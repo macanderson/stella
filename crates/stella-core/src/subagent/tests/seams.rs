@@ -28,8 +28,17 @@ async fn a_child_honors_the_soft_stop_but_never_eats_the_parents_steering() {
         drained: AtomicUsize::new(0),
         stop: true,
     };
-    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep)
-        .with_steering(&steering);
+    let seams = TurnCapabilities {
+        steering: Some(&steering),
+        ..TurnCapabilities::none()
+    };
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &NoSleep,
+        seams,
+    );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, _rx) = mpsc::unbounded_channel();
 
@@ -94,8 +103,17 @@ async fn a_child_polls_the_parents_pause_gate() {
     ]);
     let tools = MixedTools::default();
     let gate = CountingGate(AtomicUsize::new(0));
-    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep)
-        .with_gate(&gate);
+    let seams = TurnCapabilities {
+        gate: Some(&gate),
+        ..TurnCapabilities::none()
+    };
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &NoSleep,
+        seams,
+    );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, _rx) = mpsc::unbounded_channel();
 
@@ -135,9 +153,18 @@ async fn owned_turn_controls_stop_a_child_without_clobbering_an_attached_gate() 
         stop: true,
     });
     let controls = TurnControls::none().with_steering(steering.clone());
-    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep)
-        .with_gate(&gate)
-        .with_turn_controls(&controls);
+    let seams = TurnCapabilities {
+        gate: Some(&gate),
+        ..TurnCapabilities::none()
+    };
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &NoSleep,
+        seams,
+    )
+    .with_turn_controls(&controls);
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, _rx) = mpsc::unbounded_channel();
 
@@ -188,7 +215,8 @@ fn turn_controls_carrying_both_seams_give_a_child_both() {
         }));
     assert!(!both.is_empty());
 
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &NoSleep)
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &NoSleep, seams)
         .with_turn_controls(&both);
 
     assert!(engine.gate.is_some(), "the pause must survive the steering");
@@ -205,8 +233,11 @@ fn empty_turn_controls_leave_an_engine_exactly_as_it_was() {
     let tools = MixedTools::default();
     let gate = CountingGate(AtomicUsize::new(0));
     let nothing = TurnControls::none();
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &NoSleep)
-        .with_gate(&gate)
+    let seams = TurnCapabilities {
+        gate: Some(&gate),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &NoSleep, seams)
         .with_turn_controls(&nothing);
 
     assert!(
@@ -269,7 +300,8 @@ async fn the_child_claims_its_own_receipt_turn_slot() {
         lifecycle_enabled: true,
         ..EngineConfig::default()
     };
-    let parent = Engine::with_sleeper(&parent_provider, &tools, config, &NoSleep);
+    let seams = TurnCapabilities::none();
+    let parent = Engine::assemble(&parent_provider, &tools, config, &NoSleep, seams);
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, mut rx) = mpsc::unbounded_channel();
 
@@ -346,8 +378,17 @@ async fn subagent_start_and_stop_hooks_fire_around_a_child_turn() {
         }]),
         ..Hooks::default()
     };
-    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep)
-        .with_hooks(&hooks, &runner);
+    let seams = TurnCapabilities {
+        hooks: Some((&hooks, &runner)),
+        ..TurnCapabilities::none()
+    };
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &NoSleep,
+        seams,
+    );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, _rx) = mpsc::unbounded_channel();
 
@@ -423,8 +464,17 @@ async fn a_forked_child_stamps_the_subagent_fork_lane() {
     let parent_provider = ScriptedProvider::new(vec![]);
     let child_provider = ScriptedProvider::new(vec![Ok(text_result("done", 0.01))]);
     let tools = MixedTools::default();
-    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep)
-        .with_bus(&bus);
+    let seams = TurnCapabilities {
+        bus: Some(&bus),
+        ..TurnCapabilities::none()
+    };
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &NoSleep,
+        seams,
+    );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, _rx) = mpsc::unbounded_channel();
 

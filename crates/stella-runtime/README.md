@@ -228,10 +228,10 @@ One piece of that design is no longer the open risk `doc:turn-loop-wrappers`
 `Engine::assemble` is what
 [`stella-core::subagent`](../stella-core/src/subagent.rs) builds its child
 fork through today. Read `TurnCapabilities`'s own module doc before citing it
-as "the constructor cannot carry those seams" — that framing turned out false
-of this tree (`with_gate`/`with_steering`/`with_hooks` are `pub` and still
-directly callable); the property it actually enforces is *totality*, a
-decision recorded for every seam at every `assemble` call site. Whatever
+as "the constructor cannot carry those seams". That framing was false of this
+tree while a public setter stood beside the constructor for every seam. The
+property the type enforces is *totality*: a decision recorded for every seam
+at every `assemble` call site. Whatever
 implements the wrapper socket's future child-turn port earns the same
 discipline only by calling `assemble` itself — nothing today connects the two.
 

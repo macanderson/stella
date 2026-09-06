@@ -4,10 +4,14 @@
 //! the `PreCompact` summarization gate. A child module of `driver` so the
 //! engine internals stay reachable.
 //!
+//! The route a parked decision waits on is a seam. A host binds it in the
+//! turn's [`TurnCapabilities`](crate::TurnCapabilities), under
+//! `hook_approvals`. A turn that binds none refuses such a call.
+//!
 //! # PreToolUse is a permission gate now
 //!
 //! [`Engine::execute_with_hooks`] runs the matched hooks through
-//! [`crate::hooks::decision::run_decision_hooks`], so a hook's stdout JSON
+//! [`crate::hooks::decision::run_decision_hooks`]. So a hook's stdout JSON
 //! carries the extension bus's own vocabulary
 //! ([`crate::bus::HookDecision`]) — one enum, no shell-surface fork:
 //!
@@ -16,7 +20,8 @@
 //!   model sent);
 //! - `deny` blocks with the hook's reason;
 //! - `require_approval` parks the dispatch on the
-//!   [`ApprovalRoute`] port — implemented over the #2676
+//!   [`ApprovalRoute`](crate::hooks::decision::ApprovalRoute) port —
+//!   implemented over the #2676
 //!   `ApprovalBroker` by `stella-tools::hook_bridge`, so the emit-before-
 //!   park / TTL / audit-event contract is the broker's, not a copy. With
 //!   no route attached the call is refused with a grant-path message, the
@@ -66,7 +71,8 @@
 //! and a manifest must never be able to buy an unbounded loop.
 //!
 //! A `require_approval` decision parks the completion on the same
-//! [`ApprovalRoute`] a `PreToolUse` hook's does, carrying
+//! [`ApprovalRoute`](crate::hooks::decision::ApprovalRoute) a `PreToolUse`
+//! hook's does, carrying
 //! [`ApprovalSubject::TurnCompletion`] rather than a tool (#3486). Approved,
 //! the completion stands; denied, the refusal becomes the model's next
 //! observation on the `deny` path above and is bounded by the same counter.
@@ -103,8 +109,8 @@ use super::{Engine, HooksHandle};
 use crate::bus::names as bus_names;
 use crate::event_sender::EventSender;
 use crate::hooks::decision::{
-    ApprovalRoute, ApprovalRouteRequest, ApprovalRouteResolution, ApprovalSubject, GateVerdict,
-    OperatorPosture, run_decision_hooks,
+    ApprovalRouteRequest, ApprovalRouteResolution, ApprovalSubject, GateVerdict, OperatorPosture,
+    run_decision_hooks,
 };
 use crate::hooks::{HookEvent, HookPayload, run_hooks};
 
@@ -176,16 +182,6 @@ pub(super) struct PreCompactRuling {
 }
 
 impl<'a> Engine<'a> {
-    /// Attach the approval route a `PreToolUse` hook's `require_approval`
-    /// decision parks on — `stella-tools::hook_bridge`'s broker-backed
-    /// implementation in production. Opt-in like every other seam on this
-    /// builder; an engine without one refuses such calls with a grant-path
-    /// message instead of asking.
-    pub fn with_hook_approval_route(mut self, route: &'a dyn ApprovalRoute) -> Self {
-        self.hook_approvals = Some(route);
-        self
-    }
-
     /// The `read_only` bit `name` advertises on this engine's executor —
     /// `false` for a name the executor does not advertise, the cautious
     /// direction. Walks the full schema list, so hot paths thread the

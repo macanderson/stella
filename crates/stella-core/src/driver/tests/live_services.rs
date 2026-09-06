@@ -99,7 +99,8 @@ async fn run(
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("serve the docs on 8080"),

@@ -55,10 +55,11 @@ pub struct EngineConfig {
     pub retry_policy: RetryPolicy,
     pub loop_detection: LoopDetectionConfig,
     /// Compaction fires once the estimated conversation size exceeds this
-    /// many tokens (`crate::estimator`). When calibration is attached
-    /// ([`Engine::with_calibration`](super::Engine::with_calibration)) the comparison uses the
-    /// drift-corrected estimate, so this budget is honored in the model's
-    /// own observed tokens rather than raw heuristic tokens.
+    /// many tokens (`crate::estimator`). When the assembling
+    /// [`TurnCapabilities`](crate::TurnCapabilities) bound a `calibration`
+    /// map, the comparison uses the drift-corrected estimate, so this budget
+    /// is honored in the model's own observed tokens rather than raw
+    /// heuristic tokens.
     ///
     /// The value is unmeasured and stands (#4391). #2738 asked for the
     /// compaction defaults to be re-tuned if "thrash" — compaction firing

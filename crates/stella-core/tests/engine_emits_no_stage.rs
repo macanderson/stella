@@ -24,7 +24,7 @@ use stella_core::budget::BudgetGuard;
 use stella_core::event_sender::EventSender;
 use stella_core::ports::ToolExecutor;
 use stella_core::retry::Sleeper;
-use stella_core::{Engine, EngineConfig};
+use stella_core::{Engine, EngineConfig, TurnCapabilities};
 use stella_protocol::{
     AgentEvent, BudgetMode, CompletionMessage, CompletionRequestRef, CompletionResult,
     CompletionUsage, Provider, ProviderError, ToolOutput, ToolSchema,
@@ -81,7 +81,8 @@ async fn a_turn_emits_no_stage_boundary_of_its_own() {
     let provider = AnswersOnce;
     let tools = NoTools;
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let events = EventSender::new(tx);

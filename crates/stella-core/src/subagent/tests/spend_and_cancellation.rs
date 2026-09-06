@@ -57,7 +57,8 @@ async fn tool_dispatched_child_spend_aborts_the_parent_at_the_next_step_boundary
         per_call_usd: 0.60,
         drains: AtomicUsize::new(0),
     };
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &NoSleep);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &NoSleep, seams);
     let mut messages = vec![CompletionMessage::user("go")];
     let mut budget = BudgetGuard::new(BudgetMode::Enforced, None, Some(1.0));
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -123,7 +124,8 @@ async fn the_drain_is_destructive_so_child_spend_is_never_charged_twice() {
         per_call_usd: 0.25,
         drains: AtomicUsize::new(0),
     };
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &NoSleep);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &NoSleep, seams);
     let mut messages = vec![CompletionMessage::user("go")];
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, _rx) = mpsc::unbounded_channel();
@@ -225,7 +227,14 @@ async fn a_cancelled_child_closes_its_bracket_with_committed_steps_and_cost() {
         hang_reached: hang_reached.clone(),
     };
     let tools = MixedTools::default();
-    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep);
+    let seams = TurnCapabilities::none();
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &NoSleep,
+        seams,
+    );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, mut rx) = mpsc::unbounded_channel();
     let spec = SubAgentSpec::read_only("search-1", "find it");
@@ -348,7 +357,8 @@ async fn a_child_is_bounded_by_the_ceiling_its_whole_run_sits_under() {
     let parent_provider = ScriptedProvider::new(vec![]);
     let child_provider = NeverAnswers;
     let tools = MixedTools::default();
-    let parent = Engine::with_sleeper(
+    let seams = TurnCapabilities::none();
+    let parent = Engine::assemble(
         &parent_provider,
         &tools,
         EngineConfig {
@@ -358,6 +368,7 @@ async fn a_child_is_bounded_by_the_ceiling_its_whole_run_sits_under() {
             ..EngineConfig::default()
         },
         &NoSleep,
+        seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, _rx) = mpsc::unbounded_channel();
@@ -460,7 +471,8 @@ async fn a_ceiling_too_short_refuses_the_whole_spawn_loudly() {
     // Would answer happily if it were ever asked. It must not be.
     let child_provider = ScriptedProvider::new(vec![Ok(text_result("hello", 0.01))]);
     let tools = MixedTools::default();
-    let parent = Engine::with_sleeper(
+    let seams = TurnCapabilities::none();
+    let parent = Engine::assemble(
         &parent_provider,
         &tools,
         EngineConfig {
@@ -468,6 +480,7 @@ async fn a_ceiling_too_short_refuses_the_whole_spawn_loudly() {
             ..EngineConfig::default()
         },
         &NoSleep,
+        seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, mut rx) = mpsc::unbounded_channel();

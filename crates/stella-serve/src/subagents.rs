@@ -58,7 +58,7 @@ use stella_core::ports::{
 use stella_core::subagent::{
     SubAgentDispatcher, SubAgentHost, SubAgentOutcome, SubAgentSpec, push_sub_agent_spend,
 };
-use stella_core::{BudgetGuard, Engine, EventSender};
+use stella_core::{BudgetGuard, Engine, EventSender, TurnCapabilities};
 use stella_protocol::{AgentEvent, BudgetMode, ToolOutput, ToolSchema};
 use tokio::sync::mpsc;
 
@@ -259,16 +259,19 @@ impl SubAgentDispatcher for ServedSubAgents {
                     // prompt — and the reason nesting is structurally capped
                     // at one level: `delegate` is not in this view.
                     let read_only = ReadOnlyTools::new(&*tools);
-                    // The builder path, naming no lane on purpose: this engine
-                    // never drives a turn of its own. `run_sub_agent` assembles
+                    // Every seam unbound, and no lane, on purpose. This
+                    // engine never drives a turn of its own. It has nothing
+                    // to pause, steer or attribute. `run_sub_agent` builds
                     // the child that does, and that child stamps
-                    // `BuiltinLane::SubagentFork` — a lane declared here would
+                    // `BuiltinLane::SubagentFork`. A lane named here would
                     // reach no `agent.turn.started` at all.
-                    let engine = Engine::with_sleeper(
+                    let seams = TurnCapabilities::none();
+                    let engine = Engine::assemble(
                         &*provider,
                         &read_only,
                         config,
                         &crate::remote::TokioSleeper,
+                        seams,
                     );
                     // Carve from the shared pool, run, settle. The lock is
                     // taken twice and never held across the run.
@@ -1115,5 +1118,41 @@ mod tests {
             })
             .expect("allowed");
         assert_eq!(effective.child_steps, 1);
+    }
+
+    /// **The host-engine witness.** The engine this module builds is not a
+    /// lane. It still goes through the blessed constructor.
+    ///
+    /// It never drives a turn of its own. `run_sub_agent` builds the child
+    /// that does, and that child stamps `BuiltinLane::SubagentFork`. So this
+    /// site binds no seam and names no lane. It writes both answers down.
+    /// `TurnCapabilities::none` names every slot, so a new slot stops this
+    /// site compiling too.
+    ///
+    /// It failed on a tree that built this engine through a constructor that
+    /// answered no seam. There, "no seam" and "no seam anyone chose" read the
+    /// same. `stella-cli`'s `subagent.rs` is the same shape one crate over.
+    /// It carries the same test beside its own source, the way the two copies
+    /// of the accept policy each carry theirs.
+    #[test]
+    fn this_host_engine_assembles_with_a_written_seam_set() {
+        let source = include_str!("subagents.rs");
+        let blessed = format!("Engine::{}(", "assemble");
+        let bare = format!("TurnCapabilities::{}()", "none");
+
+        assert!(
+            source.contains(&blessed),
+            "this module builds a host engine and must assemble it, or a seam added to the \
+             engine reaches it as a silent `None`",
+        );
+        assert!(
+            source.contains(&bare),
+            "this module must say in one written value that it binds no seam — `{bare}` is \
+             that value, and it is exhaustive, so a new slot stops this site compiling",
+        );
+        assert!(
+            !source.contains(&format!("Engine::with_{}(", "sleeper")),
+            "this module is back on a constructor that answers no seam and takes no lane",
+        );
     }
 }

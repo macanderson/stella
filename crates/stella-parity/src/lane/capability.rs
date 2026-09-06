@@ -502,10 +502,7 @@ lane_capabilities! {
         steering: SeamClaim::declined(
             "a fleet worker has no input channel. Nobody is at a keyboard to steer it",
         ),
-        requery: SeamClaim::deferred(
-            "Refs #6158",
-            "a decision on whether a fleet attempt may ask the workspace context plane again",
-        ),
+        requery: SeamClaim::bound("requery,", CLI_SEAMS),
         bus: SeamClaim::declined(DECK_BUS),
         outcomes: SeamClaim::declined(DECK_OUTCOMES),
         fallback: SeamClaim::declined(DECK_FALLBACK),

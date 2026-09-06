@@ -79,8 +79,11 @@ async fn calibrated_estimate_changes_the_compaction_decision() {
         if calibrate {
             calibration.seed("scripted", &[(1000, 2000), (1000, 2000), (1000, 2000)]);
         }
-        let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper)
-            .with_calibration(&calibration);
+        let seams = TurnCapabilities {
+            calibration: Some(&calibration),
+            ..TurnCapabilities::none()
+        };
+        let engine = Engine::assemble(&provider, &tools, config, &sleeper, seams);
         let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
         let (tx, mut rx) = mpsc::unbounded_channel();
         let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
@@ -140,8 +143,11 @@ async fn each_committed_step_feeds_the_calibration_and_reports_its_estimate() {
     };
     let sleeper = NoopSleeper;
     let calibration = CalibrationMap::new();
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_calibration(&calibration);
+    let seams = TurnCapabilities {
+        calibration: Some(&calibration),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -224,8 +230,11 @@ async fn cache_write_tokens_count_toward_the_calibration_actual() {
     };
     let sleeper = NoopSleeper;
     let calibration = CalibrationMap::new();
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_calibration(&calibration);
+    let seams = TurnCapabilities {
+        calibration: Some(&calibration),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -283,7 +292,8 @@ async fn attachment_weight_is_excluded_from_the_drift_sample_estimate() {
         attachment > 100_000,
         "fixture sanity: the attachment must dominate the estimate"
     );
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
     let (tx, mut rx) = mpsc::unbounded_channel();
     let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
@@ -353,8 +363,11 @@ async fn a_fresh_sessions_calibration_factor_leaves_identity_within_the_turn() {
     // Unseeded, exactly like a bench container's first run: warm-up happens
     // (or fails to matter) entirely inside this one turn.
     let calibration = CalibrationMap::new();
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_calibration(&calibration);
+    let seams = TurnCapabilities {
+        calibration: Some(&calibration),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),

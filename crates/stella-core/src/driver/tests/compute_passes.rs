@@ -40,7 +40,8 @@ async fn a_step_walks_the_transcript_to_estimate_it_at_most_twice() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -94,7 +95,8 @@ async fn the_receipt_and_the_usage_record_report_one_estimate_per_step() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -196,7 +198,8 @@ async fn per_step_hashing_grows_with_the_turn_not_with_its_square() {
         }
         let tools = EchoingTools;
         let sleeper = NoopSleeper;
-        let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
         let mut messages = vec![
             CompletionMessage::system("sys"),
             CompletionMessage::user("hi"),
@@ -389,7 +392,8 @@ async fn compaction_mid_turn_invalidates_the_receipt_ledgers_digest_memo() {
         summarize_overflow: false,
         ..EngineConfig::default()
     };
-    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, config, &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -483,7 +487,8 @@ async fn a_compaction_pass_journals_the_replacement_bytes_it_wrote() {
         summarize_overflow: false,
         ..EngineConfig::default()
     };
-    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, config, &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),

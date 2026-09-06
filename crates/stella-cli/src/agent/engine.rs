@@ -842,8 +842,8 @@ pub(crate) fn session_router(cfg: &Config, worker_ref: &ModelRef) -> Router {
 /// Mid-turn fallback resolution for the bare (non-pipeline) loops (#2679):
 /// when the worker's retry ladder exhausts, the engine asks this port for a
 /// replacement, and the answer is a fresh [`Router::resolve`] of the worker
-/// role — whose breaker the failing calls already fed via
-/// `with_provider_outcomes`, so resolution routes around the sick provider.
+/// role — whose breaker the failing calls already fed through the seam set's
+/// `outcomes` slot, so resolution routes around the sick provider.
 /// The replacement adapter is built from the discovered credentials on
 /// first use and owned here (set-once), so the engine can borrow it for the
 /// rest of the turn. Every miss is soft, matching

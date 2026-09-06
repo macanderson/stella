@@ -340,9 +340,9 @@ impl Engine<'_> {
     ///
     /// # Why this is the primitive and not a hand-rolled engine
     ///
-    /// It used to build its own [`Engine`] with [`Engine::with_sleeper`],
-    /// which cannot carry the pause gate, steering, or lifecycle hooks —
-    /// those are builder-set private fields. So a paused session kept
+    /// It built its own [`Engine`] once, through a constructor that carried
+    /// no pause gate, no steering, and no lifecycle hooks. Each of the three
+    /// was a separate opt-in call. So a paused session kept
     /// spending inside the verifier, a soft stop could not end a verifier turn,
     /// and `PreToolUse`/`PostToolUse` hooks never fired for the evidence
     /// the verifier gathered. Routing through the sub-agent primitive carries
@@ -551,6 +551,7 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::*;
+    use crate::TurnCapabilities;
     use crate::driver::EngineConfig;
     use crate::ports::ToolExecutor;
     use crate::retry::Sleeper;
@@ -659,7 +660,8 @@ mod tests {
             )),
         ]);
         let tools = NoTools;
-        let engine = Engine::with_sleeper(&worker, &tools, EngineConfig::default(), &NoSleep);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&worker, &tools, EngineConfig::default(), &NoSleep, seams);
         let mut messages = vec![CompletionMessage::system("sys")];
         let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
         let (tx, rx) = mpsc::unbounded_channel();
@@ -724,7 +726,8 @@ mod tests {
             )),
         ]);
         let tools = NoTools;
-        let engine = Engine::with_sleeper(&worker, &tools, EngineConfig::default(), &NoSleep);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&worker, &tools, EngineConfig::default(), &NoSleep, seams);
         let mut messages = vec![CompletionMessage::system("sys")];
         let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
         let (tx, rx) = mpsc::unbounded_channel();
@@ -810,7 +813,8 @@ mod tests {
             )),
         ]);
         let tools = NoTools;
-        let engine = Engine::with_sleeper(&worker, &tools, EngineConfig::default(), &NoSleep);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&worker, &tools, EngineConfig::default(), &NoSleep, seams);
         let mut messages = vec![CompletionMessage::system("sys")];
         let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -869,7 +873,8 @@ mod tests {
             )),
         ]);
         let tools = NoTools;
-        let engine = Engine::with_sleeper(&worker, &tools, EngineConfig::default(), &NoSleep);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&worker, &tools, EngineConfig::default(), &NoSleep, seams);
         let mut messages = vec![CompletionMessage::system("sys")];
         // Mirrors `build_budget_guard(Some(0.05))`: the cap is on the session
         // axis. (A per-turn axis here would reset each round and let the loop
@@ -948,7 +953,8 @@ mod tests {
             )),
         ]);
         let tools = NoTools;
-        let engine = Engine::with_sleeper(&worker, &tools, EngineConfig::default(), &NoSleep);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&worker, &tools, EngineConfig::default(), &NoSleep, seams);
         let mut messages = vec![CompletionMessage::system("sys")];
         let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -970,10 +976,10 @@ mod tests {
         }
     }
 
-    /// Regression for the bug #922 names in `assess`: it used to build its
-    /// verifier with [`Engine::with_sleeper`], which cannot carry the pause
-    /// gate, steering, or hooks — so a paused session kept spending inside
-    /// the verifier and a soft stop could not end a verifier turn.
+    /// Regression for the bug #922 names in `assess`. It built its verifier
+    /// through a constructor that carried no pause gate, no steering and no
+    /// hooks. So a paused session kept spending inside the verifier, and a
+    /// soft stop could not end a verifier turn.
     ///
     /// Routing through the sub-agent primitive carries all three. The gate
     /// is the observable one: a verifier that polls it is a verifier a pause can
@@ -995,8 +1001,11 @@ mod tests {
         ))]);
         let tools = NoTools;
         let gate = CountingGate(AtomicU32::new(0));
-        let engine = Engine::with_sleeper(&worker, &tools, EngineConfig::default(), &NoSleep)
-            .with_gate(&gate);
+        let seams = TurnCapabilities {
+            gate: Some(&gate),
+            ..TurnCapabilities::none()
+        };
+        let engine = Engine::assemble(&worker, &tools, EngineConfig::default(), &NoSleep, seams);
         let mut messages = vec![CompletionMessage::system("sys")];
         let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -1046,7 +1055,8 @@ mod tests {
             )),
         ]);
         let tools = NoTools;
-        let engine = Engine::with_sleeper(&worker, &tools, EngineConfig::default(), &NoSleep);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&worker, &tools, EngineConfig::default(), &NoSleep, seams);
         let mut messages = vec![CompletionMessage::system("sys")];
         let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -1085,7 +1095,8 @@ mod tests {
         // Auth errors are non-retryable, so the verifier fails immediately.
         let verifier = ScriptedProvider::new(vec![Err(ProviderError::Auth("bad key".into()))]);
         let tools = NoTools;
-        let engine = Engine::with_sleeper(&worker, &tools, EngineConfig::default(), &NoSleep);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&worker, &tools, EngineConfig::default(), &NoSleep, seams);
         let mut messages = vec![CompletionMessage::system("sys")];
         let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -1116,7 +1127,8 @@ mod tests {
         let worker = ScriptedProvider::new(vec![Err(ProviderError::Auth("expired".into()))]);
         let verifier = ScriptedProvider::new(vec![]);
         let tools = NoTools;
-        let engine = Engine::with_sleeper(&worker, &tools, EngineConfig::default(), &NoSleep);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&worker, &tools, EngineConfig::default(), &NoSleep, seams);
         let mut messages = vec![CompletionMessage::system("sys")];
         let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -1173,7 +1185,8 @@ mod tests {
         ]);
         let verifier = ScriptedProvider::new(vec![]);
         let tools = NoTools;
-        let engine = Engine::with_sleeper(&worker, &tools, EngineConfig::default(), &NoSleep);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&worker, &tools, EngineConfig::default(), &NoSleep, seams);
         let mut messages = vec![CompletionMessage::system("sys")];
         let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -1207,7 +1220,8 @@ mod tests {
             0.001,
         ))]);
         let tools = NoTools;
-        let engine = Engine::with_sleeper(&worker, &tools, EngineConfig::default(), &NoSleep);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&worker, &tools, EngineConfig::default(), &NoSleep, seams);
         let mut messages = vec![CompletionMessage::system("sys")];
         let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
         budget.reseed_session_spend(0.75);

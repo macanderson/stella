@@ -100,12 +100,12 @@ pub struct Capability {
 /// ever expose them directly. Anything swept from the engine sources that is
 /// neither claimed by a row nor listed here fails the completeness test.
 pub const COMPOSITION_SEAMS: &[&str] = &[
-    // The blessed constructor (#3390): required ports plus one
-    // `TurnCapabilities` answering every optional seam. Assembly in the same
-    // sense `with_sleeper` is — a host builds a stack with it, and no surface
-    // exposes it — so it belongs here rather than in a capability row.
+    // The only constructor (#3390): the required ports, plus one
+    // `TurnCapabilities` that answers every optional seam. A host builds a
+    // stack with it. No surface exposes it. So it belongs here, not in a
+    // capability row. Every seam a row below names is a field of the value it
+    // takes, which is why those rows claim no entry point of their own.
     "assemble",
-    "with_sleeper",
     "with_call_role",
     // The reader for `with_call_role`, and an assembly detail for the same
     // reason the setter is: a host that drives `run_step` itself owns the turn
@@ -227,8 +227,9 @@ pub static CAPABILITIES: &[Capability] = &[
     },
     Capability {
         id: "turn.steer",
-        engine_home: "stella-core TurnSteering port — mid-turn user messages at step boundaries",
-        engine_entries: &["with_steering"],
+        engine_home: "stella-core TurnSteering port — mid-turn user messages at step \
+                      boundaries, bound by TurnCapabilities::steering",
+        engine_entries: &[],
         cli: SurfacePosture::Shipped {
             mechanism: "deck mid-turn input via the SteeringTap",
             witness: "a_live_turn_still_steers_on_the_marker_and_spawns_otherwise",
@@ -283,8 +284,8 @@ pub static CAPABILITIES: &[Capability] = &[
         id: "turn.steering_requery",
         engine_home: "stella-core SteeringRequery port — the steering plane re-queried at step \
                       boundaries when TurnSignal drift says the opening prompt stopped \
-                      describing the turn",
-        engine_entries: &["with_requery"],
+                      describing the turn, bound by TurnCapabilities::requery",
+        engine_entries: &[],
         cli: SurfacePosture::Shipped {
             mechanism: "agent::run_turn, the deck, and a fleet worker each attach a \
                         SessionRequery over SessionMemory, so a drifted turn re-selects \
@@ -335,8 +336,9 @@ pub static CAPABILITIES: &[Capability] = &[
     },
     Capability {
         id: "turn.pause_resume",
-        engine_home: "stella-core TurnGate port — park at a step boundary, never mid-tool",
-        engine_entries: &["with_gate"],
+        engine_home: "stella-core TurnGate port — park at a step boundary, never mid-tool, \
+                      bound by TurnCapabilities::gate",
+        engine_entries: &[],
         cli: SurfacePosture::Shipped {
             mechanism: "deck pause/resume controls (`p`), on worker lanes and on the lead's own \
                         turn alike (#1219 — raw and pipeline paths); a paused turn parks its \
@@ -475,8 +477,9 @@ pub static CAPABILITIES: &[Capability] = &[
         id: "hooks.lifecycle",
         engine_home: "stella-core hooks (PreToolUse/PostToolUse/SessionStart/Stop/PreCompact/\
                       UserPromptSubmit/SubagentStart/SubagentStop, the #2684 stdout-decision \
-                      plane in hooks::decision) and the observer-only HookBus",
-        engine_entries: &["with_hooks", "with_bus", "with_hook_approval_route"],
+                      plane in hooks::decision) and the observer-only HookBus, bound by \
+                      TurnCapabilities::{hooks, hook_approvals, bus}",
+        engine_entries: &[],
         cli: SurfacePosture::Shipped {
             mechanism: "workspace hooks wired via with_session_hook_context on every driver \
                         path. SessionStart firing is a HOST obligation (#2674): the engine \
@@ -515,14 +518,14 @@ pub static CAPABILITIES: &[Capability] = &[
     },
     Capability {
         id: "calibration.drift",
-        engine_home: "stella-core estimator CalibrationMap: per-model token-drift correction feeding compaction",
-        engine_entries: &["with_calibration"],
+        engine_home: "stella-core estimator CalibrationMap: per-model token-drift correction \
+                      feeding compaction, bound by TurnCapabilities::calibration",
+        engine_entries: &[],
         cli: SurfacePosture::ShippedUnwitnessed {
-            mechanism: "seed_calibration from the store plus with_calibration on all seven \
-                        assembly sites: the interactive, raw one-shot, goal, deck and \
-                        sub-session paths hand it to the engine directly, and the default \
-                        `stella run` staged-pipeline path and fleet workers lend it to the \
-                        Pipeline, which attaches it to every engine it builds (#1595)",
+            mechanism: "seed_calibration from the store, then the `calibration` slot of the \
+                        seam set every lane in lane_capabilities builds: the interactive, raw \
+                        one-shot, goal, deck, sub-session and fleet-worker lanes all bind it \
+                        (#1595)",
             missing: "a CLI-side test pinning that persisted drift samples reach the engine's \
                       calibration on session start (stella-core and stella-store each test their \
                       half; the CLI seam between them has no witness). The pipeline half of the \
@@ -652,8 +655,9 @@ pub static CAPABILITIES: &[Capability] = &[
         id: "provider.breaker_feedback",
         engine_home: "stella-core router CircuitBreaker + the ProviderOutcomes port: every \
                       logical model call's terminal verdict feeds the breaker, so `resolve` \
-                      fails over from observed outcomes, not configuration (#2673)",
-        engine_entries: &["with_provider_outcomes"],
+                      fails over from observed outcomes, not configuration (#2673), bound by \
+                      TurnCapabilities::outcomes",
+        engine_entries: &[],
         cli: SurfacePosture::ShippedUnwitnessed {
             // Was ALSO fed from PipelinePorts.attach() before the staged
             // pipeline was removed (#3865); that feed is gone with the crate, and every CLI
@@ -679,8 +683,9 @@ pub static CAPABILITIES: &[Capability] = &[
         engine_home: "stella-core driver/model_fallback + the FallbackResolver port: a retry \
                       ladder exhausting mid-turn re-resolves the role through the router — \
                       whose breaker the failing calls already fed — and continues the turn on \
-                      the replacement, transcript repaired, at most one swap per engine (#2679)",
-        engine_entries: &["with_fallback_resolver"],
+                      the replacement, transcript repaired, at most one swap per engine \
+                      (#2679), bound by TurnCapabilities::fallback",
+        engine_entries: &[],
         cli: SurfacePosture::ShippedUnwitnessed {
             // Was ALSO attached by the staged pipeline's execute/revise
             // engines before it was removed (#3865); that attach

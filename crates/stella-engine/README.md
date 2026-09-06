@@ -67,17 +67,17 @@ This section and the `# What earns a re-export` section of `src/lib.rs` state
 one rule in the same words. They used to state two: this file said a
 re-export is earned only when a host "genuinely cannot drive a turn
 without it", while `src/lib.rs` stated a strictly wider per-port closure. The
-gap between them was not theoretical — `Engine::with_requery` was reachable
-through the facade and callable by nobody, because neither the
-`SteeringRequery` it takes nor the `TurnSignal` that port's one method names
-could be spelled from this crate (#3715).
+gap between them was not theoretical. The re-query seam was reachable
+through the facade and bindable by nobody. Neither the `SteeringRequery` it
+takes nor the `TurnSignal` that port's one method names could be spelled from
+this crate (#3715).
 
 **The rule.** A host must be able to write, naming nothing but
 `stella_engine::` paths:
 
 1. an `impl` of every port this facade's engine accepts,
 2. a construction of every value it accepts — every `EngineConfig` field and
-   every builder argument, and
+   every `TurnCapabilities` seam, and
 3. a `match` on every value it hands back that the host must branch on.
 
 Closure is transitive through those three obligations and stops where they
@@ -96,9 +96,8 @@ still a design question; making an already-reachable one writable is not.
 Every entry arrives with doc prose explaining its place in the host-driving
 story.
 
-**The hook plane is the wrong layer, by design.** `Engine::with_hooks`
-(`Hooks`, `HookRunner`) and `Engine::with_bus` (`HookBus`) are not closed
-over. Their closure is the shell-command hook plane, an extension surface
+**The hook plane is the wrong layer, by design.** Two seams are not closed
+over: `hooks` (`Hooks`, `HookRunner`) and `bus` (`HookBus`). Their closure is the shell-command hook plane, an extension surface
 whose purpose is to *execute* things, fronted here by a crate that inherits
 `stella-core`'s I/O-free posture; the supported host-extension door is
 [`stella-runtime`](../stella-runtime)'s wrapper socket (#3380,

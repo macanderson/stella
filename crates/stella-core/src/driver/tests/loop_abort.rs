@@ -131,7 +131,8 @@ async fn a_loop_that_resumes_after_a_successful_course_correction_still_aborts()
         max_steps: 30,
         ..EngineConfig::default()
     };
-    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, config, &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("why is the cache write count wrong?"),
@@ -230,7 +231,8 @@ async fn a_second_distinct_loop_earns_its_own_steer_before_the_turn_dies() {
         calls: tool_calls.clone(),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, exact_repeat_only(30), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, exact_repeat_only(30), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("where is the graph store opened?"),
@@ -339,7 +341,8 @@ async fn a_third_loop_is_not_steered_and_is_not_blamed_on_the_warned_one() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, exact_repeat_only(30), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, exact_repeat_only(30), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("why is the cache write count wrong?"),
@@ -443,7 +446,8 @@ async fn a_tool_answering_identically_to_every_new_argument_is_steered_then_kill
         max_steps: 60,
         ..EngineConfig::default()
     };
-    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, config, &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("where is the cache write count summed?"),
@@ -508,7 +512,8 @@ async fn a_confident_zero_never_reports_as_completed() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("check the gcov coverage"),
@@ -560,7 +565,8 @@ async fn a_direct_zero_tool_answer_still_completes() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("what's 2+2"),
@@ -596,7 +602,8 @@ async fn a_turn_that_did_mutating_work_still_completes_despite_a_bare_closing_li
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("run the build"),
@@ -634,7 +641,8 @@ async fn a_terminated_short_answer_after_investigation_still_completes() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("does config.toml exist?"),
@@ -684,7 +692,8 @@ async fn a_stuck_loop_steer_names_the_loop_rung_as_its_cause() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, exact_repeat_only(30), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, exact_repeat_only(30), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("where is the store opened?"),
