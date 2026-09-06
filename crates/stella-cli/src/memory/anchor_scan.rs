@@ -20,7 +20,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use colored::Colorize;
-use stella_context::{Clock, ContextStore, SystemClock};
+use stella_context::{AnchorView, Clock, ContextStore, SystemClock};
 
 /// Time cap for the auto sweep at mount. Each anchor costs one file
 /// check, and a slow disk — not a long list — is what could make that
@@ -54,6 +54,46 @@ fn open_context_store(workspace_root: &Path) -> Result<Option<ContextStore>, Str
         .map_err(|e| format!("cannot open context store: {e}"))
 }
 
+/// How many of `anchors` a pass at `budget` could reach, one file check
+/// each, oldest first — the same order [`ContextStore::open_anchors`]
+/// returns and [`scan_stale_anchors_at_mount`] walks. Read-only, so
+/// `stella memory validate` can report real throughput without touching
+/// the store.
+struct ScanCapacity {
+    /// How many anchors were open when the pass started.
+    total: usize,
+    /// How many of them the pass reached before its deadline.
+    examined: usize,
+}
+
+impl ScanCapacity {
+    /// True when the backlog beat the budget. New anchors sit last in the
+    /// walk, so a workspace adding them fast enough never reaches them.
+    fn is_falling_behind(&self) -> bool {
+        self.examined < self.total
+    }
+}
+
+fn mount_scan_capacity(
+    anchors: &[AnchorView],
+    workspace_root: &Path,
+    budget: Duration,
+) -> ScanCapacity {
+    let deadline = Instant::now() + budget;
+    let mut examined = 0usize;
+    for a in anchors {
+        if Instant::now() >= deadline {
+            break;
+        }
+        let _ = workspace_root.join(&a.path).exists();
+        examined += 1;
+    }
+    ScanCapacity {
+        total: anchors.len(),
+        examined,
+    }
+}
+
 /// Walk the open `observed_in` anchors and report — or end — the ones whose
 /// file has left the tree.
 ///
@@ -74,6 +114,19 @@ pub(crate) fn scan_stale_anchors(workspace_root: &Path, end_stale: bool) -> Resu
         .map_err(|e| format!("cannot read anchors: {e}"))?;
     if anchors.is_empty() {
         return Ok(());
+    }
+
+    let capacity = mount_scan_capacity(&anchors, workspace_root, MOUNT_SCAN_BUDGET);
+    if capacity.is_falling_behind() {
+        println!(
+            "\n  {} the mount sweep can check only {}/{} open anchor(s) in one pass \
+             at the current {}ms budget — the newest may never be reached; run \
+             `stella memory validate --end-stale` to catch up.",
+            "⚠".yellow(),
+            capacity.examined,
+            capacity.total,
+            MOUNT_SCAN_BUDGET.as_millis()
+        );
     }
 
     let stale: Vec<StaleAnchor> = anchors
@@ -333,5 +386,79 @@ mod tests {
             1,
             "the anchor is untouched when the budget is already spent"
         );
+    }
+
+    /// A zero budget models a backlog too big for one pass, no slow disk
+    /// needed. `scan_stale_anchors_at_mount` stays quiet either way, so
+    /// this is the only place the gap shows.
+    #[test]
+    fn mount_scan_capacity_flags_a_backlog_the_budget_cannot_clear() {
+        let root = tempdir().unwrap();
+        let context_db =
+            stella_store::workspace_private_sqlite_path(root.path(), "context.db").unwrap();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let context = stella_context::ContextStore::open(&context_db).unwrap();
+        rt.block_on(async {
+            use stella_context::{ContextDelta, MemoryInput};
+            context
+                .upsert(ContextDelta {
+                    memories: vec![
+                        MemoryInput::reflection("about file one", Vec::<String>::new())
+                            .with_anchors(["src/one.rs"]),
+                        MemoryInput::reflection("about file two", Vec::<String>::new())
+                            .with_anchors(["src/two.rs"]),
+                        MemoryInput::reflection("about file three", Vec::<String>::new())
+                            .with_anchors(["src/three.rs"]),
+                    ],
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+        });
+        let anchors = context.open_anchors().unwrap();
+        assert_eq!(anchors.len(), 3);
+
+        let capacity = mount_scan_capacity(&anchors, root.path(), Duration::ZERO);
+        assert_eq!(capacity.total, 3);
+        assert_eq!(
+            capacity.examined, 0,
+            "a zero budget reaches its deadline before the first check"
+        );
+        assert!(
+            capacity.is_falling_behind(),
+            "3 open anchors against a pass that can examine none is exactly \
+             the falling-behind backlog this signal exists to catch"
+        );
+    }
+
+    /// The other side: a budget that covers the backlog is not falling
+    /// behind, so the report line stays quiet on an ordinary workspace.
+    #[test]
+    fn mount_scan_capacity_is_current_when_the_budget_covers_the_backlog() {
+        let root = tempdir().unwrap();
+        let context_db =
+            stella_store::workspace_private_sqlite_path(root.path(), "context.db").unwrap();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let context = stella_context::ContextStore::open(&context_db).unwrap();
+        rt.block_on(async {
+            use stella_context::{ContextDelta, MemoryInput};
+            context
+                .upsert(ContextDelta {
+                    memories: vec![
+                        MemoryInput::reflection("about file one", Vec::<String>::new())
+                            .with_anchors(["src/one.rs"]),
+                    ],
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+        });
+        let anchors = context.open_anchors().unwrap();
+
+        let capacity = mount_scan_capacity(&anchors, root.path(), Duration::from_secs(1));
+        assert_eq!(capacity.examined, capacity.total);
+        assert!(!capacity.is_falling_behind());
     }
 }

@@ -174,8 +174,13 @@ const DEPTH: usize = 40;
 /// answer set in this repository, cited at the entry.
 struct Labelled {
     query: &'static str,
-    /// `(path, Some(symbol))` pins one chunk; `(path, None)` accepts any
-    /// chunk of that file, for a query whose answer is a whole file's subject.
+    /// `(path, Some(symbol))` pins one chunk. `(path, None)` accepts every
+    /// chunk of that file. Use `None` only when `basis` names the whole
+    /// file as the subject, the way the 21 `cache_control` sites below do.
+    /// A `None` whose `basis` names one section or one part is a bug:
+    /// `measure` reads the *deepest* labelled candidate, so the loosest
+    /// chunk of that file becomes "the answer" instead of the one `basis`
+    /// names.
     answers: &'static [(&'static str, Option<&'static str>)],
     /// Why these are the answers and nothing else is — read at review time,
     /// and printed with the row so a later reader can re-check the label
@@ -216,10 +221,19 @@ const QUERIES: &[Labelled] = &[
         query: "how does a provider declare which features it supports and how is that checked",
         answers: &[
             ("crates/stella-model/src/provider_parity.rs", None),
-            ("AGENTS.md", None),
+            (
+                "AGENTS.md",
+                Some("AGENTS.md › Architecture: ports, not direct dependencies"),
+            ),
         ],
         basis: "invariant 8's matrix and the invariant that states it — a deliberately broader \
-                answer set, so the tail is measured against something other than a single file",
+                answer set, so the tail is measured against something other than a single file. \
+                Pinned to the architecture section rather than the whole file: rule 8 has no \
+                heading of its own, and `stella_graph::markdown::sections` scopes a section to \
+                the next heading of any level, so every numbered rule from 1 through 12 shares \
+                this one chunk — the finest granularity this harness's per-heading chunking can \
+                name for it. `provider_parity.rs` stays `None`: that whole file is rule 8's \
+                matrix, so nothing narrower fits there",
     },
 ];
 
@@ -627,4 +641,57 @@ async fn print_the_relevant_and_irrelevant_score_distributions() {
     println!("===================================================================\n");
 
     graph.shutdown();
+}
+
+/// Needs no embedding backend, so it runs on every `cargo test` — unlike
+/// [`print_the_relevant_and_irrelevant_score_distributions`] above.
+///
+/// A `(path, None)` label for `AGENTS.md` would let any chunk win, so
+/// `measure` could report the worst-ranked chunk as "the answer" instead
+/// of the one `basis` names. This checks the pinned `Some(breadcrumb)`
+/// against a real section: `stella_graph`'s markdown chunker must produce
+/// it from the real `AGENTS.md`, so it matches something when the harness
+/// runs. A `None` here leaves `entry.1` below with nothing to unwrap,
+/// which fails the test by construction.
+#[test]
+fn the_pinned_agents_md_answer_is_a_real_chunk_the_indexer_produces() {
+    let labelled = QUERIES
+        .iter()
+        .find(|q| q.query.starts_with("how does a provider declare"))
+        .expect("query 4 is still in the table");
+    let entry = labelled
+        .answers
+        .iter()
+        .find(|entry| entry.0 == "AGENTS.md")
+        .expect("query 4 still labels an AGENTS.md answer");
+    let breadcrumb = entry.1.expect(
+        "the AGENTS.md answer must be pinned to one section, not every chunk of the file — a \
+         whole-file None here is exactly the defect this test exists to catch",
+    );
+
+    let root = workspace_root();
+    let db_dir = tempfile::tempdir().expect("tempdir for the index");
+    let graph =
+        CodeGraph::open(&root, &db_dir.path().join("codegraph.db")).expect("open the index");
+    // Index just this one file: no embeddings, no walk of the rest of the
+    // corpus, and fast enough to run on every `cargo test` with no
+    // `#[ignore]`.
+    graph
+        .register_paths(&[root.join("AGENTS.md")])
+        .expect("index AGENTS.md");
+
+    let spans = graph
+        .definition_spans(breadcrumb)
+        .expect("query the symbol table");
+    assert_eq!(
+        spans.len(),
+        1,
+        "{breadcrumb:?} must name exactly one chunk of AGENTS.md — the harness's exact-match \
+         lookup (`chunk.name == symbol`) needs exactly one, got {spans:?}"
+    );
+    assert_eq!(spans[0].path, "AGENTS.md");
+    assert_eq!(
+        spans[0].kind, "section",
+        "the pinned breadcrumb must name a markdown section, not some other symbol kind"
+    );
 }
