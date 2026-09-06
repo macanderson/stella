@@ -1307,6 +1307,9 @@ crates/stella-store/src/work_journal/snapshot.rs 9.89
 crates/stella-store/src/work_journal/snapshot/tests.rs 9.48
 crates/stella-store/src/workspace_local.rs 8.33
 crates/stella-store/tests/stream_conformance.rs 10.00
+crates/stella-tool-facts/src/catalog.rs 10.78
+crates/stella-tool-facts/src/policy.rs 9.82
+crates/stella-tool-facts/src/subprocess_env.rs 12.21
 crates/stella-tools/Cargo.toml 10.05
 crates/stella-tools/README.md 11.96
 crates/stella-tools/src/agent_use.rs 10.00
@@ -1315,7 +1318,6 @@ crates/stella-tools/src/bash.rs 11.26
 crates/stella-tools/src/bash/words.rs 10.67
 crates/stella-tools/src/batch.rs 9.05
 crates/stella-tools/src/call_measure.rs 12.48
-crates/stella-tools/src/catalog.rs 10.78
 crates/stella-tools/src/contracts.rs 12.20
 crates/stella-tools/src/ctx.rs 11.18
 crates/stella-tools/src/custom.rs 10.59
@@ -1343,7 +1345,6 @@ crates/stella-tools/src/loop_comparability.rs 11.10
 crates/stella-tools/src/loop_comparability/tests.rs 11.93
 crates/stella-tools/src/netdeny.rs 11.54
 crates/stella-tools/src/own_change.rs 9.71
-crates/stella-tools/src/policy.rs 9.82
 crates/stella-tools/src/read.rs 10.76
 crates/stella-tools/src/read/tests.rs 9.73
 crates/stella-tools/src/registry.rs 11.25
@@ -1381,7 +1382,6 @@ crates/stella-tools/src/skill_plane.rs 12.27
 crates/stella-tools/src/staleness.rs 11.72
 crates/stella-tools/src/subagent.rs 10.56
 crates/stella-tools/src/subagent/tests.rs 10.37
-crates/stella-tools/src/subprocess_env.rs 12.21
 crates/stella-tools/src/tasks.rs 8.39
 crates/stella-tools/src/temp_roots.rs 11.87
 crates/stella-tools/src/validate.rs 10.34

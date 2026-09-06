@@ -21,7 +21,7 @@
 //!
 //! # Where the classification comes from
 //!
-//! [`stella_tools::catalog`] — the same gate-enforced table the policy layer
+//! [`stella_tool_facts::catalog`] — the same gate-enforced table the policy layer
 //! addresses, so a tool cannot be filed under one family for `tools.<group>:
 //! "off"` and a different one on screen. This module is a projection of that
 //! table onto four visual classes, plus the two dynamic groups (`mcp`,
@@ -117,8 +117,8 @@ impl ToolClass {
 /// recognise this" is [`ToolClass::Execute`], the class that promises the
 /// least about what happened.
 pub fn classify(name: &str) -> ToolClass {
-    let read_only = stella_tools::catalog::get(name).is_some_and(|entry| entry.read_only);
-    match stella_tools::catalog::group_for(name) {
+    let read_only = stella_tool_facts::catalog::get(name).is_some_and(|entry| entry.read_only);
+    match stella_tool_facts::catalog::group_for(name) {
         // Split on mutation: this group holds both halves.
         "scratch" => {
             if read_only {
@@ -209,11 +209,11 @@ mod tests {
     /// point of reading the catalog is that the two cannot drift.
     #[test]
     fn every_catalog_group_has_an_explicit_class() {
-        for group in stella_tools::catalog::groups() {
+        for group in stella_tool_facts::catalog::groups() {
             if matches!(group, "mcp" | "custom") {
                 continue;
             }
-            let name = stella_tools::catalog::names_in_group(group)
+            let name = stella_tool_facts::catalog::names_in_group(group)
                 .first()
                 .copied()
                 .unwrap_or_else(|| panic!("group `{group}` is empty"));

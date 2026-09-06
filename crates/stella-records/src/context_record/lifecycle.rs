@@ -55,7 +55,7 @@ pub const LIFECYCLE_SCHEMA_VERSION: &str = "1.0-draft";
 /// A third option, `MemoryCitation`, paired a memory citation with a model's
 /// usefulness judgement. It is retired. No real turn ever wrote one: the
 /// `cite_memory` tool that collected the judgement is retired
-/// (`RETIRED_TOOL_NAMES`, `crates/stella-tools/src/catalog.rs`). Every other
+/// (`RETIRED_TOOL_NAMES`, `crates/stella-tool-facts/src/catalog.rs`). Every other
 /// source only knows a memory was *shown* to the model, never that the model
 /// judged it useful or true. Marking a memory `truthful: true` just because
 /// it was shown would be a guess dressed up as evidence, and `stella-cli`'s

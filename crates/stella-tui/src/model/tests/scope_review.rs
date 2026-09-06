@@ -299,7 +299,7 @@ fn start_a_plan(model: &mut SessionModel, call_id: &str, steps: &[&str]) {
     model.apply(&AgentEvent::ToolStart {
         call: stella_protocol::ToolCall {
             call_id: call_id.into(),
-            name: stella_tools::tasks::START.into(),
+            name: stella_tool_facts::catalog::TASK_START.into(),
             input: serde_json::json!({ "id": "1" }),
         },
         sub_agent_id: None,

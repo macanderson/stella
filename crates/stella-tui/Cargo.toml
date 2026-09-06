@@ -10,7 +10,16 @@ publish.workspace = true
 
 [dependencies]
 stella-protocol = { path = "../stella-protocol" }
-stella-tools = { path = "../stella-tools" }
+# The tool table, the tool switches, the environment scrub and the index
+# readiness policy — everything this crate reads about the tool surface, and
+# nothing that runs one. Its only workspace dependency is `stella-protocol`,
+# so it costs this crate what the other leaves above cost it: nothing.
+#
+# Taking `stella-tools` instead brings the whole executor: a bundled SQLite
+# and nine tree-sitter grammar builds, by way of the code-graph index the
+# `search` tool ranks over. `tests/dependency_boundary.rs` holds that edge
+# shut.
+stella-tool-facts = { path = "../stella-tool-facts" }
 # The ANSI stripper, a leaf with no dependencies. `crate::ansi` re-exports
 # it, and keeps only the emission half (`line_to_ansi`, `AnsiPalette`) that
 # needs `ratatui`.

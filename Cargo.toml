@@ -10,6 +10,7 @@ members = [
   "crates/stella-plugin",
   "crates/stella-transcript",
   "crates/stella-tty",
+  "crates/stella-tool-facts",
   "crates/stella-protocol",
   "crates/stella-core",
   "crates/stella-records",

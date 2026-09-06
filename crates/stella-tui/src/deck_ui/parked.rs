@@ -61,7 +61,7 @@ pub(super) fn handle_key(key: KeyEvent, ui: &mut DeckUi) -> Option<DeckAction> {
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode, KeyModifiers};
-    use stella_tools::registry::approval::{ApprovalRequest, ApprovalResponse};
+    use stella_protocol::approval::{ApprovalRequest, ApprovalResponse};
 
     use super::*;
 
@@ -71,7 +71,7 @@ mod tests {
 
     fn approval() -> ApprovalRequest {
         ApprovalRequest {
-            parked: stella_tools::registry::approval::ApprovalSubject::Tool {
+            parked: stella_protocol::approval::ApprovalSubject::Tool {
                 name: "bash".into(),
                 read_only: false,
             },

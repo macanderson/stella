@@ -63,7 +63,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
-use stella_tools::policy::WILDCARD;
+use stella_tool_facts::policy::WILDCARD;
 use stella_tui_theme::{glyph, token};
 
 use crate::deck::DeckTab;
@@ -147,7 +147,7 @@ pub fn rows(state: &ToolPolicyState) -> Vec<ToolsRow> {
 
 /// Whether `tool` is on right now: the saved switches overlaid with the
 /// pane's unsaved edits, resolved most-specific-first — the exact precedence
-/// [`stella_tools::policy::ToolPolicy::allows`] enforces, so what the pane
+/// [`stella_tool_facts::policy::ToolPolicy::allows`] enforces, so what the pane
 /// shows and what the runtime does cannot disagree.
 ///
 /// A locked row is off, full stop. That short-circuit is the safety property:

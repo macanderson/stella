@@ -20,7 +20,7 @@ mod inspect;
 pub use broadcast::Broadcast;
 pub use inspect::{InspectMessage, InspectSection, InspectView, JournalEra, RecordedCallInfo};
 
-use stella_tools::search::readiness::IndexReadiness;
+use stella_tool_facts::readiness::IndexReadiness;
 
 use crate::graph::GraphSnapshot;
 use crate::input::UserInput;
@@ -428,7 +428,7 @@ pub enum Inbound {
     /// Out-of-band view state; the model fold ignores it. Boxed like its
     /// siblings so the per-token [`Inbound::Event`] does not grow to the size
     /// of the rarest variant.
-    ApprovalAsked(Box<stella_tools::registry::approval::ApprovalRequest>),
+    ApprovalAsked(Box<stella_protocol::approval::ApprovalRequest>),
     /// The parked approval is no longer answerable — its TTL expired (the
     /// shorter of the two deadlines; `stella-cli` sets the deck's) or the turn
     /// holding it was cancelled — so take the card down.
@@ -934,7 +934,7 @@ pub enum WorkspaceInput {
     /// broker forwards them to the model verbatim: "no, use the staging
     /// bucket" is a redirection the turn can act on, where a bare refusal is
     /// a wall it has to guess its way around.
-    ApprovalAnswered(Box<stella_tools::registry::approval::ApprovalResponse>),
+    ApprovalAnswered(Box<stella_protocol::approval::ApprovalResponse>),
     /// Pause / resume / stop / restart a specific agent.
     Control {
         agent: AgentId,

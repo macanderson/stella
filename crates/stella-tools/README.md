@@ -7,10 +7,10 @@ tool — built-in, custom, or MCP — runs through. Every tool implements the
 `ToolRegistry` is the crate's public face and the adapter behind
 `stella-core`'s `ToolExecutor` port.
 
-The dispatchable surface is the rows of [`src/catalog.rs`](src/catalog.rs) —
+The dispatchable surface is the rows of [`catalog`](../stella-tool-facts/src/catalog.rs) —
 that table is the count — in the groups below. The first three are
 the **working surface** — the rows that touch the world outside the process,
-and the reason the risk column in [`src/catalog.rs`](src/catalog.rs) earns its
+and the reason the risk column in [`catalog`](../stella-tool-facts/src/catalog.rs) earns its
 keep; the rest are coordination state that dies with the session:
 
 - **The shell** — `bash` ([`src/bash.rs`](src/bash.rs)), the one built-in that
@@ -91,13 +91,13 @@ Any capability *beyond* those verbs reaches the model as a **custom script tool*
 registry edit), an **MCP tool** (`stella-mcp`, merged above this registry by
 the CLI), or a CLI session-layer tool. This crate is also where the tool
 *mechanisms* live regardless of which surface a tool arrives on: operator
-tool policy ([`src/policy.rs`](src/policy.rs)), skill `allowed-tools` grants
+tool policy ([`policy`](../stella-tool-facts/src/policy.rs)), skill `allowed-tools` grants
 ([`src/skill_grant.rs`](src/skill_grant.rs)), the tool-foundry
 adoption plane ([`src/foundry_gate.rs`](src/foundry_gate.rs),
 [`src/foundry_witness.rs`](src/foundry_witness.rs)), the extension hook
 runner and its approval bridge ([`src/hook_runner.rs`](src/hook_runner.rs),
 [`src/hook_bridge.rs`](src/hook_bridge.rs)), and the subprocess hygiene
-every spawn path shares ([`src/subprocess_env.rs`](src/subprocess_env.rs),
+every spawn path shares ([`subprocess_env`](../stella-tool-facts/src/subprocess_env.rs),
 [`src/exec.rs`](src/exec.rs)).
 
 ## Where it sits
@@ -155,11 +155,18 @@ landing in `registry.rs`.
 
 ## Layout
 
+Four modules moved out. The tool table, the tool switches, the environment
+scrub, and the index-readiness policy now live in
+[`stella-tool-facts`](../stella-tool-facts). A screen reads them. A screen
+must not link an executor to do that. This crate re-exports each one, so the
+old path still works.
+
+
 | File | What it holds |
 |---|---|
 | [`src/lib.rs`](src/lib.rs) | The module list and the crate doc — what is dispatchable and what is mechanism. |
 | [`src/registry.rs`](src/registry.rs), [`src/registry/approval.rs`](src/registry/approval.rs), [`src/registry/executor.rs`](src/registry/executor.rs), [`src/registry/validate.rs`](src/registry/validate.rs) | The `Tool` trait, `ToolRegistry`, construction, and the single `execute` path all cross-cutting behaviour hangs off. `approval.rs` is the `tool.call.requested` blocking policy chain plus the #2676 interactive approval flow (a `RequireApproval` parks on an injected responder with a TTL instead of dead-ending); `executor.rs` is the `ToolExecutor` port impl (`schemas`/`execute` plus the drains and aggregations the engine reads); `validate.rs` is dispatch-time input validation against the advertised schema (#3144). |
-| [`src/catalog.rs`](src/catalog.rs) | The canonical tool table. Open it to add a tool or to answer "is this name taken / is it read-only / how is it graded". |
+| [`catalog`](../stella-tool-facts/src/catalog.rs) | The canonical tool table. Open it to add a tool or to answer "is this name taken / is it read-only / how is it graded". |
 | [`src/contracts.rs`](src/contracts.rs) | The trust boundary in one function (#2716): a name in the catalog resolves to a **reviewed** `ToolContract` carrying its declared risk; every other name — MCP, a customer's manifest, one this build never heard of — resolves to an untrusted contract graded `High`, whose `read_only` claim buys it nothing. Sound only because `RESERVED_NAMES` is aliased to `ALL_NAMES`, which its tests assert rather than assume. |
 | [`src/gated.rs`](src/gated.rs) | `GatedToolSet` — where an `AuthzGate` is actually called. A decorator rather than registry-internal logic, because the registry sees only the built-ins while custom and MCP tools (the ones most worth governing) are layered above it. Enforces at `execute()` and deliberately not at `schemas()`: an authorization decision can depend on the input, which does not exist while building the advertised list. |
 | [`src/bash.rs`](src/bash.rs) | The `bash` tool: one shell command in the workspace root, with the timeout backstop, the scratch-dir export, and the same subprocess hygiene every other spawn path here goes through. |
@@ -171,12 +178,12 @@ landing in `registry.rs`.
 | [`src/tasks.rs`](src/tasks.rs) | The six `task_*` tools over the session board, plus `task_assign`'s spawn queue. |
 | [`src/scratch.rs`](src/scratch.rs) | The scratch state plane: `ScratchDir` and the four state tools. |
 | [`src/environment.rs`](src/environment.rs) | `get_environment` and the shared environment-identity probes the CLI prompt renders from (#2697). |
-| [`src/policy.rs`](src/policy.rs) | `ToolPolicy` — the operator's `"tools"` switches, resolved exact-name-first, then group, then wildcard; scope composition by union of denials. |
+| [`policy`](../stella-tool-facts/src/policy.rs) | `ToolPolicy` — the operator's `"tools"` switches, resolved exact-name-first, then group, then wildcard; scope composition by union of denials. |
 | [`src/skill_grant.rs`](src/skill_grant.rs) | A skill's `allowed-tools` grant as `ToolPolicy` algebra (#2682): the grant policy, per-name `operator ∧ grant` intersection, and resolution against an advertised surface. |
 | [`src/custom.rs`](src/custom.rs), [`src/validate.rs`](src/validate.rs) | Developer-defined TOML script tools — lenient discovery for a session, strict validation for `stella tools --validate` — and `CustomToolSet`, the decorator that layers them over an inner executor. |
 | [`src/foundry_gate.rs`](src/foundry_gate.rs), [`src/foundry_witness.rs`](src/foundry_witness.rs) | The tool foundry: the adoption gate that keeps a staged tool withheld until a human adopts them (re-checked at launch), and the witness run that proves a staged tool works. Staging the `<name>.toml` + `<name>.sh` pair under `.stella/tools/proposed/` is a hand step — the machine-authoring pass was retired in #3629 for want of a caller. |
 | [`src/exec.rs`](src/exec.rs) | Shared subprocess plumbing for the three spawn paths this crate owns (`bash`, custom tools, shell hooks): the capped two-stream capture, the process-group cancellation backstop (`GroupKillGuard`), and the one model-facing middle-out elision. |
-| [`src/subprocess_env.rs`](src/subprocess_env.rs) | The credential deny-list and env hygiene applied as the last env mutation before any model- or repo-controlled spawn. Downstream crates use this, never a copy. |
+| [`subprocess_env`](../stella-tool-facts/src/subprocess_env.rs) | The credential deny-list and env hygiene applied as the last env mutation before any model- or repo-controlled spawn. Downstream crates use this, never a copy. |
 | [`src/hook_runner.rs`](src/hook_runner.rs) | The real-I/O half of the hooks framework (`stella-core` owns matching and blocking). |
 | [`src/hook_bridge.rs`](src/hook_bridge.rs) | The shell-hook → approval-flow bridge (#2684): implements the engine's `ApprovalRoute` port over the #2676 `ApprovalBroker`. |
 | [`src/input.rs`](src/input.rs) | Typed reads of a tool's JSON input (#1267) — the "absent" vs "present but wrong type" distinction the dispatch validator and the tools share. |
@@ -207,7 +214,7 @@ through** — a decorator that lets the `None` default stand silently disarms th
 gate for everything beneath it.
 
 **The catalog is the single declaration point.**
-[`src/catalog.rs`](src/catalog.rs) declares every dispatchable name once,
+[`catalog`](../stella-tool-facts/src/catalog.rs) declares every dispatchable name once,
 with its `read_only` and `speculation_safe` flags and its policy group.
 Everything else derives from it: the registry's expected-name pin, the
 read-only partition, `custom::RESERVED_NAMES` (aliased straight to
@@ -279,7 +286,7 @@ tool's own `Internal` defect.
   is per-process randomized. Prompt caching is a byte-level prefix match, so
   an unsorted list means every process writes a divergent cache entry.
 - **Three env hygiene rules before any spawn**, all in
-  [`src/subprocess_env.rs`](src/subprocess_env.rs). Scrub
+  [`subprocess_env`](../stella-tool-facts/src/subprocess_env.rs). Scrub
   `GIT_REPO_ENV_VARS`: when Stella runs from inside a git hook (the pre-push
   gate), an inherited `GIT_DIR` aims every git call at the *outer* repo.
   Scrub `FORCED_COLOR_ENV_VARS`: everything here writes to a captured pipe,
@@ -296,7 +303,7 @@ tool's own `Internal` defect.
   future is dropped.
 - **`STELLA_SCRATCH` is injected *after* the scrub, never before.** `bash`
   exports the session scratch directory to its child
-  ([`subprocess_env::inject_scratch_env`](src/subprocess_env.rs)) so a working
+  ([`subprocess_env::inject_scratch_env`](../stella-tool-facts/src/subprocess_env.rs)) so a working
   file has somewhere to live that is neither the workspace — where it would
   land in the turn's diff — nor `/tmp`, where it would outlive the session.
   The scrub is a deny-list pass over the inherited environment, so a value set
@@ -340,7 +347,7 @@ Adding a built-in tool:
    on model input.
 3. Register it in `ToolRegistry::new` ([`src/registry.rs`](src/registry.rs)).
 4. Add exactly one line to the `catalog!` invocation in
-   [`src/catalog.rs`](src/catalog.rs). Nothing else needs a count bumped.
+   [`catalog`](../stella-tool-facts/src/catalog.rs). Nothing else needs a count bumped.
 5. Regenerate the per-tool reference (`make tool-docs-update`).
 6. Write the witness test.
 7. Ensure the tool follows AGENTS.md invariant #9 (tool-first,

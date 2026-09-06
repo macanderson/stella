@@ -62,11 +62,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stella_core::bus::{HookBus, HookDecision, HookEventDraft, names as hook_names};
-pub use stella_core::hooks::decision::ApprovalSubject;
 use stella_core::ports::{DispatchAdmission, DispatchGate};
+pub use stella_protocol::approval::ApprovalSubject;
 use stella_protocol::tool::ToolOutput;
 
 use super::ToolRegistry;
@@ -109,44 +108,12 @@ pub const APPROVAL_TIMED_OUT: &str = "approval timed out — nobody answered in 
 /// string three tests pin verbatim.
 pub const APPROVAL_TIMED_OUT_TAG: &str = "approval timed out";
 
-/// One approval question, as the responder and the bus both see it. Crosses
-/// the crate boundary (the CLI implements [`ApprovalResponder`] over it),
-/// so it is serde round-trippable by contract (invariant #4).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ApprovalRequest {
-    /// What is parked: a tool call and its advertised `read_only` bit, or the
-    /// turn's own completion (#3486).
-    ///
-    /// This was `tool: String` plus `read_only: bool`, which made a tool name
-    /// a required field of every question — so a `Stop` hook asking at a turn
-    /// boundary could only ask by inventing a tool, and therefore did not ask
-    /// at all. `stella_core`'s enum rather than a second one here, for
-    /// [`RiskLevel`](stella_protocol::RiskLevel)'s reason one plane over: the
-    /// subject a surface renders and the subject the engine parked must be one
-    /// type, or two spellings of "what is this about" can disagree.
-    pub parked: ApprovalSubject,
-    /// The gate's reason, verbatim from the `RequireApproval` decision.
-    pub reason: String,
-    /// The blocking chain that raised the requirement
-    /// (`tool.call.requested`, `file.created`/`updated`/`deleted`,
-    /// `command.started`, or a bridge's own event name).
-    pub gate: String,
-    /// The chain's narrower subject when it has one — the workspace path
-    /// for a `file.*` gate, the command line for `command.started`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub subject: Option<String>,
-}
-
-/// The human's answer, as the responder port returns it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "answer", rename_all = "snake_case")]
-pub enum ApprovalResponse {
-    /// Run this one call.
-    Approve,
-    /// Refuse it. `reason` carries the human's words when they gave any;
-    /// empty means a bare "no".
-    Deny { reason: String },
-}
+/// The question and the answer. Both live in [`stella_protocol::approval`].
+///
+/// They sit down there because they cross four crate lines. A screen must be
+/// able to read them with no executor behind them. The paths here do not
+/// change.
+pub use stella_protocol::approval::{ApprovalRequest, ApprovalResponse};
 
 /// How an approval question reaches a human — the port a surface implements
 /// and injects at assembly time over its own interactive prompt io. The
