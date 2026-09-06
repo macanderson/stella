@@ -74,21 +74,31 @@ pub(crate) fn first_bidi_control(text: &str) -> Option<(usize, char)> {
 /// Here, not in `manifest.rs`, so it sits by the rule it shares with
 /// [`crate::PanelText::new`].
 ///
-/// It asks [`first_control_character`] and not [`first_bidi_control`]. A name
-/// with `U+202E` is the same trick one door over. To bar it adds a case to the
-/// public [`ManifestError`], which is its own change.
+/// It refuses both hazards [`crate::PanelText::new`] refuses: a control
+/// `char` first, since that is the worse of the two, and then a bidi one — a
+/// name carrying `U+202E` or its kin can render in an order its bytes do not
+/// have, the Trojan Source shape (`CVE-2021-42574`), and this string sits in
+/// Stella's own chrome rather than a leased rectangle the host clips.
 ///
 /// # Errors
 ///
-/// [`ManifestError::NameNotDrawable`], naming the `char` and where it sits.
+/// [`ManifestError::NameNotDrawable`] for a control `char`,
+/// [`ManifestError::NameCarriesBidiControl`] for a bidi one. Each names the
+/// `char` and where it sits.
 pub(crate) fn validate_plugin_name(name: &str) -> Result<(), ManifestError> {
-    match first_control_character(name) {
-        Some((index, found)) => Err(ManifestError::NameNotDrawable {
+    if let Some((index, found)) = first_control_character(name) {
+        return Err(ManifestError::NameNotDrawable {
             index,
             code: found as u32,
-        }),
-        None => Ok(()),
+        });
     }
+    if let Some((index, found)) = first_bidi_control(name) {
+        return Err(ManifestError::NameCarriesBidiControl {
+            index,
+            code: found as u32,
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -140,5 +150,42 @@ mod tests {
             Err(ManifestError::NameNotDrawable { index: 1, code: 27 })
         ));
         assert!(validate_plugin_name("vera").is_ok());
+    }
+
+    /// `validate_plugin_name` asks [`first_bidi_control`] as well as
+    /// [`first_control_character`], refusing every one of the twelve
+    /// [`BIDI_CONTROLS`] and none of the joiners a script legitimately needs.
+    /// Fails on a build where that second ask is missing: a name carrying
+    /// `U+202E` loads and renders reordered under Stella's own border.
+    #[test]
+    fn a_name_that_reorders_itself_with_a_bidi_control_is_refused_by_position() {
+        for hazard in BIDI_CONTROLS {
+            assert!(
+                matches!(
+                    validate_plugin_name(&format!("gates {hazard}neerg")),
+                    Err(ManifestError::NameCarriesBidiControl {
+                        index: 6,
+                        code
+                    }) if code == *hazard as u32
+                ),
+                "U+{:04X} loaded, or was refused by the wrong rule",
+                *hazard as u32
+            );
+        }
+        assert!(matches!(
+            validate_plugin_name("✦\u{202e}"),
+            Err(ManifestError::NameCarriesBidiControl {
+                index: 1,
+                code: 0x202e
+            })
+        ));
+        // The joiners stay allowed — the control-character rule above is what
+        // bars an escape, not this one.
+        for kept in ['\u{200c}', '\u{200d}'] {
+            assert!(
+                validate_plugin_name(&format!("gates{kept}status")).is_ok(),
+                "{kept:?} is a joiner and should load"
+            );
+        }
     }
 }

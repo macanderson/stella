@@ -293,8 +293,9 @@ before it crosses.
   origin, so a frame cannot name a cell of Stella's own chrome.
 - `src/drawable.rs` — the two rules behind that first one, and the argument for
   where each line sits: what a screen runs (`Cc`), and what reorders the text
-  after it (the bidi `char`s). `PanelText::new` asks both; a plugin's `name`
-  asks the first.
+  after it (the bidi `char`s). `PanelText::new` and `validate_plugin_name`
+  both ask each rule in turn, because a plugin's name is chrome Stella prints
+  under its own border, not a leased rectangle the host clips.
 - `src/seat.rs` — `seat_key`, the one place a `<plugin>/<role>` seat key is
   built (`doc:roleless-core` §8.4). The host joins the two halves; a plugin
   sends only its bare role name, so no plugin can name a seat another plugin

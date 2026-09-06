@@ -212,10 +212,10 @@ fn a_panel_frame_addressing_a_cell_outside_its_lease_is_refused() {
         }))
     );
 
-    // A run of no glyphs is anchored too. `col + 0` is inside every lease, so
-    // an extent check on its own would admit a patch naming a column the host's
-    // buffer does not have — nothing to blit, and exactly the coordinate a host
-    // that reads the column before it measures the run would index with.
+    // A run of no glyphs is anchored too. `col + 0` is inside every lease.
+    // So an extent check on its own would admit a patch naming a column the
+    // host's buffer lacks — nothing to blit, and exactly the coordinate a
+    // host reading the column first would index with.
     let anchored_out = PanelFrame::new(
         PanelSurface::Overlay,
         42,
@@ -432,10 +432,10 @@ fn every_panel_vocabulary_is_pinned_on_both_sides() {
 /// The panel tables refuse a key they do not know, as every other table on this
 /// wire does.
 ///
-/// A **frame** still may not caption itself: the caption is a manifest
-/// declaration a human consented to at install, so a per-tick title would let a
-/// panel relabel itself after the fact, which is the spoof the block's caption
-/// rule exists to prevent (#5203).
+/// A **frame** still may not caption itself. The caption is a manifest
+/// declaration a human consented to at install. A per-tick title would let a
+/// panel relabel itself after the fact — the spoof the block's caption rule
+/// exists to prevent (#5203).
 #[test]
 fn a_panel_may_not_name_itself_or_carry_a_key_the_contract_lacks() {
     let err = serde_json::from_str::<PanelResponse>(
@@ -562,9 +562,9 @@ fn a_panel_block_says_where_it_draws() {
 }
 
 /// **The witness for #5210.** A plugin drawing several surfaces gets several
-/// leases a tick, and a frame says which one it answers — so a host with three
-/// in flight routes the answer instead of guessing, and cannot blit a settings
-/// pane into a command popup that happens to be the same size.
+/// leases a tick. A frame says which one it answers. A host with three in
+/// flight routes the answer instead of guessing. It cannot blit a settings
+/// pane into a command popup that happens to share its size.
 #[test]
 fn a_frame_for_one_surface_does_not_answer_another_surfaces_lease() {
     let leased = PanelLease::new("gates", PanelSurface::Settings, 7, PanelRect::new(8, 2), 33);
@@ -640,6 +640,57 @@ fn a_plugin_name_that_is_not_drawable_does_not_load() {
         assert!(
             PluginManifest::from_toml_str(&format!("name = \"{fine}\"")).is_ok(),
             "{fine:?} is drawable and should load"
+        );
+    }
+}
+
+/// A plugin's `name` is the one string Stella prints into chrome it owns —
+/// the panel label, the install prompt, a popup heading, the rules panel.
+/// A name that can reorder itself with a bidi override is the Trojan Source
+/// shape (`CVE-2021-42574`), printed under Stella's own border next to the
+/// consent prompt a person reads to decide whether to trust the plugin.
+///
+/// Mirrors [`a_panel_frame_carrying_a_bidi_override_does_not_decode`]: the
+/// same twelve `char`s, the same refusal by position, and the same two
+/// joiners a script needs left alone.
+#[test]
+fn a_plugin_name_that_reorders_itself_with_a_bidi_override_does_not_load() {
+    // The whole refused set, written as the TOML escapes a plugin author's
+    // own encoder would put in the manifest.
+    for hazard in [
+        "\\u061c", "\\u200e", "\\u200f", "\\u202a", "\\u202b", "\\u202c", "\\u202d", "\\u202e",
+        "\\u2066", "\\u2067", "\\u2068", "\\u2069",
+    ] {
+        let toml = format!("name = \"gates {hazard}neerg\"");
+        let err = PluginManifest::from_toml_str(&toml)
+            .expect_err("a name that reorders itself must not load");
+        assert!(
+            matches!(
+                err,
+                stella_plugin::ManifestError::NameCarriesBidiControl { .. }
+            ),
+            "{hazard:?} loaded, or was refused by the wrong rule: {err}"
+        );
+    }
+
+    // The refusal names the position in `char`s, so a multi-byte glyph before
+    // the hazard does not shift it into a byte offset nobody can navigate by.
+    assert!(matches!(
+        PluginManifest::from_toml_str("name = \"\\u2726\\u202e\"").expect_err("refused"),
+        stella_plugin::ManifestError::NameCarriesBidiControl {
+            index: 1,
+            code: 0x202e
+        }
+    ));
+
+    // The joiners stay allowed: barring `U+200C`/`U+200D` here would bar a
+    // plugin author writing in Persian or naming an emoji family from having
+    // the same name they could give a panel's own text.
+    for kept in ["\\u200c", "\\u200d"] {
+        let toml = format!("name = \"gates{kept}status\"");
+        assert!(
+            PluginManifest::from_toml_str(&toml).is_ok(),
+            "{kept:?} is a joiner, not a bidi override, and should load"
         );
     }
 }
