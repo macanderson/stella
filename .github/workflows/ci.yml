@@ -368,6 +368,25 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: ./scripts/check-deleted-tests.sh
 
+      # Also toolchain-free, and reads the same two channels as the guard
+      # above for the same reason: `pull_request` only, since a PR body is a
+      # GitHub-side fact no local tree carries. GitHub's own closing-keyword
+      # parser reads a keyword ("close", "fix", "resolve") and the issue
+      # reference right after it — it does not read a negation in front of
+      # the keyword, so "This does not close #6155" still closes #6155
+      # (#6190, hit for real in #6180). PR_NUMBER lets the guard fetch both
+      # the PR's live description and its live commit messages through the
+      # API rather than the stale event-payload snapshot, the same #4495
+      # channel the guard above uses; PR_BODY is the fallback when the API
+      # call fails.
+      - name: no negated closing keyword still closes the issue
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: python3 ./scripts/check-closing-keywords.py
+
       # Also toolchain-free. AGENTS.md and CONTRIBUTING.md each restate what
       # `make gate` runs, and both had drifted twice — each time by omitting a
       # newly added guard, which is the direction that misleads a reader into
