@@ -834,6 +834,10 @@ fn run_session(
         drop(engine);
         drop(delegating);
         drop(dispatcher);
+        // The re-query port holds a sender too, and the engine only borrows
+        // it, so `drop(engine)` does not take it with them. It goes after the
+        // engine that borrows it and before the channel closes.
+        drop(requery);
         // Close the event channel so the forwarder drains and exits before the
         // terminal frame — a well-behaved host thus sees every event first.
         drop(event_tx);
