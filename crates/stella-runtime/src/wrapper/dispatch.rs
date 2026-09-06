@@ -764,8 +764,10 @@ impl WrapperDispatch {
                     let snapshot = self.stamp_round(
                         &evidence,
                         &verdict,
-                        &pipeline_id,
-                        &arbiter_id,
+                        RoundNames {
+                            author: &arbiter_id,
+                            pipeline: &pipeline_id,
+                        },
                         input.candidate.as_ref(),
                         timing,
                         &mut faults,
@@ -990,14 +992,6 @@ impl WrapperDispatch {
 
     /// The round as the ladder's own record, with one stamp on it.
     ///
-    /// The name on the stamp is `author_id` — the arbiter's id, per
-    /// `stamp::author`'s rule — and never a payload the manifests' processes
-    /// sent, so a plugin cannot sign another one's name. `pipeline_id` names
-    /// the composition instead, for the one place that still means "the run",
-    /// not "the decider": [`WrapperError::Unstampable`], where a person is
-    /// told which `--pipeline` selection produced an unhashable record.
-    /// `super::stamp` holds the rest of the rule.
-    ///
     /// A record that cannot be hashed keeps its answer and loses its stamp.
     /// The hash is taken after the verdict is settled and can change nothing
     /// about it, so failing the whole run over one would throw away a good
@@ -1007,8 +1001,7 @@ impl WrapperDispatch {
         &self,
         evidence: &EvidenceSet,
         verdict: &Verdict,
-        pipeline_id: &str,
-        author_id: &str,
+        names: RoundNames<'_>,
         candidate: Option<&CandidateGrant>,
         timing: StampTiming,
         faults: &mut Faults,
@@ -1020,17 +1013,33 @@ impl WrapperDispatch {
             .iter()
             .map(|grant| format!("candidate:{}", grant.handle))
             .collect();
-        match stamp::stamped(&self.rule, evidence, verdict, author_id, refs, timing) {
+        match stamp::stamped(&self.rule, evidence, verdict, names.author, refs, timing) {
             Ok(snapshot) => snapshot,
             Err(source) => {
                 faults.push_host(WrapperError::Unstampable {
-                    wrapper: pipeline_id.to_string(),
+                    wrapper: names.pipeline.to_string(),
                     source,
                 });
                 stamp::snapshot(&self.rule, evidence, verdict)
             }
         }
     }
+}
+
+/// The two names a stamped round carries. They are both `&str` and they mean
+/// different things, so passing them positionally is one transposition away
+/// from signing a record with the wrong name — the defect class the arbiter-id
+/// fix was itself about.
+///
+/// `author` is the arbiter's id, per `stamp::author`'s rule, and never a
+/// payload the manifests' processes sent, so a plugin cannot sign another
+/// one's name. `pipeline` names the composition, for the one place that still
+/// means "the run" rather than "the decider": [`WrapperError::Unstampable`],
+/// where a person is told which `--pipeline` selection produced an unhashable
+/// record. `super::stamp` holds the rest of the rule.
+struct RoundNames<'a> {
+    author: &'a str,
+    pipeline: &'a str,
 }
 
 /// The verdict a report carries, as the one-line answer a surface prints.
