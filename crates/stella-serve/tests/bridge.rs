@@ -733,7 +733,7 @@ async fn scripted_requery_turn(context: Option<&str>) -> RequeryRun {
                 }
                 run.asks += 1;
                 session
-                    .resolve_requery(&request_id, context.map(str::to_string))
+                    .resolve_requery(&request_id, context.map(str::to_string), None)
                     .unwrap();
             }
             ServerFrame::TurnComplete { outcome: done } => run.outcome = Some(done),
@@ -777,6 +777,131 @@ async fn a_served_turn_requeries_the_steering_plane_after_its_work_moves_to_a_ne
             text: "done".to_string(),
             cost_usd: 0.0,
         }),
+    );
+}
+
+/// **The witness for who suppresses an overlapping re-query answer: the host.**
+///
+/// A two-ask turn whose second answer overlaps the first — the host answered
+/// `{A, B, C}` and now has `{A, B, C, D}` — is answered by the host with only
+/// what the turn has not seen. The server dedups whole blocks by exact bytes
+/// and cannot see the frames inside one, so it injects whatever the host sends
+/// whole. This pins that contract: a host that re-sends the overlap puts those
+/// frames in front of the model twice, and the server does not stop it —
+/// stopping it is the host's job, because the host is the only side that knows
+/// what it sent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_served_requery_injects_an_overlapping_second_answer_whole() {
+    // The first ask's answer and a second ask whose answer overlaps it.
+    const FIRST: &str = "frames: alpha, beta, gamma";
+    const SECOND_OVERLAPPING: &str = "frames: alpha, beta, gamma, delta";
+
+    let settled: Arc<Mutex<Vec<CompletionMessage>>> = Arc::new(Mutex::new(Vec::new()));
+    let write_back = Arc::clone(&settled);
+    let mut session = Session::start(SessionSpec {
+        messages: vec![
+            CompletionMessage::system(STABLE_PREFIX),
+            CompletionMessage::user("fix the flaky test"),
+        ],
+        steering_requery: true,
+        on_settled: Some(Box::new(move |settlement| {
+            *write_back.lock().expect("settled transcript") = settlement.messages;
+        })),
+        ..spec_for("unused — the messages above are this turn's transcript")
+    });
+
+    let mut asks = 0usize;
+    let mut provider_calls = 0usize;
+    // What the model was actually shown, per provider call.
+    let mut shown: Vec<String> = Vec::new();
+
+    while let Some(frame) = session.next_frame().await {
+        match frame {
+            ServerFrame::ProviderRequest {
+                request_id, request, ..
+            } => {
+                provider_calls += 1;
+                shown.push(
+                    request
+                        .messages
+                        .iter()
+                        .map(|m| m.content.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n---\n"),
+                );
+                let result = if provider_calls <= 5 {
+                    wants_tool(
+                        &format!("call-{provider_calls}"),
+                        "echo",
+                        json!({ "path": format!("src/file-{provider_calls}.rs") }),
+                    )
+                } else {
+                    final_answer("done")
+                };
+                session.resolve_provider(&request_id, result).unwrap();
+            }
+            ServerFrame::ToolRequest { request_id, .. } => {
+                session
+                    .resolve_tool(
+                        &request_id,
+                        ToolOutput::Ok {
+                            content: "read it".to_string(),
+                            data: None,
+                        },
+                    )
+                    .unwrap();
+            }
+            ServerFrame::RequeryRequest { request_id, .. } => {
+                asks += 1;
+                // The host answers the second ask with a block that overlaps
+                // the first — the failure the contract names.
+                let answer = if asks == 1 { FIRST } else { SECOND_OVERLAPPING };
+                session
+                    .resolve_requery(&request_id, Some(answer.to_string()), None)
+                    .unwrap();
+            }
+            ServerFrame::TurnComplete { .. } => {}
+            ServerFrame::Event { .. } => {}
+            ServerFrame::TurnHeld { .. } | ServerFrame::TurnReleased => {
+                panic!("an unpaused turn must not announce a hold")
+            }
+        }
+    }
+
+    assert_eq!(asks, 2, "the turn drifted twice, so it asked twice");
+
+    // The server injected both blocks whole: the overlap (`alpha, beta,
+    // gamma`) reached the model twice. Nothing on the server side suppressed
+    // it — that is the host's job, and this is the witness that it is. The
+    // first answer is injected at the boundary after the second tool call, so
+    // it first reaches the model on the third call; the second answer lands
+    // before the final call.
+    let after_first_ask = shown.get(2).expect("a provider call after the first ask");
+    let final_call = shown.last().expect("a final provider call");
+    assert!(
+        after_first_ask.contains("alpha, beta, gamma"),
+        "the first answer reached the model: {after_first_ask}"
+    );
+    assert!(
+        !after_first_ask.contains("delta"),
+        "the second answer had not landed yet: {after_first_ask}"
+    );
+    assert!(
+        final_call.contains("alpha, beta, gamma, delta"),
+        "the overlapping second answer was injected whole: {final_call}"
+    );
+
+    // Both injected blocks sit in the settled transcript, marked, and the
+    // overlap appears in both — the model was shown it twice.
+    let messages = settled.lock().expect("settled transcript").clone();
+    let injected: Vec<&CompletionMessage> = messages
+        .iter()
+        .filter(|m| m.content.starts_with(stella_core::receipts::RECALL_MARKER))
+        .collect();
+    assert_eq!(injected.len(), 2, "both answers were injected whole");
+    assert!(
+        injected.iter().all(|m| m.content.contains("alpha, beta, gamma")),
+        "the overlap is in both blocks, so the model saw it twice: {injected:?}"
     );
 }
 
@@ -842,5 +967,98 @@ async fn a_host_that_declines_a_requery_injects_nothing() {
             text: "done".to_string(),
             cost_usd: 0.0,
         }),
+    );
+}
+
+/// **The witness for #6217: a served re-query's cost reaches the turn's own
+/// event stream.**
+///
+/// A re-query is a recall fan-out on the host's side with provider spend
+/// behind it, and until the event existed nothing on `/v1/turns/{id}/events`
+/// said what that spend was. The server cannot see the host's recall, so the
+/// event carries the cost the host reported on `RequeryResultIn` and no
+/// frames. Both turns below ask; the answered one reports a cost, the
+/// declined one reports none — and both put a `ContextRecall` on the stream,
+/// because a re-query that bought nothing was still paid for.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_served_requery_reports_its_cost_on_the_event_stream() {
+    // (context, cost_tokens) the scripted host answers with.
+    async fn run(answer: Option<(&str, Option<u32>)>) -> Vec<stella_protocol::AgentEvent> {
+        let mut session = Session::start(SessionSpec {
+            messages: vec![
+                CompletionMessage::system(STABLE_PREFIX),
+                CompletionMessage::user("fix the flaky test"),
+            ],
+            steering_requery: true,
+            ..spec_for("unused — the messages above are this turn's transcript")
+        });
+        let mut events = Vec::new();
+        let mut provider_calls = 0usize;
+        while let Some(frame) = session.next_frame().await {
+            match frame {
+                ServerFrame::ProviderRequest { request_id, .. } => {
+                    provider_calls += 1;
+                    let result = if provider_calls <= 2 {
+                        wants_tool(
+                            &format!("call-{provider_calls}"),
+                            "echo",
+                            json!({ "path": "src/adapter.rs" }),
+                        )
+                    } else {
+                        final_answer("done")
+                    };
+                    session.resolve_provider(&request_id, result).unwrap();
+                }
+                ServerFrame::ToolRequest { request_id, .. } => {
+                    session
+                        .resolve_tool(
+                            &request_id,
+                            ToolOutput::Ok {
+                                content: "read it".to_string(),
+                                data: None,
+                            },
+                        )
+                        .unwrap();
+                }
+                ServerFrame::RequeryRequest { request_id, .. } => {
+                    let (context, cost) = answer
+                        .map(|(c, k)| (Some(c.to_string()), k))
+                        .unwrap_or((None, None));
+                    session.resolve_requery(&request_id, context, cost).unwrap();
+                }
+                ServerFrame::Event { event } => events.push(event),
+                ServerFrame::TurnComplete { .. } => {}
+                ServerFrame::TurnHeld { .. } | ServerFrame::TurnReleased => {
+                    panic!("an unpaused turn must not announce a hold")
+                }
+            }
+        }
+        events
+    }
+
+    fn recall_tokens(events: &[stella_protocol::AgentEvent]) -> Option<u32> {
+        events.iter().find_map(|e| match e {
+            stella_protocol::AgentEvent::ContextRecall { tokens, .. } => Some(*tokens),
+            _ => None,
+        })
+    }
+
+    // The answered turn: the host reports a cost, and the event carries it.
+    let answered = run(Some((CONTEXT_BLOCK, Some(240)))).await;
+    assert_eq!(
+        recall_tokens(&answered),
+        Some(240),
+        "an answered re-query must put a ContextRecall carrying the host's \
+         reported cost on the stream, not one the server invented"
+    );
+
+    // The declined turn: nothing was injected, but the ask was still paid
+    // for, so the event still lands — with no cost to report.
+    let declined = run(None).await;
+    assert_eq!(
+        recall_tokens(&declined),
+        Some(0),
+        "a declined re-query was still paid for, so it still reports; a host \
+         that reported no cost prices the ask at 0"
     );
 }

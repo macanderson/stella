@@ -74,6 +74,18 @@ pub enum ServerFrame {
     /// Only ever emitted when the turn asked for it
     /// (`steering_requery` on `POST /v1/turns`). A host that has not built the
     /// answering route never sees this frame.
+    ///
+    /// # Whose job it is not to show the model the same frame twice
+    ///
+    /// The host's. The server dedups whole blocks by exact bytes and nothing
+    /// finer: it has no workspace, no store, and no way to read a host's block
+    /// into the frames it names. So when a second ask overlaps the first — the
+    /// host answered `{A, B, C}` and now has `{A, B, C, D}` — the host must
+    /// answer with only what the turn has not seen (`{D}`), or `null`. A host
+    /// that re-sends the overlap puts those frames in front of the model a
+    /// second time, and pays for them twice. The CLI's `SessionRequery` does
+    /// this per handle; a served host owns the same job because it is the only
+    /// side that knows what it sent.
     RequeryRequest {
         request_id: String,
         signal: RequerySignal,
@@ -269,12 +281,36 @@ pub enum ProviderDelta {
 /// The block is injected as sent, so the server prefixes the recall marker
 /// when the host's text does not already carry one: an injected block the
 /// engine read as a real user turn would move the turn window.
+///
+/// The block is also injected *whole*: the server dedups by exact bytes and
+/// cannot see the frames inside it. Suppressing a frame this turn already
+/// showed is the host's job — answer with only the new frames, or `null`.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequeryResultIn {
     pub request_id: String,
     #[serde(default)]
     pub context: Option<String>,
+    /// What the host's recall fan-out for this ask cost, in tokens, when the
+    /// host meters it. The server cannot see the host's recall — it owns no
+    /// store and runs no fan-out — so the cost of an answered re-query exists
+    /// only where the host counted it. A host that reports it lets the turn's
+    /// own event stream say what the re-query cost (#6217); a host that omits
+    /// it leaves the ask paid for but unpriced. `serde(default)` keeps hosts
+    /// that predate the field valid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_tokens: Option<u32>,
+}
+
+/// What a host's answer to a re-query carries across the serve boundary: the
+/// block to inject (or `None`), plus what the host's recall fan-out cost when
+/// it meters that. The pair travels together because they are one answer —
+/// splitting them is how a paid-for ask used to reach the event stream with no
+/// cost attached (#6217).
+#[derive(Debug, Clone, Default)]
+pub struct RequeryAnswer {
+    pub context: Option<String>,
+    pub cost_tokens: Option<u32>,
 }
 
 /// Serializable mirror of [`ProviderError`]'s taxonomy. The host classifies the

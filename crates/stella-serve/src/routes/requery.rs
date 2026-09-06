@@ -41,10 +41,13 @@ pub(crate) async fn handle_requery_result(
                 .await;
         }
     };
-    match entry
-        .pending
-        .resolve_requery(&posted.request_id, posted.context)
-    {
+    match entry.pending.resolve_requery(
+        &posted.request_id,
+        crate::frame::RequeryAnswer {
+            context: posted.context,
+            cost_tokens: posted.cost_tokens,
+        },
+    ) {
         Ok(()) => res.json("200 OK", br#"{"status":"ok"}"#).await,
         Err(err) => {
             res.json("409 Conflict", &error_body(&err.to_string()))

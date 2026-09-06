@@ -4717,7 +4717,7 @@
       "type": "object"
     },
     {
-      "description": "The engine's work has moved on from the prompt it opened with, and it\nis asking the host for whatever context now fits. The host answers\nwith [`RequeryResultIn`] keyed by `request_id`; the engine step that\nraised it is parked until then.\n\nOnly ever emitted when the turn asked for it\n(`steering_requery` on `POST /v1/turns`). A host that has not built the\nanswering route never sees this frame.",
+      "description": "The engine's work has moved on from the prompt it opened with, and it\nis asking the host for whatever context now fits. The host answers\nwith [`RequeryResultIn`] keyed by `request_id`; the engine step that\nraised it is parked until then.\n\nOnly ever emitted when the turn asked for it\n(`steering_requery` on `POST /v1/turns`). A host that has not built the\nanswering route never sees this frame.\n\n# Whose job it is not to show the model the same frame twice\n\nThe host's. The server dedups whole blocks by exact bytes and nothing\nfiner: it has no workspace, no store, and no way to read a host's block\ninto the frames it names. So when a second ask overlaps the first — the\nhost answered `{A, B, C}` and now has `{A, B, C, D}` — the host must\nanswer with only what the turn has not seen (`{D}`), or `null`. A host\nthat re-sends the overlap puts those frames in front of the model a\nsecond time, and pays for them twice. The CLI's `SessionRequery` does\nthis per handle; a served host owns the same job because it is the only\nside that knows what it sent.",
       "properties": {
         "request_id": {
           "type": "string"

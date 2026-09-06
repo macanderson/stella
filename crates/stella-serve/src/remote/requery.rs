@@ -27,8 +27,14 @@
 //!   die here. The set starts from the recall blocks the turn opened with.
 //!
 //! There is a finer dedup than that: "the turn already showed that frame".
-//! It stays on the CLI side. A frame handle names a thing in a workspace, and
-//! this server never sees one. The host knows what it sent.
+//! That one is the host's job, and it is a contract, not a courtesy. A frame
+//! handle names a thing in a workspace, and this server never sees one — it
+//! cannot read a host's block into the frames it names, so it cannot suppress
+//! an overlap. When a second ask overlaps the first (the host answered
+//! `{A, B, C}` and now has `{A, B, C, D}`), the host answers with only what
+//! the turn has not seen (`{D}`), or `None`. The CLI's `SessionRequery` does
+//! the same per handle; a served host owns the job because it is the only side
+//! that knows what it sent.
 //!
 //! # An ask nobody answers is not a failed turn
 //!
@@ -115,7 +121,7 @@ impl RemoteRequery {
     /// Ask the host, and wait for its answer up to this turn's deadline.
     /// Every way the ask can fail gives `None`. The module header says why
     /// that is safe here and nowhere else.
-    async fn ask(&self, signal: &TurnSignal<'_>) -> Option<String> {
+    async fn ask(&self, signal: &TurnSignal<'_>) -> Option<crate::frame::RequeryAnswer> {
         let request_id = format!(
             "requery-{}-{}",
             self.instance,
@@ -140,9 +146,9 @@ impl RemoteRequery {
         }
         let started = dispatched(&self.pending, &request_id, ReverseKind::Requery);
         match tokio::time::timeout(self.timeout, rx).await {
-            Ok(Ok(context)) => {
+            Ok(Ok(answer)) => {
                 answered(&self.pending, &request_id, ReverseKind::Requery, started);
-                context
+                Some(answer)
             }
             // The sender went away: a cancel, or the turn shutting down.
             // `Pending` reports the dropped work itself.
@@ -204,12 +210,33 @@ impl stella_core::ports::SteeringRequery for RemoteRequery {
         {
             return None;
         }
-        let context = self.ask(signal).await;
+        let answer = self.ask(signal).await;
+        // The ask was paid for the moment the host's recall fan-out ran, so it
+        // is reported here — before the dedup and the empty-block gate below,
+        // both of which can discard the answer while the spend is already
+        // done. That discard is exactly the unmeterable cost the event exists
+        // to surface (#6217), and the CLI's `SessionRequery` reports the same
+        // `ContextRecall` for the same reason (#3366). The server cannot see
+        // the host's recall, so the event carries the cost the host reported
+        // and no frames: it says "a re-query was paid for, and this is what
+        // the host said it cost", never a cost the server invented.
+        if let Some(answer) = &answer {
+            let _ = self.frames.send(ServerFrame::Event {
+                event: stella_protocol::AgentEvent::ContextRecall {
+                    frames: Vec::new(),
+                    provider_mix: Vec::new(),
+                    tokens: answer.cost_tokens.unwrap_or(0),
+                    usage: None,
+                    latency_ms: 0,
+                    used_ann_index: None,
+                },
+            });
+        }
         let mut state = self.state.lock().expect("requery state");
         // The signal counts as answered either way. A drift the host had
         // nothing for must not be asked again on every later step.
         state.answered_fingerprint = current;
-        let block = marked(context?);
+        let block = marked(answer?.context?);
         state.produced.insert(block.clone()).then_some(block)
     }
 }

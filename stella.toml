@@ -20,11 +20,13 @@ scope = "project"
 
 [agents]
 default_model = "openrouter/moonshotai/kimi-k3"
-effort_auto = "off"
-reasoning_auto = "off"
+auto_mode = "on"
+effort_auto = "on"
+reasoning_auto = "on"
+minimal_prompt = "off"
 
 [agents.default]
-effort = "xhigh"
+prompt = "do not overthink how to solve problems - if you have multiple approaches you are considering don't waste time deliberating and reasoning choose an approach and know if it fails you can always go back and try the other approache(s)"
 reasoning = "on"
 
 # ── Retired by #3908 ─────────────────────────────────────────────────────────

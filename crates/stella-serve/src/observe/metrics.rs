@@ -93,9 +93,13 @@ pub struct Metrics {
     reverse_dispatched_provider_total: AtomicU64,
     reverse_dispatched_tool_total: AtomicU64,
     reverse_dispatched_requery_total: AtomicU64,
-    reverse_answered_total: AtomicU64,
+    reverse_answered_provider_total: AtomicU64,
+    reverse_answered_tool_total: AtomicU64,
+    reverse_answered_requery_total: AtomicU64,
     reverse_wait_ms_total: AtomicU64,
-    reverse_timed_out_total: AtomicU64,
+    reverse_timed_out_provider_total: AtomicU64,
+    reverse_timed_out_tool_total: AtomicU64,
+    reverse_timed_out_requery_total: AtomicU64,
     reverse_misrouted_unknown_total: AtomicU64,
     reverse_misrouted_kind_total: AtomicU64,
     reverse_abandoned_total: AtomicU64,
@@ -159,9 +163,13 @@ pub struct Snapshot {
     pub reverse_dispatched_provider_total: u64,
     pub reverse_dispatched_tool_total: u64,
     pub reverse_dispatched_requery_total: u64,
-    pub reverse_answered_total: u64,
+    pub reverse_answered_provider_total: u64,
+    pub reverse_answered_tool_total: u64,
+    pub reverse_answered_requery_total: u64,
     pub reverse_wait_ms_total: u64,
-    pub reverse_timed_out_total: u64,
+    pub reverse_timed_out_provider_total: u64,
+    pub reverse_timed_out_tool_total: u64,
+    pub reverse_timed_out_requery_total: u64,
     pub reverse_misrouted_unknown_total: u64,
     pub reverse_misrouted_kind_total: u64,
     pub reverse_abandoned_total: u64,
@@ -234,9 +242,13 @@ impl Metrics {
             reverse_dispatched_provider_total: self.reverse_dispatched_provider_total.load(ORDER),
             reverse_dispatched_tool_total: self.reverse_dispatched_tool_total.load(ORDER),
             reverse_dispatched_requery_total: self.reverse_dispatched_requery_total.load(ORDER),
-            reverse_answered_total: self.reverse_answered_total.load(ORDER),
+            reverse_answered_provider_total: self.reverse_answered_provider_total.load(ORDER),
+            reverse_answered_tool_total: self.reverse_answered_tool_total.load(ORDER),
+            reverse_answered_requery_total: self.reverse_answered_requery_total.load(ORDER),
             reverse_wait_ms_total: self.reverse_wait_ms_total.load(ORDER),
-            reverse_timed_out_total: self.reverse_timed_out_total.load(ORDER),
+            reverse_timed_out_provider_total: self.reverse_timed_out_provider_total.load(ORDER),
+            reverse_timed_out_tool_total: self.reverse_timed_out_tool_total.load(ORDER),
+            reverse_timed_out_requery_total: self.reverse_timed_out_requery_total.load(ORDER),
             reverse_misrouted_unknown_total: self.reverse_misrouted_unknown_total.load(ORDER),
             reverse_misrouted_kind_total: self.reverse_misrouted_kind_total.load(ORDER),
             reverse_abandoned_total: self.reverse_abandoned_total.load(ORDER),
@@ -369,13 +381,23 @@ impl Observer for Metrics {
                 .fetch_add(1, ORDER);
                 self.reverse_in_flight.fetch_add(1, ORDER);
             }
-            ServeEvent::ReverseAnswered { waited_ms, .. } => {
-                self.reverse_answered_total.fetch_add(1, ORDER);
+            ServeEvent::ReverseAnswered { kind, waited_ms, .. } => {
+                match kind {
+                    ReverseKind::Provider => &self.reverse_answered_provider_total,
+                    ReverseKind::Tool => &self.reverse_answered_tool_total,
+                    ReverseKind::Requery => &self.reverse_answered_requery_total,
+                }
+                .fetch_add(1, ORDER);
                 self.reverse_wait_ms_total.fetch_add(*waited_ms, ORDER);
                 self.reverse_in_flight.fetch_sub(1, ORDER);
             }
-            ServeEvent::ReverseTimedOut { waited_ms, .. } => {
-                self.reverse_timed_out_total.fetch_add(1, ORDER);
+            ServeEvent::ReverseTimedOut { kind, waited_ms, .. } => {
+                match kind {
+                    ReverseKind::Provider => &self.reverse_timed_out_provider_total,
+                    ReverseKind::Tool => &self.reverse_timed_out_tool_total,
+                    ReverseKind::Requery => &self.reverse_timed_out_requery_total,
+                }
+                .fetch_add(1, ORDER);
                 self.reverse_wait_ms_total.fetch_add(*waited_ms, ORDER);
                 self.reverse_in_flight.fetch_sub(1, ORDER);
             }
@@ -539,8 +561,8 @@ mod tests {
         assert_eq!(snap.reverse_in_flight, 0, "the gauge leaked");
         assert_eq!(snap.reverse_dispatched_provider_total, 1);
         assert_eq!(snap.reverse_dispatched_tool_total, 3);
-        assert_eq!(snap.reverse_answered_total, 1);
-        assert_eq!(snap.reverse_timed_out_total, 1);
+        assert_eq!(snap.reverse_answered_provider_total, 1);
+        assert_eq!(snap.reverse_timed_out_tool_total, 1);
         assert_eq!(snap.reverse_abandoned_total, 2);
         assert_eq!(snap.reverse_wait_ms_total, 300_040);
     }

@@ -734,12 +734,21 @@
       ]
     },
     "RequeryResultIn": {
-      "description": "Host → engine: the answer to a [`ServerFrame::RequeryRequest`].\n\n`context` is the block to put in front of the model, or `null` for \"nothing\nhere is worth the tokens\" — the cheap answer, and the expected one for most\nboundaries. The engine appends the block to the volatile tail as a user\nmessage and never touches the byte-stable prefix.\n\nThe block is injected as sent, so the server prefixes the recall marker\nwhen the host's text does not already carry one: an injected block the\nengine read as a real user turn would move the turn window.",
+      "description": "Host → engine: the answer to a [`ServerFrame::RequeryRequest`].\n\n`context` is the block to put in front of the model, or `null` for \"nothing\nhere is worth the tokens\" — the cheap answer, and the expected one for most\nboundaries. The engine appends the block to the volatile tail as a user\nmessage and never touches the byte-stable prefix.\n\nThe block is injected as sent, so the server prefixes the recall marker\nwhen the host's text does not already carry one: an injected block the\nengine read as a real user turn would move the turn window.\n\nThe block is also injected *whole*: the server dedups by exact bytes and\ncannot see the frames inside it. Suppressing a frame this turn already\nshowed is the host's job — answer with only the new frames, or `null`.",
       "properties": {
         "context": {
           "default": null,
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "cost_tokens": {
+          "description": "What the host's recall fan-out for this ask cost, in tokens, when the\nhost meters it. The server cannot see the host's recall — it owns no\nstore and runs no fan-out — so the cost of an answered re-query exists\nonly where the host counted it. A host that reports it lets the turn's\nown event stream say what the re-query cost (#6217); a host that omits\nit leaves the ask paid for but unpriced. `serde(default)` keeps hosts\nthat predate the field valid.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
             "null"
           ]
         },

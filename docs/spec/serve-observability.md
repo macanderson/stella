@@ -364,6 +364,13 @@ Exposed at `GET /v1/metrics`, behind the same bearer token as everything else
 Prometheus text exposition under `Accept: text/plain` is a natural follow-on and
 about thirty dependency-free lines, but it is not in the first slice.
 
+The reverse-RPC counters split by `ReverseKind`: `reverse_dispatched_*`,
+`reverse_answered_*` and `reverse_timed_out_*` each come in `_provider`,
+`_tool` and `_requery` rows. A re-query that times out is a different
+operational signal from a provider that does — the host's steering plane is
+wedged, not its model — so the wedge axis is readable per kind rather than only
+in sum.
+
 ### The frame tap — what `stella-core` gives us for free
 
 `ServerFrame::Event { event: AgentEvent }` already flows through this crate on

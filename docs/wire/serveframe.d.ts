@@ -3063,10 +3063,24 @@ export interface ProviderDeltaIn {
  * The block is injected as sent, so the server prefixes the recall marker
  * when the host's text does not already carry one: an injected block the
  * engine read as a real user turn would move the turn window.
+ *
+ * The block is also injected *whole*: the server dedups by exact bytes and
+ * cannot see the frames inside it. Suppressing a frame this turn already
+ * showed is the host's job — answer with only the new frames, or `null`.
  */
 export interface RequeryResultIn {
 {
   context?: string | null;
+  /**
+   * What the host's recall fan-out for this ask cost, in tokens, when the
+   * host meters it. The server cannot see the host's recall — it owns no
+   * store and runs no fan-out — so the cost of an answered re-query exists
+   * only where the host counted it. A host that reports it lets the turn's
+   * own event stream say what the re-query cost (#6217); a host that omits
+   * it leaves the ask paid for but unpriced. `serde(default)` keeps hosts
+   * that predate the field valid.
+   */
+  cost_tokens?: number | null;
   request_id: string;
 }}
 

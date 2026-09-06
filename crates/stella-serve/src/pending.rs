@@ -39,8 +39,9 @@ type ProviderDeltaFeed = mpsc::UnboundedSender<ProviderDelta>;
 enum PendingReply {
     Tool(oneshot::Sender<ToolOutput>),
     /// The host's answer to a step-boundary context re-query: a block to put
-    /// in front of the model, or `None` for "nothing worth the tokens".
-    Requery(oneshot::Sender<Option<String>>),
+    /// in front of the model, or `None` for "nothing worth the tokens", plus
+    /// what the host's recall cost when it meters that.
+    Requery(oneshot::Sender<crate::frame::RequeryAnswer>),
     Provider {
         reply: ProviderReply,
         /// Stays in the map (looked up, never taken) so any number of delta
@@ -115,7 +116,7 @@ impl Pending {
     pub(crate) fn register_requery(
         &self,
         id: String,
-        reply: oneshot::Sender<Option<String>>,
+        reply: oneshot::Sender<crate::frame::RequeryAnswer>,
     ) -> bool {
         let mut map = self.lock();
         if self.is_cancelled() {
@@ -155,10 +156,12 @@ impl Pending {
 
     /// Resolve a re-query request with the host-supplied block. Errors if `id`
     /// is unknown or names another kind of request.
-    pub fn resolve_requery(&self, id: &str, context: Option<String>) -> Result<(), ServeError> {
-        let _ = self
-            .report_misroute(id, self.take_requery(id))?
-            .send(context);
+    pub fn resolve_requery(
+        &self,
+        id: &str,
+        answer: crate::frame::RequeryAnswer,
+    ) -> Result<(), ServeError> {
+        let _ = self.report_misroute(id, self.take_requery(id))?.send(answer);
         Ok(())
     }
 
@@ -325,7 +328,10 @@ impl Pending {
     /// Take the re-query reply channel registered under `id`, leaving a
     /// wrong-kinded entry untouched. Same single-lock discipline as
     /// [`Pending::take_tool`], for the same reason.
-    fn take_requery(&self, id: &str) -> Result<oneshot::Sender<Option<String>>, ServeError> {
+    fn take_requery(
+        &self,
+        id: &str,
+    ) -> Result<oneshot::Sender<crate::frame::RequeryAnswer>, ServeError> {
         let mut map = self.lock();
         match map.remove(id) {
             Some(PendingReply::Requery(tx)) => Ok(tx),

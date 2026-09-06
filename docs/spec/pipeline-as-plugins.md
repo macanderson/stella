@@ -229,15 +229,24 @@ separately* rather than by current module boundaries:
 
 | Plugin | Replaces | Points used | Ships |
 |---|---|---|---|
-| **vera** | witness authoring, flip oracle, verification ladder, reward labelling | `after_turn`, `judge` | Oxagen, private |
+| **vera** | witness authoring, flip oracle, verification ladder, reward labelling | `after_turn` | Oxagen, private |
 | **stella-plan** | triage, plan, scope | `before_turn` | first-party, open |
 | **stella-research** | research sub-agents, recall | `before_turn` | first-party, open |
-| **stella-candidates** | worktree candidates, best-of-N fan-out, steering mirror | `before_turn`, `again?` | first-party, open |
-| **stella-selfdriving** | the autonomous delivery loop | `again?`, host verbs | first-party, open |
-| **stella-goal** | goal mode, `stella monitor` | `judge`, `again?` | first-party, open |
+| **stella-candidates** | worktree candidates, best-of-N fan-out, steering mirror | `after_turn` | first-party, open |
+| **stella-selfdriving** | the autonomous delivery loop | — (host, not a wrapper) | first-party, open |
+| **stella-goal** | goal mode, `stella monitor` | `before_turn`, `after_turn` | first-party, open |
 | **example-py** | a working Python plugin | `after_turn` | `stella-examples`, public |
 | **example-ts** | a working TypeScript plugin | `after_turn` | `stella-examples`, public |
-| **example-rs** | the reference Rust plugin | all four | `stella-examples`, public |
+| **example-rs** | the reference Rust plugin | `before_turn`, `after_turn` | `stella-examples`, public |
+
+**Points used** names what the plugin *declares* — the `[loop] points` in its
+manifest, which accept `before_turn` and `after_turn` and nothing else. It does
+not name what the host does around the plugin: `judge` is the host's own
+synchronous function over the rule the manifest declares as `[oracle]` data,
+and `again?` comes with `participation = "arbiter"`, so neither appears in the
+column. `stella-selfdriving` declares no points (`participation = "none"`) — it
+is a host, not a wrapper — so its cell reads "—". Every row above matches
+`rg -n "^points" plugins/*/plugin.toml` under this meaning.
 
 Two notes on that table. `stella-goal` is included because #3380 already
 observes goal mode and the pipeline are the same shape written twice —

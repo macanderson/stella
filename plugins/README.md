@@ -11,6 +11,11 @@ yes or no. Nothing a plugin does is inferred.
 | [`stella-plan/`](stella-plan/) | the pipeline's plan stage | `before_turn` | Track B's second extraction (#3380 §7); the plan *is* a model call, so it asks the host for one bounded `child_turn` at the `planner` role intent (#3562, #3576) |
 | [`stella-goal/`](stella-goal/) | `stella goal`'s `Engine::assess` supervision loop, as a generic arbiter wrapper — not a staged-pipeline stage | `before_turn`, `after_turn` | The goal-supervision reference plugin (#3695; `doc:turn-loop-wrappers` §9.2); its designed home is `stella run --pipeline goal-v1` — `stella goal` itself refuses to load it at bind time, one arbiter per round rather than two (#3832) |
 
+**Points** names what the plugin declares — the `[loop] points` in its
+manifest (`before_turn`, `after_turn`), never what the host does around it
+(`judge`, `again?`). This is the same meaning `doc:pipeline-as-plugins` §3's
+**Points used** column carries.
+
 A fourth directory, [`stella-selfdriving/`](stella-selfdriving/), is
 deliberately not in this table: it is a **host, not a wrapper**
 (`participation = "none"`, no `[runtime]`/`[wrapper]`/`[oracle]`) — it drives

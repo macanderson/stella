@@ -417,13 +417,22 @@ impl Session {
     /// The block is appended to the turn's volatile tail as a user message;
     /// the byte-stable prefix is never touched. The server prefixes the recall
     /// marker when the block does not already carry one, so the engine reads
-    /// it as injected context rather than as a user turn.
+    /// it as injected context rather than as a user turn. `cost_tokens` is
+    /// what the host's recall fan-out cost when it meters that, reported on
+    /// the turn's event stream (#6217).
     pub fn resolve_requery(
         &self,
         request_id: &str,
         context: Option<String>,
+        cost_tokens: Option<u32>,
     ) -> Result<(), ServeError> {
-        self.pending.resolve_requery(request_id, context)
+        self.pending.resolve_requery(
+            request_id,
+            crate::frame::RequeryAnswer {
+                context,
+                cost_tokens,
+            },
+        )
     }
 
     /// Answer a [`ServerFrame::ProviderRequest`] with a classified failure.
