@@ -671,6 +671,26 @@ pub enum ManifestError {
         code: u32,
     },
 
+    /// The manifest's `name` carried a bidi formatting character.
+    ///
+    /// Its own case, not a reused [`Self::NameNotDrawable`]: the two refusals
+    /// ask different things, and a message telling an author to look for an
+    /// escape sequence that is not in their name wastes their time. `U+202E`
+    /// and its kin flip the text after them, so a name can render in an order
+    /// its bytes do not have — the Trojan Source shape (`CVE-2021-42574`) —
+    /// under Stella's own border, next to the consent prompt a person reads
+    /// to decide whether to trust the plugin at all.
+    #[error(
+        "manifest name carries the bidi formatting character U+{code:04X} at position {index}: \
+         it reorders the name after it, so Stella's chrome would read one way and mean another"
+    )]
+    NameCarriesBidiControl {
+        /// Which character of the name, counted in `char`s from zero.
+        index: usize,
+        /// The Unicode scalar value that was refused.
+        code: u32,
+    },
+
     /// The manifest's `name` carried a `/`.
     ///
     /// The host joins the name to a role name to build the seat key a user
