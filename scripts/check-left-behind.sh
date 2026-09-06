@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Guard: a deferral marker in code must name the issue that tracks it.
-# See #1454, and AGENTS.md § "Nothing left behind".
+# See #1454, and AGENTS.md § "Fix over file".
 #
 # AGENTS.md and CLAUDE.md require that anything noticed and not fixed inside the
 # current change becomes a GitHub issue written as a handoff. That is the right
@@ -170,7 +170,7 @@ report="$(
 if [ -n "$report" ]; then
   echo "check-left-behind: FAILED" >&2
   echo "$report" | awk '
-    /^NEW$/      { print ""; print "These files carry a TODO/FIXME/XXX/HACK that names no issue."; print ""; print "The fix is to FILE THE ISSUE and reference it — not to delete the marker,"; print "and not to add a baseline entry. Write it as a handoff a fresh agent could"; print "execute: the problem, the file paths, how to verify, what done looks like"; print "(AGENTS.md, \"Nothing left behind\"). Then:"; print ""; print "    // TODO(#1234): the thing you deferred"; print ""; print "A marker that names an issue is tracked work and passes this guard."; next }
+    /^NEW$/      { print ""; print "These files carry a TODO/FIXME/XXX/HACK that names no issue."; print ""; print "The fix is to FIX THE THING the marker names. Failing that, file the issue"; print "and reference it — never delete the marker, never add a baseline entry. Write"; print "it as a handoff a fresh agent could execute: the problem, the file paths, how"; print "to verify, what done looks like (AGENTS.md, \"Fix over file\"). Then:"; print ""; print "    // TODO(#1234): the thing you deferred"; print ""; print "A marker that names an issue is tracked work and passes this guard."; next }
     /^GREW$/     { print ""; print "These files gained untracked markers beyond their baseline count. Same fix:"; print "file the issue and reference it."; next }
     /^OBSOLETE$/ { print ""; print "Obsolete baseline entries — the markers are gone or now reference an issue."; print "Run \"make left-behind-update\": an exemption must not outlive the problem it"; print "covered, or the file is free to accumulate again."; next }
     { print }
