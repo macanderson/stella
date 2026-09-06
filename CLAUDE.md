@@ -153,7 +153,14 @@
     `make prose-update` refuses to raise a count or add a pair, so a red gate
     is cleared by deleting the prose. The baseline records debt older than
     the guard, it is meant to reach empty, and adding a line to it is the
-    expedient this file forbids. Adding a *pattern* is the one exception, and
+    expedient this file forbids. Each of the three ratchets — the counts,
+    the reading grade, and the header density below — judges your change
+    and not the whole tree, the way `check-file-size.sh` does. A number
+    fails only when it is over its own ceiling *and* over the same value in
+    the base tree, so drift you inherited is named in the run and does not
+    fail you. `--absolute` skips the base tree, which is what the
+    after-merge check runs; a base that does not resolve makes the check
+    strict again. Adding a *pattern* is the one exception, and
     it has its own door: `make prose-adopt PATTERN=<name>` records that
     pattern's pre-existing hits, once, and refuses to touch any other
     pattern's numbers. A backticked span or a fenced block is exempt: naming

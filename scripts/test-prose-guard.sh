@@ -674,6 +674,112 @@ else
   ok "B3 --absolute still sees inherited drift"
 fi
 
+# ── C: a count and a grade are judged against the base tree too ─────────────
+#
+# The same rule as B, for the other two ratchets. A branch that never opened
+# the drifted file used to fail on it, so the author had to repair somebody
+# else's prose inside their own diff or wait for a separate repair to land.
+# C1 and C5 are the witnesses: both fail before this rule reaches counts and
+# grades. C2 and C6 are the boundary -- adding to the drifted file still
+# fails. C3 keeps `--absolute` strict for the post-merge canary, and C4 keeps
+# an unresolvable base strict, which is the direction an unknown must always
+# take.
+
+# $1 = root, $2 = relative path, $3 = hard sentences, $4 = easy lines. Mixed
+# prose, so a later edit can raise the file's grade by adding hard sentences.
+mixed_doc() {
+  mkdir -p "$(dirname "$1/$2")"
+  : >"$1/$2"
+  i=0
+  while [ "$i" -lt "$3" ]; do
+    printf 'Considerable organizational infrastructure necessitates comprehensive architectural documentation regarding institutional configuration management, alongside verification.\n' >>"$1/$2"
+    i=$((i + 1))
+  done
+  i=0
+  while [ "$i" -lt "$4" ]; do
+    printf 'The cache is keyed by path. A miss is a hard error. The store owns one file.\n' >>"$1/$2"
+    i=$((i + 1))
+  done
+  (cd "$1" && git add -A) >/dev/null 2>&1
+}
+
+r="$(new_root c1)"
+baseline "$r"
+doc "$r" docs/drift.md <<'EOF'
+Two things follow from that, and the second is the hard one.
+EOF
+commit_all "$r"
+mark_as_main "$r"
+doc "$r" docs/unrelated.md <<'EOF'
+The store keys every child table off `executions.id`.
+EOF
+commit_all "$r"
+expect_pass "C1 an inherited count does not fail a branch that did not cause it" "$r"
+if python3 "$SCRIPT" "$r" 2>/dev/null | grep -q 'docs/drift.md'; then
+  ok "C1 the forgiven file is named"
+else
+  no "C1 the forgiven file is named" "the run said nothing about docs/drift.md"
+fi
+
+r="$(new_root c2)"
+baseline "$r"
+doc "$r" docs/drift.md <<'EOF'
+Two things follow from that, and the second is the hard one.
+EOF
+commit_all "$r"
+mark_as_main "$r"
+doc "$r" docs/drift.md <<'EOF'
+Two things follow from that, and the second is the hard one.
+Both halves matter here.
+EOF
+commit_all "$r"
+expect_fail "C2 adding to an already-drifted file still fails" "$r"
+
+r="$(new_root c3)"
+baseline "$r"
+doc "$r" docs/drift.md <<'EOF'
+Two things follow from that, and the second is the hard one.
+EOF
+commit_all "$r"
+mark_as_main "$r"
+doc "$r" docs/unrelated.md <<'EOF'
+The store keys every child table off `executions.id`.
+EOF
+commit_all "$r"
+if python3 "$SCRIPT" --absolute "$r" >/dev/null 2>&1; then
+  no "C3 --absolute still sees an inherited count" "the guard passed"
+else
+  ok "C3 --absolute still sees an inherited count"
+fi
+
+# One commit and no origin/main: nothing resolves as a base, so the whole-tree
+# check is what runs. A shallow clone and a fresh repository land here.
+r="$(new_root c4)"
+baseline "$r"
+doc "$r" docs/drift.md <<'EOF'
+Two things follow from that, and the second is the hard one.
+EOF
+commit_all "$r"
+expect_fail "C4 an unresolvable base holds the whole tree to the baseline" "$r"
+
+r="$(new_root c5)"
+baseline "$r"
+hard_doc "$r" docs/hard.md 8
+commit_all "$r"
+mark_as_main "$r"
+easy_doc "$r" docs/unrelated.md 12
+commit_all "$r"
+expect_pass "C5 an inherited reading grade does not fail an untouched branch" "$r"
+
+r="$(new_root c6)"
+baseline "$r"
+mixed_doc "$r" docs/hard.md 2 12
+commit_all "$r"
+mark_as_main "$r"
+mixed_doc "$r" docs/hard.md 10 12
+commit_all "$r"
+expect_fail "C6 raising an already-hard file's grade still fails" "$r"
+
 # ── G1: plain prose within grade 6 passes ────────────────────────────────────
 r="$(new_root g1)"
 easy_doc "$r" docs/a.md 12

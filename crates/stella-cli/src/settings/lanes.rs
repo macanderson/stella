@@ -3,10 +3,11 @@
 //!
 //! A manifest **asks** for the turn-loop seams its lane wants. The host
 //! decides what it holds: `granted = requested ∩ authorized`. The rung a
-//! person accepted at install is one half of what is authorized, and
-//! `stella-plugin` reads that half on its own. This block is the other: it is
-//! where an operator writes the seams a lane may hold on this machine or in
-//! this workspace.
+//! person accepted at install is one third of what is authorized, and
+//! `stella-plugin` reads that third on its own. This block is the second: it
+//! is where an operator writes the seams a lane may hold on this machine or in
+//! this workspace. The session's `AuthzGate` is the third
+//! (`crate::plugin_authz::lanes`, §9.8), and it is asked after both.
 //!
 //! # Why it nests under a named key
 //!
