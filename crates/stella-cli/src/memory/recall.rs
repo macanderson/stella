@@ -1387,12 +1387,12 @@ fn now_unix_secs() -> i64 {
 /// but never a "now" to measure it against (#2901) — a model handed one
 /// endpoint of an interval cannot reason about its width.
 ///
-/// This is why it lives here and not beside the cutoff it completes: the
+/// This is why it lives here and not beside the cutoff it completes. The
 /// cutoff is session-constant (a model card fact, fixed at catalog load) and
-/// rides the byte-stable system prefix, but the date changes once a day —
-/// possibly mid-session — so putting it in the prefix would be a guaranteed
+/// rides the byte-stable system prefix. The date changes once a day, possibly
+/// mid-session, so putting it in the prefix would be a guaranteed
 /// prompt-cache miss at every UTC midnight for every session alive across it
-/// (invariant #7 / L-E8), and `the_assembled_prompt_names_the_session_environment`
+/// (invariant #7 / L-E8). `the_assembled_prompt_names_the_session_environment`
 /// (`crates/stella-cli/src/agent/prompt.rs`) would start failing the moment a
 /// test ran across one. It belongs with the other genuinely volatile facts —
 /// selected skills, per-turn records — that ride this per-turn block instead.

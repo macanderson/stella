@@ -356,8 +356,8 @@ plugin→ { "point": "before_turn", "body": { "context": [ … ] } }     ← end
 
 ### What it must be bounded by
 
-A conversation can hang where a single exchange could not, so the bounds are
-part of the contract rather than an implementation detail:
+A conversation can hang where a single exchange could not. So the bounds are
+part of the contract, not an implementation detail:
 
 - the existing per-point timeout covers the **whole** conversation, not each
   turn of it — a plugin cannot buy time by talking;

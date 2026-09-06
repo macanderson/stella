@@ -2,9 +2,9 @@
 //! the one derivation every caller reads it through.
 //!
 //! The [`SteeringCeiling`] value itself is captured by
-//! [`Settings::merge_captured_scopes`](super::Settings) in `merge.rs`; this
-//! module owns the type and the precedence logic so the two halves of the
-//! answer — "did anyone turn it off?" and "did the org forbid it?" — live
+//! [`Settings::merge_captured_scopes`](super::Settings) in `merge.rs`. This
+//! module owns the type and the precedence logic. That keeps the two halves
+//! of the answer, "did anyone turn it off?" and "did the org forbid it?",
 //! beside each other.
 
 use super::{Settings, truthy_flag};
@@ -26,8 +26,8 @@ impl Default for SteeringCeiling {
 impl Settings {
     /// Whether the steering plane may inject anything this session (#3243).
     ///
-    /// The precedence, which is the house convention plus the one deliberate
-    /// inversion the tool ceiling already uses:
+    /// The precedence. It is the house convention plus the one inversion the
+    /// tool ceiling already uses:
     ///
     /// ```text
     /// built-in default (ON)
@@ -38,11 +38,11 @@ impl Settings {
     ///
     /// Two sentences: **anyone may turn steering off; only the org may
     /// prevent it being turned back on.** That is exactly `apply_tool_ceiling`'s
-    /// shape, so this needs no new concept — and it is why the ceiling is a
+    /// shape, so this needs no new concept. It is also why the ceiling is a
     /// separate field rather than folded into the merged block. Folded in,
-    /// "the project turned it off" and "the org forbade it" would be the same
-    /// value, and the env var could not be allowed to override the first
-    /// without also overriding the second.
+    /// "the project turned it off" and "the org forbade it" would be one
+    /// value. The env var could then not override the first without also
+    /// overriding the second.
     pub fn steering_enabled(&self) -> bool {
         if !self.steering_ceiling.0 {
             return false;

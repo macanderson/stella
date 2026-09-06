@@ -725,11 +725,11 @@ fn attempt_task_boundary(task: &Task) -> String {
 /// loop already runs under — never a failed attempt.
 ///
 /// **What it costs.** One model call per attempt that warrants one, on the same
-/// terms as every other door: gated by `turn_warrants_reflection` so a tool-free
-/// turn spends nothing and by `reflect_routed`'s own friction gate so an
-/// attempt that went straight through spends nothing either, bounded
-/// by this child's remaining headroom, and settled
-/// back into its `BudgetGuard` — so the reflection lands inside the
+/// terms as every other door. It is gated by `turn_warrants_reflection`, so a
+/// tool-free turn spends nothing, and by `reflect_routed`'s own friction gate,
+/// so an attempt that went straight through spends nothing either. It is
+/// bounded by this child's remaining headroom and settled back into its
+/// `BudgetGuard`, so the reflection lands inside the
 /// `--spend-limit` the fleet enforces twice (the child's own cap here, and the
 /// metered total the parent stops new waves on), rather than beside it.
 /// `STELLA_DISABLE_REFLECTION` turns it off, the same switch the one-shot door
@@ -971,8 +971,7 @@ async fn run_task(
     //
     // Assembled after the recall above, not before it: the tool allowance is
     // what the block left of the shared steering allowance, so a stack built
-    // first would settle its array against a spend that had not happened yet
-    // (#6110).
+    // first would settle its array against a spend that had not happened yet.
     let permitted = agent::tool_stack::policy_stack(
         &claims,
         &cfg,

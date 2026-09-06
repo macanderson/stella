@@ -997,11 +997,11 @@ mod tests {
     /// socket first — the read, as EOF, or the next write, as a broken pipe.
     /// Both must keep the turn resumable.
     ///
-    /// This is the rule, not a restatement of the implementation: the two
-    /// are raced by a `tokio::select!` that randomizes which branch it polls,
-    /// so when only `PeerDisconnected` parked the turn, a coin flip inside the
+    /// This is the rule, not a restatement of the implementation. The two
+    /// are raced by a `tokio::select!` that randomizes which branch it polls.
+    /// So when only `PeerDisconnected` parked the turn, a coin flip inside the
     /// runtime decided whether a host that dropped its connection could resume
-    /// the turn it had already paid a model call for — the other side of the
+    /// the turn it had already paid a model call for. The other side of the
     /// flip cancelled it and answered the reconnect `404 unknown turn`.
     #[test]
     fn both_spellings_of_a_hang_up_keep_the_turn_resumable() {
