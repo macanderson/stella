@@ -222,28 +222,45 @@ reference one, and its README says so plainly.
 
 ---
 
-## 3. The nine plugins
+## 3. The plugins
 
 The staged pipeline is not one thing. Splitting it by *what would be installed
 separately* rather than by current module boundaries:
 
 | Plugin | Replaces | Points used | Ships |
 |---|---|---|---|
-| **vera** | witness authoring, flip oracle, verification ladder, reward labelling | `after_turn`, `judge` | Oxagen, private |
+| **stella-witness** | the flip oracle: the artifacts a flip is judged against, and the red→green transition itself | `before_turn`, `after_turn` | first-party, open |
 | **stella-plan** | triage, plan, scope | `before_turn` | first-party, open |
 | **stella-research** | research sub-agents, recall | `before_turn` | first-party, open |
-| **stella-candidates** | worktree candidates, best-of-N fan-out, steering mirror | `before_turn`, `again?` | first-party, open |
+| **stella-candidates** | worktree candidates, best-of-N fan-out, steering mirror | `after_turn`, `again?` | first-party, open |
 | **stella-selfdriving** | the autonomous delivery loop | `again?`, host verbs | first-party, open |
 | **stella-goal** | goal mode, `stella monitor` | `judge`, `again?` | first-party, open |
-| **example-py** | a working Python plugin | `after_turn` | `stella-examples`, public |
-| **example-ts** | a working TypeScript plugin | `after_turn` | `stella-examples`, public |
-| **example-rs** | the reference Rust plugin | all four | `stella-examples`, public |
+| **verify-py** | a working Python plugin | `after_turn` | `stella-examples`, public |
+| **verify-ts** | a working TypeScript plugin | `after_turn` | `stella-examples`, public |
+| **verify-rs** | the reference Rust plugin | all four | `stella-examples`, public |
 
-Two notes on that table. `stella-goal` is included because #3380 already
-observes goal mode and the pipeline are the same shape written twice —
-extracting one and leaving the other rebuilds the drift. And the three examples
-are listed as deliverables, not documentation, because a language is supported
-when a plugin written in it runs in CI, and not before.
+`vera` is not on that list, and `doc:plugin-completion-plan` §4.1 is where it
+came off. Verification ships open, as `stella-witness`: anyone can read it,
+install it and run it, which is what the project's headline claim needs.
+`oxageninc/vera` is the paid superset — verifier independence across a roster,
+tamper hardening past artifact identity, several oracles composed, the durable
+flip record, org policy. It holds a README and nothing else today, and this
+plan does not deliver it. What this repository owes it is the wire contract,
+published as `docs/wire/wrapper.wire.json` and held by `make wire-schema`. §8
+below is the port plan for the nucleus, and `plugins/stella-witness` is where
+that port landed.
+
+`stella-goal` is on the list because #3380 already observes goal mode and the
+pipeline are the same shape written twice — extracting one and leaving the
+other rebuilds the drift.
+
+The three examples are deliverables, not documentation, because a language is
+supported when a plugin written in it runs in CI, and not before.
+
+`stella-candidates` asks for `after_turn` where `doc:plugin-completion-plan`
+§4.2 sketched `before_turn`. Its manifest carries the reason: a plugin is a
+fresh process per point, so a fan-out at `before_turn` exits before there is
+anything to report, and would have to buy every worker turn twice.
 
 ---
 
@@ -833,6 +850,13 @@ still real, open work — deleting the built-in path does not mark it done.
 ---
 
 ## 8. Vera specifically
+
+**Where the port went.** This section planned one private plugin.
+`doc:plugin-completion-plan` §4.1 split it in two and the maintainer took that
+call: the nucleus below ships open, in `plugins/stella-witness`, and Vera is
+the paid superset built on top of it. So read the port list here as the plan
+`stella-witness` executed, and the rest of the section as Vera's remaining
+work.
 
 Vera is a port, not a lift. It takes the verification nucleus and leaves the
 orchestration. **The crate these paths named no longer exists in this
