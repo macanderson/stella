@@ -198,13 +198,9 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         // Assembled, not built up by optional builders. This turn is the
         // `Resume` lane and says so. `lane_capabilities::resume` answers
         // every seam, so nothing is left to a chain.
-        let engine = Engine::assemble(
-            &*provider,
-            &tools,
-            engine_config,
-            &TokioSleeper,
-            crate::lane_capabilities::resume(cfg.hooks.as_ref(), &hook_runner, &calibration),
-        );
+        let seams =
+            crate::lane_capabilities::resume(cfg.hooks.as_ref(), &hook_runner, &calibration);
+        let engine = Engine::assemble(&*provider, &tools, engine_config, &TokioSleeper, seams);
         drive_resumed_turn(&engine, state, &events).await
     };
 
@@ -356,6 +352,7 @@ mod tests {
     use async_trait::async_trait;
 
     use super::*;
+    use stella_core::TurnCapabilities;
     use stella_core::step::{
         BudgetSnapshot, CHECKPOINT_VERSION, Checkpoint, CheckpointSink, TurnState,
     };
@@ -495,7 +492,14 @@ mod tests {
             ..EngineConfig::default()
         };
         let state = TurnState::from_checkpoint(killed_mid_turn(), &config);
-        let engine = Engine::with_sleeper(&provider, &tools, config, &crate::runtime::TokioSleeper);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(
+            &provider,
+            &tools,
+            config,
+            &crate::runtime::TokioSleeper,
+            seams,
+        );
         let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
         let events = stella_core::EventSender::new(tx);
 
@@ -566,7 +570,14 @@ mod tests {
         let mut at_cap = killed_mid_turn();
         at_cap.step = config.max_steps;
         let state = TurnState::from_checkpoint(at_cap, &config);
-        let engine = Engine::with_sleeper(&provider, &tools, config, &crate::runtime::TokioSleeper);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(
+            &provider,
+            &tools,
+            config,
+            &crate::runtime::TokioSleeper,
+            seams,
+        );
         let (tx, _rx) = mpsc::unbounded_channel::<AgentEvent>();
         let events = stella_core::EventSender::new(tx);
 
@@ -611,7 +622,14 @@ mod tests {
         let mut at_cap = killed_mid_turn();
         at_cap.step = config.max_steps;
         let state = TurnState::from_checkpoint(at_cap, &config);
-        let engine = Engine::with_sleeper(&provider, &tools, config, &crate::runtime::TokioSleeper);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(
+            &provider,
+            &tools,
+            config,
+            &crate::runtime::TokioSleeper,
+            seams,
+        );
         let (tx, _rx) = mpsc::unbounded_channel::<AgentEvent>();
         let events = stella_core::EventSender::new(tx);
 

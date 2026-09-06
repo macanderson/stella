@@ -108,7 +108,8 @@ impl SessionWhistle {
         }
     }
 
-    /// What to hand `stella_core::Engine::with_steering`.
+    /// What to hand a seam set's `steering` slot. The engine drains it once
+    /// a step, at the same boundary as the pause gate.
     pub(crate) fn steering(&self) -> &dyn stella_core::ports::TurnSteering {
         self.tap.as_ref()
     }

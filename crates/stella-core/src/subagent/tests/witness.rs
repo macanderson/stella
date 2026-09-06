@@ -25,7 +25,14 @@ async fn the_parent_transcript_does_not_grow_by_the_childs_intermediate_work() {
         Ok(text_result("the retry policy is in retry.rs", 0.001)),
     ]);
     let tools = MixedTools::default();
-    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep);
+    let seams = TurnCapabilities::none();
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &NoSleep,
+        seams,
+    );
 
     let mut parent_messages = vec![
         CompletionMessage::system("sys"),
@@ -131,7 +138,8 @@ async fn a_child_turn_never_writes_or_clears_the_parents_resume_point() {
         checkpoint_sink: Some(sink.clone() as Arc<dyn crate::step::CheckpointSink>),
         ..EngineConfig::default()
     };
-    let parent = Engine::with_sleeper(&parent_provider, &tools, config, &NoSleep);
+    let seams = TurnCapabilities::none();
+    let parent = Engine::assemble(&parent_provider, &tools, config, &NoSleep, seams);
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, mut rx) = mpsc::unbounded_channel();
 
@@ -175,7 +183,14 @@ async fn the_report_is_clamped_to_the_spec_cap_and_says_so() {
     let parent_provider = ScriptedProvider::new(vec![]);
     let child_provider = ScriptedProvider::new(vec![Ok(text_result(&"y".repeat(5_000), 0.001))]);
     let tools = MixedTools::default();
-    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep);
+    let seams = TurnCapabilities::none();
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &NoSleep,
+        seams,
+    );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, mut rx) = mpsc::unbounded_channel();
 

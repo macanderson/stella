@@ -135,8 +135,8 @@ pub type Extensions = Vec<std::sync::Arc<dyn ServeExtension>>;
 ///
 /// Returns `None` when nothing is installed, so a turn on a serve deployment
 /// with no extensions never mints a bus and the engine's every emit site stays
-/// behind its `if let Some(bus)` — the "`None` adds zero work" contract
-/// `Engine::with_bus` is written to.
+/// behind its `if let Some(bus)`. That is the "`None` adds zero work"
+/// contract the engine's `bus` seam is written to.
 pub(crate) fn install_for_turn(
     extensions: &Extensions,
     turn_id: impl Into<String>,

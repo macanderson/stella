@@ -138,8 +138,11 @@ impl crate::retry::Sleeper for NoSleep {
 async fn run_one_turn(provider: &dyn Provider, bus: &HookBus) -> TurnOutcome {
     let tools = NoTools;
     let sleeper = NoSleep;
-    let engine =
-        Engine::with_sleeper(provider, &tools, EngineConfig::default(), &sleeper).with_bus(bus);
+    let seams = TurnCapabilities {
+        bus: Some(bus),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(provider, &tools, EngineConfig::default(), &sleeper, seams);
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let mut messages = vec![CompletionMessage::user("hi")];
     let mut budget = BudgetGuard::new(stella_protocol::BudgetMode::Off, None, None);
@@ -154,17 +157,12 @@ async fn run_one_turn_in_lane(
 ) -> TurnOutcome {
     let tools = NoTools;
     let sleeper = NoSleep;
-    let engine = Engine::assemble(
-        provider,
-        &tools,
-        EngineConfig::default(),
-        &sleeper,
-        crate::driver::capabilities::TurnCapabilities {
-            bus: Some(bus),
-            lane: Some(lane),
-            ..no_seams()
-        },
-    );
+    let seams = crate::driver::capabilities::TurnCapabilities {
+        bus: Some(bus),
+        lane: Some(lane),
+        ..no_seams()
+    };
+    let engine = Engine::assemble(provider, &tools, EngineConfig::default(), &sleeper, seams);
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let mut messages = vec![CompletionMessage::user("hi")];
     let mut budget = BudgetGuard::new(stella_protocol::BudgetMode::Off, None, None);
@@ -330,7 +328,14 @@ async fn a_step_reports_how_it_ended() {
 async fn an_engine_without_a_bus_runs_identically() {
     let tools = NoTools;
     let sleeper = NoSleep;
-    let engine = Engine::with_sleeper(&OneShotProvider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(
+        &OneShotProvider,
+        &tools,
+        EngineConfig::default(),
+        &sleeper,
+        seams,
+    );
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let mut messages = vec![CompletionMessage::user("hi")];
     let mut budget = BudgetGuard::new(stella_protocol::BudgetMode::Off, None, None);

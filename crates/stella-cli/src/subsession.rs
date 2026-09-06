@@ -611,7 +611,7 @@ pub(crate) fn route_mid_turn(text: String, settling: bool) -> MidTurnRoute {
 ///
 /// `pub(crate)` for one caller beyond this module: the deck's LEAD lane
 /// (#1219), which builds the same adapter over its own per-turn channel and
-/// hands it to `Pipeline::with_turn_gate` / `Engine::with_gate`. Deck worker
+/// binds it as its seam set's `gate`. Deck worker
 /// lanes and the deck lead sit on the same side of the deck/fleet boundary,
 /// so they share this item rather than duplicating it; `fleet_cmd.rs` keeps
 /// its own co-located twin precisely because it does not.

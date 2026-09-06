@@ -20,6 +20,7 @@ use stella_protocol::{
 use tokio::sync::mpsc;
 
 use super::*;
+use crate::TurnCapabilities;
 use crate::budget::BudgetOutcome;
 use crate::ports::TurnGate;
 use crate::retry::Sleeper;

@@ -570,6 +570,7 @@ mod tests {
     };
     use tokio::sync::mpsc;
 
+    use crate::TurnCapabilities;
     use crate::budget::BudgetGuard;
     use crate::driver::{Engine, EngineConfig};
     use crate::event_sender::EventSender;
@@ -741,7 +742,8 @@ mod tests {
             files: files.clone(),
             active: vec![],
         };
-        let engine = Engine::with_sleeper(&provider, &tools, config(), &NoSleep);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&provider, &tools, config(), &NoSleep, seams);
         let mut messages = vec![
             CompletionMessage::system("sys"),
             CompletionMessage::user("the task"),
@@ -781,7 +783,8 @@ mod tests {
             files: files.clone(),
             active: vec![],
         };
-        let engine = Engine::with_sleeper(&provider, &tools, config(), &NoSleep);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&provider, &tools, config(), &NoSleep, seams);
         let mut messages = vec![
             CompletionMessage::system("sys"),
             CompletionMessage::user("the task"),
@@ -824,7 +827,8 @@ mod tests {
             files: files.clone(),
             active: vec![],
         };
-        let engine = Engine::with_sleeper(&provider, &tools, config(), &NoSleep);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&provider, &tools, config(), &NoSleep, seams);
         let mut messages = vec![
             CompletionMessage::system("sys"),
             CompletionMessage::user("the task"),
@@ -869,7 +873,8 @@ mod tests {
             files: Arc::new(Mutex::new(HashMap::new())),
             active: vec!["deploy".into()],
         };
-        let engine = Engine::with_sleeper(&provider, &tools, config(), &NoSleep);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&provider, &tools, config(), &NoSleep, seams);
         let mut messages = vec![
             CompletionMessage::system("sys"),
             CompletionMessage::user("the task"),
@@ -909,7 +914,8 @@ mod tests {
             files: Arc::new(Mutex::new(HashMap::new())),
             active: vec![],
         };
-        let engine = Engine::with_sleeper(&provider, &tools, config(), &NoSleep);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&provider, &tools, config(), &NoSleep, seams);
         let mut messages = vec![
             CompletionMessage::system("sys"),
             CompletionMessage::user("the task"),
@@ -941,7 +947,8 @@ mod tests {
             files: Arc::new(Mutex::new(HashMap::new())), // gone from "disk"
             active: vec![],
         };
-        let engine = Engine::with_sleeper(&provider, &tools, config(), &NoSleep);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&provider, &tools, config(), &NoSleep, seams);
         let mut messages = vec![
             CompletionMessage::system("sys"),
             CompletionMessage::user("the task"),
@@ -1066,7 +1073,8 @@ mod tests {
             files: Arc::new(Mutex::new(HashMap::new())),
             active: vec![],
         };
-        let engine = Engine::with_sleeper(&provider, &tools, config(), &NoSleep);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&provider, &tools, config(), &NoSleep, seams);
         let mut messages = vec![
             CompletionMessage::system("sys"),
             CompletionMessage::user("the task"),
@@ -1120,7 +1128,8 @@ mod tests {
             files: Arc::new(Mutex::new(HashMap::new())),
             active: vec![],
         };
-        let engine = Engine::with_sleeper(&provider, &tools, config(), &NoSleep);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&provider, &tools, config(), &NoSleep, seams);
         let mut messages = vec![
             CompletionMessage::system("sys"),
             CompletionMessage::user("the task"),

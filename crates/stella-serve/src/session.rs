@@ -777,21 +777,16 @@ fn run_session(
         // Assembled rather than built up by optional builders: this turn is
         // the `ServeSession` lane and says so, and `served_capabilities`
         // answers every seam rather than only the ones a chain attached.
-        let engine = Engine::assemble(
-            &provider,
-            tool_view,
-            spec.config.clone(),
-            &sleeper,
-            served_capabilities(
-                spec.calibration.as_deref(),
-                &gate,
-                &*steering,
-                requery
-                    .as_ref()
-                    .map(|r| r as &dyn stella_core::ports::SteeringRequery),
-                bus.as_ref(),
-            ),
+        let seams = served_capabilities(
+            spec.calibration.as_deref(),
+            &gate,
+            &*steering,
+            requery
+                .as_ref()
+                .map(|r| r as &dyn stella_core::ports::SteeringRequery),
+            bus.as_ref(),
         );
+        let engine = Engine::assemble(&provider, tool_view, spec.config.clone(), &sleeper, seams);
 
         // Two mutually exclusive modes: plain turn, judged goal run (#1297).
         let outcome = match &spec.goal {
@@ -924,6 +919,7 @@ mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
 
     use async_trait::async_trait;
+    use stella_core::TurnCapabilities;
     use stella_core::driver::TurnHalt;
     use stella_protocol::{
         BudgetMode, CompletionRequestRef, CompletionUsage, Provider, ProviderError, ToolCall,
@@ -1008,7 +1004,8 @@ mod tests {
         let provider = ToolThenText { calls };
         let tools = OkTool;
         let sleeper = TokioSleeper;
-        let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&provider, &tools, config, &sleeper, seams);
         let (tx, _rx) = mpsc::unbounded_channel();
         drive_turn(
             &engine,
@@ -1102,9 +1099,9 @@ mod tests {
     /// so a host grouping turns by lane sees this one as its own bucket
     /// rather than as an unattributed `null`.
     ///
-    /// Fails on a tree that builds this engine with `Engine::with_sleeper`,
-    /// for a structural reason: that constructor has no parameter that could
-    /// carry a lane and writes `None`, so there is no `served_capabilities`
+    /// Failed on a tree that built this engine with the sleeper-only
+    /// constructor, for a structural reason: it had no parameter that could
+    /// carry a lane and wrote `None`, so there was no `served_capabilities`
     /// to call and nothing that could answer. What the value then does is
     /// `stella-core`'s `a_turn_stamps_the_lane_that_assembled_it`.
     #[test]

@@ -70,7 +70,7 @@ impl LeadPause {
         }
     }
 
-    /// The gate to hand to `Pipeline::with_turn_gate` and `Engine::with_gate`.
+    /// The gate to hand a seam set's `gate` slot.
     /// (`attach_turn_controls` wants the owned form — see [`turn_controls`].)
     pub(super) fn turn_gate(&self) -> &dyn stella_core::ports::TurnGate {
         self.gate.as_ref()
@@ -179,9 +179,9 @@ mod tests {
     use stella_core::ports::TurnGate;
     use tokio::sync::mpsc;
 
-    /// `p` on the lead row must reach the gate handed to
-    /// `Pipeline::with_turn_gate` and `Engine::with_gate`, so this asserts on
-    /// the real adapter's parking behavior rather than on the flag behind it.
+    /// `p` on the lead row must reach the gate the lead lane binds, so this
+    /// asserts on the real adapter's parking behavior rather than on the flag
+    /// behind it.
     /// Parking IS the acceptance criterion — the engine polls the gate once
     /// per step, so a gate that never parks is a pause that buys another
     /// model call.

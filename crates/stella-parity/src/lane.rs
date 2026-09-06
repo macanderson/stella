@@ -6,9 +6,9 @@
 //! `stella_protocol::BuiltinLane` names every place a turn runs.
 //! `Engine::assemble` lets each of them put its own name on
 //! `agent.turn.started`. Having a name and saying it are two facts. A site
-//! that builds its engine with `Engine::with_sleeper` writes `lane: None` and
-//! cannot say anything. Its turns then land in one `null` bucket. This table
-//! keeps the two facts together.
+//! that hands over a seam set writing `lane: None` says nothing, and its
+//! turns land in one `null` bucket. This table keeps the two facts
+//! together.
 //!
 //! Same instrument as the two matrices beside it, pointed at lanes. One row
 //! per case. A witness test per row, named and checked. The compiler enforces
@@ -244,8 +244,8 @@ mod tests {
     /// lane.
     ///
     /// On a tree where only the fork stamps itself, this fails for the other
-    /// five rows at once. A site that builds its engine with
-    /// `Engine::with_sleeper` takes no lane, so it never spells one.
+    /// five rows at once. A site whose seam set leaves `lane` unset never
+    /// spells one.
     #[test]
     fn every_bound_lane_is_stamped_at_its_site() {
         for row in LANES {

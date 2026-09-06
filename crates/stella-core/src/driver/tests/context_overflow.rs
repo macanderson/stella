@@ -177,10 +177,11 @@ async fn run_turn_with_fallback(
 ) -> (TurnOutcome, Vec<AgentEvent>) {
     let tools = NoTools;
     let sleeper = NoSleep;
-    let mut engine = Engine::with_sleeper(provider, &tools, EngineConfig::default(), &sleeper);
-    if let Some(resolver) = resolver {
-        engine = engine.with_fallback_resolver(resolver);
-    }
+    let seams = TurnCapabilities {
+        fallback: resolver,
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(provider, &tools, EngineConfig::default(), &sleeper, seams);
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let mut messages = vec![CompletionMessage::user("do the thing")];
     let mut budget = BudgetGuard::new(stella_protocol::BudgetMode::Off, None, None);
@@ -434,7 +435,8 @@ async fn a_summarizer_request_that_overflows_drops_its_head_and_still_folds_the_
         calls: std::sync::Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoSleep;
-    let engine = Engine::with_sleeper(&provider, &tools, super::overflow_config(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, super::overflow_config(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("the task"),
@@ -485,7 +487,8 @@ async fn head_dropping_is_bounded_when_no_span_size_is_accepted() {
         calls: std::sync::Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoSleep;
-    let engine = Engine::with_sleeper(&provider, &tools, super::overflow_config(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, super::overflow_config(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("the task"),

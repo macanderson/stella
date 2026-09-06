@@ -7,9 +7,9 @@
 //! `CircuitBreaker` and the engine observed every call outcome, but nothing
 //! connected them — `record_success`/`record_failure` had no production
 //! caller, so a provider could fail every call for hours and `resolve` kept
-//! routing to it. These tests drive real turns through
-//! [`Engine::with_provider_outcomes`] and assert the router's *next*
-//! resolution actually routes around the provider those turns watched fail.
+//! routing to it. These tests drive real turns whose seam set binds
+//! `outcomes` and assert the router's *next* resolution actually routes
+//! around the provider those turns watched fail.
 
 use super::super::*;
 use crate::ports::Clock;
@@ -112,8 +112,11 @@ fn router() -> Router {
 async fn run_turn_feeding(provider: &dyn Provider, router: &Router) -> TurnOutcome {
     let tools = NoTools;
     let sleeper = NoSleep;
-    let engine = Engine::with_sleeper(provider, &tools, EngineConfig::default(), &sleeper)
-        .with_provider_outcomes(router);
+    let seams = TurnCapabilities {
+        outcomes: Some(router),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(provider, &tools, EngineConfig::default(), &sleeper, seams);
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let mut messages = vec![CompletionMessage::user("hi")];
     let mut budget = BudgetGuard::new(stella_protocol::BudgetMode::Off, None, None);

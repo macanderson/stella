@@ -3,22 +3,20 @@
 //!
 //! # The defect this closes
 //!
-//! [`Engine::with_sleeper`](super::Engine::with_sleeper) returns an engine
-//! with every optional seam set to `None`, and each one is turned on by its
-//! own builder call. Those builders are public and work correctly; the
-//! problem is that **nothing makes a caller use them**. An assembly site that
-//! wants the pause gate and forgets `with_gate` compiles, runs, and quietly
-//! spends through a pause — and reads identically to a site that decided it
-//! did not want a gate. `goal.rs::assess` shipped exactly that bug against
-//! three seams at once.
+//! A constructor that sets every optional seam to `None`, with one opt-in
+//! call per seam, gives a caller nothing that makes those calls happen. An
+//! assembly site that wants the pause gate and attaches no gate compiles,
+//! runs, and quietly spends through a pause — and reads exactly like a site
+//! that decided it did not want one. `goal.rs::assess` shipped that bug
+//! against three seams at once.
 //!
-//! It was tempting to state this as "the constructor *cannot* carry those
-//! seams" (the framing in #3274 slice 2 and slide 22 of the turn-loop deck).
-//! That is not true of this tree and a witness written against it passes
-//! unchanged on `main`: `with_gate`/`with_steering`/`with_hooks` are `pub`
-//! and callers outside this crate use them today. The real property is
-//! **totality** — a decision must be recorded for every slot — and that is
-//! what this type enforces.
+//! [`Engine::assemble`](super::Engine::assemble) is the only constructor, and
+//! the value it takes answers every seam, so a decision is recorded for every
+//! slot because there is no other way to build an engine. The property is
+//! **totality**. It is not "the constructor cannot carry those seams" — the
+//! framing in #3274 slice 2 and slide 22 of the turn-loop deck — which a
+//! witness could not hold on a tree where every seam had a public setter
+//! beside the constructor.
 //!
 //! # Why there is no `Default`, and no `#[non_exhaustive]`
 //!
@@ -26,7 +24,11 @@
 //!
 //! - **No `Default`.** A default is precisely the forgotten decision this
 //!   type exists to abolish. `..Default::default()` at an assembly site would
-//!   restore the defect with better syntax.
+//!   restore the defect with better syntax. A test fixture may write
+//!   `..TurnCapabilities::none()` over the seams it binds — [`Self::none`] is
+//!   itself an exhaustive literal, so a new slot still stops the build until
+//!   somebody answers it there. A lane writes every field out; `stella-cli`'s
+//!   `lane_capabilities` is where they all live.
 //! - **No `#[non_exhaustive]`.** That attribute forbids struct-literal
 //!   construction outside the defining crate, which would force every
 //!   external lane through setters — and setters are optional calls, which is
@@ -258,11 +260,10 @@ impl<'a> Engine<'a> {
     /// The blessed constructor: assemble an engine from its required ports
     /// and one [`TurnCapabilities`] answering every optional seam.
     ///
-    /// This is what a lane — builtin or plugin-driven — is expected to call.
-    /// [`Engine::with_sleeper`](Engine::with_sleeper) plus the individual
-    /// `with_*` builders remain for existing call sites and behave exactly as
-    /// before; what they cannot offer is the guarantee that every seam was
-    /// considered.
+    /// The only constructor. A lane — builtin or plugin-driven — reaches the
+    /// engine through here, and the seam set it hands over is what makes
+    /// "every seam was considered" a fact about the build rather than a
+    /// habit.
     pub fn assemble(
         provider: &'a dyn Provider,
         tools: &'a dyn ToolExecutor,
@@ -319,9 +320,9 @@ mod tests {
     /// rest pattern. Adding a slot to the struct without adding it here fails
     /// to compile, which is the property the type exists to provide.
     ///
-    /// It is not written as "a fork carries gate/steering/hooks":
-    /// that passes on `main` unchanged, because the fork already carries them
-    /// and the builders that attach them are public. See the module doc.
+    /// It is not written as "a fork carries gate/steering/hooks". That
+    /// passed unchanged while the per-seam builders were public, because the
+    /// fork already carried them. See the module doc.
     #[test]
     fn every_capability_slot_is_named_by_this_test() {
         let TurnCapabilities {
@@ -372,13 +373,8 @@ mod tests {
         let sleeper = crate::subagent::tests::NoSleep;
 
         let owned = built_elsewhere();
-        let engine = Engine::assemble(
-            &provider,
-            &tools,
-            EngineConfig::default(),
-            &sleeper,
-            owned.as_borrowed(),
-        );
+        let seams = owned.as_borrowed();
+        let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
 
         assert_eq!(engine.call_role, ModelCallRole::Verdict);
     }
@@ -415,13 +411,8 @@ mod tests {
         let tools = crate::subagent::tests::MixedTools::default();
         let sleeper = crate::subagent::tests::NoSleep;
 
-        let engine = Engine::assemble(
-            &provider,
-            &tools,
-            EngineConfig::default(),
-            &sleeper,
-            TurnCapabilities::none(),
-        );
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
 
         assert!(engine.hooks.is_none());
         assert!(engine.hook_approvals.is_none());
@@ -433,5 +424,64 @@ mod tests {
         assert!(engine.outcomes.is_none());
         assert!(engine.fallback.is_none());
         assert_eq!(engine.call_role, ModelCallRole::Worker);
+    }
+
+    /// **The deletion witness.** No per-seam builder survives on `Engine`,
+    /// so `assemble` is the only way to build one.
+    ///
+    /// The shape tests above are about the *value*: they hold
+    /// [`TurnCapabilities`] to naming every slot. Neither can see a second
+    /// constructor beside `assemble`, which is what made the totality claim
+    /// worth only what a caller chose to spend on it — a site could take the
+    /// sleeper-only constructor, reach the engine with every seam unset and
+    /// no lane, and nothing here would notice.
+    ///
+    /// Source text rather than a `compile_fail` doctest: a doctest passes on
+    /// any compile error at all, including a typo in its own setup, so it
+    /// cannot tell "the builder is gone" from "this snippet is broken".
+    /// Reading the two files back can.
+    ///
+    /// The needles are built rather than written out, so this test is not its
+    /// own match and neither is any prose above it.
+    #[test]
+    fn no_per_seam_builder_survives_beside_assemble() {
+        let sources = [
+            ("driver.rs", include_str!("../driver.rs")),
+            ("driver/user_hooks.rs", include_str!("user_hooks.rs")),
+        ];
+        let seams = [
+            "sleeper",
+            "hooks",
+            "calibration",
+            "gate",
+            "steering",
+            "requery",
+            "bus",
+            "provider_outcomes",
+            "fallback_resolver",
+            "hook_approval_route",
+        ];
+
+        for (path, source) in sources {
+            for seam in seams {
+                let needle = format!("pub fn with_{seam}(");
+                assert!(
+                    !source.contains(&needle),
+                    "{path} defines `{needle}` again — a caller taking it reaches the engine \
+                     with every other seam unset and no lane, which is the defect \
+                     `TurnCapabilities` exists to close",
+                );
+            }
+        }
+
+        // The other half: the constructor that replaced them is still here,
+        // so this cannot pass by the file having moved out from under it.
+        assert!(
+            sources
+                .iter()
+                .all(|(_, source)| source.contains("impl<'a> Engine<'a> {")),
+            "a source here stopped opening an Engine impl — this witness is reading the \
+             wrong files, and an empty search proves nothing",
+        );
     }
 }

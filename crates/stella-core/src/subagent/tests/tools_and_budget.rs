@@ -10,7 +10,14 @@ async fn a_read_only_child_cannot_execute_a_mutating_tool_even_when_it_tries() {
         Ok(text_result("i tried", 0.001)),
     ]);
     let tools = MixedTools::default();
-    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep);
+    let seams = TurnCapabilities::none();
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &NoSleep,
+        seams,
+    );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, _rx) = mpsc::unbounded_channel();
 
@@ -38,7 +45,14 @@ async fn write_access_is_opt_in_per_spawn() {
         Ok(text_result("done", 0.001)),
     ]);
     let tools = MixedTools::default();
-    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep);
+    let seams = TurnCapabilities::none();
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &NoSleep,
+        seams,
+    );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, _rx) = mpsc::unbounded_channel();
 
@@ -63,7 +77,14 @@ async fn child_spend_settles_into_the_parent_exactly_once() {
         Ok(text_result("found it", 0.03)),
     ]);
     let tools = MixedTools::default();
-    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep);
+    let seams = TurnCapabilities::none();
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &NoSleep,
+        seams,
+    );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     budget.record_spend(0.10); // the parent's own prior work
     let (tx, _rx) = mpsc::unbounded_channel();
@@ -98,7 +119,14 @@ async fn an_enforced_carve_stops_the_child_without_touching_the_parents_turn() {
         Ok(text_result("never reached", 0.50)),
     ]);
     let tools = MixedTools::default();
-    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep);
+    let seams = TurnCapabilities::none();
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &NoSleep,
+        seams,
+    );
     let mut budget = BudgetGuard::new(BudgetMode::Enforced, None, Some(100.0));
     let (tx, _rx) = mpsc::unbounded_channel();
 
@@ -134,7 +162,14 @@ async fn a_child_can_never_be_carved_past_the_parents_remaining_headroom() {
     let parent_provider = ScriptedProvider::new(vec![]);
     let child_provider = ScriptedProvider::new(vec![Ok(text_result("hi", 0.001))]);
     let tools = MixedTools::default();
-    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep);
+    let seams = TurnCapabilities::none();
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &NoSleep,
+        seams,
+    );
     let mut budget = BudgetGuard::new(BudgetMode::Enforced, None, Some(1.0));
     budget.record_spend(0.96);
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -174,7 +209,14 @@ async fn an_enforced_parent_with_no_headroom_refuses_before_spending_anything() 
     // Would answer happily if it were ever asked. It must not be.
     let child_provider = ScriptedProvider::new(vec![Ok(text_result("hello", 0.99))]);
     let tools = MixedTools::default();
-    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep);
+    let seams = TurnCapabilities::none();
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &NoSleep,
+        seams,
+    );
     let mut budget = BudgetGuard::new(BudgetMode::Enforced, None, Some(1.0));
     budget.record_spend(1.5);
     let (tx, mut rx) = mpsc::unbounded_channel();

@@ -16,7 +16,7 @@
 //!
 //! ```ignore
 //! let route = BrokerApprovalRoute::for_registry(&registry);
-//! let engine = engine.with_hooks(hooks, &runner).with_hook_approval_route(&route);
+//! seams.hook_approvals = Some(&route);
 //! ```
 //!
 //! The decision fold itself (stdout JSON → [`stella_core::bus::HookDecision`]

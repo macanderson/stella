@@ -55,9 +55,12 @@ async fn a_structured_stop_denial_reaches_the_model_and_the_journal_intact() {
     })
     .detach();
 
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_hooks(&hooks, &runner)
-        .with_bus(&bus);
+    let seams = TurnCapabilities {
+        hooks: Some((&hooks, &runner)),
+        bus: Some(&bus),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -130,8 +133,11 @@ async fn a_prose_only_stop_denial_grows_no_evidence_section() {
     };
     let hooks: Hooks =
         serde_json::from_str(r#"{ "Stop": [ { "hooks": [{ "command": "verify" }] } ] }"#).unwrap();
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_hooks(&hooks, &runner);
+    let seams = TurnCapabilities {
+        hooks: Some((&hooks, &runner)),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -216,8 +222,11 @@ async fn run_always_denying_stop_gate(allowance: Option<u32>, answers: usize) ->
         stop_hold_allowance: allowance,
         ..EngineConfig::default()
     };
-    let engine =
-        Engine::with_sleeper(&provider, &tools, config, &sleeper).with_hooks(&hooks, &runner);
+    let seams = TurnCapabilities {
+        hooks: Some((&hooks, &runner)),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, config, &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),

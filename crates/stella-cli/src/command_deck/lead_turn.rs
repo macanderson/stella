@@ -158,28 +158,21 @@ pub(super) async fn run_lead_turn(
             // The scoped skill's `effort:` override, for this turn.
             engine_config.effort = Some(effort);
         }
-        // Assembled rather than built up by optional builders (#6056): this
-        // turn is the `Lead` lane and now says so, and every seam it does not
-        // take is a written `None` in `lane_capabilities::lead` rather than
-        // whatever the builder chain happened not to attach. The conditional
-        // `with_hooks` / `with_requery` calls this replaces bound exactly the
-        // same two seams, which is why both arrive as `Option`s.
-        let engine = Engine::assemble(
-            provider,
-            &scoped_tap,
-            engine_config,
-            &TokioSleeper,
-            crate::lane_capabilities::lead(
-                cfg.hooks.as_ref(),
-                &hook_runner,
-                calibration,
-                pause.turn_gate(),
-                &**steering,
-                requery
-                    .as_ref()
-                    .map(|requery| requery as &dyn stella_core::ports::SteeringRequery),
-            ),
+        // Assembled from one value, not built up call by call (#6056).
+        // This turn is the `Lead` lane and says so. Every seam it does not
+        // take is a written `None` in `lane_capabilities::lead`. The two
+        // seams the deck binds only sometimes arrive as `Option`s.
+        let seams = crate::lane_capabilities::lead(
+            cfg.hooks.as_ref(),
+            &hook_runner,
+            calibration,
+            pause.turn_gate(),
+            &**steering,
+            requery
+                .as_ref()
+                .map(|requery| requery as &dyn stella_core::ports::SteeringRequery),
         );
+        let engine = Engine::assemble(provider, &scoped_tap, engine_config, &TokioSleeper, seams);
         let outcome = engine.run_turn_with_sender(messages, budget, &events).await;
         // The turn's plan graph, mirrored beside the board it was built from
         // (#5037): every revision, the `[:NEXT]` chain each of them authored,

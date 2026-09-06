@@ -69,8 +69,11 @@ async fn pre_tool_use_hook_nonzero_exit_blocks_the_tool_and_model_sees_it() {
         }]),
         ..Hooks::default()
     };
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_hooks(&hooks, &runner);
+    let seams = TurnCapabilities {
+        hooks: Some((&hooks, &runner)),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -142,8 +145,11 @@ async fn post_tool_use_hook_runs_after_the_tool_and_never_blocks() {
         }]),
         ..Hooks::default()
     };
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_hooks(&hooks, &runner);
+    let seams = TurnCapabilities {
+        hooks: Some((&hooks, &runner)),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -205,8 +211,11 @@ async fn non_blocking_hook_failure_surfaces_as_one_retryable_error_event() {
         }]),
         ..Hooks::default()
     };
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_hooks(&hooks, &runner);
+    let seams = TurnCapabilities {
+        hooks: Some((&hooks, &runner)),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -263,7 +272,8 @@ async fn no_hooks_configured_leaves_the_turn_path_unchanged() {
     };
     let sleeper = NoopSleeper;
     // Built WITHOUT `with_hooks` — `hooks` stays `None`.
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -324,8 +334,11 @@ async fn run_turn_never_fires_session_start_hooks() {
         }]),
         ..Hooks::default()
     };
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_hooks(&hooks, &runner);
+    let seams = TurnCapabilities {
+        hooks: Some((&hooks, &runner)),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
 
     let mut messages = vec![
         CompletionMessage::system("sys"),
@@ -387,8 +400,11 @@ async fn a_hooked_read_fires_its_hook_once_never_for_a_dropped_speculative_attem
         }]),
         ..Hooks::default()
     };
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_hooks(&hooks, &runner);
+    let seams = TurnCapabilities {
+        hooks: Some((&hooks, &runner)),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![CompletionMessage::user("read a.rs")];
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
     let (tx, _rx) = mpsc::unbounded_channel();
@@ -495,8 +511,11 @@ async fn pre_tool_use_modify_decision_rewrites_the_input_the_tool_receives() {
         }"#,
     )
     .unwrap();
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_hooks(&hooks, &runner);
+    let seams = TurnCapabilities {
+        hooks: Some((&hooks, &runner)),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -611,9 +630,12 @@ async fn a_hook_require_approval_parks_on_the_route_and_the_answer_decides() {
         calls: Arc::new(AtomicU32::new(0)),
         seen: Arc::new(TokioMutex::new(Vec::new())),
     };
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_hooks(&hooks, &runner)
-        .with_hook_approval_route(&route);
+    let seams = TurnCapabilities {
+        hooks: Some((&hooks, &runner)),
+        hook_approvals: Some(&route),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -653,9 +675,12 @@ async fn a_hook_require_approval_parks_on_the_route_and_the_answer_decides() {
         calls: Arc::new(AtomicU32::new(0)),
         seen: Arc::new(TokioMutex::new(Vec::new())),
     };
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_hooks(&hooks, &runner)
-        .with_hook_approval_route(&route);
+    let seams = TurnCapabilities {
+        hooks: Some((&hooks, &runner)),
+        hook_approvals: Some(&route),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -698,8 +723,11 @@ async fn require_approval_without_a_route_refuses_with_the_grant_path() {
         hooks,
     } = require_approval_fixture(ask);
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_hooks(&hooks, &runner);
+    let seams = TurnCapabilities {
+        hooks: Some((&hooks, &runner)),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -757,8 +785,11 @@ async fn pre_tool_use_payload_carries_the_schemas_read_only_bit() {
         r#"{ "PreToolUse": [ { "matcher": "*", "hooks": [{ "command": "audit" }] } ] }"#,
     )
     .unwrap();
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_hooks(&hooks, &runner);
+    let seams = TurnCapabilities {
+        hooks: Some((&hooks, &runner)),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -849,8 +880,11 @@ async fn an_always_denying_stop_hook_is_consulted_to_the_bound_then_the_turn_sta
     let hooks: Hooks =
         serde_json::from_str(r#"{ "Stop": [ { "hooks": [{ "command": "checklist" }] } ] }"#)
             .unwrap();
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_hooks(&hooks, &runner);
+    let seams = TurnCapabilities {
+        hooks: Some((&hooks, &runner)),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -954,8 +988,11 @@ async fn a_deny_then_allow_is_reconsulted_and_the_allowed_completion_stands() {
     };
     let hooks: Hooks =
         serde_json::from_str(r#"{ "Stop": [ { "hooks": [{ "command": "verify" }] } ] }"#).unwrap();
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_hooks(&hooks, &runner);
+    let seams = TurnCapabilities {
+        hooks: Some((&hooks, &runner)),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -1024,8 +1061,11 @@ async fn a_failing_stop_hook_never_holds_the_turn_open() {
     let hooks: Hooks =
         serde_json::from_str(r#"{ "Stop": [ { "hooks": [{ "command": "checklist" }] } ] }"#)
             .unwrap();
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_hooks(&hooks, &runner);
+    let seams = TurnCapabilities {
+        hooks: Some((&hooks, &runner)),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -1101,9 +1141,12 @@ async fn a_stop_hooks_require_approval_resolves_both_ways() {
             calls: Arc::new(AtomicU32::new(0)),
             seen: Arc::new(TokioMutex::new(Vec::new())),
         };
-        let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-            .with_hooks(&hooks, &runner)
-            .with_hook_approval_route(&route);
+        let seams = TurnCapabilities {
+            hooks: Some((&hooks, &runner)),
+            hook_approvals: Some(&route),
+            ..TurnCapabilities::none()
+        };
+        let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
         let mut messages = vec![
             CompletionMessage::system("sys"),
             CompletionMessage::user("hi"),
@@ -1186,8 +1229,11 @@ async fn a_stop_hooks_require_approval_with_no_route_lets_the_turn_complete() {
     };
     let hooks: Hooks =
         serde_json::from_str(r#"{ "Stop": [ { "hooks": [{ "command": "vera" }] } ] }"#).unwrap();
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_hooks(&hooks, &runner);
+    let seams = TurnCapabilities {
+        hooks: Some((&hooks, &runner)),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -1240,8 +1286,11 @@ async fn pre_compact_hook_veto_skips_the_summarization_round() {
     let hooks: Hooks =
         serde_json::from_str(r#"{ "PreCompact": [ { "hooks": [{ "command": "gate" }] } ] }"#)
             .unwrap();
-    let engine = Engine::with_sleeper(&provider, &tools, overflow_config(), &sleeper)
-        .with_hooks(&hooks, &runner);
+    let seams = TurnCapabilities {
+        hooks: Some((&hooks, &runner)),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     let mut messages = overflow_messages_for_hooks();
     let before = messages.clone();
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
@@ -1308,8 +1357,11 @@ async fn pre_compact_modify_instructions_reach_the_summarizer_request() {
     let hooks: Hooks =
         serde_json::from_str(r#"{ "PreCompact": [ { "hooks": [{ "command": "steer" }] } ] }"#)
             .unwrap();
-    let engine = Engine::with_sleeper(&provider, &tools, overflow_config(), &sleeper)
-        .with_hooks(&hooks, &runner);
+    let seams = TurnCapabilities {
+        hooks: Some((&hooks, &runner)),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     let mut messages = overflow_messages_for_hooks();
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
     let mut health = SummarizerHealth::default();

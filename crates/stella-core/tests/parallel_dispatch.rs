@@ -26,7 +26,7 @@ use serde_json::Value;
 use stella_core::budget::BudgetGuard;
 use stella_core::ports::ToolExecutor;
 use stella_core::retry::Sleeper;
-use stella_core::{Engine, EngineConfig, TurnOutcome};
+use stella_core::{Engine, EngineConfig, TurnCapabilities, TurnOutcome};
 use stella_protocol::{
     BudgetMode, CompletionMessage, CompletionRequestRef, CompletionResult, CompletionUsage,
     Provider, ProviderError, ToolCall, ToolOutput, ToolSchema,
@@ -126,7 +126,8 @@ async fn sibling_delegate_calls_in_one_step_execute_concurrently() {
         barrier: tokio::sync::Barrier::new(2),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("research two questions"),
@@ -236,7 +237,8 @@ async fn a_mutating_call_between_spawns_keeps_its_barrier() {
         barrier: tokio::sync::Barrier::new(2),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("research around an edit"),

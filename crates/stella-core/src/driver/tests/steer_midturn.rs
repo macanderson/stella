@@ -64,8 +64,11 @@ async fn a_soft_stop_closes_caller_supplied_open_tool_calls() {
     };
     let sleeper = NoopSleeper;
     let steering = StopNow;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_steering(&steering);
+    let seams = TurnCapabilities {
+        steering: Some(&steering),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     // A caller-injected assistant message whose call nothing answered.
     let mut messages = vec![
         CompletionMessage::system("sys"),
@@ -129,8 +132,11 @@ async fn a_steer_after_a_tool_round_keeps_every_call_paired_with_its_result() {
         fire_on_drain: 2,
         drains: AtomicU32::new(0),
     };
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_steering(&steering);
+    let seams = TurnCapabilities {
+        steering: Some(&steering),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("the task"),
@@ -199,8 +205,11 @@ async fn a_mid_tool_round_steer_leaves_a_tool_message_immediately_before_it() {
         fire_on_drain: 2,
         drains: AtomicU32::new(0),
     };
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_steering(&steering);
+    let seams = TurnCapabilities {
+        steering: Some(&steering),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("the task"),

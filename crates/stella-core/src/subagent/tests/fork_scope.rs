@@ -76,7 +76,14 @@ async fn a_grant_scoped_child_cannot_see_or_call_outside_its_grant() {
         Ok(text_result("done", 0.001)),
     ]);
     let tools = MixedTools::default();
-    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep);
+    let seams = TurnCapabilities::none();
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &NoSleep,
+        seams,
+    );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, _rx) = mpsc::unbounded_channel();
 
@@ -126,7 +133,8 @@ async fn a_forked_skills_effort_overrides_the_parents_and_absent_inherits() {
         effort: Some(ReasoningEffort::Low),
         ..EngineConfig::default()
     };
-    let parent = Engine::with_sleeper(&parent_provider, &tools, config, &NoSleep);
+    let seams = TurnCapabilities::none();
+    let parent = Engine::assemble(&parent_provider, &tools, config, &NoSleep, seams);
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, _rx) = mpsc::unbounded_channel();
 

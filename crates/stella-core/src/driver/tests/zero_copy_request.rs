@@ -66,7 +66,8 @@ async fn a_retried_attempt_re_sends_the_same_slices_it_did_the_first_time() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let (tx, _rx) = mpsc::unbounded_channel();
     let mut messages = vec![
         CompletionMessage::system("You are Stella."),
@@ -122,7 +123,8 @@ async fn the_adapter_serializes_off_the_callers_own_transcript() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let (tx, _rx) = mpsc::unbounded_channel();
     // Reserved up front so appending the turn's answer cannot reallocate the
     // buffer out from under the address recorded during the call — the test

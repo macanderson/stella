@@ -153,8 +153,11 @@ async fn the_requery_port_sees_live_turn_evidence_and_its_block_lands_in_history
             crate::receipts::RECALL_MARKER
         ),
     };
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_requery(&requery);
+    let seams = TurnCapabilities {
+        requery: Some(&requery),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("fix the flaky test"),
@@ -226,8 +229,11 @@ async fn since_last_query_resets_when_the_port_answers() {
             crate::receipts::RECALL_MARKER
         ),
     };
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_requery(&requery);
+    let seams = TurnCapabilities {
+        requery: Some(&requery),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("fix the flaky test"),

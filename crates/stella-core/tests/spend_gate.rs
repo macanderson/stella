@@ -33,7 +33,7 @@ use stella_core::hooks::{
 };
 use stella_core::ports::{FallbackResolver, ResolvedFallback, ToolExecutor};
 use stella_core::retry::Sleeper;
-use stella_core::{Engine, EngineConfig, TurnOutcome};
+use stella_core::{Engine, EngineConfig, TurnCapabilities, TurnOutcome};
 use stella_protocol::{
     BudgetMode, CompletionMessage, CompletionRequestRef, CompletionResult, CompletionUsage,
     Provider, ProviderError, ToolCall, ToolOutput, ToolSchema,
@@ -286,13 +286,17 @@ impl Turn {
         });
         let runner = self.stop_decision.map(|stdout| DecidingRunner { stdout });
 
-        let mut engine = Engine::with_sleeper(&provider, &tools, self.config, &sleeper);
-        if let Some(resolver) = &resolver {
-            engine = engine.with_fallback_resolver(resolver);
-        }
-        if let (Some(hooks), Some(runner)) = (&hooks, &runner) {
-            engine = engine.with_hooks(hooks, runner);
-        }
+        let seams = TurnCapabilities {
+            hooks: match (&hooks, &runner) {
+                (Some(hooks), Some(runner)) => Some((hooks, runner as &dyn HookRunner)),
+                _ => None,
+            },
+            fallback: resolver
+                .as_ref()
+                .map(|resolver| resolver as &dyn FallbackResolver),
+            ..TurnCapabilities::none()
+        };
+        let engine = Engine::assemble(&provider, &tools, self.config, &sleeper, seams);
 
         let mut messages = self.messages;
         let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
