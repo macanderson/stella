@@ -105,6 +105,7 @@ fn settings_ledger(s: &Settings) -> Vec<Field> {
         context_providers,
         plugins,
         active_plugins,
+        lanes,
         managed_authority,
         enterprise_telemetry,
         authority_policy,
@@ -172,6 +173,7 @@ fn settings_ledger(s: &Settings) -> Vec<Field> {
             Posture::Merged,
             active_plugins != &d.active_plugins,
         ),
+        keyed("lanes", Posture::Merged, lanes != &d.lanes),
         keyed(
             "authority",
             Posture::Merged,
@@ -471,6 +473,7 @@ const EVERY_KEY: &str = r#"{
   },
   "plugins": { "vera": "off" },
   "active_plugins": ["stella-plan"],
+  "lanes": { "custom": { "acme.replay": { "capabilities": ["bus"] } } },
   "authority": { "project_prompts": "on" },
   "enterprise_telemetry": { "source": "managed" }
 }"#;
@@ -717,6 +720,7 @@ fn the_toml_root_vocabulary_matches_the_document() {
         ui: _,
         voice: _,
         plugins: _,
+        lanes: _,
         reward: _,
         foundry: _,
         plan_review: _,
@@ -745,6 +749,7 @@ fn the_toml_root_vocabulary_matches_the_document() {
         "ui",
         "voice",
         "plugins",
+        "lanes",
         "reward",
         "foundry",
         "plan_review",

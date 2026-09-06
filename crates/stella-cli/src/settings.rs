@@ -45,6 +45,7 @@ pub(crate) mod context_providers;
 // unchanged.
 mod engine;
 pub(crate) mod foundry;
+pub(crate) mod lanes;
 mod managed;
 mod merge;
 pub(crate) mod migrate;
@@ -88,6 +89,7 @@ pub use context::{
 pub use context_providers::{ContextProviderSettings, ExternalContextProvider, ProviderEndpoint};
 pub use engine::*;
 pub use foundry::{FoundryAutonomy, FoundryConfig, FoundrySettings};
+pub use lanes::{LaneCeiling, LaneSettings};
 pub use merge::ToolScopePolicies;
 pub(crate) use steering::SteeringCeiling;
 pub(crate) use withheld::WithheldNotice;
@@ -367,6 +369,17 @@ pub struct Settings {
     /// "the plugin ran and did nothing".
     #[serde(default)]
     pub active_plugins: Option<Vec<String>>,
+    /// `lanes.custom.<id>` — the operator's ceiling on a lane a plugin
+    /// ships. A lane named by no scope has no ceiling here and holds
+    /// whatever the rung a person accepted at install allows.
+    ///
+    /// Scopes fold by intersection, per lane, so a scope may take a seam
+    /// away and never hand one back. That direction is what keeps the key
+    /// safe to read from a repository you cloned, on the same argument the
+    /// sticky `plugins` switch above rests on: the only reachable effect of
+    /// a project file here is a plugin lane holding less.
+    #[serde(default)]
+    pub lanes: Option<LaneSettings>,
     /// Authority ceilings are honored only from the org-managed settings
     /// file. The serde name is intentionally short because the containing
     /// file is already the policy source.

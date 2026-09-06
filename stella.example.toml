@@ -517,6 +517,25 @@ some-noisy-observer = "off"
 
 
 # -----------------------------------------------------------------------------
+# LANES — how much of the turn loop a plugin's own lane may hold
+#
+# A plugin can ship a lane: a place a turn runs, with its own set of the loop's
+# optional seams. Its manifest asks for the seams it wants. This table is where
+# you say what it may actually hold here.
+#
+# A lane you never name has no ceiling here, and holds whatever the rung you
+# accepted when you installed the plugin allows. A lane you do name holds only
+# the seams you list. Scopes narrow: a project file can take a seam away and can
+# never hand one back.
+#
+# The seam names are the ones `stella plugin doctor` prints: bus, hooks,
+# hook_approvals, calibration, gate, steering, requery, outcomes, fallback.
+# -----------------------------------------------------------------------------
+[lanes.custom."acme.replay"]
+capabilities = ["bus"]
+
+
+# -----------------------------------------------------------------------------
 # REWARD — what a finished turn's verdict is worth as a training label (#1043)
 #
 # *** NOTHING CONSUMES THIS TODAY (#4224). *** These keys parse and resolve into

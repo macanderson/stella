@@ -80,9 +80,20 @@ pub(super) const ROOT_FIELDS: &[&str] = &[
     "context_providers",
     "plugins",
     "active_plugins",
+    "lanes",
     "authority",
     "enterprise_telemetry",
 ];
+
+/// `lanes` — [`super::LaneSettings`]. Closed: the block holds `custom` and
+/// nothing else. A lane set written under any other key is one the scope
+/// merge drops, which is the shape `doc:turn-lane-assembly` §9.7 warns about.
+const LANES_FIELDS: &[&str] = &["custom"];
+
+/// `lanes.custom.<id>` — [`super::LaneCeiling`]. Closed for `[run]`'s reason:
+/// a mistyped key leaves a lane holding whatever its install rung allows,
+/// which looks exactly like a ceiling that was applied.
+const LANE_CEILING_FIELDS: &[&str] = &["capabilities"];
 
 /// `providers.<id>` — [`super::ProviderSettings`]. Checked against the struct
 /// in both directions by [`super::completeness`].
@@ -548,6 +559,8 @@ pub(super) const TOML_ROOT_FIELDS: &[&str] = &[
     // change, or this walker tells people their working config is a typo.
     "self_driving",
     "issues",
+    // `[lanes]` — the operator's ceiling on a lane a plugin ships.
+    "lanes",
     // `[plugins]` — the per-plugin retraction switches
     // (`TomlConfig::plugins`). The THIRD instance of the omission the two
     // comments above record, and the one that bites hardest: the operator most
@@ -685,12 +698,34 @@ fn scan_toml_root(root: &Value, found: &mut Vec<String>) {
                     }
                 }
             }
+            "lanes" => scan_lanes(value, found),
             "agents" => scan_toml_agents(value, found),
             // `tools`, `context_providers`, `context`, `authority`, and
             // `enterprise_telemetry` are open maps or types owned elsewhere —
             // same treatment as the JSON walker gives them.
             _ => {}
         }
+    }
+}
+
+/// The lane ceilings, in either document. The block is closed, the lane ids
+/// under `custom` are open, and each ceiling is closed again.
+///
+/// One function for both walkers because the shape is the same in JSON and in
+/// TOML: `lanes.custom.<id>.capabilities` either way, which is what makes the
+/// nested key readable from both files.
+fn scan_lanes(lanes: &Value, found: &mut Vec<String>) {
+    closed("lanes", lanes, LANES_FIELDS, found);
+    let Some(entries) = lanes.get("custom").and_then(Value::as_object) else {
+        return;
+    };
+    for (id, ceiling) in entries {
+        closed(
+            &format!("lanes.custom.{id}"),
+            ceiling,
+            LANE_CEILING_FIELDS,
+            found,
+        );
     }
 }
 
@@ -761,6 +796,7 @@ fn scan_root(root: &Value, found: &mut Vec<String>) {
             "foundry" => closed("foundry", value, FOUNDRY_FIELDS, found),
             "plan_review" => closed("plan_review", value, PLAN_REVIEW_FIELDS, found),
             "hooks" => closed("hooks", value, &hook_events(), found),
+            "lanes" => scan_lanes(value, found),
             "agent_engine_config" => scan_engine(value, found),
             // `tools`, `context_providers`, `context`, `authority`, and
             // `enterprise_telemetry` are open maps or types owned elsewhere.

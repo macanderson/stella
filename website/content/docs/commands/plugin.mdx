@@ -12,6 +12,7 @@ This command works offline. It only reads and writes local files, and it does no
 ```bash
 stella plugin install <dir> [--scope project|user] [--yes]
 stella plugin list
+stella plugin doctor
 stella plugin panel <name> [--allow|--deny]
 stella plugin remove <name>
 stella plugin drive <name>
@@ -122,6 +123,29 @@ hook dispatches:
 The output has two parts, and they answer different questions. The first part shows what each plugin asked for. The second part, "hook dispatches," shows what stella will actually run. If a plugin lists a hook but has no `[runtime]` block, it shows up in the first part but not the second. That's why a plugin can declare `Stop` and still never run anything.
 
 If a plugin asks for an environment variable that stella recognizes as a model API key, stella blocks it and tells you here, in the list output. You won't have to discover a missing variable later when the plugin runs. A plugin never gets the API key that pays for model usage directly. Instead, a plugin that needs model access should use a `[roles]` block, so stella makes the model call itself and tracks the cost properly.
+
+## `stella plugin doctor`
+
+Shows what each plugin's own lane asked to hold, what it holds, and which parts of the turn loop nobody decided for it.
+
+A plugin can ship a **lane**: a place a turn runs, with its own set of the loop's optional parts. The lanes stella ships are checked by the compiler, so a new part of the loop cannot ship until every one of them answers for it. A plugin's lane is a file, and a file cannot fail a build. That means a part added after the plugin was written reaches its lane as nothing at all, and nobody chose that. This command is where it shows up.
+
+```bash
+stella plugin doctor
+```
+
+```text
+acme
+  lane `acme.replay` — steering, resumed by redispatch
+    asks for: bus, steering
+    holds:    bus
+    withheld: steering — above the `observer` rung accepted at install, or outside this workspace's `lanes.custom` ceiling
+    nobody decided: calibration, fallback, gate, hook_approvals, hooks, outcomes, requery
+```
+
+"Asks for" is what the plugin's manifest wrote. "Holds" is what it actually gets, once the rung you accepted at install and your own `[lanes]` ceiling have both had their say. "Nobody decided" is the list worth reading: those are parts of the loop the plugin never answered for in either direction. Set a ceiling with the `[lanes]` section of `stella.toml`.
+
+This command reads. It writes nothing, starts nothing, and changes no grant.
 
 ## `stella plugin panel`
 

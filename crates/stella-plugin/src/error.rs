@@ -5,6 +5,8 @@
 //! of these to a plugin author should be able to print it verbatim and have
 //! the fix be obvious.
 
+use stella_protocol::LaneCapability;
+
 use crate::driver::DriverCall;
 use crate::host_call::HostCall;
 use crate::manifest::{HookEvent, Participation};
@@ -1100,5 +1102,85 @@ pub enum ManifestError {
         signal: Signal,
         /// The stage that publishes it, skipped this turn.
         publisher: HostStage,
+    },
+
+    /// A grade below `observer` declared a lane. A lane is a place a turn
+    /// runs, and a bundle with no say in the turn has no turn to run.
+    #[error(
+        "[lanes] needs participation \"observer\" or above; \
+         \"{participation}\" has no say in a turn to lend a lane"
+    )]
+    LanesRequireObserver {
+        /// The declared grade, below the one a lane needs.
+        participation: Participation,
+    },
+
+    /// A `[lanes]` block with no lane under it. An empty block reads as a
+    /// grant and asks for nothing, which is the shape this crate refuses on
+    /// sight rather than leaving to be found as a silence.
+    #[error("[lanes] declares no lane; drop the block or write a [lanes.custom.<id>] table")]
+    EmptyLanes,
+
+    /// A lane id outside the set Stella will print and store. The set is
+    /// lower-case letters, digits, `.`, `_` and `-`.
+    #[error(
+        "[lanes.custom.\"{lane}\"] is not a usable lane id; \
+         use lower-case letters, digits, `.`, `_` and `-`"
+    )]
+    LaneIdNotAllowed {
+        /// The id as written.
+        lane: String,
+    },
+
+    /// A lane took the name of a lane this tree already runs. Resolution is
+    /// builtin first, so the name is refused rather than quietly taken over
+    /// (`doc:turn-lane-assembly` §9.7).
+    #[error("[lanes.custom.{lane}] names a lane Stella already runs; that lane is not yours")]
+    LaneNamesABuiltin {
+        /// The builtin lane the manifest tried to take.
+        lane: String,
+    },
+
+    /// A lane did not say who picks a dead turn on it back up. The answer
+    /// decides what the lane owes when it dies, so a guess would leave a
+    /// report nobody asked for, or none where one was owed.
+    #[error(
+        "[lanes.custom.{lane}] does not declare `resume`; \
+         say who picks a dead turn back up: \"own\", \"parent\" or \"redispatch\""
+    )]
+    LaneResumeUndeclared {
+        /// The lane with no resume authority.
+        lane: String,
+    },
+
+    /// A lane named a seam this build does not have. The unknown-key rule
+    /// every table here follows, one level down: a name nobody reads is a
+    /// grant that quietly does nothing.
+    #[error("[lanes.custom.{lane}] asks for \"{name}\", which is not a turn-loop capability")]
+    UnknownLaneCapability {
+        /// The lane that asked.
+        lane: String,
+        /// The word it wrote.
+        name: String,
+    },
+
+    /// A lane named one seam twice. A repeat is always an editing mistake,
+    /// and folding it away would hide it.
+    #[error("[lanes.custom.{lane}] names {capability} more than once")]
+    DuplicateLaneCapability {
+        /// The lane that repeated itself.
+        lane: String,
+        /// The seam named twice.
+        capability: LaneCapability,
+    },
+
+    /// A lane both asked for a seam and turned it down. The two lists are
+    /// answers, so one seam cannot carry both.
+    #[error("[lanes.custom.{lane}] both asks for {capability} and declines it")]
+    LaneCapabilityBothWays {
+        /// The lane with two answers.
+        lane: String,
+        /// The seam answered twice.
+        capability: LaneCapability,
     },
 }

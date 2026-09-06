@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! `stella plugin install|list|panel|remove|drive` — the loader
+//! `stella plugin install|list|doctor|panel|remove|drive` — the loader
 //! (`doc:pipeline-as-plugins` §A4).
 //!
 //! One verb for each thing a human does with a plugin, and each one doing
@@ -63,6 +63,7 @@ use std::path::{Path, PathBuf};
 use crate::settings::{Settings, Toggle};
 
 pub(crate) mod configure;
+pub(crate) mod doctor;
 pub(crate) mod package;
 pub(crate) mod panel_grant;
 pub(crate) mod process;
@@ -92,6 +93,15 @@ pub enum PluginCmd {
     /// List installed plugins, what each is allowed to do, and where it came
     /// from.
     List,
+    /// Report each plugin lane: what it asked to hold, what it holds, and
+    /// which turn-loop seams nobody decided.
+    ///
+    /// A lane Stella ships is held to every seam of the loop by the
+    /// compiler. A lane a plugin ships is a file, and a file cannot fail a
+    /// build — so a seam added after the plugin was written reaches its lane
+    /// as nothing at all. This is where that shows up. Reads; changes
+    /// nothing.
+    Doctor,
     /// Decide whether an installed plugin may draw on your screen: print its
     /// panel handshake, and record the answer (SPEC 12.4).
     ///
@@ -158,6 +168,7 @@ pub fn run_plugin(cmd: &PluginCmd) -> Result<(), String> {
             install(&root, dir, (*scope).into(), *yes, &settings)
         }
         PluginCmd::List => list(&root, &settings),
+        PluginCmd::Doctor => doctor::doctor(&root, &settings),
         PluginCmd::Panel { name, allow, deny } => {
             decide_panel(&root, name, panel_answer(*allow, *deny), &settings)
         }

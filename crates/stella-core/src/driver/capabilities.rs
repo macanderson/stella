@@ -351,6 +351,66 @@ mod tests {
         assert!(lane.is_none());
     }
 
+    /// The register witness: every optional seam has a name a plugin
+    /// manifest can ask for, and the register holds nothing else.
+    ///
+    /// This is the load-time half of the two-level rule
+    /// (`doc:turn-lane-assembly` §9.2). A builtin lane is held to the seams
+    /// by the compiler. A lane a plugin ships is held to
+    /// [`LaneCapability`](stella_protocol::LaneCapability) at load time, and
+    /// that only works while the two sets are the same set.
+    ///
+    /// The mechanism is the destructure, not the assertion. It carries no
+    /// `..` rest pattern, so a new seam stops this file compiling until its
+    /// author gives it a name; the assertion then catches a name in the
+    /// register that no seam answers to.
+    #[test]
+    fn every_optional_seam_has_a_register_name() {
+        use stella_protocol::LaneCapability;
+
+        let TurnCapabilities {
+            hooks,
+            hook_approvals,
+            calibration,
+            gate,
+            steering,
+            requery,
+            bus,
+            outcomes,
+            fallback,
+            // Neither of these is an optional seam. A role is always
+            // answered, and a lane is the name of the lane itself, so
+            // neither is a thing a lane can ask to hold.
+            call_role: _,
+            lane: _,
+        } = TurnCapabilities::none();
+
+        let mut named = vec![
+            (LaneCapability::Hooks, hooks.is_none()),
+            (LaneCapability::HookApprovals, hook_approvals.is_none()),
+            (LaneCapability::Calibration, calibration.is_none()),
+            (LaneCapability::Gate, gate.is_none()),
+            (LaneCapability::Steering, steering.is_none()),
+            (LaneCapability::Requery, requery.is_none()),
+            (LaneCapability::Bus, bus.is_none()),
+            (LaneCapability::Outcomes, outcomes.is_none()),
+            (LaneCapability::Fallback, fallback.is_none()),
+        ];
+        for (name, unset) in &named {
+            assert!(unset, "`{name}` is set on the bare capability set");
+        }
+
+        named.sort_by_key(|(name, _)| *name);
+        let seams: Vec<_> = named.into_iter().map(|(name, _)| name).collect();
+        let mut register = LaneCapability::ALL.to_vec();
+        register.sort_unstable();
+        assert_eq!(
+            seams, register,
+            "the engine's optional seams and `LaneCapability` have drifted apart, so a \
+             plugin lane is validated against a register that is not the engine's"
+        );
+    }
+
     /// The owned-slot witness (#3387): a lane that **owns** its seams can
     /// assemble an engine.
     ///

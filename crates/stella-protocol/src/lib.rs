@@ -74,6 +74,7 @@ pub mod issue;
 pub mod journal;
 pub mod ladder;
 pub mod lane;
+pub mod lane_capability;
 pub mod plan_graph;
 pub mod proof;
 pub mod provenance;
@@ -153,6 +154,7 @@ pub use task_id::TaskId;
 pub use hook::HookEvent;
 pub use journal::{StampedEvent, stamped_line};
 pub use lane::{BuiltinLane, LaneId, ResumeAuthority, TurnLane};
+pub use lane_capability::LaneCapability;
 // The `ask_question` vocabulary (#4212). Re-exported flat because both the
 // tool that raises a question and every surface that renders one name these
 // types constantly, and neither should have to spell the module path.

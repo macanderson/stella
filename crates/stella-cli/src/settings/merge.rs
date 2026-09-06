@@ -425,6 +425,20 @@ impl Settings {
         if let Some(active) = &scope.active_plugins {
             self.active_plugins = Some(active.clone());
         }
+        // Plugin-lane ceilings fold per LANE, and by intersection rather than
+        // by replacement. A lane no scope names has no ceiling here;
+        // a lane two scopes name holds only what both allow.
+        //
+        // The explicit-listing rule again, and this block is the one
+        // `doc:turn-lane-assembly` §9.7 wrote the warning for: the overlay
+        // walks known keys, so a lane set folded into the root would read
+        // correctly from one file and vanish on the way through here — a
+        // withheld seam quietly restored, arriving through the config plane.
+        if let Some(lanes) = &scope.lanes {
+            self.lanes
+                .get_or_insert_with(LaneSettings::default)
+                .narrow(lanes);
+        }
         // External CGP providers merge per-ENTRY (like `providers`), so a
         // project scope can enable an entry the user scope declared without
         // restating its transport — but a higher scope's entry replaces the
