@@ -194,13 +194,12 @@ fn the_deprecation_notice_fires_only_when_no_pipeline_was_passed() {
 /// after `WrapperDispatch::run` had already billed
 /// `1 + DEFAULT_HOST_MAX_HOLDS` worker turns inside one judged round
 /// (`report.rounds != 1`, `goal_wrapped::run_goal_wrapped_turn`) — every one
-/// of those turns paid for before the whole run was discarded. This
-/// assertion fails on the pre-fix code (no such pre-flight check exists, so
-/// `reject_arbiter_wrapper_on_goal` is not even a name in scope / always
-/// returns `Ok`) and passes on this one: the arbiter grade is refused at
-/// resolve/bind time, before any provider is ever built and before a single
-/// paid call — mirrored end to end (no cost, no provider reached) by
-/// `crates/stella-cli/tests/goal_arbiter_wrapper_refusal_cli.rs`.
+/// of those turns paid for before the whole run was discarded. Without the
+/// fix, no such check exists: `reject_arbiter_wrapper_on_goal` is not even a
+/// name in scope, or it always returns `Ok`. With the fix, the arbiter grade
+/// is refused at resolve/bind time — before any provider is built and
+/// before a single paid call. `crates/stella-cli/tests/goal_arbiter_wrapper_refusal_cli.rs`
+/// mirrors it end to end: no cost, no provider reached.
 #[test]
 fn an_arbiter_grade_wrapper_is_refused_on_goal() {
     let mut warn = |_: String| {};
@@ -879,58 +878,6 @@ async fn a_stella_run_host_serves_candidate_fanout() {
     assert!(
         leaked.is_empty(),
         "the sweep must take every workspace: {leaked:?}"
-    );
-}
-
-/// A fan-out's spend is printed, and the clamp is printed with it (#3892).
-///
-/// The largest spend a plugin can cause on one host call — N *writing* worker
-/// turns — so a run that reported child turns and stayed silent here would be
-/// visible about the cheap spend and quiet about the expensive one. The
-/// requested width appears only when it differs from what ran, because "asked
-/// 5, ran 3" and "asked 3, ran 3" are different facts about a plugin and only
-/// the host knows which one happened.
-#[test]
-fn a_fanout_reports_what_it_bought_and_names_a_clamp() {
-    use stella_protocol::event::ModelCallRole;
-    use stella_runtime::wrapper::CandidateFanoutSpend;
-
-    let clamped = super::fanout_spend_lines(&[CandidateFanoutSpend {
-        role: "attempt".into(),
-        seat: ModelCallRole::Worker,
-        requested_width: 5,
-        width: 3,
-        cost_usd: 0.4200,
-        completed: 2,
-    }])
-    .remove(0);
-    assert!(clamped.contains("3 candidate turn(s)"), "{clamped}");
-    assert!(clamped.contains("attempt"), "{clamped}");
-    assert!(clamped.contains("0.4200"), "the money is named: {clamped}");
-    assert!(clamped.contains("2 finished"), "{clamped}");
-    assert!(
-        clamped.contains("asked for 5"),
-        "a clamp the plugin could not see is a clamp it will report as its \
-         own choice: {clamped}"
-    );
-
-    let unclamped = super::fanout_spend_lines(&[CandidateFanoutSpend {
-        role: "attempt".into(),
-        seat: ModelCallRole::Worker,
-        requested_width: 3,
-        width: 3,
-        cost_usd: 0.1,
-        completed: 3,
-    }])
-    .remove(0);
-    assert!(
-        !unclamped.contains("asked for"),
-        "nothing was clamped, so nothing is said about it: {unclamped}"
-    );
-
-    assert!(
-        super::fanout_spend_lines(&[]).is_empty(),
-        "a plugin that never fanned out keeps a silent run silent"
     );
 }
 

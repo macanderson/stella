@@ -110,6 +110,131 @@ fn an_arbiter_that_did_not_answer_gets_a_line_of_its_own() {
     );
 }
 
+/// **Witness.** A claim of `done` beside a rung that says a real test still
+/// fails prints a line saying so, rather than reading like an ordinary pass.
+///
+/// A build that never hands `fold_stamps` the round's rung leaves
+/// `Arbitration::rung` at `None` always, so `refutes_done` can never answer
+/// `true` there and this line can never print. This report is built the way a
+/// real dispatch builds one when it does pass the rung through — a `Done`
+/// claim sitting beside a rung `deterministic_failure` reads as a real
+/// failure — so the assertion below distinguishes the two.
+#[test]
+fn a_done_claim_beside_a_failing_rung_says_the_rung_wins() {
+    use stella_runtime::wrapper::{ArbiterClaim, TurnHoldBudget, fold_stamps};
+
+    let grant = stella_plugin::LoopGrant {
+        participation: stella_plugin::Participation::Arbiter,
+        ..stella_plugin::LoopGrant::default()
+    };
+    let verdict = stella_plugin::Verdict::Met {
+        evidence: stella_plugin::EvidenceProvenance::PluginReported,
+    };
+    let arbitration = fold_stamps(
+        Some(stella_protocol::LadderRung::Revise),
+        &[ArbiterClaim::from_verdict("vera", &verdict, &grant, 0)],
+        TurnHoldBudget {
+            turn_holds_spent: 0,
+            host_max_holds: 2,
+        },
+    );
+    let report = stella_runtime::wrapper::DispatchReport {
+        verdict: verdict.clone(),
+        outcome: stella_plugin::Outcome::Met {
+            evidence: stella_plugin::EvidenceProvenance::PluginReported,
+        },
+        snapshot: stella_runtime::wrapper::stamp::snapshot(
+            &stella_plugin::VerdictRule::default(),
+            &stella_plugin::EvidenceSet::unobserved(),
+            &verdict,
+        ),
+        faults: Vec::new(),
+        arbitration,
+        ..faulted_report()
+    };
+
+    let lines = super::report_lines(None, OutputFormat::Text, &report, &[], &[], &[], &[]);
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("the rung's evidence wins")),
+        "a done claim beside a failing rung must not read as an ordinary pass: {lines:#?}"
+    );
+}
+
+/// A fan-out's spend is printed, and the clamp is printed with it.
+///
+/// The largest spend a plugin can cause on one host call — N *writing* worker
+/// turns — so a run that reported child turns and stayed silent here would be
+/// visible about the cheap spend and quiet about the expensive one. The
+/// requested width appears only when it differs from what ran, because "asked
+/// 5, ran 3" and "asked 3, ran 3" are different facts about a plugin and only
+/// the host knows which one happened.
+///
+/// **Also asserts the line names the plugin that spent it**, and prints the
+/// seat in the wire vocabulary telemetry carries — a lowercase `"worker"` —
+/// never `{:?}`'s `"Worker"`. A build that prints `seat Worker` with no
+/// plugin fails both assertions.
+#[test]
+fn a_fanout_reports_what_it_bought_and_names_a_clamp() {
+    use stella_protocol::event::ModelCallRole;
+    use stella_runtime::wrapper::CandidateFanoutSpend;
+
+    let clamped = super::fanout_spend_lines(&[CandidateFanoutSpend {
+        plugin: "candidates-wrapper".into(),
+        role: "attempt".into(),
+        seat: ModelCallRole::Worker,
+        requested_width: 5,
+        width: 3,
+        cost_usd: 0.4200,
+        completed: 2,
+    }])
+    .remove(0);
+    assert!(clamped.contains("3 candidate turn(s)"), "{clamped}");
+    assert!(clamped.contains("attempt"), "{clamped}");
+    assert!(clamped.contains("0.4200"), "the money is named: {clamped}");
+    assert!(clamped.contains("2 finished"), "{clamped}");
+    assert!(
+        clamped.contains("candidates-wrapper"),
+        "the line names the plugin that spent it, matching the child-turn line beside it: \
+         {clamped}"
+    );
+    assert!(
+        clamped.contains("seat worker"),
+        "the seat prints in the wire vocabulary telemetry carries, not a Rust identifier: \
+         {clamped}"
+    );
+    assert!(
+        !clamped.contains("Worker"),
+        "no Debug rendering of the enum survives to the report: {clamped}"
+    );
+    assert!(
+        clamped.contains("asked for 5"),
+        "a clamp the plugin could not see is a clamp it will report as its \
+         own choice: {clamped}"
+    );
+
+    let unclamped = super::fanout_spend_lines(&[CandidateFanoutSpend {
+        plugin: "candidates-wrapper".into(),
+        role: "attempt".into(),
+        seat: ModelCallRole::Worker,
+        requested_width: 3,
+        width: 3,
+        cost_usd: 0.1,
+        completed: 3,
+    }])
+    .remove(0);
+    assert!(
+        !unclamped.contains("asked for"),
+        "nothing was clamped, so nothing is said about it: {unclamped}"
+    );
+
+    assert!(
+        super::fanout_spend_lines(&[]).is_empty(),
+        "a plugin that never fanned out keeps a silent run silent"
+    );
+}
+
 /// **Witness (#3883).** Every line a wrapper's report prints names the lane it
 /// came from, when there is more than one lane to confuse.
 ///
@@ -136,6 +261,7 @@ fn a_scoped_report_names_its_task_on_every_line() {
         completed: true,
     }];
     let fanouts = [CandidateFanoutSpend {
+        plugin: "budget-keeper".to_string(),
         role: "attempt".to_string(),
         seat: ModelCallRole::Worker,
         requested_width: 2,

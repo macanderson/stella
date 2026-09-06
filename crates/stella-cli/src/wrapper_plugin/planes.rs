@@ -90,14 +90,15 @@ pub(crate) fn child_turn_plane(
 /// capability whose unit is a *writing* worker turn rather than a read:
 ///
 /// - **Only `worker` may be fanned out to, and this host binds no extra
-///   tier.** [`CandidateFanouts`] keeps its own tier table and refuses every
-///   tier that does not resolve to the worker's seat, which is the inverse of
-///   the child plane's rule and the reason both exist: a child turn is
-///   evidence *about* the work and must not be graded by the model that did
-///   it, while a candidate **is** the work and must not be booked to a
-///   responsibility that wrote nothing. Nothing is bound here, so that rule
-///   stands as core wrote it. Moving this plane onto the grant
-///   [`child_turn_plane`] reads has its own issue.
+///   tier.** [`CandidateFanouts`] resolves an unbound tier to the worker's
+///   seat by default. Whether this plugin may fan out at all is a separate
+///   check, done first: `HostCallGate` reads `[loop] calls` for
+///   `candidate_fanout` before this plane is ever asked to resolve a tier. So
+///   no core-owned word list decides the tier here. This is the child plane's
+///   rule, inverted: a child turn is evidence *about* the work and must not
+///   be graded by the model that did it, while a candidate **is** the work
+///   and must not be booked to a responsibility that wrote nothing. Nothing
+///   is bound here, so every declared tier resolves to the worker.
 /// - **No per-fan-out USD carve is requested.** `None` asks for the whole
 ///   headroom, divided by the clamped width, and each share is clamped again
 ///   by the substrate against the session's sub-agent pool

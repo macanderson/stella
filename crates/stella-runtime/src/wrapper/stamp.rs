@@ -65,6 +65,22 @@ pub struct StampTiming {
 /// A plugin gets the id from the manifest the host loaded. Nothing else can
 /// reach this field, so no plugin can sign another one's name. Evidence the
 /// host concluded for itself is [`HOST_AUTHOR`].
+///
+/// # Whose id, in a composition
+///
+/// `manifest_id` is a single id, and a composition can run several plugins in
+/// one dispatch. The rule is the **arbiter's** id — the one plugin whose
+/// `[requirements]` and `[oracle]` became `self.rule` at bind time
+/// (`WrapperDispatch::bind_composed`'s `super::compose::merge_rule`), because
+/// that rule is what `judge` actually read to reach the verdict this stamp
+/// records. It is the same id [`super::ArbiterClaim::from_verdict`] carries,
+/// on purpose: a stamp and the claim beside it on one report must name the
+/// same decider, or a reader has no way to tell which one to trust
+/// (`doc:pipeline-as-plugins` §4). The composition's own joined id (every
+/// member's, comma-separated) is a record of what *ran*, not of what
+/// *decided*, and stays on [`super::DispatchReport::variant`] instead. A
+/// composition with no arbiter has nothing this rule can single out, so the
+/// caller falls back to that same joined id — the two already agree there.
 #[must_use]
 pub fn author(provenance: EvidenceProvenance, manifest_id: &str) -> &str {
     match provenance {

@@ -142,8 +142,9 @@ booked, and whether it may be spent there at all, come from
 `stella_runtime::wrapper::SeatGrant` — the manifest a person read at install.
 The two rules the table carried survive on the grant: no plugin spends at the
 seat the session's own turns use, and a seat that decides whether the work is
-done needs a manifest declaring an `[oracle]`. One table is left in that crate,
-in `candidate_fanout.rs`, whose rule is the inverse; it has its own issue.
+done needs a manifest declaring an `[oracle]`. The one other table in that
+crate, in `candidate_fanout.rs`, carried the inverse rule and is gone too
+(§6's Slice 1 note).
 
 ## 5. The four gaps
 
@@ -190,12 +191,18 @@ reference to any role name.
 
 **Landed.** The witness is
 `a_tier_core_has_never_heard_of_runs_at_the_grants_own_seat` in
-`crates/stella-runtime/src/wrapper/child_turn.rs`. The done check was written
-as a whole-crate one and could not be met as written: `candidate_fanout.rs`
-keeps its own table for the inverted rule, tracked as its own issue, and prose
-that explains the rule still names the worker. What holds instead is that the
-child-turn plane carries no role-word table and no role-word literal outside
-its tests.
+`crates/stella-runtime/src/wrapper/child_turn.rs`.
+
+**The one table left behind is also gone.** `candidate_fanout.rs`'s
+own `default_seats()` — the same four words, bound the other way round — kept
+this whole-crate check from being met as written. Whether a plugin may fan out
+at all is now `[loop] calls` containing `candidate_fanout`, checked by
+`HostCallGate` before the plane resolves anything, so a declared tier core has
+never heard of resolves to the worker's seat exactly as `reviewer` does for a
+child turn; a host that still wants a tier refused binds it away with
+`CandidateFanouts::with_seat`, and that binding is what is checked, never the
+spelling. The done check now holds as written: no role-word table and no
+role-word literal remain in `crates/stella-runtime/` outside a test.
 
 ### Slice 2 — receipts carry the name (gap C)
 
