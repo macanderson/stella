@@ -66,7 +66,8 @@ async fn run_productive_turn(steps: u32, config: EngineConfig) -> (TurnOutcome, 
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &DistinctTools, config, &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &DistinctTools, config, &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("do the long task"),
