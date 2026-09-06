@@ -168,7 +168,7 @@ fn advancing_walks_every_lens_and_ends_in_watch_not_termination() {
 fn every_lens_declares_its_tooling_or_admits_it_has_none() {
     for l in LENSES {
         match l.tooling {
-            Tooling::Command { run, interpret } => {
+            Tooling::Command { run, interpret, .. } => {
                 assert!(!run.trim().is_empty(), "{} names an empty command", l.name);
                 assert!(
                     !interpret.trim().is_empty(),

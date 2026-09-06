@@ -25,9 +25,10 @@ use crate::{Calibration, CycleRecord, Metrics, Signal, metrics, starved};
 
 /// The label a finding about the loop carries.
 ///
-/// The loop wasting its own cycles is a defect, and the type axis of a backlog
-/// convention spells that `bug`.
-pub const DEFECT_LABEL: &str = "bug";
+/// The loop wasting its own cycles is a defect, and every supply files a
+/// defect under one word. One definition, in [`crate::supply::DEFECT_LABEL`],
+/// so two of them cannot drift apart.
+pub use crate::supply::DEFECT_LABEL;
 
 /// How many cycles a lens must have run before its silence counts.
 ///
