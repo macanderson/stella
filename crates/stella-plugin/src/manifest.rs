@@ -46,6 +46,7 @@ use crate::consent::{Capability, validate_capabilities};
 use crate::driver::DriverGrant;
 use crate::error::ManifestError;
 use crate::host_call::HostCall;
+use crate::lanes::{DeclaredLane, Lanes};
 use crate::oracle::{Oracle, OracleProcess, OracleProcessSource};
 use crate::package::{
     McpContribution, RecordContribution, SkillContribution, ToolContribution,
@@ -434,6 +435,15 @@ pub struct PluginManifest {
     /// turn-loop wrapper.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wrapper: Option<Wrapper>,
+    /// Observer and above: the lanes this plugin ships. Absent = it ships
+    /// none.
+    ///
+    /// A lane is a place a turn runs, so the seams it holds are checked at
+    /// load against the register the engine's own seams are held to. See
+    /// [`Lanes`] for the rules and for why the rung is read out of the seam
+    /// list rather than written beside it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lanes: Option<Lanes>,
     /// Observer and above: the process this plugin runs as, and the exact
     /// environment slice it inherits (`doc:pipeline-as-plugins` §A5). Absent =
     /// this plugin ships no process, so no hook grant it holds can be
@@ -555,6 +565,24 @@ impl PluginManifest {
                 timeout_secs: runtime.timeout_secs,
                 source: OracleProcessSource::Runtime,
             }),
+        }
+    }
+
+    /// The lanes this manifest ships, checked.
+    ///
+    /// An empty list for a manifest with no `[lanes]` block. For a manifest
+    /// that came from [`PluginManifest::from_toml_str`] this cannot fail —
+    /// validation has already resolved the block once — so a caller that
+    /// wants the lanes alone can treat an error as unreachable.
+    ///
+    /// # Errors
+    ///
+    /// Every rule [`Lanes::resolve`] enforces, for a manifest built by hand
+    /// rather than through the constructor.
+    pub fn declared_lanes(&self) -> Result<Vec<DeclaredLane>, ManifestError> {
+        match &self.lanes {
+            Some(lanes) => lanes.resolve(),
+            None => Ok(Vec::new()),
         }
     }
 
@@ -808,6 +836,16 @@ impl PluginManifest {
                 return Err(ManifestError::RuntimeRequiresObserver { participation });
             }
             runtime.validate(ProcessBlock::Runtime)?;
+        }
+
+        // A lane is a place a turn runs, so it needs at least the grade that
+        // buys a say in one — `[runtime]`'s rule, for the same reason. Every
+        // rule about what a lane may hold lives with the block itself.
+        if let Some(lanes) = &self.lanes {
+            if !participation.includes(Participation::Observer) {
+                return Err(ManifestError::LanesRequireObserver { participation });
+            }
+            lanes.resolve()?;
         }
 
         if let Some(roles) = &self.roles {

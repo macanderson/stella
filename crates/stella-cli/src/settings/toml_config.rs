@@ -46,9 +46,9 @@ use super::authority::ManagedAuthoritySettings;
 use super::context::ContextSettings;
 use super::context_providers::ContextProviderSettings;
 use super::{
-    AgentEngineAgent, AgentEngineAgents, AgentEngineConfig, FoundrySettings, McpSettings,
-    PlanReviewSettings, ProviderSettings, RewardSettings, Settings, Toggle, ToolsSettings,
-    UiSettings,
+    AgentEngineAgent, AgentEngineAgents, AgentEngineConfig, FoundrySettings, LaneSettings,
+    McpSettings, PlanReviewSettings, ProviderSettings, RewardSettings, Settings, Toggle,
+    ToolsSettings, UiSettings,
 };
 
 /// The schema version this build writes and understands.
@@ -343,6 +343,14 @@ pub struct TomlConfig {
     /// plugin its operator switched off.
     #[serde(default)]
     pub plugins: BTreeMap<String, super::Toggle>,
+    /// `[lanes]` — the operator's ceiling on a lane a plugin ships. Same
+    /// shape in JSON and TOML, so no lowering beyond the move.
+    ///
+    /// A top-level section rather than a key under `[run]`, for
+    /// `[plan_review]`'s reason: it is a table of tables, and `[run]` holds
+    /// scalars.
+    #[serde(default)]
+    pub lanes: Option<LaneSettings>,
     /// `[reward]` — what a turn's verdict is worth as a training label (#1043).
     /// Same shape in JSON and TOML, so no lowering beyond the move.
     #[serde(default)]
@@ -832,6 +840,7 @@ impl TomlConfig {
             ui,
             voice,
             plugins,
+            lanes,
             reward,
             foundry,
             plan_review,
@@ -885,6 +894,7 @@ impl TomlConfig {
             context,
             context_providers,
             plugins,
+            lanes,
             managed_authority: authority,
             // Round-trip through JSON: the field is stored untyped and
             // validated fail-open by its own adapter, which speaks

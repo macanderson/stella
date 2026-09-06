@@ -364,6 +364,27 @@ fn loop_say(manifest: &PluginManifest) -> Vec<String> {
         ));
     }
 
+    // A lane is a place a turn runs, so what it asks to hold is part of the
+    // say a person is agreeing to. `unwrap_or_default` cannot hide anything
+    // here: a manifest that came through `from_toml_str` has already had its
+    // lanes resolved once, so the only value this drops is one a hand-built
+    // manifest never checked.
+    for lane in manifest.declared_lanes().unwrap_or_default() {
+        let asked: Vec<String> = lane.requested().iter().map(ToString::to_string).collect();
+        lines.push(if asked.is_empty() {
+            format!(
+                "  - brings a lane of its own, `{}`, asking to hold nothing",
+                one_line(lane.id().as_str())
+            )
+        } else {
+            format!(
+                "  - brings a lane of its own, `{}`, asking to hold: {}",
+                one_line(lane.id().as_str()),
+                asked.join(", ")
+            )
+        });
+    }
+
     if grant.participation.includes(Participation::Arbiter) {
         lines.push(match grant.max_holds {
             Some(1) => "  - may refuse to let a finished turn end, once per turn".into(),

@@ -109,6 +109,7 @@ mod driver;
 mod error;
 mod evidence;
 mod host_call;
+mod lanes;
 mod manifest;
 mod observed;
 mod oracle;
@@ -162,6 +163,10 @@ pub use host_call::{
     ChildTurnArgs, ChildTurnResult, FanoutCandidate, HostCall, HostCallArgs, HostCallFailure,
     HostCallOk, HostCallOutcome, HostCallRefusal, HostCallRequest, HostCallResponse, PluginMessage,
     RecallArgs, RecallFrame, RecallResult, RunTestArgs, TestRunResult,
+};
+pub use lanes::{
+    ConsentedGrade, DeclaredLane, LaneAuthority, LaneDeclaration, LaneGrant, Lanes,
+    participation_for, risk_ceiling,
 };
 pub use manifest::{HookEvent, LoopGrant, Participation, PluginManifest, Role, Subloop};
 pub use observed::ObservedEvidence;

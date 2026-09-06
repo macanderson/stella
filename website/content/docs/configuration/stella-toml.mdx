@@ -324,6 +324,28 @@ Keys are plugin ids, so like `[seats]` this is an **open** map: it cannot join
 vera = "off"
 ```
 
+### `[lanes]`
+
+A plugin can ship a **lane**: a place a turn runs, with its own set of the loop's
+optional seams. Its manifest asks for the seams it wants. This section is where you
+say what it may actually hold.
+
+`lanes.custom.<id>` is keyed by the lane id the plugin's manifest declared. A lane you
+never name has no ceiling here, and holds whatever the rung you accepted when you
+installed the plugin allows. A lane you do name holds only the seams you list.
+
+Scopes narrow, one after another: a project file can take a seam away, and can never
+hand one back. That is why this section is read from a repository you cloned at all —
+the only thing it can do there is leave a plugin lane holding less.
+
+`stella plugin doctor` prints the seam names, what each lane asked for, what it holds,
+and every seam a lane answered for in neither direction.
+
+```toml title="stella.toml"
+[lanes.custom."acme.replay"]
+capabilities = ["bus"]
+```
+
 ### `[tools]`
 
 This is the same open map, deny-list, and name-over-group-over-`"*"` precedence as

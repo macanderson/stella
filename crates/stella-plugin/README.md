@@ -210,6 +210,14 @@ before it crosses.
   out of `manifest.rs` on the rule every other block here already follows,
   before that file reached the 1500-line ceiling it had 17 lines of headroom
   against.
+- `src/lanes.rs` — the `[lanes.custom.<id>]` block: a lane the plugin ships,
+  the turn-loop seams it asks for, the seams it declines, and who resumes it.
+  Every rule is a load-time one, because a lane this tree ships is held to the
+  seam set by the compiler and a lane in a file cannot be. The rung is read
+  out of the seam list (`participation_for`) rather than written beside it,
+  and `granted = requested ∩ authorized` is kept as two sets so a lane that
+  asked for more than it holds still shows the ask. `ConsentedGrade` is the
+  authority this crate can answer on its own; a host with a gate wraps it.
 - `src/wrapper.rs` — the `[wrapper]` block: `Wrapper`, `WrapperStage`, the
   **open** `StageName` vocabulary over the closed `HostStage` twelve (#3963 —
   a manifest may contribute a stage under its own word, and the load checks
