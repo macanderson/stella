@@ -584,6 +584,8 @@ pub(crate) fn decide_for_test(
 }
 
 mod retract;
+/// The unprinted half of `stella proposals retract`, for the efficacy sweep.
+pub(crate) use retract::retract_published;
 
 #[cfg(test)]
 mod tests;
