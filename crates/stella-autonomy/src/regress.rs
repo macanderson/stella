@@ -25,10 +25,10 @@ use crate::supply::Finding;
 
 /// The label a returning defect carries.
 ///
-/// A fix that came back out is a defect, and the type axis of a backlog
-/// convention spells that `bug`. A convention with no such member refuses the
-/// draft, and the refusal stands. Nothing here invents a word.
-pub const DEFECT_LABEL: &str = "bug";
+/// A fix that came back out is a defect, and every supply files a defect under
+/// one word. One definition, in [`crate::supply::DEFECT_LABEL`], so two of
+/// them cannot drift apart. Nothing here invents a word.
+pub use crate::supply::DEFECT_LABEL;
 
 /// What the loop wrote down when it closed an issue.
 ///

@@ -86,7 +86,7 @@ the CLI does — so the dashboard and the terminal cannot disagree.
 | [`src/ready.rs`](src/ready.rs) | `ready_queue`: which backlog issues may be taken next, and in what order. `Blocked by: #N` lines, the `status:ready` override, and the escalation cooldown. |
 | [`src/escalation.rs`](src/escalation.rs) | Escalation as a cooldown: `classify` reads an abort message, `retry_after` says how long to wait, `park_after` says when waiting ends. The record is written into the issue body and read back from it. |
 | [`src/gate.rs`](src/gate.rs) | Which checks are allowed to block a merge, and which have stopped earning that right. |
-| [`src/supply.rs`](src/supply.rs) | Where the loop looks when the ranked queue is empty: `WorkSupply`, `SupplyPolicy` (every switch off), the `rearm` rule that re-opens a dry ladder against a moved base, and `novel`, which drops a finding the seen set already holds. |
+| [`src/supply.rs`](src/supply.rs) | Where the loop looks when the ranked queue is empty: `WorkSupply`, `SupplyPolicy` (every switch off), the `rearm` rule that re-opens a dry ladder against a moved base, `Reading`/`read`, which turn a lens command's output into findings with no model, and `novel`, which drops a finding the seen set already holds. |
 | [`src/seen.rs`](src/seen.rs) | The dedup set, and the one thing that ages a line out of it: `Filing` pairs a digest with the issue it became, and `live` drops a line whose every issue closed on a cited change. A line with no filing record never decays. |
 | [`src/regress.rs`](src/regress.rs) | Re-checking the fixes the loop has claimed: `ClosureReceipt`, `check`, and the `sweep` that turns a change gone from the base branch into a fresh defect. |
 | [`src/meta.rs`](src/meta.rs) | The loop read against its own ledger: a raised signal nobody acted on, and a lens that has looked several times and found nothing. |
@@ -151,7 +151,10 @@ Adding a new aperture lens: add a [`Lens`] entry to [`LENSES`] naming its
 [`Tooling`] (a concrete `run`/`interpret` command, or `ModelOnly` with a note
 saying what tooling would close the gap — no lens may be silently a no-op,
 #1549), then extend `the_ladder_is_the_shell_drivers_ladder_in_order` in
-`src/tests.rs` with the new name in its position.
+`src/tests.rs` with the new name in its position. A `Command` lens also says
+whether the driver can read its output with no model: give it a
+`supply::Reading` only when its `interpret` line asks for no judgement, and
+make sure `run` is a command a shell can run as written.
 
 Adding a new self-improvement signal: extend [`metrics`] (or add a
 `starved`-shaped standalone function if the signal reads the calibration

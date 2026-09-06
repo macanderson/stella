@@ -212,6 +212,117 @@ pub fn rearm(aperture: &str, base: &Baseline, policy: &SupplyPolicy) -> Rearm {
     }
 }
 
+/// The label a lens finding carries.
+///
+/// The same word `regress` and `meta` file under. A defect a lens found is a
+/// defect, and the type axis of a backlog convention spells that `bug`. A
+/// convention with no such member refuses the draft, and the refusal stands.
+pub const DEFECT_LABEL: &str = "bug";
+
+/// How many findings one lens pass offers at most.
+///
+/// A tool that prints a hundred errors would otherwise become a hundred
+/// issues in one pass. Ten is a bound and not a measurement: enough that a
+/// real run is not cut short, small enough that a broken tool cannot flood a
+/// tracker. What is over the cap is offered again on the next pass, because
+/// nothing wrote it down as seen.
+pub const MAX_LENS_FINDINGS: usize = 10;
+
+/// How the driver reads one lens command's output, with no model.
+///
+/// A lens declares one only when its output can be read without judgement.
+/// Most `interpret` lines ask for a judgement — "each listed file that holds
+/// pure decision logic" — and a mechanical read of those would file noise.
+/// That is how `doc:backlog-self-driving` §4.4 says this supply turns into
+/// make-work. A lens that asks for judgement declares no reading, and the
+/// model-driven audit phase still reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reading {
+    /// Every line the tool prints as an error is one defect.
+    ///
+    /// `error: text` and `error[code]: text` are both read, and the text is
+    /// the finding. That is the shape `cargo deny` writes, which is what the
+    /// `supply-chain` lens declares. A reading that matches nothing yields
+    /// nothing, so a tool that changes its output costs the loop a supply and
+    /// never a wrong filing.
+    ErrorLines,
+}
+
+/// Turn one lens command's output into findings.
+///
+/// Empty for a lens that declares no reading, and for output the reading does
+/// not match. Both mean one thing to the caller: this lens offered nothing.
+///
+/// The order is the order the tool printed. A repeat of one line is dropped,
+/// so a tool that says the same thing twice is one finding.
+#[must_use]
+pub fn read(lens: &crate::Lens, output: &str) -> Vec<Finding> {
+    let crate::Tooling::Command {
+        run,
+        reading: Some(reading),
+        ..
+    } = lens.tooling
+    else {
+        return Vec::new();
+    };
+
+    let mut taken: Vec<&str> = Vec::new();
+    let mut found = Vec::new();
+    for line in output.lines() {
+        let Some(message) = (match reading {
+            Reading::ErrorLines => error_message(line),
+        }) else {
+            continue;
+        };
+        if taken.contains(&message) {
+            continue;
+        }
+        taken.push(message);
+        found.push(lens_finding(lens.name, run, message));
+        if found.len() == MAX_LENS_FINDINGS {
+            break;
+        }
+    }
+    found
+}
+
+/// What a tool said on a line it printed as an error, if it did.
+///
+/// `error: text` and `error[code]: text` both yield `text`. A line with the
+/// word somewhere else in it — a path, a sentence — is not one, so the prefix
+/// is what is matched.
+fn error_message(line: &str) -> Option<&str> {
+    let rest = line.trim().strip_prefix("error")?;
+    let rest = match rest.strip_prefix('[') {
+        Some(tail) => tail.split_once(']')?.1,
+        None => rest,
+    };
+    let message = rest.strip_prefix(':')?.trim();
+    (!message.is_empty()).then_some(message)
+}
+
+/// One defect a lens read out of its own tool's output.
+fn lens_finding(lens: &str, run: &str, message: &str) -> Finding {
+    Finding {
+        title: format!("the `{lens}` lens reports: {message}"),
+        body: format!(
+            "The `{lens}` rung of the aperture ladder ran `{run}`. It printed this \
+             line as an error:\n\n\
+             ```\n{message}\n```\n\n\
+             The loop read the line and did not judge it. That lens says every error \
+             its tool prints is a defect, so the line is filed rather than weighed.\n\n\
+             ## How to check\n\n\
+             1. Run `{run}` at the root of this repository.\n\
+             2. Find the error above in what it prints.\n\
+             3. Fix the cause, or say on this issue why the tool is wrong here.\n\n\
+             ## Definition of done\n\n\
+             - [ ] `{run}` no longer prints this error, or this issue records why the \
+             error is not a defect.\n"
+        ),
+        labels: vec![DEFECT_LABEL.to_owned()],
+    }
+}
+
 /// The findings whose digest is absent from the seen set.
 ///
 /// The key is [`crate::finding_digest`] over the title, which is the key the
@@ -387,5 +498,108 @@ mod tests {
         let seen = vec![crate::finding_digest(&first.title)];
 
         assert!(novel(&[again], &seen).is_empty());
+    }
+
+    /// The lens the shipped table gives a reading to.
+    fn mechanical() -> &'static crate::Lens {
+        crate::LENSES
+            .iter()
+            .find(|lens| match lens.tooling {
+                crate::Tooling::Command { reading, .. } => reading.is_some(),
+                crate::Tooling::ModelOnly { .. } => false,
+            })
+            .expect("one lens declares a reading")
+    }
+
+    /// **The witness for the mechanical read.** A tool's error lines become
+    /// findings, and its other lines do not.
+    #[test]
+    fn a_reading_turns_error_lines_into_findings() {
+        let out = read(
+            mechanical(),
+            "checking 412 crates\n\
+             error[vulnerability]: a crate has a known advisory\n\
+             warning[unmaintained]: a crate is unmaintained\n\
+             error: a crate carries a license this workspace refuses\n\
+             advisories FAILED, bans ok\n",
+        );
+
+        assert_eq!(out.len(), 2, "two error lines, two findings");
+        assert!(out[0].title.ends_with("a crate has a known advisory"));
+        assert!(
+            out[1]
+                .title
+                .ends_with("a crate carries a license this workspace refuses")
+        );
+        assert_eq!(out[0].labels, vec![DEFECT_LABEL.to_owned()]);
+    }
+
+    /// One line said twice is one defect, so a tool that repeats itself does
+    /// not open two issues.
+    #[test]
+    fn a_repeated_line_is_one_finding() {
+        let out = read(
+            mechanical(),
+            "error: the same thing\nerror: the same thing\n",
+        );
+
+        assert_eq!(out.len(), 1);
+    }
+
+    /// A broken tool cannot flood the tracker in one pass.
+    #[test]
+    fn a_pass_offers_no_more_than_the_cap() {
+        let flood: String = (0..MAX_LENS_FINDINGS * 3)
+            .map(|n| format!("error: defect number {n}\n"))
+            .collect();
+
+        assert_eq!(read(mechanical(), &flood).len(), MAX_LENS_FINDINGS);
+    }
+
+    /// A lens with no reading offers nothing, so the audit phase keeps it.
+    #[test]
+    fn a_lens_with_no_reading_offers_nothing() {
+        let model_read = crate::lens("rubric").expect("the first rung");
+
+        assert!(read(model_read, "error: something went wrong").is_empty());
+    }
+
+    /// The word has to be the prefix. A path or a sentence that holds it is
+    /// not a tool reporting one.
+    #[test]
+    fn the_word_error_inside_a_line_is_not_a_finding() {
+        let out = read(
+            mechanical(),
+            "compiling crates/stella-core/src/error.rs\n\
+             an error is not what this line reports\n\
+             error:\n",
+        );
+
+        assert!(out.is_empty(), "got {out:?}");
+    }
+
+    /// A lens that declares a reading must name a command a shell can run.
+    /// Several `run` strings are prose — "/ultraudit (deep) or /reaudit
+    /// (fast)" — and the driver runs the string as written.
+    #[test]
+    fn a_lens_with_a_reading_names_a_runnable_command() {
+        for lens in crate::LENSES {
+            let crate::Tooling::Command {
+                run,
+                reading: Some(_),
+                ..
+            } = lens.tooling
+            else {
+                continue;
+            };
+            for word in ["(", ")", " or "] {
+                assert!(
+                    !run.contains(word),
+                    "the `{}` lens declares a reading, so the driver runs `{run}` as \
+                     written, and `{word}` says that string is prose",
+                    lens.name
+                );
+            }
+        }
     }
 }

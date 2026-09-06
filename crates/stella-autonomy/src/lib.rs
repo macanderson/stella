@@ -296,6 +296,10 @@ pub enum Tooling {
     Command {
         run: &'static str,
         interpret: &'static str,
+        /// How the driver reads this command's output with no model, or
+        /// `None` when only a model can read it. See
+        /// [`crate::supply::Reading`].
+        reading: Option<crate::supply::Reading>,
     },
     /// No mechanical backing exists yet; the model audits unaided and the
     /// note says what tooling would close the gap.
@@ -322,6 +326,7 @@ pub const LENSES: &[Lens] = &[
         tooling: Tooling::Command {
             run: "/ultraudit (deep) or /reaudit (fast)",
             interpret: "the report's findings, deduped by digest against seen.txt",
+            reading: None,
         },
         heavy_only: false,
     },
@@ -333,6 +338,7 @@ pub const LENSES: &[Lens] = &[
                   crates/stella-fleet/src crates/stella-tui/src",
             interpret: "each listed file that holds pure decision logic and has \
                         no property test is a finding",
+            reading: None,
         },
         heavy_only: false,
     },
@@ -343,6 +349,7 @@ pub const LENSES: &[Lens] = &[
             interpret: "numbering/citation violations mechanically; the semantic \
                         half — does the code still honor each numbered invariant \
                         in AGENTS.md — is read by the model against that list",
+            reading: None,
         },
         heavy_only: false,
     },
@@ -361,6 +368,7 @@ pub const LENSES: &[Lens] = &[
                   fixtures (cargo test -p stella-model)",
             interpret: "a regression against the previous loop-bench run or a \
                         golden diff is a finding",
+            reading: None,
         },
         heavy_only: true,
     },
@@ -371,6 +379,7 @@ pub const LENSES: &[Lens] = &[
             interpret: "every advisory, ban, source, or license finding is a \
                         defect (this is a separate CI job, so running it in a \
                         cycle is additive, not duplicated work)",
+            reading: Some(supply::Reading::ErrorLines),
         },
         heavy_only: false,
     },
@@ -390,6 +399,7 @@ pub const LENSES: &[Lens] = &[
                   scripts/check-command-docs.sh",
             interpret: "stale citations, uncited documents, and undocumented \
                         commands are findings",
+            reading: None,
         },
         heavy_only: false,
     },
@@ -400,6 +410,7 @@ pub const LENSES: &[Lens] = &[
                   with --rig --dry-run first)",
             interpret: "aborts, stalls, and stuck-loop detections across the \
                         long run are findings",
+            reading: None,
         },
         heavy_only: true,
     },
