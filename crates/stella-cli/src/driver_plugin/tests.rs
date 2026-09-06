@@ -963,6 +963,15 @@ async fn a_claim_is_granted_when_free_and_names_the_holder_when_it_is_not() {
     assert!(!taken.held, "{taken:?}");
     assert!(taken.holder.contains("peer:9001"), "{taken:?}");
     drop(peer);
+
+    // A claim that names nothing is refused rather than pointed at the top of
+    // the queue: which unit to take is the driver's decision.
+    let blank = host(workspace.path().to_path_buf())
+        .perform(DriverCall::BacklogClaim, claim_on("  "))
+        .await
+        .expect_err("a blank key names no unit");
+    assert_eq!(blank.refusal, HostCallRefusal::Failed);
+    assert!(blank.detail.contains("names no issue"), "{blank}");
 }
 
 /// Working a unit reads the tracker, so it is held to the same grant the read
