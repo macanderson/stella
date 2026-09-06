@@ -57,12 +57,20 @@ for manifest in "$plugin_root"/*/plugin.toml; do
 
   # A line naming the plugin's directory, with `//` comment lines dropped
   # first so a doc comment cannot pass for a spawn.
+  #
+  # The strip and the search do not share a pipe. Under `pipefail` a `grep -q`
+  # that matches early exits while `sed` is still writing, `sed` takes SIGPIPE
+  # and reports 141, and the pipeline reads as no-match. Which files lost that
+  # race varied run to run: five runs of the piped form over this repository
+  # reported stella-witness four times, stella-candidates twice, and once
+  # reported nothing at all.
   graders=""
   while IFS= read -r src; do
     [ -n "$src" ] || continue
-    if sed 's|^[[:space:]]*//.*$||' "$src" | grep -qF "plugins/$name"; then
-      graders="${graders}${src}"$'\n'
-    fi
+    stripped="$(sed 's|^[[:space:]]*//.*$||' "$src")"
+    case "$stripped" in
+      *"plugins/$name"*) graders="${graders}${src}"$'\n' ;;
+    esac
   done <"$sources"
 
   if [ -z "$graders" ]; then
