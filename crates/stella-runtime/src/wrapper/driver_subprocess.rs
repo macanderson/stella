@@ -650,7 +650,7 @@ impl SubprocessDriver {
                             });
                         };
                         let outcome = match session {
-                            Some(session) => session.call(ask.call).await,
+                            Some(session) => session.call(ask.call, ask.args).await,
                             // Unreachable: `frames` is `Some` only when a session
                             // was opened. Written as a value rather than an
                             // `expect`, because AGENTS.md #5 makes no exception

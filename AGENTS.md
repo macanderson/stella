@@ -1039,40 +1039,53 @@ not a `make gate` step: locally there is no second tree to compare.
 
 ---
 
-## Nothing left behind — every finding becomes a fix or a GitHub issue
+## Fix over file — a finding is fixed in the PR, and filed only when it cannot be
 
 The standing rule for every session, human or agent, and the companion to the
-witness-test contract above: work is not finished while anything you noticed
+witness-test contract above: work is not finished while a defect you noticed
 lives only in your head, a chat transcript, or a worktree that is about to be
-deleted.
+deleted. The durable place for a finding is the fix itself, and the issue
+tracker is the fallback, not the default.
 
-- **Fix what you can inside the change you are already making.** A bug you can
-  fix safely within your current scope gets fixed, not filed.
-- **Everything else becomes a GitHub issue before you finish** — a bug you saw
-  and did not fix, a defect you worked around, a missing test, an idea worth
-  keeping, dead or unwired code you noticed, and the logical next step of the
-  work you just completed. If your change ships scaffolding that something else
-  must later wire up, file the issue for that wiring in the same PR — unwired
-  code with no tracking issue is exactly the failure mode this rule exists to
-  prevent.
-- **Write every issue as a handoff.** Assume the reader is a fresh agent with
-  none of your session's context: state the problem, the files involved (paths,
-  not descriptions), how to reproduce or verify, the constraints you already
-  discovered (gates, invariants, related PRs and issues), and what "done" looks
-  like. A one-line issue that needs your memory to interpret is a note to
-  yourself, not a handoff.
+- **Fix it in the PR you are already making.** A defect you can fix gets
+  fixed, whether or not it is what the PR set out to do. Two unrelated fixes in
+  one PR is fine; say what each one is in the description so a reviewer can
+  read them apart. A PR that ships scaffolding wires it up in the same change
+  rather than filing the wiring for later.
+- **Defer to an issue only when a fix cannot responsibly ride the PR.** Three cases:
+  it needs a decision only the maintainer can make; it needs a rig, a
+  credential, or real spend; or it is larger than the session, so a partial
+  fix would leave the tree worse than the defect. Say which case applies in
+  the issue.
+- **Log nothing that does not eat at a pillar.** An issue earns its place
+  only if fixing it moves at least one of stability, reliability,
+  maintainability, innovation, efficiency, or performance, and the issue
+  names which. These are not issues: an open design question with no defect
+  behind it (decide it in the PR, or record the decision as an ADR); a
+  record of a choice already in effect; a measurement or bench run that
+  cannot change a decision; a test for a path nothing reaches; bookkeeping
+  about the tracker itself; and a follow-up the PR that would file it has
+  already made moot.
+- **Write every issue you do file as a handoff.** Assume the reader is a
+  fresh agent with none of your session's context: state the problem, the
+  files involved (paths, not descriptions), how to reproduce or verify, the
+  constraints you already discovered (gates, invariants, related PRs and
+  issues), which pillar it moves, and what "done" looks like. A one-line
+  issue that needs your memory to interpret is a note to yourself, not a
+  handoff.
 - **Search before filing** (`gh issue list`, `gh search issues`) and link
   related issues instead of duplicating them. Reference the issues you filed
-  from your PR description so the residue of the work is auditable.
+  from your PR description so what was deferred, and why, is auditable.
 
-The judgment half of this rule — did you notice something and not file it —
-is not mechanically decidable, and the PR template asks a human. Its most
-common *residue* is checked: `left-behind` (`scripts/check-left-behind.sh`)
-fails the gate on a `TODO`/`FIXME`/`XXX`/`HACK` in code that names no issue,
-because a marker with no `#1234` beside it is by definition a thing left
-behind with no handoff (#1454). A marker that names an issue is tracked work
-and passes. The fix is always to file the issue and reference it — never to
-delete the marker, and never to add a baseline entry: that baseline started
+The judgment half of this rule — did you notice a defect and neither fix nor
+file it — is not mechanically decidable, and the PR template asks a human.
+Its most common *residue* is checked: `left-behind`
+(`scripts/check-left-behind.sh`) fails the gate on a `TODO`/`FIXME`/`XXX`/
+`HACK` in code that names no issue, because a marker with no `#1234` beside
+it is by definition a thing left behind with no handoff (#1454). A marker
+that names an issue is tracked work and passes. The fix is to fix the thing
+the marker names; failing that, file the issue and reference it — never
+delete the marker, and never add a baseline entry: that baseline started
 empty and is meant to stay empty.
 
 ---
@@ -1614,10 +1627,13 @@ macanderson org repos.
   finishing it links it with `Refs #N` rather than `Closes #N`: `Refs`
   does not close, so the merge gate does not hold that PR against the
   issue's DoD. A PR may carry both, and is gated only on what it closes.
-- **[SCR-004](docs/scr/SCR-004-residue-becomes-issues.md) — Residue:**
-  Before declaring any task complete, file a GitHub issue for every
-  follow-up, tech-debt item, or logical next step you noticed. Apply ONLY
-  the `triage` label.
+- **[SCR-004](docs/scr/SCR-004-residue-becomes-issues.md) — Fix over
+  file:** Fix what you notice in the PR you are making; two unrelated fixes
+  in one PR is fine. File an issue only when a fix cannot responsibly ride
+  the PR (a maintainer decision, a rig or spend, or work larger than the
+  session), and only when fixing it moves stability, reliability,
+  maintainability, innovation, efficiency, or performance. Apply ONLY the
+  `triage` label.
 - **[SCR-005](docs/scr/SCR-005-triage-separation-of-duties.md) — Triage
   separation of duties:** Never apply a priority or size label —
   a dedicated triage agent owns sizing and priority; a guard workflow

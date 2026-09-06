@@ -35,16 +35,18 @@ Stella's definition of done is a test that **fails on the old code and passes on
 - [ ] `Closes #N` appears **both** above and as a commit trailer — squash builds
       the commit body from commit messages, so the description alone won't carry it
 
-## Nothing left behind
+## Fix over file
 
-Anything you noticed and did not fix — a bug, a missing test, dead or unwired
-code, the logical next step of this work — is a GitHub issue before this merges,
-written as a handoff a fresh agent could execute (AGENTS.md § "Nothing left
-behind"). The gate catches the residue (a `TODO` with no issue number); it
-cannot catch what only you saw.
+A defect you saw while making this change is fixed in this PR, even when it
+is off-topic. Name each extra fix below. File an issue only when a fix could
+not ride this PR: it needs a maintainer call, a rig or spend, or more than
+one session. File it only if fixing it moves a pillar: stability,
+reliability, maintainability, innovation, efficiency, or performance
+(AGENTS.md § "Fix over file"). The gate catches a `TODO` with no issue
+number. It cannot catch what only you saw.
 
-- [ ] Filed: #___, #___ — **or**
-- [ ] There is nothing: everything I noticed is fixed in this PR
+- [ ] Extra fixes in this PR: ___ — **or** none
+- [ ] Filed, with the reason a fix could not ride this PR: #___ — **or** nothing was deferred
 
 ## Ground-rule check
 

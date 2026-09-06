@@ -98,9 +98,9 @@ git ls-files -z | xargs -0 rg -l --fixed-strings '<tool_name>'
 Every remaining hit is either (a) updated or deleted, (b) a record that must
 stay as recorded (an issue postmortem, archived bench data, a trace fixture),
 or (c) a defect. There is no fourth category — in particular, prose docs do
-not get "removed in ..." notes: delete the sentence, don't memorialize it. Anything discovered that cannot be
-fixed in the same change is filed as a GitHub issue before finishing
-(AGENTS.md § "Nothing left behind").
+not get "removed in ..." notes: delete the sentence, don't memorialize it. Fix what you find in the same
+change. File an issue only for what cannot ride it (AGENTS.md § "Fix over
+file").
 
 ### 10. Gates
 

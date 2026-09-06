@@ -236,7 +236,7 @@ shell through `Bash::confined_to`. That file and the rest of
 (#3852); `ToolRegistry::new(root)` is the whole constructor today, and
 nothing left in the tree can say which tree is graded, because nothing
 declares one. Porting the 1,456 lines back would land a boundary that
-never arms, which is the unwired code AGENTS.md § "Nothing left behind"
+never arms, which is the unwired code AGENTS.md § "Fix over file"
 exists to stop. A host that later mounts a graded tree it does not want
 written may reopen this: the claim here is that per-command confinement
 is the wrong layer for it, not that the two regressions above were

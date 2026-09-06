@@ -19,7 +19,7 @@ use super::term_policy::{
     PlainReason, animation_disabled, deck_decision, dumb_terminal, truthy_env,
 };
 use super::{
-    AuthCmd, Cli, Command, OutputFormat, TelemetryCmd, error_summary_json, fleet_verbs,
+    AuthCmd, Cli, Command, OutputFormat, TelemetryCmd, error_summary_json, fleet_verbs, plugin_cmd,
     query_format,
 };
 
@@ -547,6 +547,35 @@ fn fleet_claims_parses_as_a_verb_and_defaults_to_the_live_listing() {
             assert_eq!(tasks, vec!["claims are stale, audit them".to_string()]);
         }
         _ => panic!("expected the fleet subcommand"),
+    }
+}
+
+/// `stella plugin drive <name> --spend-limit <usd>` still parses, and binds
+/// the session-wide global rather than a flag of `drive`'s own.
+///
+/// `drive` declared its own `--spend-limit` when the verb landed, which
+/// collided with the global of that name and reddened
+/// [`no_subcommand_flag_reuses_a_global_name`]. Reading the propagated global
+/// is the fix. The invocation `website/content/docs/commands/plugin.mdx`
+/// documents is unchanged by it, and this pins that, so restoring the local
+/// flag fails both tests rather than only the collision one.
+#[test]
+fn plugin_drive_reads_the_session_wide_spend_limit() {
+    let cli = Cli::try_parse_from([
+        "stella",
+        "plugin",
+        "drive",
+        "selfdriving",
+        "--spend-limit",
+        "25",
+    ])
+    .expect("the documented `plugin drive --spend-limit` invocation must parse");
+    assert_eq!(cli.globals.spend_limit, Some(25.0));
+    match cli.command {
+        Some(Command::Plugin {
+            cmd: plugin_cmd::PluginCmd::Drive { ref name },
+        }) => assert_eq!(name, "selfdriving"),
+        _ => panic!("expected the parse to bind `plugin drive selfdriving`"),
     }
 }
 

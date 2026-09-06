@@ -74,7 +74,7 @@ use super::turn_flags::TurnFlags;
 /// describes: spend is still summed, so the loop can report what a run cost,
 /// and nothing is ever refused.
 #[derive(Debug, Clone)]
-pub(super) struct RunBudget {
+pub(crate) struct RunBudget {
     /// The flags every child turn inherits, ceiling included.
     flags: TurnFlags,
     /// Turns whose summary could not be read, and which were therefore
@@ -90,7 +90,7 @@ pub(super) struct RunBudget {
 /// ends the run and reports *budget reached*, while the same condition inside a
 /// work unit defers that issue. A message would make both read the prose.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(super) struct Exhausted {
+pub(crate) struct Exhausted {
     /// The run's ceiling.
     pub cap: f64,
     /// What it had already spent when the turn was refused.
@@ -109,7 +109,7 @@ impl std::fmt::Display for Exhausted {
 
 impl RunBudget {
     /// A budget over the flags this invocation parsed.
-    pub(super) fn new(flags: TurnFlags) -> Self {
+    pub(crate) fn new(flags: TurnFlags) -> Self {
         Self {
             flags,
             spent: 0.0,
@@ -118,12 +118,12 @@ impl RunBudget {
     }
 
     /// The run's ceiling, when one was set.
-    pub(super) fn cap(&self) -> Option<f64> {
+    pub(crate) fn cap(&self) -> Option<f64> {
         self.flags.spend_limit
     }
 
     /// What this run's turns have reported spending.
-    pub(super) fn spent(&self) -> f64 {
+    pub(crate) fn spent(&self) -> f64 {
         self.spent
     }
 

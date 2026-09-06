@@ -6,6 +6,42 @@
         "call": "backlog_next",
         "id": 1
       }
+    },
+    {
+      "case": "backlog_claim",
+      "message": {
+        "args": {
+          "backlog_claim": {
+            "issue": "1234"
+          }
+        },
+        "call": "backlog_claim",
+        "id": 2
+      }
+    },
+    {
+      "case": "work_start",
+      "message": {
+        "args": {
+          "work_start": {
+            "issue": "1234"
+          }
+        },
+        "call": "work_start",
+        "id": 3
+      }
+    },
+    {
+      "case": "work_abandon",
+      "message": {
+        "args": {
+          "work_abandon": {
+            "reason": "the base moved under it"
+          }
+        },
+        "call": "work_abandon",
+        "id": 4
+      }
     }
   ],
   "driver_results": [
@@ -35,6 +71,44 @@
           }
         },
         "result": 4
+      }
+    },
+    {
+      "case": "ok/claim",
+      "message": {
+        "ok": {
+          "claim": {
+            "held": false,
+            "holder": "self-driving:8412",
+            "issue": "1234"
+          }
+        },
+        "result": 5
+      }
+    },
+    {
+      "case": "ok/work",
+      "message": {
+        "ok": {
+          "work": {
+            "branch": "stella/1234",
+            "issue": "1234",
+            "stat": " 2 files changed, 31 insertions(+)",
+            "state": "changed"
+          }
+        },
+        "result": 6
+      }
+    },
+    {
+      "case": "ok/work/idle",
+      "message": {
+        "ok": {
+          "work": {
+            "state": "idle"
+          }
+        },
+        "result": 7
       }
     },
     {

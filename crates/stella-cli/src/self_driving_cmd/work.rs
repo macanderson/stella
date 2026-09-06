@@ -108,9 +108,47 @@ pub(super) fn worktrees_root(root: &Path) -> PathBuf {
     root.join(WORKTREES_DIR)
 }
 
+/// Give a checkout back, keeping whatever it committed.
+///
+/// The checkout goes; the branch stays. `git worktree remove` deletes no
+/// branch, so a turn that committed keeps its work and only the disk is
+/// reclaimed — which is what makes this safe for a driver to reach for
+/// mid-cycle. The prune afterwards is what stops a removal that half-finished
+/// from making the next attempt at the same issue collide with a registration
+/// pointing at nothing.
+///
+/// Refuses to touch anything outside [`worktrees_root`]. A driver names the
+/// path it is releasing, and a path is the one argument that can name somebody
+/// else's checkout; the loop's own namespace is the whole of what it may
+/// reclaim (`stella fleet gc`'s rule, at the other door).
+///
+/// # Errors
+///
+/// A message a user can act on: the path is not this loop's, or git would not
+/// remove it.
+pub(crate) fn release(root: &Path, path: &Path) -> Result<(), String> {
+    if !path.starts_with(worktrees_root(root)) {
+        return Err(format!(
+            "{} is not under this loop's own worktrees, so nothing here will remove it",
+            path.display()
+        ));
+    }
+    let target = path.to_string_lossy().to_string();
+    // The tree decides, not the exit code. [`super::state::git`] answers `None`
+    // for empty stdout as well as for failure, and a successful `worktree
+    // remove` prints nothing — the trap [`tree_change`] documents, at this
+    // door. So the removal is judged by whether the checkout is gone.
+    let _ = super::state::git(root, &["worktree", "remove", &target, "--force"]);
+    let _ = super::state::git(root, &["worktree", "prune"]);
+    if path.exists() {
+        return Err(format!("git would not release the checkout at {target}"));
+    }
+    Ok(())
+}
+
 /// What one unit of work did, measured from the tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum WorkOutcome {
+pub(crate) enum WorkOutcome {
     /// The turn left changes on the branch.
     Changed {
         /// The branch holding them, for `deliver` to push.
@@ -640,7 +678,7 @@ pub(super) struct Worktree {
 /// issue through the port, cut a worktree outside the fleet's namespace, run a
 /// real `stella run` inside it with the issue quoted as data, then read the
 /// tree.
-pub(super) fn start(
+pub(crate) fn start(
     root: &Path,
     issue: &Issue,
     budget: &mut RunBudget,
