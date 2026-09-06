@@ -47,7 +47,7 @@
 //! any other.
 
 use super::super::context_record::kind::Origin;
-use super::super::ingest::record::{EnforcementMode, Record, TruthBasis};
+use super::super::ingest::record::{EnforcementMode, Record};
 use super::trust::decreed_by_a_named_human_at;
 use super::{LoadedRecord, Trust};
 use stella_learn::rules::{Rule, RuleGuard};
@@ -267,7 +267,7 @@ pub fn rule_from_record(loaded: &LoadedRecord, ledger_approved: bool) -> (Rule, 
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::ingest::record::{Enforcement, Probe, ProbeKind, Truth};
+    use super::super::super::ingest::record::{Enforcement, Probe, ProbeKind, Truth, TruthBasis};
     use super::super::tests::{hard_guard, record_named, with_truth};
     use super::*;
 

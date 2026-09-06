@@ -37,7 +37,7 @@
 //! what the agent sees.
 
 use super::super::ingest::gate::origin_is_untrusted;
-use super::super::ingest::record::{Probe, Record, TruthBasis, Verdict};
+use super::super::ingest::record::{Probe, Record, Verdict};
 use super::Trust;
 use super::clock;
 use super::trust::decreed_by_a_named_human_at;
@@ -161,7 +161,9 @@ impl Disposition {
 ///   from is the one fact it cannot write, and [`super::registry::load`] stamps
 ///   that from the directory. What is relied on then is a person whose name is
 ///   on the claim. A name nobody wrote is not one.
-///   [`decreed_by_a_named_human_at`] holds both conditions.
+///   `trust`'s `decreed_by_a_named_human_at` holds both conditions. Named in
+///   prose rather than linked: it is `pub(crate)`, and a public item's doc
+///   cannot link a private one without `--document-private-items` carrying it.
 ///   [`super::bridge`]'s `self_attested` asks it too, before it lets a record
 ///   approve its own blocking guard. One rule, called twice, so tightening it
 ///   moves both gates.
@@ -276,7 +278,7 @@ pub fn disposition(input: &SweepInput<'_>) -> Disposition {
 #[cfg(test)]
 mod tests {
     use super::super::super::context_record::kind::Origin;
-    use super::super::super::ingest::record::{ProbeKind, Truth};
+    use super::super::super::ingest::record::{ProbeKind, Truth, TruthBasis};
     use super::super::tests::{record_named, with_truth};
     use super::*;
 
