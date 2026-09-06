@@ -197,32 +197,42 @@ fn every_lens_declares_its_tooling_or_admits_it_has_none() {
     );
 }
 
-/// A lens command that names a path which no longer exists is worse than a
-/// lens with no tooling: `rg` exits non-zero on a missing directory, so the
-/// whole aperture reports "no findings" for a reason that has nothing to do
-/// with the code. The `properties` lens carried
-/// `crates/stella-pipeline/src` for as long as it took anyone to notice the
-/// crate had been deleted from the workspace (#3865).
+/// A lens command that names a missing path is worse than a lens with no
+/// tooling at all. `rg` exits non-zero on a missing directory, so the whole
+/// aperture reports "no findings" for a reason that has nothing to do with
+/// the code. The `properties` lens carried `crates/stella-pipeline/src` for
+/// as long as it took anyone to notice the crate had been deleted from the
+/// workspace (#3865). A `scripts/…` word is the same trap. `run_lens` shells
+/// out to it directly, and a renamed or deleted script fails with "no such
+/// file", not a finding.
 ///
-/// Only `crates/…` words are checked. The rest of a `run` string is a make
-/// target, a slash command, or a script this crate does not own, and asserting
-/// on those would make this test a second copy of the `Makefile`.
+/// Only `crates/…` and `scripts/…` words are checked. The rest of a `run`
+/// string is a make target, a cargo subcommand, or a flag. Checking those too
+/// would turn this test into a second copy of the `Makefile`. It also would
+/// not prove the whole line runs: a stale make target could still slip past.
+/// Running every `run` string for real is not an option either — `soak` is a
+/// multi-hour bench arm, too slow for every `cargo test`. Checking that the
+/// paths a command names still exist is the cheap half of that proof.
 #[test]
-fn every_crate_path_a_lens_names_exists_in_the_tree() {
+fn every_crate_or_script_path_a_lens_names_exists_in_the_tree() {
     let workspace = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
     for l in LENSES {
         let Tooling::Command { run, .. } = l.tooling else {
             continue;
         };
         for word in run.split_whitespace() {
-            let Some(path) = word.strip_prefix("crates/") else {
+            let path = if let Some(rest) = word.strip_prefix("crates/") {
+                workspace.join("crates").join(rest)
+            } else if let Some(rest) = word.strip_prefix("scripts/") {
+                workspace.join("scripts").join(rest)
+            } else {
                 continue;
             };
             assert!(
-                workspace.join("crates").join(path).exists(),
-                "the `{}` lens runs `rg` over `crates/{path}`, which is not in \
-                 the tree — the aperture reports nothing found for a reason \
-                 that is not about the code",
+                path.exists(),
+                "the `{}` lens's run string names `{word}`, which is not in \
+                 the tree — the lens fails with \"no such file\" or reports \
+                 nothing found for a reason that is not about the code",
                 l.name
             );
         }

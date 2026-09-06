@@ -65,14 +65,17 @@ pub struct PriorityLadder {
 }
 
 impl Default for PriorityLadder {
-    /// GitHub's common convention, which is also this repository's.
+    /// SCR-005's five-level scheme, most urgent first.
     ///
     /// A default exists so an operator who configures nothing still gets a
-    /// working loop — the same reason the issue vocabulary ships GitHub's
-    /// defaults rather than refusing to start.
+    /// working loop, and it ranks every level
+    /// `docs/scr/SCR-005-triage-separation-of-duties.md`'s Directive names.
+    /// The Directive calls `P4` "someday, speculative" — a judged rung, not
+    /// an unjudged one. Stopping at `P3` would read a `P4` issue as unjudged
+    /// and send it back for triage it already got.
     fn default() -> Self {
         Self {
-            rungs: ["P0", "P1", "P2", "P3"]
+            rungs: ["P0", "P1", "P2", "P3", "P4"]
                 .into_iter()
                 .map(str::to_owned)
                 .collect(),
@@ -644,5 +647,31 @@ mod tests {
         let queue = partition(vec![issue(1, "2026-01-01T00:00:00Z", &["P0"])], &ladder);
         assert!(queue.ranked.is_empty());
         assert_eq!(queue.unassessed.len(), 1);
+    }
+
+    /// **The witness.** SCR-005's scheme names `P4` as a judged rung
+    /// ("someday, speculative"), not an absence of judgement. A ladder that
+    /// stops at `P3` drops an issue carrying `P4` out of `rank_of` into
+    /// `Unassessed` — a triaged issue reported as untriaged. This fails
+    /// against a four-rung default and passes against the five-rung one.
+    #[test]
+    fn the_lowest_scheme_rung_is_ranked_not_unassessed() {
+        let ladder = PriorityLadder::default();
+        assert_eq!(
+            ladder.rungs.last().map(String::as_str),
+            Some("P4"),
+            "the default ladder must reach SCR-005's lowest rung"
+        );
+
+        let queue = partition(vec![issue(1, "2026-01-01T00:00:00Z", &["P4"])], &ladder);
+        assert_eq!(
+            queue.ranked.len(),
+            1,
+            "a P4 issue is judged work, not a question for triage"
+        );
+        assert!(
+            queue.unassessed.is_empty(),
+            "P4 must not be reported as unjudged"
+        );
     }
 }

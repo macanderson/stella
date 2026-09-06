@@ -803,7 +803,7 @@ park_after = 3
 # it: a partial override would leave you unable to remove a built-in you
 # disagree with. Every field defaults, so writing none of it gets a working loop
 # on GitHub's common conventions.
-priorities = ["P0", "P1", "P2", "P3"]           # most urgent first
+priorities = ["P0", "P1", "P2", "P3", "P4"]     # most urgent first
 defect_kinds = ["bug", "triage"]                # "this loop works this"
 excluded_kinds = ["enhancement", "feature", "documentation", "question", "epic"]
 
