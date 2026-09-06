@@ -450,6 +450,11 @@ pub struct SelectionConfig {
     /// recency/`AutoCreated` tie-break, never large enough to select a skill
     /// that is otherwise below `min_score`.
     pub auto_created_bonus: f64,
+    /// Weight for the body's own coverage score. Kept below 1.0 so a body
+    /// match never outranks a real summary or domain match. A strong body
+    /// match can still clear `min_score` on its own. See
+    /// [`select_skills_reporting`] for how the two combine.
+    pub body_weight: f64,
 }
 
 impl Default for SelectionConfig {
@@ -459,6 +464,7 @@ impl Default for SelectionConfig {
             min_score: 0.08,
             domain_boost: 0.5,
             auto_created_bonus: 0.02,
+            body_weight: 0.5,
         }
     }
 }
@@ -470,7 +476,9 @@ impl Default for SelectionConfig {
 pub struct SelectedSkill {
     pub skill: Skill,
     pub score: f64,
-    /// Prompt terms that overlapped the skill's name+description (sorted).
+    /// Prompt terms that overlapped the skill's summary (name+description)
+    /// or its body (sorted, deduplicated) — see [`select_skills_reporting`]
+    /// for why the body counts too.
     pub matched_terms: Vec<String>,
     /// Active domains the skill is tagged with (as authored on the skill).
     pub matched_domains: Vec<String>,
@@ -478,10 +486,11 @@ pub struct SelectedSkill {
 
 /// Select the skills most relevant to `prompt`, given the currently active
 /// `active_domains`. Pure scoring: lexical coverage of each skill's
-/// name+description by the prompt, plus a per-matched-domain boost, plus
-/// the small `AutoCreated` tie-break. Only skills scoring at least
-/// `config.min_score` are returned, top-k by `config.max_skills`, highest
-/// first (ties broken by name for determinism).
+/// name+description by the prompt, plus a smaller coverage score for its
+/// body, plus a per-matched-domain boost, plus the small `AutoCreated`
+/// tie-break. Only skills scoring at least `config.min_score` are returned,
+/// top-k by `config.max_skills`, highest first (ties broken by name for
+/// determinism).
 ///
 /// Scoring runs in `crate::mining::score_terms`'s space rather than the
 /// miners' `crate::mining::terms`. Both read Unicode since #3298; what
@@ -527,10 +536,17 @@ pub fn select_skills_reporting(
     for skill in skills {
         let haystack = format!("{} {}", skill.name, skill.description);
         let skill_terms: HashSet<String> = score_terms(&haystack).into_iter().collect();
+        // The body is scored on its own, not folded into `skill_terms`. A
+        // body is far longer than a summary. Folding it in would grow the
+        // haystack `coverage` divides by, so it would push every summary
+        // score toward zero instead of adding a signal.
+        let body_terms: HashSet<String> = score_terms(&skill.body).into_iter().collect();
 
         let mut matched_terms: Vec<String> =
             prompt_terms.intersection(&skill_terms).cloned().collect();
+        matched_terms.extend(prompt_terms.intersection(&body_terms).cloned());
         matched_terms.sort();
+        matched_terms.dedup();
 
         let matched_domains: Vec<String> = skill
             .domains
@@ -546,17 +562,21 @@ pub fn select_skills_reporting(
         // selection fire only on prompts about as short as a description, and
         // effectively never on a real one (#3243 D2).
         let lexical = coverage(&prompt_terms, &skill_terms);
+        // Same measure, over the body's own vocabulary, then cut by
+        // `body_weight` — see that field's doc comment for why.
+        let body_score = coverage(&prompt_terms, &body_terms) * config.body_weight;
         let domain_score = matched_domains.len() as f64 * config.domain_boost;
         let recency = if skill.origin == SkillOrigin::AutoCreated {
             config.auto_created_bonus
         } else {
             0.0
         };
-        let score = lexical + domain_score + recency;
+        let score = lexical + body_score + domain_score + recency;
 
         // A pure-lexical match hanging off a single shared term is noise
         // ("about", "something") no matter what jaccard says — require at
-        // least two shared terms unless a domain tag corroborates.
+        // least two shared terms (summary or body) unless a domain tag
+        // corroborates.
         let corroborated = !matched_domains.is_empty() || matched_terms.len() >= 2;
 
         // The floor reads the evidence-bearing half only. The AutoCreated
@@ -564,7 +584,7 @@ pub fn select_skills_reporting(
         // "never large enough to select a skill that is otherwise below
         // min_score" — letting it into the threshold gave freshly-mined
         // skills a LOWER selection floor than hand-authored ones.
-        if corroborated && lexical + domain_score >= config.min_score {
+        if corroborated && lexical + body_score + domain_score >= config.min_score {
             selected.push(SelectedSkill {
                 skill: skill.clone(),
                 score,
@@ -894,15 +914,18 @@ const SENTENCE_MIN_CHARS: usize = 24;
 
 /// The one-line description a mined candidate is **found** by.
 ///
-/// [`select_skills_reporting`] scores `name + description` and nothing else,
-/// so this string is half of a learned skill's entire searchable vocabulary —
-/// and the other half, [`candidate_id`], is a slug `slugify` truncates at 40
-/// characters. This used to be `"Learned from N observations."`: two words
-/// that match no prompt anyone will ever write, occupying the one field that
-/// decides whether the skill is reachable at all. A skill was therefore
-/// findable only through whatever fragment of its lesson survived those 40
-/// characters — the mechanism that mints skills and the mechanism that
-/// surfaces them tuned against each other (#5335).
+/// [`select_skills_reporting`] weighs `name + description` far more than the
+/// body, so this string is still the stronger half of a learned skill's
+/// searchable vocabulary. The other half, [`candidate_id`], is a slug
+/// `slugify` truncates at 40 characters. This used to be `"Learned from N
+/// observations."`: two words that match no prompt anyone will ever write.
+/// Back then the body carried no weight at all, so those two words were the
+/// whole vocabulary. A skill was therefore findable only through whatever
+/// fragment of its lesson survived those 40 characters — the mechanism that
+/// mints skills and the mechanism that surfaces them tuned against each other
+/// (#5335). A mined candidate's body is the lesson itself (see
+/// [`SkillCandidate::body`]), so this same text now reaches a prompt two
+/// ways: a strong path and a weak one.
 ///
 /// So the lesson describes itself: its first sentence, whitespace collapsed
 /// (the frontmatter writer emits `description:` on one line, and a lesson
