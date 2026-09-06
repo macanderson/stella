@@ -47,6 +47,7 @@ pub(crate) mod residue;
 pub(crate) mod state;
 mod stats;
 mod stop;
+mod supply;
 mod surface;
 mod triage;
 pub(crate) mod turn_flags;
@@ -1051,6 +1052,12 @@ fn cycle_end(
         let mut cal = st.calibration();
         cal.extra
             .insert("last_clean_head".to_string(), Value::String(head));
+        // And when. A tree that merges rarely still drifts, so the re-arm rule
+        // reads the date as well as the commit count.
+        cal.extra.insert(
+            "last_clean_at".to_string(),
+            Value::from(crate::timefmt::now_unix()),
+        );
         st.write_calibration(&cal)?;
     }
     Ok(())

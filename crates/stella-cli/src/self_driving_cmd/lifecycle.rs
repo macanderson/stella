@@ -271,11 +271,20 @@ fn apply_closure(
     // Counted by canonical resolution through `record_closure`, so the three
     // kinds cannot drift from the total — the balance a dashboard shows beside
     // them is true by construction rather than by every call site remembering.
+    //
+    // The receipt is written here too. It says what the closure cited, so a
+    // later sweep can ask whether that change is still on the base branch.
     match durable {
-        Some(state) => state.update_stats(|s| s.record_closure(canonical)),
-        None => state::LoopState::open()
-            .map(|st| st.update_stats(|s| s.record_closure(canonical)))
-            .unwrap_or_default(),
+        Some(state) => {
+            state.update_stats(|s| s.record_closure(canonical));
+            super::supply::record_receipt(state, key, closure);
+        }
+        None => {
+            if let Ok(state) = state::LoopState::open() {
+                state.update_stats(|s| s.record_closure(canonical));
+                super::supply::record_receipt(&state, key, closure);
+            }
+        }
     }
 
     // After the tracker has taken it, so a subscriber woken by this event

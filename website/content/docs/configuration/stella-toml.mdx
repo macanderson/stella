@@ -619,6 +619,44 @@ machine is a weaker signal than a clean CI run and a far stronger one than nothi
   </OptionCard>
 </CardGrid>
 
+#### `[self_driving.supply]`
+
+Where the loop looks for work once the ranked queue is empty. Every switch here is off,
+and that is the shipped default. The queue is the only supply that drains, so it is the
+only one a fresh install draws from. An endless supply of work is not an endless supply
+of *useful* work, so each of these is a choice somebody makes rather than one they
+inherit.
+
+Nothing a sweep finds can be filed twice. Every filing goes through the same dedup set,
+keyed by a digest of the finding's own words, so re-passing a lens yields what the new
+code introduced and nothing else.
+
+<CardGrid size="sm">
+  <OptionCard name="self_driving.supply.rearm" defaultValue="off">
+    Re-open the lens ladder once the base branch has moved. A lens that found nothing at
+    one commit says nothing about the tree two hundred commits later. Held shut while the
+    loop's own ledger reports `NOISY`: a loop filing far more than it finds should narrow
+    rather than open one more lens.
+  </OptionCard>
+  <OptionCard name="self_driving.supply.regress" defaultValue="off">
+    Re-check the fixes this loop has already claimed. As it closes an issue the loop
+    writes down what the closure cited and whether that change was on the base branch at
+    the time. A change that was there and is gone is a fact rather than a claim needing
+    triage, and it is filed as a fresh defect.
+  </OptionCard>
+  <OptionCard name="self_driving.supply.meta" defaultValue="off">
+    Read the loop's own ledger for habits it should file against itself — a raised signal
+    nobody has acted on, or a lens that has looked several times and found nothing at all.
+  </OptionCard>
+  <OptionCard name="self_driving.supply.rearm_commits" defaultValue="50">
+    How many commits the base must gain before a dry ladder re-opens.
+  </OptionCard>
+  <OptionCard name="self_driving.supply.rearm_days" defaultValue="30">
+    How many days may pass instead, for a tree that merges rarely. Either bound alone is
+    enough.
+  </OptionCard>
+</CardGrid>
+
 #### `[self_driving.doctrine]`
 
 How the loop decides things where two operators would decide differently. These are
