@@ -90,6 +90,36 @@ impl Settings {
             mcp_max_tokens: steering.tools.mcp_max_tokens,
         })
     }
+
+    /// What an installed plugin may put in front of the model this session,
+    /// or `None` when the plane is off.
+    ///
+    /// The same number [`Self::tool_advertisement`] hands the tool arm: the
+    /// whole volatile allowance, `context.steering.max_tokens`. A plugin's
+    /// `before_turn` text is volatile context like a record or a recalled
+    /// frame, so it spends the allowance they spend rather than one of its
+    /// own — a second key would be a second budget nobody could weigh against
+    /// the first, which is the defect the plane exists to end.
+    ///
+    /// `None` is the master switch, read exactly as the tool arm reads it: with
+    /// the plane off nothing may be withheld, or turning steering off would
+    /// take a plugin's contribution away instead of a ranking.
+    ///
+    /// It does **not** ask `tools.lean`. That lever is about the tool array,
+    /// and a workspace that sends every schema has said nothing about what a
+    /// third-party plugin may spend.
+    pub fn plugin_context_budget(&self) -> Option<u64> {
+        if !self.steering_enabled() {
+            return None;
+        }
+        Some(
+            self.context
+                .as_ref()
+                .map(|context| context.steering.clone())
+                .unwrap_or_default()
+                .max_tokens,
+        )
+    }
 }
 
 /// The tri-state reading of an environment variable: unset, explicitly on, or
@@ -141,6 +171,32 @@ mod tests {
             }
             other => panic!("the lever is on, so a budget is owed: {other:?}"),
         }
+    }
+
+    /// **Witness.** A plugin's contribution is held to the allowance the
+    /// settings name — the same one the block and the tool array spend.
+    #[test]
+    fn a_plugin_is_held_to_the_allowance_the_settings_name() {
+        let settings = from_json(r#"{"context":{"steering":{"max_tokens":900}}}"#);
+        assert_eq!(settings.plugin_context_budget(), Some(900));
+    }
+
+    /// The master switch settles it here too. With the plane off nothing may
+    /// be withheld, so a plugin's contribution is not budgeted at all.
+    #[test]
+    fn the_plane_being_off_budgets_no_plugin_contribution() {
+        let settings = from_json(r#"{"context":{"steering":{"enabled":false}}}"#);
+        assert_eq!(settings.plugin_context_budget(), None);
+    }
+
+    /// The tool lever is about the tool array. A workspace that sends every
+    /// schema has said nothing about what a plugin may spend.
+    #[test]
+    fn the_tool_lever_does_not_decide_what_a_plugin_may_spend() {
+        let settings =
+            from_json(r#"{"context":{"steering":{"max_tokens":700,"tools":{"lean":false}}}}"#);
+        assert_eq!(settings.tool_advertisement(), ToolAdvertisement::Full);
+        assert_eq!(settings.plugin_context_budget(), Some(700));
     }
 
     /// The master switch settles it. With the plane off, no tool may be held

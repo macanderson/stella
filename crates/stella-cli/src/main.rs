@@ -101,6 +101,9 @@ mod plugin_cmd;
 // Where those routes become dispatches: the session's hook plane, folded
 // once at config assembly (#4417, #3521).
 mod plugin_hooks;
+// The plugin arm of the steering plane. It sets what a plugin may put in
+// front of the model. It names what the allowance cut.
+mod plugin_steering;
 mod scoreboard_cmd;
 mod self_driving_cmd;
 // The `/profile` posture planner (fast · balanced · pro · ultra).

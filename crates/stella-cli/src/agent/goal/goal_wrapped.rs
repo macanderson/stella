@@ -156,6 +156,9 @@ impl TurnDriver for GoalRoundDriver<'_, '_> {
         // `TamperWatch::pin_declared` for why re-observing would launder a
         // rewrite from an earlier round.
         self.watch.pin_declared(prelude.witness());
+        // Whatever the steering allowance refused, named where every other
+        // steering source names its cuts.
+        crate::plugin_steering::report_drops(&prelude);
         self.messages.extend(prelude.into_messages());
         // One observer per internal turn, exactly as
         // `crate::wrapper_plugin::RawTurnDriver` builds one per round: `tools`

@@ -188,7 +188,10 @@ pub(crate) async fn run_raw_one_shot(
                 .serving(|manifest| {
                     crate::wrapper_plugin::session_host(cfg, manifest, Arc::clone(&sub_agents))
                 })
-                .map_err(crate::failure::CliFailure::from)?,
+                .map_err(crate::failure::CliFailure::from)?
+                // What a plugin puts in front of the model spends the same
+                // allowance this turn's records, skills and frames spend.
+                .with_context_allowance(crate::plugin_steering::allowance(cfg)),
         ),
         None => None,
     };
@@ -621,7 +624,9 @@ pub async fn run_goal_cmd(
                         candidate.as_ref().map(|granted| &granted.grant),
                     )
                 })
-                .map_err(crate::failure::CliFailure::from)?,
+                .map_err(crate::failure::CliFailure::from)?
+                // The same allowance every other steering source spends.
+                .with_context_allowance(crate::plugin_steering::allowance(cfg)),
         ),
         None => None,
     };

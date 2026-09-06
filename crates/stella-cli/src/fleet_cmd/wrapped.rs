@@ -393,6 +393,9 @@ impl TurnDriver for AttemptDriver<'_, '_> {
         // later round's declaration cannot launder an earlier round's rewrite —
         // see `TamperWatch::pin_declared`.
         self.watch.pin_declared(prelude.witness());
+        // Whatever the steering allowance refused, named where every other
+        // steering source names its cuts.
+        crate::plugin_steering::report_drops(&prelude);
         // Invariant 7: `into_messages` hands back user messages, appended
         // after the byte-stable system prefix this conversation opens with.
         self.messages.extend(prelude.into_messages());
@@ -471,7 +474,9 @@ impl ResolvedAttempt {
     /// isolated worktree's, which has none and would answer every recall with
     /// nothing. `child_turn` reaches this attempt's own dispatcher, so the
     /// child runs in the worker's tree with the worker's tool policy and is
-    /// paid for out of the worker's guard.
+    /// paid for out of the worker's guard. `cfg` is what the steering
+    /// allowance is read from, so a plugin's contribution spends the tokens
+    /// this attempt's records, skills and frames spend.
     ///
     /// # Errors
     ///
@@ -482,6 +487,7 @@ impl ResolvedAttempt {
         self,
         invocation_root: &std::path::Path,
         dispatcher: std::sync::Arc<crate::subagent::SessionSubAgents>,
+        cfg: &crate::config::Config,
     ) -> Result<AttemptWrapper, String> {
         // One host per member of the selection, built from that member's own
         // manifest: the child-turn plane reads the manifest's `[roles]` and
@@ -501,7 +507,9 @@ impl ResolvedAttempt {
             )
         })?;
         Ok(AttemptWrapper {
-            bound,
+            // What a plugin puts in front of the model spends the same
+            // allowance this attempt's records, skills and frames spend.
+            bound: bound.with_context_allowance(crate::plugin_steering::allowance(cfg)),
             candidate: self.candidate,
             task: self.task,
         })
