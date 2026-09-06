@@ -32,21 +32,28 @@
 //! must not become "everything must be configured", and a loop that refused to
 //! start because nobody had written a vocabulary file would be useless on the
 //! tracker it is most likely pointed at.
+//!
+//! The default is a file too. GitHub's manifest ships inside the binary, next
+//! to its adapter (`crate::issue_provider::manifest`). A workspace that set
+//! nothing still reads a real file. A workspace file at
+//! `.stella/issues/github.toml` takes its place.
 
 use std::path::Path;
 
 use stella_autonomy::Attribution;
 use stella_protocol::issue::Vocabulary;
 
-use crate::settings::toml_config::{IssuesSection, TomlConfig};
+use crate::issue_provider::ProviderManifest;
+use crate::settings::toml_config::TomlConfig;
 
 /// Everything the self-driving verbs read out of configuration.
 #[derive(Debug, Clone)]
 pub(crate) struct LoopConfig {
     /// What the loop appends to what it writes, and how it names branches.
     pub attribution: Attribution,
-    /// How the active tracker spells the concepts every tracker has.
-    pub vocabulary: Vocabulary,
+    /// The active tracker's declaration: its vocabulary and its class
+    /// mapping, resolved once here so two readers cannot see two files.
+    pub manifest: ProviderManifest,
     /// Which labels mean urgent, which mean "ours", which mean "not ours".
     pub triage: stella_autonomy::priority::TriagePolicy,
     /// Labels marking a tracking/container issue — a checklist of other
@@ -79,11 +86,18 @@ pub(crate) struct LoopConfig {
     pub worker: crate::settings::toml_config::WorkerSection,
 }
 
+impl LoopConfig {
+    /// How the active tracker spells the concepts every tracker has.
+    pub fn vocabulary(&self) -> &Vocabulary {
+        &self.manifest.vocabulary
+    }
+}
+
 impl Default for LoopConfig {
     fn default() -> Self {
         Self {
             attribution: Attribution::default(),
-            vocabulary: Vocabulary::default(),
+            manifest: ProviderManifest::default(),
             triage: stella_autonomy::priority::TriagePolicy::default(),
             container_labels: default_container_labels(),
             doctrine: stella_autonomy::Doctrine::default(),
@@ -105,15 +119,24 @@ impl Default for LoopConfig {
 /// apply — the loop should say loudly that it could not read a setting and
 /// then keep working, rather than refuse to run because of a typo in a section
 /// it might not even use.
+///
+/// A workspace with no `stella.toml` still resolves its provider manifest.
+/// `.stella/issues/github.toml` is the file the tracker's words and classes
+/// are edited in, and requiring a second file beside it to make the first one
+/// count would make the manifest unreachable for the workspace that has
+/// configured nothing else — which is the workspace it exists for.
 #[must_use]
 pub(crate) fn load(root: &Path) -> LoopConfig {
     let Some(parsed) = read_toml(root) else {
-        return LoopConfig::default();
+        return LoopConfig {
+            manifest: ProviderManifest::for_workspace(root),
+            ..LoopConfig::default()
+        };
     };
 
     LoopConfig {
         attribution: parsed.self_driving.attribution.clone(),
-        vocabulary: vocabulary_for(root, &parsed.issues),
+        manifest: ProviderManifest::resolve(root, &parsed.issues),
         triage: parsed.self_driving.triage.policy(),
         container_labels: if parsed.self_driving.container_labels.is_empty() {
             default_container_labels()
@@ -156,57 +179,6 @@ fn read_toml(root: &Path) -> Option<TomlConfig> {
     }
 }
 
-/// Load the active provider's vocabulary.
-///
-/// The manifest path is the one `[issues] manifest` names, or
-/// `.stella/issues/<provider>.toml`. An absent file is the built-in default
-/// for that provider rather than an error.
-fn vocabulary_for(root: &Path, issues: &IssuesSection) -> Vocabulary {
-    let default = builtin_vocabulary(&issues.provider);
-
-    let path = issues.manifest.clone().unwrap_or_else(|| {
-        format!(
-            ".stella/issues/{}.toml",
-            issues.provider.trim().to_ascii_lowercase()
-        )
-    });
-
-    let Ok(raw) = std::fs::read_to_string(root.join(&path)) else {
-        return default;
-    };
-
-    match toml::from_str::<Vocabulary>(&raw) {
-        Ok(vocabulary) => vocabulary,
-        Err(error) => {
-            eprintln!(
-                "warning: {path} could not be read ({error}); using the built-in \
-                 vocabulary for `{}`",
-                issues.provider
-            );
-            default
-        }
-    }
-}
-
-/// The vocabulary shipped for a provider this build knows.
-///
-/// An unknown provider gets GitHub's, **and says so**: the shapes are close
-/// enough that the loop will mostly work, and a silent empty vocabulary would
-/// make every status unmapped and every read fail with no hint why.
-fn builtin_vocabulary(provider: &str) -> Vocabulary {
-    match provider.trim().to_ascii_lowercase().as_str() {
-        "github" | "" => Vocabulary::github(),
-        other => {
-            eprintln!(
-                "warning: no built-in vocabulary for issue provider `{other}`; using GitHub's. \
-                 Declare it in `.stella/issues/{other}.toml` to say how that tracker spells \
-                 open, closed, and its resolutions."
-            );
-            Vocabulary::github()
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,11 +201,96 @@ mod tests {
         let cfg = load(workspace().path());
 
         assert_eq!(cfg.attribution.branch_prefix(), "stella/");
-        assert!(cfg.vocabulary.is_open("open"));
+        assert!(cfg.vocabulary().is_open("open"));
         assert_eq!(
-            cfg.vocabulary
+            cfg.vocabulary()
                 .resolution(stella_protocol::issue::RESOLUTION_COMPLETED),
             "completed"
+        );
+    }
+
+    /// **The shipped-manifest witness.** GitHub's words and class map reach
+    /// the loop from the built-in file. The default tracker is declared in a
+    /// file, like any other.
+    #[test]
+    fn github_is_resolved_through_the_shipped_manifest() {
+        use crate::issue_provider::ProviderManifest;
+
+        // No `stella.toml` at all.
+        assert_eq!(
+            load(workspace().path()).manifest,
+            ProviderManifest::embedded()
+        );
+
+        // A `stella.toml` naming github, with no manifest file beside it.
+        let ws = workspace();
+        write(
+            ws.path(),
+            "stella.toml",
+            "[meta]\nschema_version = 1\nscope = \"project\"\n\n[issues]\nprovider = \"github\"\n",
+        );
+        let cfg = load(ws.path());
+        assert_eq!(cfg.manifest, ProviderManifest::embedded());
+        assert_eq!(cfg.manifest.name, "github");
+        assert!(cfg.vocabulary().is_open("open"));
+        assert_eq!(
+            cfg.manifest.classes.class_of(&["bug"]),
+            stella_protocol::issue::IssueClass::Bug
+        );
+    }
+
+    /// A manifest is read on its own. `stella.toml` says which provider is
+    /// active, and github is the default, so a workspace that edited only
+    /// `.stella/issues/github.toml` has already said everything the loop needs
+    /// — the shadow must not wait on a second file.
+    #[test]
+    fn a_manifest_shadows_the_shipped_one_with_no_stella_toml_beside_it() {
+        let ws = workspace();
+        write(
+            ws.path(),
+            ".stella/issues/github.toml",
+            "open = [\"triage\"]\nclosed = [\"shipped\"]\n\n[classes]\nbug = [\"kind/defect\"]\n",
+        );
+
+        let cfg = load(ws.path());
+        assert!(
+            cfg.vocabulary().is_open("triage"),
+            "the manifest's words are read without a stella.toml beside them"
+        );
+        assert_eq!(
+            cfg.manifest.classes.class_of(&["kind/defect"]),
+            stella_protocol::issue::IssueClass::Bug,
+            "the manifest's classes are read too, not just its words"
+        );
+    }
+
+    /// **The shadow witness.** A workspace `.stella/issues/github.toml` takes
+    /// the place of the shipped one. Words and classes both.
+    #[test]
+    fn a_workspace_github_manifest_shadows_the_shipped_one() {
+        let ws = workspace();
+        write(
+            ws.path(),
+            "stella.toml",
+            "[meta]\nschema_version = 1\nscope = \"project\"\n\n[issues]\nprovider = \"github\"\n",
+        );
+        write(
+            ws.path(),
+            ".stella/issues/github.toml",
+            "open = [\"triage\"]\nclosed = [\"shipped\"]\n\n[classes]\nbug = [\"kind/defect\"]\n",
+        );
+
+        let cfg = load(ws.path());
+        assert!(cfg.vocabulary().is_open("triage"));
+        assert!(!cfg.vocabulary().is_open("open"));
+        assert_eq!(
+            cfg.manifest.classes.class_of(&["kind/defect"]),
+            stella_protocol::issue::IssueClass::Bug
+        );
+        assert_eq!(
+            cfg.manifest.classes.class_of(&["bug"]),
+            stella_protocol::issue::IssueClass::Other,
+            "the shipped label must not survive a mapping that replaced it"
         );
     }
 
@@ -356,14 +413,14 @@ body = "description"
         );
 
         let cfg = load(ws.path());
-        assert!(cfg.vocabulary.is_open("In Progress"));
-        assert!(!cfg.vocabulary.is_open("Done"));
+        assert!(cfg.vocabulary().is_open("In Progress"));
+        assert!(!cfg.vocabulary().is_open("Done"));
         assert_eq!(
-            cfg.vocabulary
+            cfg.vocabulary()
                 .resolution(stella_protocol::issue::RESOLUTION_NOT_PLANNED),
             "Won't Do"
         );
-        assert_eq!(cfg.vocabulary.fields.body, "description");
+        assert_eq!(cfg.vocabulary().fields.body, "description");
     }
 
     /// The manifest path defaults from the provider name, so naming a provider
@@ -382,7 +439,7 @@ body = "description"
             "open = [\"To Do\"]\nclosed = [\"Done\"]\n",
         );
 
-        assert!(load(ws.path()).vocabulary.is_open("To Do"));
+        assert!(load(ws.path()).vocabulary().is_open("To Do"));
     }
 
     /// The doctrine is read from `stella.toml`, like everything else
@@ -493,6 +550,6 @@ container_labels = ["tracking"]
             "this is not toml {{",
         );
 
-        assert!(load(ws.path()).vocabulary.is_open("open"));
+        assert!(load(ws.path()).vocabulary().is_open("open"));
     }
 }

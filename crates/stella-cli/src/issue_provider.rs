@@ -20,8 +20,20 @@
 //! **Stella never holds a GitHub credential.** `gh` owns the auth, the token
 //! never enters this process, and `stella auth` has nothing new to store.
 //! `doc:agent-native-delivery` §4.4's `kind = "exec"` is the general form of
-//! exactly this shape, and a manifest-driven provider is the next slice.
+//! exactly this shape.
+//!
+//! # The declaration is a file; this is the transport
+//!
+//! Which words mean open, how a resolution is spelled, and which labels mean
+//! which [`IssueClass`] are read from the shipped manifest beside this file
+//! (`issue_provider/github.toml`), which a workspace `.stella/issues/github.toml`
+//! shadows. GitHub therefore ships the way a third-party tracker would have to
+//! ship, and the built-in path and the manifest path are one path. See
+//! [`manifest`] for what the file carries and what `#1281` still owns.
 
+mod manifest;
+
+use std::path::Path;
 use std::process::Command;
 
 use async_trait::async_trait;
@@ -30,11 +42,59 @@ use stella_protocol::issue::{
     IssueState, RESOLUTION_COMPLETED, RESOLUTION_DUPLICATE, RESOLUTION_NOT_PLANNED,
 };
 
+pub(crate) use manifest::{ClassMap, ProviderManifest};
+
 /// The provider id this adapter answers to, and the one an error names.
 pub(crate) const GITHUB: &str = "github";
 
-/// Reads the workspace's GitHub issues through the `gh` CLI.
-pub(crate) struct GhIssueProvider;
+/// Reads the workspace's GitHub issues through the `gh` CLI, classifying them
+/// the way the active manifest says to.
+pub(crate) struct GhIssueProvider {
+    /// Which labels mean which class, as the resolved manifest declares them.
+    classes: ClassMap,
+}
+
+impl GhIssueProvider {
+    /// The adapter as the manifest this workspace resolves declares it.
+    pub(crate) fn for_workspace(root: &Path) -> Self {
+        Self::from_manifest(&ProviderManifest::for_workspace(root))
+    }
+
+    /// The adapter as one already-resolved manifest declares it.
+    ///
+    /// For a caller that has loaded the loop's configuration: the manifest is
+    /// resolved once there, and reading it twice could see a workspace file
+    /// change between the two reads.
+    pub(crate) fn from_manifest(manifest: &ProviderManifest) -> Self {
+        Self {
+            classes: manifest.classes.clone(),
+        }
+    }
+
+    /// Decode a `gh issue list --json …` payload into the kernel's shape.
+    ///
+    /// Split out of its three callers so the decode can be proven without a
+    /// `gh` on `PATH`: it takes the payload as text, consults the manifest, and
+    /// spawns nothing.
+    pub(crate) fn decode_list(&self, raw: &str) -> Result<Vec<Issue>, IssueError> {
+        let rows: Vec<GhIssue> =
+            serde_json::from_str(raw).map_err(|error| IssueError::Malformed {
+                provider: GITHUB.into(),
+                reason: error.to_string(),
+            })?;
+        Ok(rows
+            .into_iter()
+            .map(|row| row.into_issue(&self.classes))
+            .collect())
+    }
+}
+
+impl Default for GhIssueProvider {
+    /// The shipped manifest, for a caller with no workspace root in hand.
+    fn default() -> Self {
+        Self::from_manifest(&ProviderManifest::embedded())
+    }
+}
 
 /// What `gh issue list --json …` writes, named separately from [`Issue`] on
 /// purpose.
@@ -117,28 +177,21 @@ fn canonical_resolution(state_reason: Option<&str>) -> Option<String> {
 
 impl GhIssue {
     /// GitHub has no issue *type* on a plain repository, so the class is read
-    /// off the labels this repository actually uses.
-    ///
-    /// [`IssueClass::Other`] is the honest answer for an issue labelled
-    /// neither, and it is deliberately not `Task`: a wrong class silently
-    /// applies the wrong completion policy, which is worse than a visible
-    /// unmapped one (`doc:agent-native-delivery` §12.6 leaves whether `Other`
-    /// is workable open, and this adapter does not pre-empt it).
-    fn class(&self) -> IssueClass {
-        let has = |name: &str| self.labels.iter().any(|label| label.name == name);
-        if has("bug") {
-            IssueClass::Bug
-        } else if has("feature") {
-            IssueClass::Feature
-        } else if has("chore") || has("task") || has("refactor") {
-            IssueClass::Task
-        } else {
-            IssueClass::Other
-        }
+    /// off the labels — and which labels those are comes from the manifest,
+    /// never from this file (`doc:agent-native-delivery` §12.6 leaves whether
+    /// [`IssueClass::Other`] is workable open, and this adapter does not
+    /// pre-empt it).
+    fn class(&self, classes: &ClassMap) -> IssueClass {
+        let names: Vec<&str> = self
+            .labels
+            .iter()
+            .map(|label| label.name.as_str())
+            .collect();
+        classes.class_of(&names)
     }
 
-    fn into_issue(self) -> Issue {
-        let class = self.class();
+    fn into_issue(self, classes: &ClassMap) -> Issue {
+        let class = self.class(classes);
         Issue {
             key: IssueKey(self.number.to_string()),
             title: self.title,
@@ -188,12 +241,7 @@ impl IssueProvider for GhIssueProvider {
             "--json",
             "number,title,body,labels,createdAt,updatedAt,url",
         ])?;
-        let rows: Vec<GhIssue> =
-            serde_json::from_str(&raw).map_err(|error| IssueError::Malformed {
-                provider: GITHUB.into(),
-                reason: error.to_string(),
-            })?;
-        Ok(rows.into_iter().map(GhIssue::into_issue).collect())
+        self.decode_list(&raw)
     }
 
     /// `gh issue view` — one issue, asked for by number.
@@ -214,7 +262,7 @@ impl IssueProvider for GhIssueProvider {
             provider: GITHUB.into(),
             reason: error.to_string(),
         })?;
-        Ok(row.into_issue())
+        Ok(row.into_issue(&self.classes))
     }
 
     async fn file(&self, draft: &IssueDraft) -> Result<IssueKey, IssueError> {
@@ -374,16 +422,11 @@ impl IssueProvider for GhIssueProvider {
         }
         let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
         let raw = gh_json(&borrowed)?;
-        let rows: Vec<GhIssue> =
-            serde_json::from_str(&raw).map_err(|error| IssueError::Malformed {
-                provider: GITHUB.into(),
-                reason: error.to_string(),
-            })?;
-        Ok(rows
+        Ok(self
+            .decode_list(&raw)?
             .into_iter()
             .skip(offset)
             .take(limit)
-            .map(GhIssue::into_issue)
             .collect())
     }
 
@@ -683,8 +726,9 @@ mod tests {
 
     #[test]
     fn the_gh_payload_maps_onto_the_kernel() {
-        let rows: Vec<GhIssue> = serde_json::from_str(gh_payload()).expect("decode");
-        let issues: Vec<Issue> = rows.into_iter().map(GhIssue::into_issue).collect();
+        let issues = GhIssueProvider::default()
+            .decode_list(gh_payload())
+            .expect("decode");
 
         assert_eq!(issues[0].key, IssueKey::from("1234"));
         assert_eq!(issues[0].class, IssueClass::Bug);
@@ -699,12 +743,46 @@ mod tests {
     /// labels it sorts on and the stamp it breaks ties with.
     #[test]
     fn the_ranker_mapping_keeps_what_ranking_reads() {
-        let rows: Vec<GhIssue> = serde_json::from_str(gh_payload()).expect("decode");
-        let issues: Vec<Issue> = rows.into_iter().map(GhIssue::into_issue).collect();
+        let issues = GhIssueProvider::default()
+            .decode_list(gh_payload())
+            .expect("decode");
         let mapped = to_queue_issue(&issues[0]);
 
         assert_eq!(mapped.number, 1234);
         assert_eq!(mapped.created_at, "2026-08-19T05:00:00Z");
         assert!(mapped.labels.iter().any(|label| label.name == "P1"));
+    }
+
+    /// **The manifest witness.** The shipped decode reads its label taxonomy
+    /// out of the manifest, so a workspace that renames `bug` gets its own
+    /// class back.
+    ///
+    /// `GhIssue::class` now takes its label names from the manifest and from
+    /// nowhere else, so this answer is unreachable without one.
+    #[test]
+    fn a_renamed_label_set_in_the_manifest_reaches_the_decode() {
+        let manifest = ProviderManifest::parse(
+            "open = [\"open\"]\nclosed = [\"closed\"]\n\n[classes]\nbug = [\"kind/defect\"]\n",
+        )
+        .expect("fixture manifest parses");
+        let payload = r#"[
+          {"number":11,"title":"crash on resume","body":"",
+           "labels":[{"name":"kind/defect"}],
+           "createdAt":"2026-09-01T00:00:00Z","url":"https://example.test/11"},
+          {"number":12,"title":"still shipped-only","body":"",
+           "labels":[{"name":"bug"}],
+           "createdAt":"2026-09-01T00:00:00Z","url":"https://example.test/12"}
+        ]"#;
+
+        let issues = GhIssueProvider::from_manifest(&manifest)
+            .decode_list(payload)
+            .expect("decode");
+
+        assert_eq!(issues[0].class, IssueClass::Bug);
+        assert_eq!(
+            issues[1].class,
+            IssueClass::Other,
+            "the compiled label must not survive a manifest that replaced it"
+        );
     }
 }

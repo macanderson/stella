@@ -787,7 +787,11 @@ fn gh_plain(args: &[&str]) -> Option<String> {
 /// which is the answer when the backlog really is empty — see
 /// [`backlog::demand_from`].
 fn demand(root: &std::path::Path) -> Result<Demand, String> {
-    backlog::demand_from(&crate::issue_provider::GhIssueProvider, &config::load(root))
+    let cfg = config::load(root);
+    backlog::demand_from(
+        &crate::issue_provider::GhIssueProvider::from_manifest(&cfg.manifest),
+        &cfg,
+    )
 }
 
 fn plan(st: &LoopState, explain: bool) -> Result<(), String> {
@@ -939,7 +943,10 @@ fn cycle_begin(st: &LoopState) -> Result<(), String> {
     // One tracker read a cycle: which issues this loop filed have closed since
     // it last looked. A closure somebody else made writes no receipt, so
     // without this the digest it was filed under would suppress for ever.
-    closures::reconcile(st, &crate::issue_provider::GhIssueProvider);
+    closures::reconcile(
+        st,
+        &crate::issue_provider::GhIssueProvider::for_workspace(&st.repo_root),
+    );
 
     let aperture = st.aperture();
     let streak = stella_autonomy::dry_streak(&st.cycles().rows, &aperture);
@@ -1203,7 +1210,10 @@ fn work_issue(
     format: QueryFormat,
 ) -> Result<(), String> {
     let root = state::repo_root();
-    let issue = backlog::resolve(&crate::issue_provider::GhIssueProvider, key)?;
+    let issue = backlog::resolve(
+        &crate::issue_provider::GhIssueProvider::for_workspace(&root),
+        key,
+    )?;
 
     let loop_config = config::load(&root);
     let attribution = &loop_config.attribution;
@@ -1332,7 +1342,7 @@ fn file_finding(
         .map_err(|e| format!("could not start a runtime for the issue provider: {e}"))?;
     let outcome = runtime
         .block_on(backlog::file_finding(
-            &crate::issue_provider::GhIssueProvider,
+            &crate::issue_provider::GhIssueProvider::for_workspace(&root),
             &bound.convention,
             &st.live_seen(),
             &draft,
