@@ -136,6 +136,14 @@ pub enum PluginCmd {
         /// The plugin's `name`, as `stella plugin list` prints it.
         #[arg(value_name = "NAME")]
         name: String,
+        /// The most this session may spend on the turns it asks for, in USD.
+        ///
+        /// A driver that asks for `work_start` spends your provider budget,
+        /// and this is the ceiling. Omitted means observed mode — spend is
+        /// still summed and reported, and nothing is refused, which is what
+        /// `stella self-driving` does with the same flag absent.
+        #[arg(long, value_name = "USD")]
+        spend_limit: Option<f64>,
     },
 }
 
@@ -173,7 +181,7 @@ pub fn run_plugin(cmd: &PluginCmd) -> Result<(), String> {
             decide_panel(&root, name, panel_answer(*allow, *deny), &settings)
         }
         PluginCmd::Remove { name } => remove(&root, name),
-        PluginCmd::Drive { name } => drive(&root, name),
+        PluginCmd::Drive { name, spend_limit } => drive(&root, name, *spend_limit),
     }
 }
 
@@ -202,7 +210,7 @@ fn session_id() -> String {
 /// Whatever [`crate::driver_plugin::bind_installed`] refuses, or the session's
 /// own failure — a driver that could not be started, timed out, died, or ended
 /// without saying what should happen next.
-fn drive(workspace_root: &Path, name: &str) -> Result<(), String> {
+fn drive(workspace_root: &Path, name: &str, spend_limit: Option<f64>) -> Result<(), String> {
     let name = checked_name(name)?;
     let mut warn = |line: String| eprintln!("  ! {line}");
     let resolved = crate::driver_plugin::resolve(workspace_root, name, &mut warn)?;
@@ -215,24 +223,48 @@ fn drive(workspace_root: &Path, name: &str) -> Result<(), String> {
     // The capabilities are built here rather than inside the binder because
     // this is where the workspace is: the tracker adapter and the loop's own
     // configuration are both facts about the directory `stella` was run in.
+    let config = crate::self_driving_cmd::config::load(workspace_root);
+    // The ceiling the operator named, in the shape a child turn takes it: a
+    // run's cap, narrowed per turn to what is left of it, never handed down
+    // whole, which is `RunBudget`'s own rule.
+    let budget = crate::self_driving_cmd::budget::RunBudget::new(
+        crate::self_driving_cmd::turn_flags::TurnFlags {
+            spend_limit,
+            ..Default::default()
+        },
+    );
     let capabilities = Box::new(
         crate::driver_plugin::capabilities::HostDriverCapabilities::new(
             name,
             resolved.gates().cloned(),
             Box::new(crate::issue_provider::GhIssueProvider),
-            crate::self_driving_cmd::config::load(workspace_root),
+            config.clone(),
+            workspace_root.to_path_buf(),
+            crate::driver_plugin::work::WorkSlot::new(Box::new(
+                crate::driver_plugin::work::SpawnedWorkRunner::new(
+                    workspace_root.to_path_buf(),
+                    config,
+                    budget,
+                ),
+            )),
         ),
     );
     let bound = resolved.serving(capabilities);
-    // Said before the session rather than inferred from the refusals after it:
-    // this host serves the tracker read and nothing else yet, so an operator
-    // should learn which asks will degrade from the host rather than from a
-    // driver's own halt message.
+    // Said before the session rather than inferred from the refusals after it,
+    // so an operator learns which asks will degrade from the host rather than
+    // from a driver's own halt message.
     if bound.offers_calls() {
         println!(
-            "  this build serves `backlog_next`; every other capability this session asks for \
-             will be refused as unsupported"
+            "  this build serves `backlog_next`, `backlog_claim`, `work_start`, `work_status` \
+             and `work_abandon`; every other capability this session asks for will be refused \
+             as unsupported"
         );
+        if spend_limit.is_none() {
+            println!(
+                "  no --spend-limit was given, so a turn this session asks for spends until it \
+                 finishes"
+            );
+        }
     }
     let next = bound.open(&session);
     let refusals = bound.refusals();

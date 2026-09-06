@@ -51,10 +51,11 @@
 //! be pinning a wire contract to behaviour no host code can typecheck against,
 //! and every one of them would change at the phase that implemented it.
 //!
-//! So no call carries arguments today — no served verb reads one — and
-//! [`DriverOk`] carries one optional member per verb the host reports on, of
-//! which [`BacklogPage`] is the first. Every member is omitted when absent, so
-//! a verb that reports nothing still answers `{}`.
+//! So [`DriverArgs`] and [`DriverOk`] each carry one optional member per verb
+//! that reads or reports one, and nothing for the rest. Every member is
+//! omitted when absent, so a verb that reads nothing sends no `args` key and a
+//! verb that reports nothing still answers `{}` — the bytes a driver written
+//! against B0 already sends and reads.
 //!
 //! What this pins independently of any of that is the part consent depends on:
 //! which capabilities exist, which of them a driver declared, and what happens
@@ -435,6 +436,8 @@ struct DriverEnvelope {
     call: Option<DriverCall>,
     #[serde(default)]
     id: Option<u32>,
+    #[serde(default)]
+    args: Option<DriverArgs>,
 }
 
 impl DriverEnvelope {
@@ -445,10 +448,10 @@ impl DriverEnvelope {
                  `call` (a capability ask), never both",
             )),
             (Some(DrivePoint::Drive), None) => {
-                if self.id.is_some() {
+                if self.id.is_some() || self.args.is_some() {
                     return Err(E::custom(
-                        "a session response carries `point` and `body` only; `id` belongs to a \
-                         capability ask",
+                        "a session response carries `point` and `body` only; `id` and `args` \
+                         belong to a capability ask",
                     ));
                 }
                 let body = self
@@ -466,7 +469,11 @@ impl DriverEnvelope {
                 let id = self
                     .id
                     .ok_or_else(|| E::custom("a capability ask must carry `id`"))?;
-                Ok(DriverMessage::Call(DriverCallRequest { id, call }))
+                Ok(DriverMessage::Call(DriverCallRequest {
+                    id,
+                    call,
+                    args: self.args,
+                }))
             }
             (None, None) => Err(E::custom(
                 "a driver message must carry either `point` (a session response) or `call` (a \
@@ -616,14 +623,22 @@ pub enum DriveNext {
 /// pipelines two asks needs to tell the answers apart, and a number the host
 /// assigned would arrive too late to be useful.
 ///
-/// There is no `args` key, and its absence is checked rather than tolerated —
-/// see this module's header. The verb that needs arguments brings them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+/// The `args` key is the verb's own table and nothing else — see
+/// [`DriverArgs`]. An ask for a verb that reads no arguments omits it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DriverCallRequest {
     /// What the driver calls this ask, echoed on the answer.
     pub id: u32,
     /// Which capability.
     pub call: DriverCall,
+    /// What the ask is about, for a verb that reads one.
+    ///
+    /// Omitted for a verb that reads none, which is what every ask written
+    /// against B0 sends. A table naming a verb other than [`Self::call`] is a
+    /// refusal rather than a value the host quietly drops — see
+    /// [`DriverArgs::tables`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<DriverArgs>,
 }
 
 impl<'de> Deserialize<'de> for DriverCallRequest {
@@ -733,6 +748,88 @@ pub enum DriverCallOutcome {
     Err(HostCallFailure),
 }
 
+/// What a capability ask is **about** — one member per verb that reads one.
+///
+/// The mirror of [`DriverOk`], on the way in. Every member is omitted when
+/// absent, so a verb that reads nothing sends no table at all and the bytes an
+/// ask written against B0 sends are unchanged. The table denies unknown
+/// fields, so an argument this contract does not have is a decode error on the
+/// host's side rather than a value silently dropped.
+///
+/// **A table names exactly the verb the ask names.** [`Self::tables`] is what
+/// a host checks that with: an ask carrying `work_start` arguments under a
+/// `work_status` call is two claims about what the driver wants, and believing
+/// one of them quietly is the failure [`DriverMessage`]'s own envelope refuses
+/// one layer out.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DriverArgs {
+    /// Which unit [`DriverCall::BacklogClaim`] should take the lease on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backlog_claim: Option<UnitArgs>,
+    /// Which unit [`DriverCall::WorkStart`] should work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_start: Option<UnitArgs>,
+    /// Why [`DriverCall::WorkAbandon`] is releasing the session's unit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_abandon: Option<AbandonArgs>,
+}
+
+impl DriverArgs {
+    /// Every verb this table carries arguments for, in declaration order.
+    ///
+    /// Written over an exhaustive destructure rather than a field-by-field
+    /// read, so a member added to [`DriverArgs`] without a case here is
+    /// `E0027` — the compiler enforcing totality, the way
+    /// [`crate::wire_corpus`] does for the enums on this wire.
+    #[must_use]
+    pub fn tables(&self) -> Vec<DriverCall> {
+        let Self {
+            backlog_claim,
+            work_start,
+            work_abandon,
+        } = self;
+        let mut named = Vec::new();
+        if backlog_claim.is_some() {
+            named.push(DriverCall::BacklogClaim);
+        }
+        if work_start.is_some() {
+            named.push(DriverCall::WorkStart);
+        }
+        if work_abandon.is_some() {
+            named.push(DriverCall::WorkAbandon);
+        }
+        named
+    }
+}
+
+/// The unit of backlog an ask is about.
+///
+/// The tracker's own key, as [`BacklogEntry::key`] spelled it. Opaque to the
+/// driver, which hands back what the host handed it and never parses it — a
+/// second tracker spells its keys `STELLA-42` and the loop's policy must not
+/// have an opinion about that.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnitArgs {
+    /// The tracker key.
+    pub issue: String,
+}
+
+/// Why a unit is being released.
+///
+/// A sentence rather than a code, because the audience is a human reading the
+/// loop's ledger afterwards. A release with no reason is the silence
+/// `doc:backlog-self-driving` §3.7 refuses at the session's own terminal, one
+/// level down: a loop that gives an issue back without saying why teaches
+/// nobody anything.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AbandonArgs {
+    /// What a human reads in the ledger.
+    pub reason: String,
+}
+
 /// What a successful capability ask returned.
 ///
 /// One member per verb the host performs, and nothing for the verbs it does
@@ -757,6 +854,16 @@ pub struct DriverOk {
     /// facts, and a loop branches on both.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backlog: Option<BacklogPage>,
+    /// What [`DriverCall::BacklogClaim`] answered with: who holds the unit
+    /// now.
+    ///
+    /// Absent for every other verb, on [`Self::backlog`]'s terms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim: Option<ClaimReport>,
+    /// What the three `work` verbs answered with: the session's unit, and what
+    /// the tree holds for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work: Option<WorkReport>,
 }
 
 /// The ranked queue one [`DriverCall::BacklogNext`] read produced.
@@ -799,6 +906,71 @@ pub struct BacklogEntry {
     /// address.
     #[serde(default)]
     pub url: String,
+}
+
+/// Who holds a unit of backlog, after [`DriverCall::BacklogClaim`] asked.
+///
+/// Three answers, and they are different facts a loop branches on: the ask
+/// took the lease, a live peer already holds it, or the ledger could not say.
+/// The third is not the second — an unopenable ledger is not a peer, and a
+/// loop that read it as one would stop working on its own crash — so
+/// [`Self::holder`] is empty exactly when nobody was named.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimReport {
+    /// The unit the ask named, echoed so a pipelined driver can join it.
+    pub issue: String,
+    /// Whether this session now holds the lease.
+    pub held: bool,
+    /// Who holds it instead, or empty when nobody was named — either because
+    /// this session took it, or because the ledger could not answer.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub holder: String,
+}
+
+/// The session's unit of work, as the three `work` verbs report it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkReport {
+    /// The unit, or empty when the session holds none.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub issue: String,
+    /// Where the unit stands.
+    pub state: WorkState,
+    /// The branch the work sits on, for `deliver` to push. Empty unless the
+    /// tree holds a change.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub branch: String,
+    /// The summary line `git` printed for what the turn left behind. Empty
+    /// unless the tree holds a change.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub stat: String,
+    /// What the turn said, or why the unit did not finish. Empty when there is
+    /// nothing to add.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub detail: String,
+}
+
+/// Where a unit of work stands.
+///
+/// [`Self::NoChange`] is **not** a failure and the two are separate cases for
+/// that reason: an issue the loop cannot act on is a real answer, and folding
+/// it into failure is how a loop learns to report noise
+/// (`crates/stella-cli/src/self_driving_cmd/work.rs` argues it at the door
+/// that produces it).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkState {
+    /// This session holds no unit. The answer to a `work_status` asked before
+    /// anything was started, and after a `work_abandon`.
+    #[default]
+    Idle,
+    /// The turn ran and left a change on the branch.
+    Changed,
+    /// The turn ran and changed nothing.
+    NoChange,
+    /// The turn did not complete.
+    Failed,
 }
 
 #[cfg(test)]
@@ -876,13 +1048,108 @@ mod tests {
         assert!(err.to_string().contains("never both"), "{err}");
     }
 
+    /// An argument this contract does not have is a decode error, not a value
+    /// the host reads past. The key `args` exists now; `limit` does not, and
+    /// `deny_unknown_fields` on [`DriverArgs`] is what says so.
     #[test]
-    fn a_capability_ask_may_not_carry_arguments_yet() {
-        // `args` is not a key of this contract at B0, and the envelope denies
-        // it rather than ignoring it — a driver written against a later phase's
-        // arguments must fail loudly against a host that has none.
+    fn a_capability_ask_may_not_carry_an_argument_this_contract_lacks() {
         let err = serde_json::from_str::<DriverCallRequest>(
             r#"{"call":"backlog_next","id":1,"args":{"limit":5}}"#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("limit"), "{err}");
+    }
+
+    /// An ask for a verb that reads nothing still sends the B0 bytes: no
+    /// `args` key at all, in either direction.
+    #[test]
+    fn an_ask_that_reads_nothing_carries_no_args_key() {
+        let ask = DriverCallRequest {
+            id: 1,
+            call: DriverCall::BacklogNext,
+            args: None,
+        };
+        let json = serde_json::to_string(&ask).expect("an ask serializes");
+        assert_eq!(json, r#"{"id":1,"call":"backlog_next"}"#);
+        assert_eq!(
+            serde_json::from_str::<DriverCallRequest>(&json).expect("and reads back"),
+            ask
+        );
+    }
+
+    /// A table names the verbs it carries arguments for, so a host can refuse
+    /// an ask whose table and whose verb disagree instead of reading one of
+    /// them and dropping the other.
+    #[test]
+    fn an_argument_table_names_the_verbs_it_is_for() {
+        assert!(DriverArgs::default().tables().is_empty());
+
+        let one = DriverArgs {
+            work_start: Some(UnitArgs { issue: "41".into() }),
+            ..DriverArgs::default()
+        };
+        assert_eq!(one.tables(), vec![DriverCall::WorkStart]);
+
+        let two = DriverArgs {
+            backlog_claim: Some(UnitArgs { issue: "41".into() }),
+            work_abandon: Some(AbandonArgs {
+                reason: "the base moved".into(),
+            }),
+            ..DriverArgs::default()
+        };
+        assert_eq!(
+            two.tables(),
+            vec![DriverCall::BacklogClaim, DriverCall::WorkAbandon]
+        );
+    }
+
+    /// The work verbs' arguments and their report survive the wire, and the
+    /// ask still round-trips through the shared envelope.
+    #[test]
+    fn a_work_ask_and_its_report_round_trip() {
+        let ask = DriverMessage::Call(DriverCallRequest {
+            id: 3,
+            call: DriverCall::WorkStart,
+            args: Some(DriverArgs {
+                work_start: Some(UnitArgs { issue: "41".into() }),
+                ..DriverArgs::default()
+            }),
+        });
+        let json = serde_json::to_string(&ask).expect("a work ask serializes");
+        assert_eq!(
+            json,
+            r#"{"id":3,"call":"work_start","args":{"work_start":{"issue":"41"}}}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<DriverMessage>(&json).expect("and reads back"),
+            ask
+        );
+
+        let answered = DriverCallResponse::ok(
+            3,
+            DriverOk {
+                work: Some(WorkReport {
+                    issue: "41".into(),
+                    state: WorkState::Changed,
+                    branch: "stella/41".into(),
+                    stat: " 2 files changed".into(),
+                    detail: String::new(),
+                }),
+                ..DriverOk::default()
+            },
+        );
+        let json = serde_json::to_string(&answered).expect("a work report serializes");
+        let back: DriverCallResponse = serde_json::from_str(&json).expect("and reads back");
+        assert_eq!(back, answered);
+    }
+
+    /// A session response may not carry an argument table: `args` belongs to
+    /// an ask, and a message claiming both is the contradiction the envelope
+    /// exists to refuse.
+    #[test]
+    fn a_session_response_may_not_carry_arguments() {
+        let err = serde_json::from_str::<DriverMessage>(
+            r#"{"point":"drive","body":{"next":{"sleep":{"secs":1}}},"args":{}}"#,
         )
         .unwrap_err();
         assert!(err.to_string().contains("args"), "{err}");
@@ -893,6 +1160,7 @@ mod tests {
         let ask = DriverMessage::Call(DriverCallRequest {
             id: 1,
             call: DriverCall::BacklogNext,
+            args: None,
         });
         let json = serde_json::to_string(&ask).expect("an ask serializes");
         assert_eq!(json, r#"{"id":1,"call":"backlog_next"}"#);
@@ -973,6 +1241,7 @@ mod tests {
                         },
                     ],
                 }),
+                ..DriverOk::default()
             },
         );
         let json = serde_json::to_string(&answered).expect("a backlog page serializes");

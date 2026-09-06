@@ -202,7 +202,15 @@ Drivers use `[driver.process]` instead of `[runtime]`, because these are two dif
 
 **A `[driver]` block with no `[driver.process]` is just a description, not a working program.** It shows what a driver like this would ask for, but stella doesn't start anything. The plugin `plugins/stella-selfdriving` works this way, and the install prompt tells you so directly.
 
-Every action a driver asks for is done **by stella itself**, not by the plugin. The plugin never holds its own API keys or tokens. Right now, every action returns `unsupported`, so any driver session that asks for something is told no, and it explains why. More actions will work over time. Also note: running `stella plugin drive` only opens one session. Something else, the loop itself, is what reopens a session after it goes to sleep.
+Every action a driver asks for is done **by stella itself**, not by the plugin. The plugin never holds its own API keys or tokens. Right now stella performs five of them: `backlog_next` reads the ranked defect queue, `backlog_claim` takes a lease on one issue, and `work_start` / `work_status` / `work_abandon` run one issue through a turn in a checkout of its own. Every other action returns `unsupported`, so a driver that asks for one is told no, and it explains why. More actions will work over time. Also note: running `stella plugin drive` only opens one session. Something else, the loop itself, is what reopens a session after it goes to sleep.
+
+`work_start` spends money, so give it a ceiling:
+
+```bash
+stella plugin drive selfdriving --spend-limit 25
+```
+
+The number is the whole session's cap in US dollars, and each turn gets what is left of it. With no `--spend-limit`, spend is added up and reported and nothing is refused.
 
 ## Scopes
 

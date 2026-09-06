@@ -12,6 +12,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use stella_plugin::PluginManifest;
 
@@ -265,15 +266,85 @@ fn opening_a_session_spawns_the_resolved_program_and_reports_what_it_was() {
 
 use async_trait::async_trait;
 use stella_core::ports::Principal;
-use stella_plugin::{DriverCall, HostCallRefusal};
+use stella_plugin::{AbandonArgs, DriverArgs, DriverCall, HostCallRefusal, UnitArgs, WorkState};
 use stella_protocol::issue::{
     Issue, IssueClass, IssueDraft, IssueError, IssueKey, IssueLabel, IssueProvider, IssueState,
 };
 use stella_runtime::wrapper::{DriverCapabilities, NoDriverCapabilities};
 
 use super::capabilities::HostDriverCapabilities;
+use super::work::{WorkRunner, WorkSlot};
 use crate::plugin_authz::PluginGates;
 use crate::self_driving_cmd::config::LoopConfig;
+use crate::self_driving_cmd::work::WorkOutcome;
+
+/// A worker that answers from memory, so no test here spends a model call or
+/// cuts a checkout.
+///
+/// The seam is [`WorkRunner`] and nothing below it, so what these tests drive
+/// is the shipping slot, the shipping refusals and the shipping report.
+struct FixtureWorker {
+    /// What one unit comes back as.
+    outcome: WorkOutcome,
+    /// Every path a release was asked for, in order.
+    released: Mutex<Vec<PathBuf>>,
+}
+
+impl FixtureWorker {
+    fn answering(outcome: WorkOutcome) -> Self {
+        Self {
+            outcome,
+            released: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+#[async_trait]
+impl WorkRunner for FixtureWorker {
+    async fn run(&self, _issue: &Issue) -> Result<WorkOutcome, String> {
+        Ok(self.outcome.clone())
+    }
+
+    async fn release(&self, path: &std::path::Path) -> Result<(), String> {
+        self.released
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(path.to_path_buf());
+        Ok(())
+    }
+}
+
+/// A unit that left a change on a branch.
+fn changed() -> WorkOutcome {
+    WorkOutcome::Changed {
+        branch: "stella/41".into(),
+        path: PathBuf::from("/tmp/self-driving/41"),
+        stat: " 1 file changed, 2 insertions(+)".into(),
+    }
+}
+
+/// The one-issue tracker, one worker, and the slot over it.
+fn capabilities_working(manifest: &str, outcome: WorkOutcome) -> HostDriverCapabilities {
+    let roster = roster(vec![installed(manifest, "/opt/pkgs/selfdriving")]);
+    HostDriverCapabilities::new(
+        "stella-selfdriving",
+        PluginGates::from_roster(&roster),
+        Box::new(one_open_issue()),
+        LoopConfig::default(),
+        PathBuf::from("/tmp/stella-driver-test"),
+        WorkSlot::new(Box::new(FixtureWorker::answering(outcome))),
+    )
+}
+
+/// The arguments a `work_start` ask carries for issue 41.
+fn work_on(key: &str) -> Option<DriverArgs> {
+    Some(DriverArgs {
+        work_start: Some(UnitArgs {
+            issue: key.to_string(),
+        }),
+        ..DriverArgs::default()
+    })
+}
 
 /// For the gate tests above, which are about what a grant admits rather than
 /// what runs behind it.
@@ -371,6 +442,8 @@ fn capabilities_for(manifest: &str, tracker: FixtureTracker) -> HostDriverCapabi
         PluginGates::from_roster(&roster),
         Box::new(tracker),
         LoopConfig::default(),
+        PathBuf::from("/tmp/stella-driver-test"),
+        WorkSlot::new(Box::new(FixtureWorker::answering(changed()))),
     )
 }
 
@@ -427,7 +500,7 @@ async fn a_served_call_is_attributed_to_the_plugin_and_held_to_its_grant() {
     );
 
     let ok = granted
-        .perform(DriverCall::BacklogNext)
+        .perform(DriverCall::BacklogNext, None)
         .await
         .expect("a granted plugin is served the queue");
     let page = ok.backlog.expect("a served read carries its page");
@@ -436,7 +509,7 @@ async fn a_served_call_is_attributed_to_the_plugin_and_held_to_its_grant() {
     assert_eq!(page.issues[0].labels, ["bug", "P1"]);
 
     let refused = capabilities_for(GRANTS_NO_SHELL, one_open_issue())
-        .perform(DriverCall::BacklogNext)
+        .perform(DriverCall::BacklogNext, None)
         .await
         .expect_err("a plugin that was not granted the shell is refused the read");
     assert_eq!(refused.refusal, HostCallRefusal::Forbidden);
@@ -450,7 +523,7 @@ async fn a_served_call_is_attributed_to_the_plugin_and_held_to_its_grant() {
 #[tokio::test]
 async fn an_unbuilt_verb_names_its_family() {
     let refused = capabilities_for(GRANTS_BASH, FixtureTracker { open: Vec::new() })
-        .perform(DriverCall::DeliverMerge)
+        .perform(DriverCall::DeliverMerge, None)
         .await
         .expect_err("nothing here serves a merge");
     assert_eq!(refused.refusal, HostCallRefusal::Unsupported);
@@ -488,6 +561,11 @@ fn the_shipped_package_names_a_program_stella_starts() {
 }
 
 /// One session against the shipped program, under `grant`.
+///
+/// The workspace root is a temporary directory, because `backlog_claim` writes
+/// a lease into `.stella/private/fleet.db` under it — a test that pointed this
+/// at the repository would leave a ledger row behind and would race every other
+/// test doing the same.
 #[cfg(unix)]
 fn drive_shipped_program(grant: &str) -> (Result<DriveNext, String>, Vec<String>) {
     let installed = InstalledPlugin {
@@ -497,6 +575,7 @@ fn drive_shipped_program(grant: &str) -> (Result<DriveNext, String>, Vec<String>
         consent: crate::plugin_cmd::receipt::ConsentState::Receipted,
         panel_grant: crate::plugin_cmd::panel_grant::PanelGrantState::Undecided,
     };
+    let workspace = tempfile::tempdir().expect("a temporary workspace");
     let roster = roster(vec![installed]);
     let bound = bind_with(&roster, "stella-selfdriving", &mut |_| {}, &mut path_only)
         .expect("binds to the shipped program")
@@ -505,6 +584,8 @@ fn drive_shipped_program(grant: &str) -> (Result<DriveNext, String>, Vec<String>
             PluginGates::from_roster(&roster),
             Box::new(one_open_issue()),
             LoopConfig::default(),
+            workspace.path().to_path_buf(),
+            WorkSlot::new(Box::new(FixtureWorker::answering(changed()))),
         )));
     let next = bound.open("drive-test");
     (next, bound.refusals())
@@ -513,14 +594,16 @@ fn drive_shipped_program(grant: &str) -> (Result<DriveNext, String>, Vec<String>
 /// **The end-to-end witness.** The shipped program, through the real
 /// transport, twice.
 ///
-/// With `backlog_next` declared, the read is served and the program gets as far
-/// as asking to claim the issue it found. With it omitted, the host refuses the
-/// ask `undeclared`, the session **keeps running**, and the program still ends
-/// it with a `next` rather than dying — the property that makes a refusal a
-/// value the loop reads instead of a crash.
+/// With `backlog_next` and `backlog_claim` declared, both are served and the
+/// program gets as far as asking to work the issue it claimed — which this
+/// grant does not declare, so the loop stops there and says which ask it was.
+/// With the read omitted, the host refuses the first ask `undeclared`, the
+/// session **keeps running**, and the program still ends it with a `next`
+/// rather than dying — the property that makes a refusal a value the loop reads
+/// instead of a crash.
 ///
 /// The package must name a program for either arm to run at all, and the host
-/// must serve the verb for the first arm to reach the claim.
+/// must serve both verbs for the first arm to reach the work.
 #[cfg(unix)]
 #[test]
 fn the_shipped_program_is_served_what_it_declared_and_refused_what_it_did_not() {
@@ -559,10 +642,12 @@ env = ["PATH"]
     let (served, served_refusals) = drive_shipped_program(DECLARES_THE_READ);
     match served.expect("the session ended with a next") {
         DriveNext::Halt { reason } => {
-            // The read was served, so the program reached the claim — which
-            // this host does not serve, and which it says rather than guessing.
+            // The read and the claim were both served, so the program reached
+            // the work — which this grant does not declare, and which it says
+            // rather than guessing.
             assert!(reason.contains("41"), "{reason}");
-            assert!(reason.contains("backlog_claim"), "{reason}");
+            assert!(reason.contains("work_start"), "{reason}");
+            assert!(reason.contains("undeclared"), "{reason}");
         }
         DriveNext::Sleep { secs } => {
             panic!("the queue was not empty, yet the driver slept {secs}s");
@@ -571,7 +656,7 @@ env = ["PATH"]
     assert!(
         served_refusals
             .iter()
-            .all(|line| !line.contains("backlog_next")),
+            .all(|line| !line.contains("backlog_next") && !line.contains("backlog_claim")),
         "a declared, served call must not be refused: {served_refusals:?}"
     );
 
@@ -591,4 +676,317 @@ env = ["PATH"]
         .unwrap_or_else(|| panic!("the refusal must be reported: {refusals:?}"));
     assert!(named.contains("stella-selfdriving"), "{named}");
     assert!(named.contains("undeclared"), "{named}");
+}
+
+// ---------------------------------------------------------------------------
+// The work verbs
+// ---------------------------------------------------------------------------
+
+/// A manifest that grants `bash` and declares the three work verbs beside the
+/// read, which is what the shipped package declares.
+const GRANTS_WORK: &str = r#"
+name = "stella-selfdriving"
+[loop]
+participation = "none"
+[[capabilities]]
+tool = "bash"
+risk = "destructive"
+purpose = "read the defect queue and work an issue"
+[driver]
+calls = ["backlog_next", "work_start", "work_status", "work_abandon"]
+[driver.process]
+argv = ["/bin/sh"]
+timeout_secs = 5
+"#;
+
+/// **The witness.** `work_start` runs a unit and reports what the tree holds.
+///
+/// Nothing weaker can pass it: without a served verb there is no `work` member
+/// to read, and without an argument table there is no way to say which unit.
+#[tokio::test]
+async fn work_start_runs_a_unit_and_reports_what_the_tree_holds() {
+    let host = capabilities_working(GRANTS_WORK, changed());
+
+    let ok = host
+        .perform(DriverCall::WorkStart, work_on("41"))
+        .await
+        .expect("a granted plugin is served the work");
+    let report = ok.work.expect("a served work ask carries its report");
+    assert_eq!(report.issue, "41");
+    assert_eq!(report.state, WorkState::Changed);
+    assert_eq!(report.branch, "stella/41");
+    assert!(report.stat.contains("1 file changed"), "{report:?}");
+}
+
+/// A turn that changed nothing is a real answer, not a failure, and it carries
+/// the turn's own last word — which is the only thing that tells "nothing to do
+/// here" from "the money ran out before it started".
+#[tokio::test]
+async fn a_unit_that_changed_nothing_is_not_a_failure() {
+    let host = capabilities_working(
+        GRANTS_WORK,
+        WorkOutcome::NoChange {
+            why: "this was already fixed on the base".into(),
+        },
+    );
+    let report = host
+        .perform(DriverCall::WorkStart, work_on("41"))
+        .await
+        .expect("a unit that changed nothing still answers")
+        .work
+        .expect("with a report");
+    assert_eq!(report.state, WorkState::NoChange);
+    assert!(report.detail.contains("already fixed"), "{report:?}");
+    assert!(report.branch.is_empty(), "{report:?}");
+}
+
+/// The slot answers `idle` before anything is started, so a driver can tell an
+/// empty session from a host that did not perform the call.
+#[tokio::test]
+async fn work_status_is_idle_before_a_unit_is_started() {
+    let host = capabilities_working(GRANTS_WORK, changed());
+    let report = host
+        .perform(DriverCall::WorkStatus, None)
+        .await
+        .expect("status is served with no unit held")
+        .work
+        .expect("with a report");
+    assert_eq!(report.state, WorkState::Idle);
+    assert!(report.issue.is_empty(), "{report:?}");
+}
+
+/// Starting, reading, and giving the unit back — the session's whole slot, in
+/// the order a cycle uses it.
+#[tokio::test]
+async fn a_unit_is_held_until_it_is_abandoned() {
+    let host = capabilities_working(GRANTS_WORK, changed());
+
+    host.perform(DriverCall::WorkStart, work_on("41"))
+        .await
+        .expect("the unit starts");
+
+    let held = host
+        .perform(DriverCall::WorkStatus, None)
+        .await
+        .expect("status is served")
+        .work
+        .expect("with a report");
+    assert_eq!(held.state, WorkState::Changed);
+    assert_eq!(held.issue, "41");
+
+    // A second unit while one is held is refused rather than queued: two
+    // worktrees under one session are two claims it cannot release apart.
+    let refused = host
+        .perform(DriverCall::WorkStart, work_on("41"))
+        .await
+        .expect_err("a session works one unit at a time");
+    assert_eq!(refused.refusal, HostCallRefusal::Unavailable);
+    assert!(refused.detail.contains("stella/41"), "{refused}");
+
+    let given_back = host
+        .perform(
+            DriverCall::WorkAbandon,
+            Some(DriverArgs {
+                work_abandon: Some(AbandonArgs {
+                    reason: "the base moved under it".into(),
+                }),
+                ..DriverArgs::default()
+            }),
+        )
+        .await
+        .expect("the unit is given back")
+        .work
+        .expect("with a report");
+    assert_eq!(given_back.state, WorkState::Idle);
+    assert!(
+        given_back.detail.contains("the base moved"),
+        "{given_back:?}"
+    );
+
+    let after = host
+        .perform(DriverCall::WorkStatus, None)
+        .await
+        .expect("status is served")
+        .work
+        .expect("with a report");
+    assert_eq!(after.state, WorkState::Idle);
+}
+
+/// A `work_start` that names no issue is refused with a reason. The one
+/// plausible guess — the top of the queue — is the wrong one, because what to
+/// work is the driver's decision.
+#[tokio::test]
+async fn a_work_ask_that_names_no_issue_is_refused_rather_than_guessed_at() {
+    let host = capabilities_working(GRANTS_WORK, changed());
+
+    let no_table = host
+        .perform(DriverCall::WorkStart, None)
+        .await
+        .expect_err("an ask with no arguments cannot name a unit");
+    assert_eq!(no_table.refusal, HostCallRefusal::Failed);
+
+    let blank = host
+        .perform(DriverCall::WorkStart, work_on("   "))
+        .await
+        .expect_err("a blank key names no unit either");
+    assert_eq!(blank.refusal, HostCallRefusal::Failed);
+    assert!(blank.detail.contains("names no issue"), "{blank}");
+}
+
+/// An ask carries the table of the verb it names and nothing else. Reading one
+/// and dropping the other would leave a driver believing it said something the
+/// host never heard.
+#[tokio::test]
+async fn an_ask_carrying_another_verbs_arguments_is_refused() {
+    let host = capabilities_working(GRANTS_WORK, changed());
+
+    let crossed = host
+        .perform(
+            DriverCall::WorkStart,
+            Some(DriverArgs {
+                backlog_claim: Some(UnitArgs { issue: "41".into() }),
+                ..DriverArgs::default()
+            }),
+        )
+        .await
+        .expect_err("a claim table does not answer a work ask");
+    assert_eq!(crossed.refusal, HostCallRefusal::Failed);
+    assert!(crossed.detail.contains("backlog_claim"), "{crossed}");
+
+    let unread = host
+        .perform(DriverCall::WorkStatus, work_on("41"))
+        .await
+        .expect_err("work_status reads no arguments");
+    assert_eq!(unread.refusal, HostCallRefusal::Failed);
+    assert!(unread.detail.contains("work_start"), "{unread}");
+}
+
+/// Abandoning records why. A release with nothing said about it teaches the
+/// next cycle nothing, so a blank reason is refused rather than accepted.
+#[tokio::test]
+async fn abandoning_a_unit_without_a_reason_is_refused() {
+    let host = capabilities_working(GRANTS_WORK, changed());
+    host.perform(DriverCall::WorkStart, work_on("41"))
+        .await
+        .expect("the unit starts");
+
+    let refused = host
+        .perform(
+            DriverCall::WorkAbandon,
+            Some(DriverArgs {
+                work_abandon: Some(AbandonArgs {
+                    reason: "  ".into(),
+                }),
+                ..DriverArgs::default()
+            }),
+        )
+        .await
+        .expect_err("a release says why");
+    assert_eq!(refused.refusal, HostCallRefusal::Failed);
+    assert!(refused.detail.contains("no reason"), "{refused}");
+}
+
+/// Abandoning nothing is a refusal, not a success that released nothing: a
+/// driver that lost track of its own slot is told so.
+#[tokio::test]
+async fn abandoning_an_empty_slot_is_refused() {
+    let host = capabilities_working(GRANTS_WORK, changed());
+    let refused = host
+        .perform(
+            DriverCall::WorkAbandon,
+            Some(DriverArgs {
+                work_abandon: Some(AbandonArgs {
+                    reason: "stopping".into(),
+                }),
+                ..DriverArgs::default()
+            }),
+        )
+        .await
+        .expect_err("there is nothing to abandon");
+    assert_eq!(refused.refusal, HostCallRefusal::Unavailable);
+}
+
+/// **The claim witness.** The lease is real, and a peer that holds it is named.
+///
+/// Both directions over one workspace: a free key is granted, and a key a peer
+/// already leased comes back `held: false` with the holder's own string. The
+/// grant is what makes the second answer usable — a loop told only "no" cannot
+/// tell a peer from a broken ledger, and those call for opposite responses.
+#[tokio::test]
+async fn a_claim_is_granted_when_free_and_names_the_holder_when_it_is_not() {
+    let workspace = tempfile::tempdir().expect("a temporary workspace");
+    let roster = roster(vec![installed(GRANTS_WORK, "/opt/pkgs/selfdriving")]);
+    let claim_on = |key: &str| {
+        Some(DriverArgs {
+            backlog_claim: Some(UnitArgs {
+                issue: key.to_string(),
+            }),
+            ..DriverArgs::default()
+        })
+    };
+    let host = |root: PathBuf| {
+        HostDriverCapabilities::new(
+            "stella-selfdriving",
+            PluginGates::from_roster(&roster),
+            Box::new(one_open_issue()),
+            LoopConfig::default(),
+            root,
+            WorkSlot::new(Box::new(FixtureWorker::answering(changed()))),
+        )
+    };
+
+    let free = host(workspace.path().to_path_buf())
+        .perform(DriverCall::BacklogClaim, claim_on("41"))
+        .await
+        .expect("a free key is granted")
+        .claim
+        .expect("a served claim carries its report");
+    assert_eq!(free.issue, "41");
+    assert!(free.held, "{free:?}");
+    assert!(free.holder.is_empty(), "{free:?}");
+
+    // A peer takes the key and keeps it: the lease releases when it drops, so
+    // it has to outlive the ask.
+    let peer = crate::self_driving_cmd::claim::acquire_as(workspace.path(), "42", "peer:9001");
+    assert!(
+        matches!(peer, crate::self_driving_cmd::claim::Claim::Granted(_)),
+        "the peer must actually hold it for this to test anything"
+    );
+
+    let taken = host(workspace.path().to_path_buf())
+        .perform(DriverCall::BacklogClaim, claim_on("42"))
+        .await
+        .expect("a held key still answers")
+        .claim
+        .expect("with a report");
+    assert_eq!(taken.issue, "42");
+    assert!(!taken.held, "{taken:?}");
+    assert!(taken.holder.contains("peer:9001"), "{taken:?}");
+    drop(peer);
+}
+
+/// Working a unit reads the tracker, so it is held to the same grant the read
+/// is: a plugin that was not granted the shell gets neither.
+#[tokio::test]
+async fn a_work_ask_is_held_to_the_grant_the_read_is() {
+    const NO_SHELL: &str = r#"
+name = "stella-selfdriving"
+[loop]
+participation = "none"
+[[capabilities]]
+tool = "write_file"
+risk = "medium"
+purpose = "remember what a cycle learned"
+[driver]
+calls = ["work_start"]
+[driver.process]
+argv = ["/bin/sh"]
+timeout_secs = 5
+"#;
+    let refused = capabilities_working(NO_SHELL, changed())
+        .perform(DriverCall::WorkStart, work_on("41"))
+        .await
+        .expect_err("a plugin that was not granted the shell is refused the work");
+    assert_eq!(refused.refusal, HostCallRefusal::Forbidden);
+    assert!(refused.detail.contains("stella-selfdriving"), "{refused}");
 }

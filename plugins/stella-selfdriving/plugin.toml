@@ -113,13 +113,16 @@ scope = [
 # in-turn influence: `participation = "none"` above stays the honest answer,
 # because this plugin still never runs inside a turn. It starts them.
 #
-# ONE OF THESE IS SERVED. `backlog_next` reads the tracker through the same
-# `IssueProvider` port the `stella self-driving` verbs use. Every other verb
-# below returns `unsupported` until the phase that builds it lands, and the
-# loop degrades rather than dying. They are all declared now because a grant is
-# a consent document: a user should read the whole shape of what this loop will
-# be permitted to do before any of it works, rather than discover it one silent
-# widening at a time.
+# FIVE OF THESE ARE SERVED. `backlog_next` reads the tracker through the same
+# `IssueProvider` port the `stella self-driving` verbs use. `backlog_claim`
+# takes the same lease `stella self-driving drive` takes. The three `work`
+# verbs run one issue through one bounded `stella run`, in a checkout of its
+# own.
+#
+# Every other verb below comes back `unsupported` until the phase that builds
+# it lands. The loop degrades; it does not die. All of them are declared now
+# because a grant is a consent document. Read the whole shape of what this loop
+# may do before any of it works.
 #
 # WHAT IS DELIBERATELY ABSENT, and why each is a decision rather than an
 # oversight:
@@ -191,10 +194,13 @@ calls = [
 # and this block is where its process is named.
 [driver.process]
 argv = ["python3", "${plugin_dir}/main.py"]
-# One session is a decision, not a cycle of work: the program reads the queue,
-# asks, and says what should happen next. A minute is a backstop against a
-# child that hangs before writing anything, not a work budget.
-timeout_secs = 60
+# A session now includes the work, because `work_start` is served. The host
+# cuts a checkout and runs one turn in it while this program waits. A turn on a
+# real issue takes minutes. A one-minute backstop would have killed every
+# session that got as far as doing something. An hour is a backstop against a
+# child that wedges. It is not a work budget: `stella plugin drive
+# --spend-limit` is the number that decides what a session may cost.
+timeout_secs = 3600
 # Default-deny, and `PATH` is the whole list — it is here so the host can find
 # `python3`. This program reaches for no file, no forge token and no provider
 # key: everything it needs, it asks for above, and the socket withholds a model

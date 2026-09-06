@@ -26,11 +26,12 @@
 //!
 //! # What a session does today
 //!
-//! [`capabilities::HostDriverCapabilities`] serves the tracker read and answers
-//! `unsupported` for the rest, so a driver's ask for an unbuilt verb degrades
-//! rather than dying. This module does not paper over that: the refusals are
-//! printed, in the driver's own vocabulary and under the plugin's own name, so
-//! an operator sees exactly which asks this build could not serve and for whom.
+//! [`capabilities::HostDriverCapabilities`] serves the tracker read, the
+//! cooperative claim and the three `work` verbs, and answers `unsupported` for
+//! the rest, so a driver's ask for an unbuilt verb degrades rather than dying.
+//! This module does not paper over the rest: the refusals are printed, in the
+//! driver's own vocabulary and under the plugin's own name, so an operator sees
+//! exactly which asks this build could not serve and for whom.
 //!
 //! Scheduling is absent. One invocation opens one session and
 //! reports what the driver said to do next; who re-opens it after a
@@ -58,6 +59,7 @@ use crate::plugin_cmd::roster::PluginRoster;
 
 pub(crate) mod capabilities;
 pub(crate) mod session_log;
+pub(crate) mod work;
 
 /// An installed driver, bound to the process the host will start.
 ///
@@ -213,11 +215,11 @@ pub(crate) fn bind_installed(
 
 /// [`bind_installed`], with the environment lookup supplied.
 ///
-/// The seam exists for the reason [`stella_plugin::Runtime::child_env`] takes
-/// a lookup rather than reading the environment itself: what the socket
-/// withholds from a child is decided by the *names* a manifest declared, and a
-/// test that had to set `ANTHROPIC_API_KEY` in the test process to prove the
-/// withholding would be mutating global state every other test shares.
+/// The seam is here for the reason [`stella_plugin::Runtime::child_env`] takes
+/// a lookup. What the socket keeps from a child is decided by the *names* a
+/// manifest declared. A test that had to set `ANTHROPIC_API_KEY` in its own
+/// process to prove that would be writing global state every other test
+/// shares.
 fn bind_with(
     roster: &PluginRoster,
     name: &str,

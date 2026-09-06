@@ -48,7 +48,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use async_trait::async_trait;
 use stella_plugin::{
-    DriverCall, DriverCallOutcome, DriverGrant, DriverOk, HostCallFailure, HostCallRefusal,
+    DriverArgs, DriverCall, DriverCallOutcome, DriverGrant, DriverOk, HostCallFailure,
+    HostCallRefusal,
 };
 
 /// The host's own ceiling on capability asks per driver session, when a caller
@@ -71,15 +72,21 @@ pub const DEFAULT_DRIVER_MAX_CALLS: u32 = 128;
 /// [`HostCallRefusal::Unsupported`] for the rest.
 ///
 /// This is the port the *gate* calls **after** it has checked the grant, so an
-/// implementor is never the thing that decides whether a driver may ask. It
-/// still takes no arguments: no served verb needs one yet, and
-/// `stella_plugin::driver` states the rule both halves follow — an argument
-/// table lands with the verb that reads it. The result already carries what a
-/// served verb reports ([`DriverOk`]).
+/// implementor is never the thing that decides whether a driver may ask.
+///
+/// The arguments arrive as the driver sent them, and `None` is what a verb
+/// that reads none is asked with. Whether a table is the *right* one for the
+/// verb is the implementor's answer, not the gate's: the gate decides what a
+/// plugin may ask for, and what a well-formed ask looks like is a property of
+/// the verb. [`DriverArgs::tables`] is what an implementor checks it with.
 #[async_trait]
 pub trait DriverCapabilities: Send + Sync {
-    /// Perform `call`, or say why not.
-    async fn perform(&self, call: DriverCall) -> Result<DriverOk, HostCallFailure>;
+    /// Perform `call` with `args`, or say why not.
+    async fn perform(
+        &self,
+        call: DriverCall,
+        args: Option<DriverArgs>,
+    ) -> Result<DriverOk, HostCallFailure>;
 }
 
 /// A host that implements no driver capability yet.
@@ -93,7 +100,11 @@ pub struct NoDriverCapabilities;
 
 #[async_trait]
 impl DriverCapabilities for NoDriverCapabilities {
-    async fn perform(&self, call: DriverCall) -> Result<DriverOk, HostCallFailure> {
+    async fn perform(
+        &self,
+        call: DriverCall,
+        _args: Option<DriverArgs>,
+    ) -> Result<DriverOk, HostCallFailure> {
         Err(HostCallFailure::new(
             HostCallRefusal::Unsupported,
             format!(
@@ -270,7 +281,7 @@ impl DriverSession<'_> {
     ///
     /// Infallible by construction: a refusal is a [`DriverCallOutcome::Err`]
     /// value the driver reads, never an error that ends the session.
-    pub async fn call(&self, call: DriverCall) -> DriverCallOutcome {
+    pub async fn call(&self, call: DriverCall, args: Option<DriverArgs>) -> DriverCallOutcome {
         // The grant first, and before anything is spent: an undeclared call
         // costs the driver nothing from an allowance it was never entitled to
         // use.
@@ -302,7 +313,7 @@ impl DriverSession<'_> {
             return DriverCallOutcome::Err(failure);
         }
 
-        match self.gate.capabilities.perform(call).await {
+        match self.gate.capabilities.perform(call, args).await {
             Ok(ok) => DriverCallOutcome::Ok(ok),
             Err(failure) => {
                 self.gate.record(call, &failure);
@@ -322,7 +333,11 @@ mod tests {
 
     #[async_trait]
     impl DriverCapabilities for Serves {
-        async fn perform(&self, _call: DriverCall) -> Result<DriverOk, HostCallFailure> {
+        async fn perform(
+            &self,
+            _call: DriverCall,
+            _args: Option<DriverArgs>,
+        ) -> Result<DriverOk, HostCallFailure> {
             Ok(DriverOk::default())
         }
     }
@@ -349,7 +364,7 @@ mod tests {
         );
         let session = gate.open();
 
-        let refused = session.call(DriverCall::DeliverMerge).await;
+        let refused = session.call(DriverCall::DeliverMerge, None).await;
         match refused {
             DriverCallOutcome::Err(failure) => {
                 assert_eq!(failure.refusal, HostCallRefusal::Undeclared);
@@ -364,7 +379,7 @@ mod tests {
         // And the session is still alive and still able to be served — the
         // half that makes the refusal a value rather than a death.
         assert_eq!(
-            session.call(DriverCall::BacklogNext).await,
+            session.call(DriverCall::BacklogNext, None).await,
             DriverCallOutcome::Ok(DriverOk::default())
         );
         assert_eq!(session.spent(), 1);
@@ -388,11 +403,11 @@ mod tests {
         let session = gate.open();
         for _ in 0..4 {
             assert!(matches!(
-                session.call(DriverCall::BacklogNext).await,
+                session.call(DriverCall::BacklogNext, None).await,
                 DriverCallOutcome::Ok(_)
             ));
         }
-        match session.call(DriverCall::BacklogNext).await {
+        match session.call(DriverCall::BacklogNext, None).await {
             DriverCallOutcome::Err(failure) => {
                 assert_eq!(failure.refusal, HostCallRefusal::AllowanceSpent);
             }
@@ -410,7 +425,7 @@ mod tests {
         for _ in 0..3 {
             let session = gate.open();
             assert!(matches!(
-                session.call(DriverCall::SweepAudit).await,
+                session.call(DriverCall::SweepAudit, None).await,
                 DriverCallOutcome::Ok(_)
             ));
         }
@@ -424,7 +439,7 @@ mod tests {
             DEFAULT_DRIVER_MAX_CALLS,
             Box::new(NoDriverCapabilities),
         );
-        match gate.open().call(DriverCall::WorkStart).await {
+        match gate.open().call(DriverCall::WorkStart, None).await {
             DriverCallOutcome::Err(failure) => {
                 assert_eq!(failure.refusal, HostCallRefusal::Unsupported);
                 // The gap names the family and the epic, so a driver author

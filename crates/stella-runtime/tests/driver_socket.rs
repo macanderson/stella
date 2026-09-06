@@ -26,8 +26,8 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use stella_plugin::{
-    DriveNext, DriveRequest, DriverCall, DriverGrant, DriverOk, HostCallFailure, HostCallRefusal,
-    PluginManifest,
+    DriveNext, DriveRequest, DriverArgs, DriverCall, DriverGrant, DriverOk, HostCallFailure,
+    HostCallRefusal, PluginManifest,
 };
 use stella_runtime::wrapper::{
     DEFAULT_DRIVER_MAX_CALLS, DriverCallGate, DriverCapabilities, DriverError, MAX_SLEEP_SECS,
@@ -56,7 +56,11 @@ struct Serves;
 
 #[async_trait]
 impl DriverCapabilities for Serves {
-    async fn perform(&self, _call: DriverCall) -> Result<DriverOk, HostCallFailure> {
+    async fn perform(
+        &self,
+        _call: DriverCall,
+        _args: Option<DriverArgs>,
+    ) -> Result<DriverOk, HostCallFailure> {
         Ok(DriverOk::default())
     }
 }
