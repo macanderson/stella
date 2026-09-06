@@ -486,12 +486,14 @@ not create.
 
 ## 7. What this design does not do
 
-- **It does not let a plugin emit a trace.** Plugins emit journal events in
-  the `plugin.<id>.*` namespace; the trace is a fold
-  (`crates/stella-cli/src/trace.rs`). Contributed facts then inherit
-  replayability, `TRACE_SCHEMA_VERSION` skip-on-unknown, redaction, and the
-  guarantee that nothing reaches `store.db`. A plugin writing `traces.jsonl`
-  directly routes around all four.
+- **It does not let a plugin emit a trace, or an event of its own.** A
+  plugin's facts cross as evidence, and the host turns them into typed journal
+  events that name their consumers — `AgentEvent::Proof`,
+  `AgentEvent::Verdict`, `AgentEvent::GateBoard`. There is no free-form event
+  channel: the `plugin.<id>.*` namespace was retired with the trace fold it
+  pointed at, because nothing could send a name in it
+  (`doc:pipeline-as-plugins` A9). A plugin writing its own journal would route
+  around redaction and around the consumer ledger.
 - **It does not give a plugin an `Engine`, a provider, or a credential.** A
   wrapper names a role *intent*; the host resolves it against the user's BYOK
   providers, carves the budget, attaches gate/steering/hooks, runs the turn and

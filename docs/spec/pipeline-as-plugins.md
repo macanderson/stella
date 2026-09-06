@@ -494,26 +494,35 @@ rule this item was written to protect.
 
 ### A9. Plugin events and the trace fold
 
-**LANDED (ed18283).** `PLUGIN_NAMESPACE_PREFIX = "plugin."` is reserved in the
-bus catalog (`crates/stella-core/src/bus/names.rs:284`, with
-`plugin_event_name`/`plugin_id_of` validating and parsing it), and
-`crates/stella-cli/src/trace.rs` gained the fold arm: `TraceRecord::plugin_facts:
-Vec<PluginFact>` (`trace.rs:130-136`, `:195-207`), folded from `plugin.<id>.*`
-journal events (`trace.rs:351-354`) — present and empty, never omitted, when
-no plugin ran. Everything this item asked for exists.
+**RETIRED.** Neither half is in the tree, and neither had work left to do.
 
-(Correction, 2026-08-17: an earlier draft said this namespace was "already
-contemplated at `crates/stella-core/src/bus/names.rs:3-4`". It is not — the
-string `plugin` does not appear in that file at all. What lines 3-4 actually
-say is the weaker, general "Extensions may emit custom names — the catalog is
-the contract for what the host emits, not a closed set", which permits the
-namespace without contemplating it. The namespace is entirely net-new.)
+The fold went first. `trace_capture` is gone, so
+`crates/stella-cli/src/trace.rs` is absent and `TRACE_SCHEMA_VERSION` has no
+hits anywhere. `crates/stella-cli/src/settings/unknown.rs` records the
+retirement and its reason: `store.db` already holds every step, tool call and
+cost the trace wrote.
 
-**Plugins do not write traces.** They emit journal events; the trace is a fold
-(`crates/stella-cli/src/trace.rs:8-18`). Contributed facts then inherit
-replayability, `TRACE_SCHEMA_VERSION` skip-on-unknown, redaction, and the
-guarantee that nothing reaches `store.db`. A plugin writing `traces.jsonl`
-directly routes around all four.
+The namespace followed. `PLUGIN_NAMESPACE_PREFIX = "plugin."` and its four
+helpers held names for events a plugin could never send: no manifest key
+declares one, no field on the wrapper wire carries one, and the only stated
+destination was the fold above. `crates/stella-core/src/bus/names.rs` says of
+`agent.step.started` that a name nothing emits is a promise rather than a
+contract, and this was the exception to that. The module's own test,
+`every_declared_name_is_one_the_host_emits`, now holds the rule by reading its
+source, so the next reserved name arrives with the code that emits it.
+
+**Where a plugin's facts go instead.** They reach the journal as typed events
+that name their consumers — `AgentEvent::Proof`, `AgentEvent::Verdict` and
+`AgentEvent::GateBoard` in `crates/stella-protocol/src/event/kind.rs`, each
+carrying a row generated from `crates/stella-protocol/src/event/tags.rs` — and
+`store.db` is the durable store. A free-form channel would still owe a manifest
+key, a wire field, a consent line, a destination, and an answer to AGENTS.md's
+rule that every emitted signal names what reads it. Build it when a plugin
+needs it; the name validation is a page of code.
+
+**Plugins still do not write traces**, and now nothing does. A plugin writing a
+journal of its own would route around redaction and around the consumer ledger
+at once, which is why the evidence channel is the one it gets.
 
 ### A10. A worktree handle that crosses a process
 
