@@ -71,7 +71,7 @@ use stella_fleet::{
 use stella_protocol::{AgentEvent, PrStatus};
 use stella_tools::ToolRegistry;
 use stella_tools::hook_runner::HostHookRunner;
-use stella_tui::{FleetMsg, FleetStatus};
+use stella_tui::FleetMsg;
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::config::Config;
