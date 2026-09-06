@@ -406,6 +406,14 @@ lapses so a crashed session cannot hold an issue shut, and every unknown
 proceeds loudly. `make issue-claim N=5045` asks by hand; `make
 issue-claim-test` covers it, both blocking branches included.
 
+It carries the same session word, and for the same reason: one login is one
+account, and the thing that has to be identified is the session. Comparing
+the login alone read a peer session's claim as this session's own and cleared
+both to work one issue (#5875). `scripts/lib/claim-session.sh` resolves the
+word for both scripts, so a fleet sets `STELLA_CLAIM_SESSION` once rather
+than twice, and both fail open the same way: a run with no word of its own,
+and a claim comment carrying none, fall back to the author-only rule.
+
 Run it **before writing code and again before opening the PR**. The gap
 between those two is enough: a peer's PR can merge inside one issue's worth of
 work, and then the check that was clean at the start is stale at the end.

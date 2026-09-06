@@ -64,7 +64,7 @@ echo "issue-claim"
 
 # A live peer. Without this case the script is a comment.
 want "a fresh claim by somebody else stands this session down" \
-  expect-block "claimed by @grace" check "ada" "grace 300" ""
+  expect-block "claimed by @grace" check "ada" "grace - 300" ""
 
 # A PR that closes the issue — the signal that would have caught the
 # collisions this script was filed for, and the one the issue itself never
@@ -128,22 +128,22 @@ want "an unclaimed issue proceeds" \
 # A session's own claim is not a reason to stand it down — re-running the
 # pre-flight is what a session does when it comes back to work it started.
 want "a claim of this session's own does not stand it down" \
-  expect-proceed "is unclaimed" check "ada" "ada 300" ""
+  expect-proceed "is unclaimed" check "ada" "ada - 300" ""
 
 # A lapsed claim is not a claim. Without this a crashed session holds an issue
 # shut forever, which is why this is a comment rather than an assignee.
 want "a claim past the window has lapsed" \
-  expect-proceed "is unclaimed" check "ada" "grace 999999" ""
+  expect-proceed "is unclaimed" check "ada" "grace - 999999" ""
 
 # An unreadable identity cannot tell a claim of its own from a peer's, so it
 # proceeds rather than guessing.
 want "an unknown identity proceeds" \
-  expect-proceed "identity unknown" check "" "grace 300" ""
+  expect-proceed "identity unknown" check "" "grace - 300" ""
 
 # A malformed age is not a claim. The alternative is a parse failure standing a
 # session down on a comment nobody can date.
 want "a claim with an unreadable age is ignored" \
-  expect-proceed "is unclaimed" check "ada" "grace notanumber" ""
+  expect-proceed "is unclaimed" check "ada" "grace - notanumber" ""
 
 # A query that never ran is not proof the list was empty. The unfixed script
 # prints "no PR closes it" whether it read the list or failed to ask. That
@@ -169,6 +169,66 @@ case "$rc,$out" in
   ;;
 esac
 
+# ── two sessions of one author ───────────────────────────────────────────────
+#
+# The positive control for the session word, and the case the login alone
+# could never answer: a fleet, or several agent worktrees on one machine, all
+# run as one login. Comparing the login read a peer's claim as this session's
+# own and cleared both to work the same issue (#5875).
+#
+# `want` cannot drive this: it pins no session word, which is the fail-open
+# side. Each case here sets both halves.
+want_session() { # want_session <name> <expect-proceed|expect-block> <want-text> <login> <session> <claims>
+  local name="$1" expect="$2" want_text="$3" login="$4" session="$5" claims="$6"
+  local out rc
+  out="$("$SCRIPT" check 5045 \
+    --fixture-login "$login" \
+    --fixture-session "$session" \
+    --fixture-claims "$claims" \
+    --fixture-prs "" 2>&1)"
+  rc=$?
+  if [ "$expect" = "expect-proceed" ] && [ "$rc" -ne 0 ]; then
+    bad "$name — expected proceed, got exit $rc: $out"
+    return
+  fi
+  if [ "$expect" = "expect-block" ] && [ "$rc" -eq 0 ]; then
+    bad "$name — expected a stand-down, got exit 0: $out"
+    return
+  fi
+  case "$out" in
+    *"$want_text"*) ok "$name" ;;
+    *) bad "$name — right exit, wrong reason (wanted '$want_text'): $out" ;;
+  esac
+}
+
+want_session "a second session of the same author is stood down" \
+  expect-block "claimed by @ada (session s1)" ada s2 "ada s1 300"
+
+want_session "...and the report says whose sessions those are" \
+  expect-block "another of your own sessions" ada s2 "ada s1 300"
+
+# The other direction, and the one that must not regress: a session that
+# re-runs its own pre-flight has to keep proceeding.
+want_session "this session's own claim still does not stand it down" \
+  expect-proceed "is unclaimed" ada s1 "ada s1 300"
+
+# Fail-open, both sides. A claim written before the word existed carries none,
+# and a run that could not mint one has none either. Each falls back to the
+# author-only rule rather than blocking on something it cannot establish.
+want_session "a claim with no session word falls back to the author-only rule" \
+  expect-proceed "is unclaimed" ada s1 "ada - 300"
+
+want_session "a run with no session word of its own proceeds on its own login" \
+  expect-proceed "is unclaimed" ada "" "ada s1 300"
+
+want_session "...and says so, rather than proceeding silently" \
+  expect-proceed "no session word" ada "" "ada s1 300"
+
+# A peer's claim still blocks whatever the words are, or the fail-open path
+# would have widened into a hole.
+want_session "another author's claim still blocks a run with no word" \
+  expect-block "claimed by @grace" ada "" "grace s1 300"
+
 # ── claim mode ───────────────────────────────────────────────────────────────
 
 want "claim posts when the issue is free" \
@@ -177,7 +237,7 @@ want "claim posts when the issue is free" \
 # ...and refuses to post over somebody else's live claim, which is the whole
 # point: `claim` is `check` plus a write, never a write that skips the check.
 want "claim stands down rather than posting over a peer" \
-  expect-block "claimed by @grace" claim "ada" "grace 300" ""
+  expect-block "claimed by @grace" claim "ada" "grace - 300" ""
 
 # ── argument handling ────────────────────────────────────────────────────────
 
@@ -198,7 +258,7 @@ fi
 # The window is configurable, and the case proves the flag reaches the
 # comparison rather than being parsed and dropped.
 if out="$("$SCRIPT" check 5045 --window-minutes 1 \
-  --fixture-login ada --fixture-claims "grace 300" --fixture-prs "" 2>&1)"; then
+  --fixture-login ada --fixture-claims "grace - 300" --fixture-prs "" 2>&1)"; then
   ok "--window-minutes narrows the window (a 5m claim lapses under 1m)"
 else
   bad "--window-minutes did not reach the comparison: $out"
@@ -235,14 +295,30 @@ want_select() {
   fi
 }
 
-want_select "a live claim parses as <login> <age>" \
-  "grace 300" \
+want_select "a live claim parses as <login> <session> <age>" \
+  "grace s7 300" \
+  "{\"comments\":[$(comment grace "<!-- issue-claim --> grace s7" $((NOW_SELECT - 300)))]}"
+
+# A claim written before the word existed has two words on its marker line.
+# It has to parse with a `-` rather than erroring on the missing field.
+want_select "a claim with no session word parses with a '-' in that column" \
+  "grace - 300" \
   "{\"comments\":[$(comment grace "<!-- issue-claim --> grace" $((NOW_SELECT - 300)))]}"
+
+# The parse reads fields, not columns, so extra spacing and a CRLF line
+# ending cannot shift the session word into the wrong slot.
+want_select "a marker line with extra spaces still parses" \
+  "grace s7 300" \
+  "{\"comments\":[$(comment grace "<!-- issue-claim -->   grace   s7" $((NOW_SELECT - 300)))]}"
+
+want_select "a CRLF first line still parses cleanly" \
+  "grace s7 300" \
+  "{\"comments\":[$(comment grace "$(printf '<!-- issue-claim --> grace s7\r\nmore')" $((NOW_SELECT - 300)))]}"
 
 # A lapsed claim still parses correctly here — the window is judged by `check`
 # downstream, not by `select`.
 want_select "a lapsed claim still parses; the window is judged downstream" \
-  "grace 999999" \
+  "grace - 999999" \
   "{\"comments\":[$(comment grace "<!-- issue-claim --> grace" $((NOW_SELECT - 999999)))]}"
 
 out="$(printf '{"comments":[%s]}' \

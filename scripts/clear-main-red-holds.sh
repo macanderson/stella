@@ -45,6 +45,20 @@
 # canary turned red by a `gh` blip would say `main` is broken when it is not.
 # That is the one lie this machinery must not tell.
 #
+# ## What it names rather than passes over (`#6052`)
+#
+# Two shapes slipped past a sweep that still read as clean.
+#
+# The list was capped at one page, silently. A repository with more open pull
+# requests than the cap left the rest unlooked-at, and the summary counted only
+# what it saw. The list is paged now, and `--limit` is an explicit cap that says
+# so when it bites.
+#
+# A head can also carry no hold run at all — an Actions outage, or a run that
+# was never created. There is nothing to re-run, `main is not known-broken` is a
+# required check, and the pull request stays unmergeable. The sweep counts those
+# and names them, so a reader knows which branches still need a push.
+#
 # Usage:
 #   scripts/clear-main-red-holds.sh
 #   scripts/clear-main-red-holds.sh --dry-run
@@ -54,7 +68,9 @@ set -uo pipefail
 
 label="main-red"
 workflow="main-red-hold.yml"
-limit=100
+# Zero pages the whole list. A caller who wants a cap asks for one, and gets
+# told when it cuts the list short.
+limit=0
 dry_run=0
 fixture_open_issues=""
 fixture_open_prs=""
@@ -73,6 +89,11 @@ while [ $# -gt 0 ]; do
       exit 2
     }
     limit="$2"
+    case "$limit" in '' | *[!0-9]*)
+      echo "clear-main-red-holds: --limit takes a whole number" >&2
+      exit 2
+      ;;
+    esac
     shift 2
     ;;
   # Test-only seams. Any one of them stubs every lookup, and stops the re-run
@@ -160,38 +181,94 @@ fi
 
 # ── Run the hold again on every open pull request ────────────────────────────
 
+# `gh pr list --limit N` capped the sweep at one page and said nothing about
+# what it never looked at. `--paginate` follows the Link headers instead, so
+# the list is the whole list however long it is.
 if [ "$use_fixture" -eq 1 ]; then
   open_prs="$fixture_open_prs"
-elif ! open_prs="$(gh pr list --state open --limit "$limit" \
-  --json number,headRefOid --jq '.[] | "\(.number) \(.headRefOid)"' 2>/dev/null)"; then
+elif ! open_prs="$(gh api --paginate \
+  "repos/{owner}/{repo}/pulls?state=open&per_page=100" \
+  --jq '.[] | "\(.number) \(.head.sha)"' 2>/dev/null)"; then
   note "could not list the open pull requests, so no hold was cleared."
   exit 0
 fi
 
-# The last hold run on this head, and only if it is a failure right now. A
-# re-run updates the run in place, so `[0]` is that run, and its conclusion is
-# the verdict the branch rules read.
-stale_run_for() {
-  head="$1"
+open_prs="$(printf '%s\n' "$open_prs" | sed '/^$/d')"
+
+if [ "$limit" -gt 0 ]; then
+  total="$(printf '%s\n' "$open_prs" | sed '/^$/d' | wc -l | tr -d ' ')"
+  if [ "$total" -gt "$limit" ]; then
+    note "--limit $limit cuts the list short: $total open pull requests, so"
+    note "$((total - limit)) of them are not swept by this run."
+    open_prs="$(printf '%s\n' "$open_prs" | head -n "$limit")"
+  fi
+fi
+
+# `<state> <run id>` for the last hold run on one head. A re-run updates the
+# run in place, so `[0]` is that run and its conclusion is the verdict the
+# branch rules read.
+#
+#   failure <id>  the last run failed — a re-run is what clears it
+#   ok      -     the last run is not a failure; nothing to do
+#   none    -     no hold run on this head at all, so there is nothing to
+#                 re-run and the required check stays unreported
+#   unknown -     the API could not be read
+hold_state() { # hold_state <head sha>
+  local head="$1" answer rest total conclusion id
   if [ "$use_fixture" -eq 1 ]; then
-    printf '%s\n' "$fixture_stale_runs" |
-      awk -v head="$head" '$1 == head { print $2; exit }'
+    # A fixture line is `<head> <run id>`, or `<head> ok` / `<head> none` for
+    # the two states that carry no run to name. A head the fixture does not
+    # mention is `none`, which is what "nothing is known about it" means.
+    answer="$(printf '%s\n' "$fixture_stale_runs" |
+      awk -v head="$head" '$1 == head { print $2; exit }')"
+    case "$answer" in
+    '' | none) printf 'none -' ;;
+    ok) printf 'ok -' ;;
+    *) printf 'failure %s' "$answer" ;;
+    esac
     return 0
   fi
-  gh api "repos/{owner}/{repo}/actions/workflows/$workflow/runs?head_sha=$head&per_page=20" \
-    --jq '.workflow_runs[0] | select(.conclusion == "failure") | .id' 2>/dev/null || true
+  if ! answer="$(gh api \
+    "repos/{owner}/{repo}/actions/workflows/$workflow/runs?head_sha=$head&per_page=20" \
+    --jq '"\(.total_count) \(.workflow_runs[0].conclusion // "-") \(.workflow_runs[0].id // "-")"' \
+    2>/dev/null)" || [ -z "$answer" ]; then
+    printf 'unknown -'
+    return 0
+  fi
+  total="${answer%% *}"
+  rest="${answer#* }"
+  conclusion="${rest%% *}"
+  id="${rest##* }"
+  if [ "$total" = "0" ]; then
+    printf 'none -'
+  elif [ "$conclusion" = "failure" ]; then
+    printf 'failure %s' "$id"
+  else
+    printf 'ok -'
+  fi
 }
 
 cleared=0
 seen=0
+unrun=""
 
 while read -r pr head; do
   [ -n "$pr" ] || continue
   seen=$((seen + 1))
-  run="$(stale_run_for "$head")"
-  if [ -z "$run" ]; then
+  state="$(hold_state "$head")"
+  run="${state#* }"
+  case "${state%% *}" in
+  none)
+    unrun="${unrun} #${pr}"
     continue
-  fi
+    ;;
+  unknown)
+    note "could not read the hold runs for PR #$pr (head $head); it is neither"
+    note "swept nor counted as needing a push."
+    continue
+    ;;
+  ok) continue ;;
+  esac
   if [ "$dry_run" -eq 1 ]; then
     say "would re-run the hold on PR #$pr (head $head, run $run)"
     cleared=$((cleared + 1))
@@ -212,4 +289,10 @@ $open_prs
 EOF
 
 say "main has recovered — cleared the hold on $cleared of $seen open pull request(s)."
+
+if [ -n "$unrun" ]; then
+  say "no $workflow run exists on the head of${unrun} — there is nothing to"
+  say "re-run, and \`main is not known-broken\` is a required check, so each of"
+  say "those stays unmergeable until its branch is pushed."
+fi
 exit 0

@@ -30,6 +30,28 @@
 #   every unknown proceeds     loudly. A claim check that can BLOCK work is
 #                              worse than the duplication it prevents.
 #
+# ── The author alone is not the identity ─────────────────────────────────────
+#
+# One login is one account, and one person runs several agent sessions at once
+# — a fleet, or several worktrees on one machine. Comparing the login alone
+# read a peer session's claim as this session's own and cleared both to work
+# the same issue, which is the collision the whole script exists to stop
+# (#5875).
+#
+# So a claim carries a session word beside the login:
+#
+#   <!-- issue-claim --> <login> <session>
+#
+# and a claim is this session's own only when both match. The word comes from
+# `scripts/lib/claim-session.sh`, shared with `main-red-claim.sh` so a fleet
+# sets one environment variable rather than two;
+# `./scripts/main-red-claim.sh session` prints the one this clone claims under.
+#
+# Fail-open holds on both sides of the comparison. A run with no word of its
+# own, and a claim comment carrying none, both fall back to the author-only
+# rule — so a claim written by an older copy of this script cannot block the
+# author who wrote it.
+#
 # ── What it cannot see ───────────────────────────────────────────────────────
 #
 # A claim is a signal somebody chose to leave. It does not see a session that
@@ -44,6 +66,11 @@
 
 set -uo pipefail
 
+# `plain_word` and `resolve_session` — the same word `main-red-claim.sh`
+# claims under, so two scripts cannot disagree about which session this is.
+# shellcheck source=scripts/lib/claim-session.sh
+. "$(dirname "$0")/lib/claim-session.sh"
+
 # A decided verdict must survive a reader that closes the pipe early (#1815).
 trap '' PIPE
 
@@ -53,6 +80,7 @@ window_minutes=90
 mode=""
 issue=""
 fixture_login=""
+fixture_session=""
 fixture_claims=""
 fixture_prs=""
 fixture_prs_failed=0
@@ -81,6 +109,13 @@ while [ $# -gt 0 ]; do
   # `main-red-claim.sh`'s paired fixtures avoid.
   --fixture-login)
     fixture_login="${2:-}"
+    use_fixture=1
+    shift 2
+    ;;
+  # This session's own word. An empty value is the run that has none, which
+  # is the fail-open side of the comparison.
+  --fixture-session)
+    fixture_session="${2:-}"
     use_fixture=1
     shift 2
     ;;
@@ -119,14 +154,29 @@ while [ $# -gt 0 ]; do
 done
 
 # Every claim comment in a `gh issue view --json comments` payload, as
-# `<login> <age-in-seconds>`. Pure: the payload comes in on stdin, and `now`
-# is an argument, not the real clock. That lets `select` mode below, and the
-# tests in scripts/test-issue-claim.sh, run the exact filter production uses.
+# `<login> <session> <age-in-seconds>` — `-` marks a claim with no session
+# word, same as `--fixture-claims`. Pure: the payload comes in on stdin, and
+# `now` is an argument, not the real clock. That lets `select` mode below, and
+# the tests in scripts/test-issue-claim.sh, run the exact filter production
+# uses.
+#
+# Only the first line is read, with CRLF stripped and runs of spaces collapsed
+# to one field each. A claim's marker line is
+# `<!-- issue-claim --> <login> [session]`, so the marker itself takes the
+# first three fields and the session word is the fifth. Padding with `-`
+# first is what lets a claim with no session word — written by an older copy
+# of this script — parse `$word[4]` instead of erroring on a missing index.
+#
+# The login comes from `.author.login` rather than the marker line, because
+# that is the one GitHub stamps and a body can say anything.
 select_claims() {
   jq -r --arg marker "$marker" --argjson now "$1" '
     .comments[]
     | select(.body | startswith($marker))
-    | "\(.author.login) \(($now - (.createdAt | fromdateiso8601)) | floor)"
+    | ((.body | split("\n")[0] | gsub("\r"; "") | split(" ")
+        | map(select(length > 0)))
+       + ["-", "-", "-", "-", "-"]) as $word
+    | "\(.author.login) \($word[4]) \(($now - (.createdAt | fromdateiso8601)) | floor)"
   '
 }
 
@@ -288,6 +338,16 @@ if [ -z "$me" ]; then
   proceed "ok  proceed (identity unknown)"
 fi
 
+if [ "$use_fixture" -eq 1 ]; then
+  my_session="$fixture_session"
+elif ! my_session="$(resolve_session)"; then
+  my_session=""
+fi
+if [ -z "$my_session" ]; then
+  echo "note: this run has no session word, so a claim of its own login cannot" >&2
+  echo "      be told from a peer session's. Proceeding on those (fail-open)." >&2
+fi
+
 # Every claim comment, via `select_claims` above rather than a `--jq` program
 # embedded in this call.
 if [ "$use_fixture" -eq 1 ]; then
@@ -300,20 +360,28 @@ elif ! claims="$(printf '%s' "$comments_json" | select_claims "$(date -u +%s)")"
   proceed "ok  proceed (comments unreadable)"
 fi
 
-# The freshest claim by anybody else. A claim of this session's own is not a
-# reason to stand it down: re-running the pre-flight is what a session does
-# when it comes back to work it already started.
+# The freshest claim this session cannot account for. Its own is not a reason
+# to stand it down: re-running the pre-flight is what a session does when it
+# comes back to work it already started. Same login and same session word is
+# its own; same login and either word missing is unprovable, and an unknown
+# proceeds.
 held_by=""
+held_session=""
 held_age=""
-while read -r who age; do
+while read -r who claim_session age; do
   [ -n "$who" ] || continue
-  [ "$who" = "$me" ] && continue
+  if [ "$who" = "$me" ]; then
+    [ -z "$my_session" ] && continue
+    [ "$claim_session" = "-" ] && continue
+    [ "$claim_session" = "$my_session" ] && continue
+  fi
   case "$age" in
   '' | *[!0-9]*) continue ;;
   esac
   [ "$age" -lt "$window_seconds" ] || continue
   if [ -z "$held_age" ] || [ "$age" -lt "$held_age" ]; then
     held_by="$who"
+    held_session="$claim_session"
     held_age="$age"
   fi
 done <<EOF
@@ -322,10 +390,22 @@ EOF
 
 if [ -n "$held_by" ]; then
   minutes=$((held_age / 60))
+  if [ "$held_session" = "-" ]; then
+    held_where="session unknown"
+  else
+    held_where="session $held_session"
+  fi
   echo "STAND DOWN  #$issue is already being implemented." >&2
   echo "" >&2
-  echo "     claimed by @$held_by, ${minutes}m ago (window: ${window_minutes}m)" >&2
+  echo "     claimed by @$held_by ($held_where), ${minutes}m ago" \
+    "(window: ${window_minutes}m)" >&2
   echo "" >&2
+  if [ "$held_by" = "$me" ]; then
+    echo "     That login is yours, so this is another of your own sessions —" >&2
+    echo "     a second agent in a second worktree, which is the case the" >&2
+    echo "     session word exists to catch." >&2
+    echo "" >&2
+  fi
   echo "     Two sessions implemented #5045 in parallel and one merge kept one" >&2
   echo "     tree, dropping the other implementation without a conflict to" >&2
   echo "     report. Every signal said that branch was abandoned (#5224)." >&2
@@ -346,10 +426,24 @@ if [ "$mode" = "check" ]; then
   proceed "ok  #$issue is unclaimed — nothing open or merged closes it, and no live claim holds it."
 fi
 
-body="$marker $me
+# The session word rides on the marker line, where the check parses it. A run
+# without one posts the old two-word body, which every reader still accepts.
+if [ -n "$my_session" ]; then
+  claimant="$me $my_session"
+  session_note="
+The second word is this session's own, so another session of the same author
+reads this as somebody else's claim."
+else
+  claimant="$me"
+  session_note="
+This run had no session word to add, so another session of the same author
+reads this as its own and proceeds."
+fi
+
+body="$marker $claimant
 Implementing this. The claim lapses after ${window_minutes} minutes, so it
 cannot hold the issue shut if this session dies
-(\`scripts/issue-claim.sh\`, #5224)."
+(\`scripts/issue-claim.sh\`, #5224).${session_note}"
 
 if [ "$use_fixture" -eq 1 ]; then
   proceed "ok  claimed #$issue as @$me (fixture: nothing was posted)"
