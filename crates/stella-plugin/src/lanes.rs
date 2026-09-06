@@ -39,7 +39,9 @@
 //! asked for more than it holds. [`LaneAuthority`] is the second half, and
 //! the answer this crate can give on its own is [`ConsentedGrade`]: a lane
 //! may hold a seam whose risk sits at or under the rung a human accepted at
-//! install. A host with a real gate composes a stricter one on top.
+//! install. A host with a real gate narrows the grant this hands back — it
+//! never widens it, and this crate stays unaware that a gate exists
+//! (`stella_cli::plugin_authz::lanes`, `doc:turn-lane-assembly` §9.8).
 
 use std::collections::{BTreeMap, BTreeSet};
 

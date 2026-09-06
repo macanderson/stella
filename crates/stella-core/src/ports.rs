@@ -10,7 +10,7 @@ use stella_protocol::{Provider, ToolOutput, ToolSchema};
 
 pub use authz::{
     AuthzContribution, AuthzDecision, AuthzEvalError, AuthzEvaluation, AuthzGate, AuthzRuleTrace,
-    AuthzTrace, NoAuthz, Principal, RiskCeiling,
+    AuthzTrace, LaneSeam, NoAuthz, Principal, RiskCeiling,
 };
 
 /// Executes one tool call. Implemented by `stella-tools::ToolRegistry` (and
