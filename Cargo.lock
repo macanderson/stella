@@ -3572,7 +3572,7 @@ dependencies = [
 
 [[package]]
 name = "stella-tool-facts"
-version = "0.9.367"
+version = "0.9.368"
 dependencies = [
  "proptest",
  "stella-protocol",
