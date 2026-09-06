@@ -30,9 +30,10 @@
 //!
 //! [`DriverArgs`] has one member per verb that reads one, and an ask naming
 //! `work_start` while carrying a `backlog_claim` table is two claims about
-//! what the driver wants. [`mismatched_args`] refuses that rather than reading
-//! one and dropping the other — the rule `DriverMessage`'s own envelope
-//! applies to `point` against `call`, one layer in.
+//! what the driver wants. [`table_for`] refuses that rather than reading one
+//! and dropping the other, and [`no_args`] refuses a table sent to a verb that
+//! reads none — the rule `DriverMessage`'s own envelope applies to `point`
+//! against `call`, one layer in.
 
 use std::path::PathBuf;
 use std::sync::Mutex;

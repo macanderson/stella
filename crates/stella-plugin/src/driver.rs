@@ -780,8 +780,10 @@ impl DriverArgs {
     ///
     /// Written over an exhaustive destructure rather than a field-by-field
     /// read, so a member added to [`DriverArgs`] without a case here is
-    /// `E0027` — the compiler enforcing totality, the way
-    /// [`crate::wire_corpus`] does for the enums on this wire.
+    /// `E0027` — the compiler enforcing totality, the way `wire_corpus` does
+    /// for the enums on this wire. Named rather than linked: that module is
+    /// behind the `schema` feature and this one is not, so a default-features
+    /// `cargo doc` cannot resolve a link to it.
     #[must_use]
     pub fn tables(&self) -> Vec<DriverCall> {
         let Self {

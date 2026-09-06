@@ -132,18 +132,16 @@ pub enum PluginCmd {
     ///
     /// One session per invocation: what re-opens it after a `sleep` is the
     /// loop the driver is describing, not this verb (#3599 B2).
+    /// The ceiling on what this session may spend is the session-wide
+    /// `--spend-limit` global, not a flag of this verb's own. `--spend-limit`
+    /// is declared `global = true` on [`crate::cli::GlobalArgs`], so clap
+    /// already propagates it into `stella plugin drive`; redefining it here
+    /// would collide with that slot rather than shadow it, which is what
+    /// `no_subcommand_flag_reuses_a_global_name` refuses.
     Drive {
         /// The plugin's `name`, as `stella plugin list` prints it.
         #[arg(value_name = "NAME")]
         name: String,
-        /// The most this session may spend on the turns it asks for, in USD.
-        ///
-        /// A driver that asks for `work_start` spends your provider budget,
-        /// and this is the ceiling. Omitted means observed mode — spend is
-        /// still summed and reported, and nothing is refused, which is what
-        /// `stella self-driving` does with the same flag absent.
-        #[arg(long, value_name = "USD")]
-        spend_limit: Option<f64>,
     },
 }
 
@@ -167,7 +165,13 @@ impl From<ScopeArg> for PluginScope {
 }
 
 /// Run `stella plugin <cmd>`. Offline: local files only, no API key.
-pub fn run_plugin(cmd: &PluginCmd) -> Result<(), String> {
+///
+/// `spend_limit` is the session-wide `--spend-limit` global, read off
+/// [`crate::cli::GlobalArgs`] by the caller and passed down rather than
+/// redeclared on `drive` — see [`PluginCmd::Drive`]. `None` is observed mode:
+/// spend is still summed and reported, and nothing is refused, which is what
+/// `stella self-driving` does with the same flag absent.
+pub fn run_plugin(cmd: &PluginCmd, spend_limit: Option<f64>) -> Result<(), String> {
     let root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
     let settings = Settings::load(&root).unwrap_or_default();
@@ -181,7 +185,7 @@ pub fn run_plugin(cmd: &PluginCmd) -> Result<(), String> {
             decide_panel(&root, name, panel_answer(*allow, *deny), &settings)
         }
         PluginCmd::Remove { name } => remove(&root, name),
-        PluginCmd::Drive { name, spend_limit } => drive(&root, name, *spend_limit),
+        PluginCmd::Drive { name } => drive(&root, name, spend_limit),
     }
 }
 

@@ -38,8 +38,9 @@
 //! # Why the turn runs on a blocking thread
 //!
 //! `work::start` builds its own tokio runtime and calls `block_on`. But
-//! [`super::capabilities::HostDriverCapabilities::perform`] is already inside
-//! the session's runtime, so a straight call would panic.
+//! [`stella_runtime::wrapper::DriverCapabilities::perform`], which
+//! [`super::capabilities::HostDriverCapabilities`] implements, is already
+//! inside the session's runtime, so a straight call would panic.
 //! [`tokio::task::spawn_blocking`] moves the work to a thread with no runtime
 //! on it. That is what the inner `block_on` needs.
 //!
