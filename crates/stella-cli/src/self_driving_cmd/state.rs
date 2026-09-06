@@ -88,6 +88,20 @@ pub(crate) fn floors() -> Floors {
 // Resolution
 // ---------------------------------------------------------------------------
 
+/// Whether a git command succeeded, ignoring what it printed.
+///
+/// [`git`] answers with output, so a command that succeeds silently reads as a
+/// failure there. `merge-base --is-ancestor` is exactly that shape: it prints
+/// nothing and says yes or no in its exit code.
+pub(crate) fn git_ok(root: &Path, args: &[&str]) -> bool {
+    Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .is_ok_and(|out| out.status.success())
+}
+
 pub(crate) fn git(root: &Path, args: &[&str]) -> Option<String> {
     let out = Command::new("git")
         .arg("-C")
@@ -265,6 +279,9 @@ impl LoopState {
     fn queue_path(&self) -> PathBuf {
         self.dir.join("queue.json")
     }
+    fn receipts_path(&self) -> PathBuf {
+        self.dir.join("receipts.jsonl")
+    }
 
     /// Snapshot the ranked queue as the loop last saw it.
     ///
@@ -426,6 +443,33 @@ impl LoopState {
 
     pub fn add_seen(&self, digest: &str) -> Result<(), String> {
         append_line(&self.seen_path(), digest)
+    }
+
+    // -- closure receipts ---------------------------------------------------
+
+    /// Every closure this loop has written down.
+    ///
+    /// A line that does not parse is skipped, the same rule the ledger reads
+    /// by: one bad line must not hide the rest.
+    pub fn receipts(&self) -> Vec<stella_autonomy::regress::ClosureReceipt> {
+        read_jsonl(&self.receipts_path())
+            .values
+            .into_iter()
+            .filter_map(|value| serde_json::from_value(value).ok())
+            .collect()
+    }
+
+    /// Write down what a closure cited, so it can be re-checked later.
+    ///
+    /// Append-only, like the ledger beside it. The file is the whole basis of
+    /// the regression sweep: a closure nobody wrote down is a claim nothing
+    /// can ever falsify.
+    pub fn append_receipt(
+        &self,
+        receipt: &stella_autonomy::regress::ClosureReceipt,
+    ) -> Result<(), String> {
+        let line = serde_json::to_string(receipt).map_err(|e| e.to_string())?;
+        append_line(&self.receipts_path(), &line)
     }
 
     // -- the run lifecycle ---------------------------------------------------

@@ -622,6 +622,28 @@ residue_gate = "on"
 # it, the same rule `self_driving.triage`'s lists follow.
 container_labels = ["epic"]
 
+[self_driving.supply]
+# Where the loop looks for work once the ranked queue is empty. Every switch
+# here is OFF, and that is the shipped default: the queue is the only supply
+# that drains, so it is the only one a fresh install draws from. An endless
+# supply of work is not an endless supply of USEFUL work, which is why each of
+# these is a choice somebody makes rather than one they inherit.
+#
+# rearm  — re-open the lens ladder once the base branch has moved. A lens that
+#          found nothing at one commit says nothing about the tree two hundred
+#          commits later.
+# regress— re-check the fixes this loop has already claimed. A fix that has
+#          left the base branch is a defect again, and that is a fact rather
+#          than a claim needing triage.
+# meta   — read the loop's own ledger for habits it should file against itself.
+rearm = "off"
+regress = "off"
+meta = "off"
+# How far the base must move before a dry ladder re-opens. Either bound alone
+# is enough: a busy tree trips the commit count, a quiet one trips the days.
+rearm_commits = 50
+rearm_days = 30
+
 [self_driving.attribution]
 # What the loop appends to what it writes. Source-tracked so it travels with the
 # repository, and rewritable by an installed plugin — a downstream distribution

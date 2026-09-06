@@ -52,10 +52,11 @@
 //! # What this slice performs, and what it only reports
 //!
 //! It drives `claim → work → deliver`, the path that produces pull requests.
-//! `Sweep` and `Curate` are returned by the machine and **reported rather than
-//! performed** — B4 and B6 build them. Each says out loud that it is not built
-//! and stops, rather than spinning on a step it cannot take: a driver that did
-//! nothing for a step it was handed would look healthy forever.
+//! When an operator opens one of the extra supplies it sweeps as well: it
+//! re-checks the fixes it has claimed, and reads its own ledger for habits.
+//! `Curate` is the one step left that the machine can ask for and this build
+//! cannot take, so it says so and stops. A driver that did nothing for a step
+//! it was handed would look healthy forever.
 
 use std::collections::HashMap;
 
@@ -283,6 +284,9 @@ pub(super) fn drive(
     let mut state = LoopState {
         planned: true,
         batch: max_issues,
+        // Where the loop looks once the queue is dry. `None` unless an
+        // operator opened a supply, which is what keeps an upgrade quiet.
+        lens: super::supply::open_lens(durable, &cfg, &root),
         ..LoopState::default()
     };
     // Best effort: a tracker that refuses the label costs the loop its record
@@ -989,16 +993,12 @@ pub(super) fn drive(
             },
 
             LoopStep::Sweep { lens } => {
-                audit::record(
-                    durable,
-                    Audit::SessionStopped,
-                    None,
-                    &format!(
-                        "the machine asked to sweep `{lens}` and this build cannot — B4 builds \
-                         it (#3599). Stopping rather than spinning on a step it cannot take."
-                    ),
-                );
-                return report(durable, &tally, &budget);
+                // A sweep that files nothing shuts the supply for the rest of
+                // this run, so the loop falls through to watch instead of
+                // asking for the same step again.
+                if !super::supply::pass(durable, &provider, &cfg, &root, &lens) {
+                    state.lens = None;
+                }
             }
 
             LoopStep::Curate => {

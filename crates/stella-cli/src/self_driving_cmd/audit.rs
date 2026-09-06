@@ -86,6 +86,8 @@ pub(super) enum Action {
     PrMerged,
     /// A pull request was handed to a human.
     PrEscalated,
+    /// A supply that does not drain was drawn from.
+    Swept,
     /// An issue was filed.
     IssueFiled,
     /// An issue was closed.
@@ -121,6 +123,7 @@ impl Action {
             Self::PrObserved => "pr observed",
             Self::PrMerged => "pr merged",
             Self::PrEscalated => "pr escalated",
+            Self::Swept => "swept",
             Self::IssueFiled => "filed",
             Self::IssueClosed => "closed",
             Self::Waited => "waiting",

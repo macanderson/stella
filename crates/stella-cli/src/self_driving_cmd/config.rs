@@ -72,6 +72,9 @@ pub(crate) struct LoopConfig {
     /// Whether the drive loop also watches the release workflow's latest run
     /// and files on red. On unless `stella.toml` says `deploy_watch = "off"`.
     pub deploy_watch: bool,
+    /// Where the loop looks for work once the ranked queue is empty. Every
+    /// supply is shut unless `[self_driving.supply]` opens one.
+    pub supply: stella_autonomy::supply::SupplyPolicy,
     /// Which coding agent performs issue work.
     pub worker: crate::settings::toml_config::WorkerSection,
 }
@@ -90,6 +93,7 @@ impl Default for LoopConfig {
             verify_timeout_secs: 1800,
             residue_gate: true,
             deploy_watch: true,
+            supply: stella_autonomy::supply::SupplyPolicy::default(),
             worker: crate::settings::toml_config::WorkerSection::default(),
         }
     }
@@ -123,6 +127,7 @@ pub(crate) fn load(root: &Path) -> LoopConfig {
         verify_timeout_secs: parsed.self_driving.verify.timeout_secs.unwrap_or(1800),
         residue_gate: parsed.self_driving.residue_gate.enabled(),
         deploy_watch: parsed.self_driving.deploy_watch.enabled(),
+        supply: parsed.self_driving.supply.policy(),
         worker: parsed.self_driving.worker,
     }
 }

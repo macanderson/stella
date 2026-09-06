@@ -429,6 +429,10 @@ pub struct SelfDrivingSection {
     /// find it to turn the gate on.
     #[serde(default)]
     pub residue_gate: ResidueGateSwitch,
+    /// `[self_driving.supply]` — where the loop looks for work once the
+    /// ranked queue is empty.
+    #[serde(default)]
+    pub supply: SupplySection,
     /// `deploy_watch = "on" | "off"` — whether the drive loop also watches
     /// the release workflow's latest run and files on red. On unless an
     /// operator stands it down: a watch that must be asked for is a watch
@@ -442,6 +446,69 @@ pub struct SelfDrivingSection {
     /// same rule `[self_driving.triage]`'s lists follow.
     #[serde(default)]
     pub container_labels: Vec<String>,
+}
+
+/// `[self_driving.supply]` — where the loop looks for work when the ranked
+/// queue is empty.
+///
+/// Every switch here starts off. The queue is the only supply that drains,
+/// and it is the only one a fresh install draws from. An operator turns one on
+/// when they want the loop to keep going without them. An endless supply of
+/// work is not an endless supply of *useful* work, so each one is a choice
+/// somebody makes rather than a default they inherit.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SupplySection {
+    /// `rearm = "on" | "off"` — re-open the lens ladder once the base branch
+    /// has moved. A lens that found nothing at one commit says nothing about
+    /// the tree two hundred commits later.
+    pub rearm: SupplySwitch,
+    /// `regress = "on" | "off"` — re-check the fixes this loop has claimed. A
+    /// fix that has left the base branch is a defect again.
+    pub regress: SupplySwitch,
+    /// `meta = "on" | "off"` — read the loop's own ledger for habits it should
+    /// file against itself.
+    pub meta: SupplySwitch,
+    /// `rearm_commits = <n>` — how many commits the base must gain before a
+    /// dry ladder re-opens. Absent means the built-in number.
+    pub rearm_commits: Option<u64>,
+    /// `rearm_days = <n>` — how many days may pass instead, for a tree that
+    /// merges rarely. Absent means the built-in number.
+    pub rearm_days: Option<u64>,
+}
+
+impl SupplySection {
+    /// The policy the loop reads.
+    #[must_use]
+    pub fn policy(self) -> stella_autonomy::supply::SupplyPolicy {
+        let built_in = stella_autonomy::supply::SupplyPolicy::default();
+        stella_autonomy::supply::SupplyPolicy {
+            rearm: self.rearm.enabled(),
+            regress: self.regress.enabled(),
+            meta: self.meta.enabled(),
+            rearm_commits: self.rearm_commits.unwrap_or(built_in.rearm_commits),
+            rearm_days: self.rearm_days.unwrap_or(built_in.rearm_days),
+        }
+    }
+}
+
+/// One supply switch. Off unless an operator turns it on.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SupplySwitch {
+    /// Draw from this supply.
+    On,
+    /// Do not. The default.
+    #[default]
+    Off,
+}
+
+impl SupplySwitch {
+    /// Whether the supply is open.
+    #[must_use]
+    pub fn enabled(self) -> bool {
+        matches!(self, Self::On)
+    }
 }
 
 /// The end-of-turn residue gate's switch (`doc:backlog-self-driving` B5).

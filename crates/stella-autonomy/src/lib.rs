@@ -58,10 +58,13 @@ mod deliver;
 mod doctrine;
 pub mod escalation;
 pub mod gate;
+pub mod meta;
 pub mod priority;
 pub mod ready;
+pub mod regress;
 mod stats;
 mod step;
+pub mod supply;
 mod surface;
 
 use std::fmt::Write as _;
