@@ -343,6 +343,45 @@ def test_the_author_is_read_from_the_key_the_adapter_actually_writes(
     assert row["witness_author_model"] == "openrouter/moonshotai/kimi-k3"
 
 
+def test_extract_carries_which_loop_the_trial_ran(tmp_path: Path) -> None:
+    """`assurance_arm` names the declared verification tiers, not the loop.
+
+    A launcher that drops the plugin selector produces a full, plausible arm
+    that ran the control path — `compare_arms.py --treatment-fired` can only
+    refuse that on a per-trial field naming what actually ran. `extract_trial`
+    has no `loop_mode` key without this field, so this assertion is a
+    `KeyError` by construction rather than a changed value.
+    """
+    path = _result(
+        tmp_path,
+        {
+            "task_name": "task",
+            "verifier_result": {"rewards": {"reward": 1.0}},
+            "agent_result": {
+                "metadata": {"stella_loop_mode": "bare_step_loop"},
+            },
+        },
+    )
+    row = scorer.extract_trial(path)
+
+    assert row["loop_mode"] == "bare_step_loop"
+
+
+def test_a_missing_loop_mode_extracts_null_not_a_guess(tmp_path: Path) -> None:
+    """Absent must never read as a default path the trial may not have taken."""
+    path = _result(
+        tmp_path,
+        {
+            "task_name": "task",
+            "verifier_result": {"rewards": {"reward": 1.0}},
+            "agent_result": {"metadata": {}},
+        },
+    )
+    row = scorer.extract_trial(path)
+
+    assert row["loop_mode"] is None
+
+
 def test_a_trial_that_closed_no_verdict_extracts_null_not_false(tmp_path: Path) -> None:
     """Tri-state, or "not measured" starts reading as "measured and honest"."""
     path = _result(

@@ -55,11 +55,12 @@ committed. `trials.jsonl` is extracted from it and carries every field the score
 depends on; `run-manifest.json` records the digest of each committed artifact so
 a reader can tell whether what they have is what was published.
 
-Each row also carries the posture digest, assurance arm, binary SHA, source
-commit and Harbor version **the trial itself recorded**, so the manifest states
-the run's identity by collapsing 89 independent observations of it rather than by
-recomputing it from whatever checkout the manifest happened to be built in. Those
-are the same thing only while the run is still warm.
+Each row also carries the posture digest, assurance arm, loop mode, binary
+SHA, source commit and Harbor version **the trial itself recorded**, so the
+manifest states the run's identity by collapsing 89 independent observations
+of it rather than by recomputing it from whatever checkout the manifest
+happened to be built in. Those are the same thing only while the run is still
+warm.
 
 Since #1284 a row also carries what the trial's own verification ladder did:
 which witness state it reached, and whether Stella itself claimed the work
