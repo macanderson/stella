@@ -1623,11 +1623,10 @@ class StellaAgent(BaseInstalledAgent):
             if isinstance(stream_view, dict)
             else None
         ) or "not_reported"
-        # Stella's own verdict on its own work. It is a top-level field for
-        # the same reason the witness state is one. The A/B this exists for
-        # (#1284) compares it against the external grader's reward. A
-        # comparison that has to reach into a nested blob is one an analysis
-        # quietly skips.
+        # Stella's own verdict on its own work. It is top-level for the same
+        # reason the witness state is. The A/B this exists for (#1284) weighs
+        # it against the grader's reward. A comparison that reaches into a
+        # nested blob is one an analysis quietly skips.
         # A trial with no stream made no claim — "not_reported", never "failed".
         self_verdict_state = (
             stream_view.get("self_verdict_state")
