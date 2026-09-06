@@ -50,7 +50,7 @@ everywhere at once. The embedding story the matrix serves is
 
 ## Boundary — does this change belong here?
 
-Two ledgers, one discipline. `src/lib.rs` holds the CLI-vs-API capability
+Four tables, one discipline. `src/lib.rs` holds the CLI-vs-API capability
 matrix: the posture types, the matrix rows, and the tests (inline `mod
 tests`) that keep the rows true. `src/evolution.rs` holds the evolution
 ledger (AGENTS.md rule 11): one row per surface Stella changes itself
@@ -58,7 +58,12 @@ through — framework, memory, skill, tool, workflow, model — each declaring a
 posture, timing, impact class, rollback artifact, and, for a live posture,
 the witness test proving the surface can be changed; its rows and the
 `EvolutionSurface` enum come from one macro table, so a surface without a
-row does not compile. A change belongs here when it is a ledger decision — a
+row does not compile. `src/lane.rs` says which builtin lane each
+turn-assembly site stamps, and writes down why nothing stamps the one lane
+nothing does. `src/lane/capability.rs` says what each of those lanes binds:
+one row per lane and seam, with what the lane asked for beside what it got,
+each row read back against the literal its lane writes. A change belongs
+here when it is a ledger decision — a
 new row, a posture change, a witness name, a composition-seam entry,
 lowering `UNWITNESSED_BASELINE` after writing a missing witness. The capability *itself* never lives here: its engine home
 is `stella-core`, its surfaces are `stella-cli` and `stella-serve`, and this
@@ -67,7 +72,10 @@ crate only records how they relate.
 The dependency set is the boundary made concrete: `stella-serve` only, for
 `Route::ALL` — the enumerable API surface the matrix sweeps. The CLI is a
 binary crate, so its surface is checked against source text, the same
-discipline `provider_parity.rs` uses for adapter witnesses. Adding any other
+discipline `provider_parity.rs` uses for adapter witnesses. `stella-core`
+joins that set for tests alone: the lane matrix reads `TurnCapabilities`
+there, so a new slot on that struct breaks this crate's test build until
+every lane row answers it. Adding any other
 dependency here is a design smell: the matrix reads declarations and source
 text, it does not run the stack.
 

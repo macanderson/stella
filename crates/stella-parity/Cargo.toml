@@ -17,3 +17,9 @@ stella-serve = { path = "../stella-serve" }
 # from (#2782). The matrix reads that policy rather than restating it, which is
 # what keeps the two ledgers from drifting apart.
 stella-protocol = { path = "../stella-protocol" }
+
+[dev-dependencies]
+# The lane matrix reads `TurnCapabilities` in a test. A new slot on that
+# struct must break this build. Nothing is added: `stella-serve` already
+# pulls this crate in.
+stella-core = { path = "../stella-core" }

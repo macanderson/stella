@@ -20,8 +20,13 @@
 //! named witness really exists. That is enough to make an author say who
 //! stamps a lane. It is also enough to fail when a site goes back to the
 //! builder path.
+//!
+//! What a lane *binds* is the neighbouring table, [`capability`]. This one
+//! answers who names a lane; that one answers what a lane takes.
 
 use stella_protocol::BuiltinLane;
+
+pub mod capability;
 
 /// Whether a lane has a producer, and what proves it.
 #[derive(Debug)]
@@ -136,52 +141,56 @@ pub fn row(lane: BuiltinLane) -> Option<&'static Lane> {
     LANES.iter().find(|row| row.lane == lane)
 }
 
+/// Every file a row may name as a site or a witness home, as
+/// `(workspace-relative path, source)`.
+///
+/// Source text, not the module tree. `provider_parity` names the trade.
+/// A site or a witness that moves out of this list fails loudly. Extend
+/// the list to fix it. It never fails silently.
+///
+/// Shared with [`capability`], which reads the same files to check what each
+/// lane binds.
+#[cfg(test)]
+pub(crate) fn lane_sources() -> [(&'static str, &'static str); 4] {
+    [
+        // Where four of this workspace's lanes declare what they bind,
+        // and where their shared witness lives.
+        (
+            "crates/stella-cli/src/lane_capabilities.rs",
+            include_str!("../../stella-cli/src/lane_capabilities.rs"),
+        ),
+        // The fork's own assembly.
+        (
+            "crates/stella-core/src/subagent.rs",
+            include_str!("../../stella-core/src/subagent.rs"),
+        ),
+        // The fork's witness lives in a split-out test module, which
+        // `include_str!` of the parent does not pull in.
+        (
+            "crates/stella-core/src/subagent/tests/seams.rs",
+            include_str!("../../stella-core/src/subagent/tests/seams.rs"),
+        ),
+        // The served turn's assembly and its witness, in one file.
+        (
+            "crates/stella-serve/src/session.rs",
+            include_str!("../../stella-serve/src/session.rs"),
+        ),
+    ]
+}
+
+/// The source of one swept file, by its workspace-relative path.
+#[cfg(test)]
+pub(crate) fn source_named(path: &str) -> &'static str {
+    lane_sources()
+        .into_iter()
+        .find(|(name, _)| *name == path)
+        .map(|(_, source)| source)
+        .unwrap_or_else(|| panic!("a lane row names `{path}`, which `lane_sources` does not carry"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Every file a row may name as a site or a witness home, as
-    /// `(workspace-relative path, source)`.
-    ///
-    /// Source text, not the module tree. `provider_parity` names the trade.
-    /// A site or a witness that moves out of this list fails loudly. Extend
-    /// the list to fix it. It never fails silently.
-    fn lane_sources() -> [(&'static str, &'static str); 4] {
-        [
-            // Where four of this workspace's lanes declare what they bind,
-            // and where their shared witness lives.
-            (
-                "crates/stella-cli/src/lane_capabilities.rs",
-                include_str!("../../stella-cli/src/lane_capabilities.rs"),
-            ),
-            // The fork's own assembly.
-            (
-                "crates/stella-core/src/subagent.rs",
-                include_str!("../../stella-core/src/subagent.rs"),
-            ),
-            // The fork's witness lives in a split-out test module, which
-            // `include_str!` of the parent does not pull in.
-            (
-                "crates/stella-core/src/subagent/tests/seams.rs",
-                include_str!("../../stella-core/src/subagent/tests/seams.rs"),
-            ),
-            // The served turn's assembly and its witness, in one file.
-            (
-                "crates/stella-serve/src/session.rs",
-                include_str!("../../stella-serve/src/session.rs"),
-            ),
-        ]
-    }
-
-    fn source_named(path: &str) -> &'static str {
-        lane_sources()
-            .into_iter()
-            .find(|(name, _)| *name == path)
-            .map(|(_, source)| source)
-            .unwrap_or_else(|| {
-                panic!("a lane row names `{path}`, which `lane_sources` does not carry")
-            })
-    }
 
     /// Completeness, from the compiler's side and the table's.
     ///
