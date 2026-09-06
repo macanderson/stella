@@ -105,6 +105,15 @@ impl WorkerSteering {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use stella_core::steering::ledger::SteeringLedger;
+
+    /// The allowance one attempt spends against. A fresh cell per call, the
+    /// way a live attempt takes its own rather than the dispatcher's clone,
+    /// so nothing these tests assert about the block depends on what another
+    /// attempt spent.
+    fn ledger() -> SteeringLedger {
+        SteeringLedger::new()
+    }
 
     /// A workspace with one domain over `crates/stella-model`. One file
     /// under it to anchor against. One skill tagged with that domain, worded
@@ -189,12 +198,14 @@ mod tests {
             CompletionMessage::user(prompt),
         ];
 
+        let ledger = ledger();
         let (steering, recall) = WorkerSteering::open(
             dir.path(),
             &trusted(),
             &ResolvedRules::default(),
             prompt,
             &mut messages,
+            &ledger,
         )
         .await;
 
@@ -251,12 +262,14 @@ mod tests {
         let prompt = "rename the changelog heading";
         let mut messages = vec![CompletionMessage::user(prompt)];
 
+        let ledger = ledger();
         let (steering, recall) = WorkerSteering::open(
             dir.path(),
             &trusted(),
             &ResolvedRules::default(),
             prompt,
             &mut messages,
+            &ledger,
         )
         .await;
 

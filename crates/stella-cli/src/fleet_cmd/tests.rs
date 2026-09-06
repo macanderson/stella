@@ -693,12 +693,16 @@ async fn a_fleet_worker_receives_skills_records_and_todays_date() {
     // The injection is the seam now, so the block is read back off the
     // messages it landed in rather than returned beside them.
     let mut messages: Vec<stella_protocol::CompletionMessage> = Vec::new();
+    // This attempt's own allowance. Fresh, so the block below is measured
+    // against a cell nothing else has spent from.
+    let ledger = stella_core::steering::ledger::SteeringLedger::new();
     let (_steering, _recall) = steering::WorkerSteering::open(
         &root,
         &cfg.authority,
         &active_rules,
         "run the database migration for the billing service",
         &mut messages,
+        &ledger,
     )
     .await;
     let block = messages
