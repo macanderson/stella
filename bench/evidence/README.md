@@ -15,6 +15,8 @@ score_dev_baseline.py     scoring: trials.jsonl -> pass@1 + two 95% intervals
 make_manifest.py          identity: freeze every input that can move the number
 compare_arms.py           two arms of one experiment -> did the change pay?
 witness-ab/               the authored-witness A/B: protocol, plan, decision rule
+pipeline-ab/              the cut built-in path against the plugin path that
+                          replaced it: protocol, plan, decision rule
 tests/                    what keeps the three of them honest
 <run-id>/
   run-manifest.json       the frozen inputs, and why the run is not a claim
@@ -81,6 +83,12 @@ spend per additional task passed. It refuses — non-zero exit, `"verdict":
 one experiment, or when the treatment arm declared a verification tier it never
 exercised. See [`witness-ab/`](witness-ab/) for the experiment it was written
 for and the decision rule it applies.
+
+A declared cross-build mode drops the arm-label check and replaces it with
+stricter ones: each arm must report the commit named for it, the two binary
+hashes must differ, and a per-trial field must show the treatment arm ran the
+path under test. Its report carries a confound line no caller can drop. See
+[`pipeline-ab/`](pipeline-ab/).
 
 ### Reading a descriptive total
 

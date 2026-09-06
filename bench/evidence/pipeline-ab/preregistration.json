@@ -1,0 +1,110 @@
+{
+  "schema": "stella-pipeline-ab-preregistration-v1",
+  "issue": "https://github.com/macanderson/stella/issues/6155",
+  "epic": "https://github.com/macanderson/stella/issues/4029",
+  "status": "plan_fixed_run_not_started",
+  "status_note": "The design, outcomes, seeds and decision rule below are fixed and were written before any data existed. The run has not been executed. It needs a benchmark host, a spend-capable credential, a build of a crate this workspace deleted, and the two adapter preconditions named under `preconditions`. The fields under `to_be_recorded_before_the_first_paid_call` are the run's identity and must be filled in — and this file committed — before the first paid call, not after.",
+  "plan_fixed_at": "2026-09-05",
+  "question": "Is the plugin verification path at least as good as the built-in staged pipeline it replaced?",
+  "why_it_is_owed": "docs/spec/pipeline-as-plugins.md §7 set one bar for deleting the built-in path: a side-by-side benchmark. The deletion shipped ahead of that bar as a recorded maintainer call. This run is the late payment.",
+  "design": "two arms, paired by task, one build each. The SUT commit is the arm: a build cannot be talked into being the other one.",
+  "arms": {
+    "control": {
+      "name": "built-in staged pipeline",
+      "sut_commit": "f4c24c12bde5578818f1141ec4e438291ac4db55",
+      "why_this_commit": "the parent of a6d3db4f6b783ec5d67571b3d08f47051f7eedc0, which deleted crates/stella-pipeline. This is the last commit on main where the built-in path exists and `--pipeline classic` runs it.",
+      "invocation": "stella run --pipeline classic",
+      "plugins_installed": "none",
+      "known_cost_risk": "this path spends several model calls per step (triage, plan, witness author, verify), so its per-trial spend is expected to exceed the raw loop's by an amount nobody here has measured"
+    },
+    "treatment": {
+      "name": "stella-witness plugin over the wrapper socket",
+      "sut_commit": null,
+      "sut_commit_floor": "befa1b3fbd3ce8db3e5e59c710166cfb3041e4ea",
+      "why_this_commit": "the build must carry plugins/stella-witness and the wrapper-plugin driver. The floor above is the main commit this plan was written against; the exact commit built is recorded before the first paid call and must be a descendant of it.",
+      "invocation": "stella run --pipeline witness-v1",
+      "plugins_installed": "plugins/stella-witness, whose [wrapper] id is witness-v1"
+    }
+  },
+  "held_constant": "same task list file read by both arms, same dataset digest, same worker model, same engine posture, same concurrency, attempts fixed per replicate, no budget cap and no token cap, same host, same adapter revision",
+  "confound": {
+    "statement": "the two arms differ by every commit between f4c24c12b and the treatment build, which is hundreds. This is not a clean A/B and no analysis can make it one.",
+    "claim_available": "this arm scored better or worse than that arm",
+    "claim_not_available": "the change from the built-in path to the plugin path caused the difference",
+    "where_it_is_printed": "compare_arms.py stamps it on every cross-build report, and the report cannot be produced without it"
+  },
+  "task_list": {
+    "source": "phaseA + phaseB of the run scratch phases.json, written once to $TB_ROOT/pipeline_ab.tasks and read by both arms",
+    "denominator": 89,
+    "denominator_rule": "fixed here. A task that produced no trial in an arm scores 0 in that arm and stays in the denominator. No task is dropped for any reason, including an operational abort.",
+    "taskset_sha256": null
+  },
+  "repeats": {
+    "shape": "three preregistered replicates, each a fresh pair of arms with attempts=1 per task",
+    "why_not_attempts_greater_than_one": "the analysis keys one row per task per arm and refuses a duplicate, so several attempts inside one job cannot be paired without a fold nobody has written. Three independent pairs also measure run-to-run variance directly, which a majority vote inside one job hides.",
+    "replicates": 3,
+    "reporting": "all three replicates are reported side by side, always. Picking one is an outcome-selected stop and is forbidden.",
+    "spend_stop_rule": "if replicate 1 costs more than 600 USD across both arms, stop and report replicate 1 alone, naming this rule. The trigger is spend and is fixed here; no stop may be triggered by a score."
+  },
+  "outcomes": {
+    "primary": "tasks passed, paired by task over the fixed denominator; reported as gained/lost/both/neither with an exact McNemar test over the discordant pairs and a percentile bootstrap interval on the paired difference",
+    "secondary": "trials whose own verdict claimed the work passed while the external grader scored it zero, overall and restricted to model-opined verdicts (self_verdict_deterministic=false)",
+    "cost": "total spend per arm, the treatment/control ratio, and spend per additional task passed. Wall clock is reported and is not treated as a time measurement while a finished turn's process is killed at the agent timeout."
+  },
+  "analysis": {
+    "tool": "bench/evidence/compare_arms.py",
+    "mode": "--cross-sut <control-sha>:<treatment-sha> --treatment-fired loop_mode=<plugin path value>",
+    "why_a_declared_mode": "the default refuses two builds, and it is right to. The declaration names both commits so a build from the wrong tree is caught, and names the per-trial field proving the treatment arm ran the plugin path so a dropped selector is caught.",
+    "reward_rule": "the external verifier's reward is authoritative; a trial that produced no reward scores 0 and stays in the denominator; a task absent from an arm scores 0 in that arm",
+    "bootstrap_seed": 20260905,
+    "bootstrap_draws": 50000,
+    "significance_alpha": 0.05,
+    "cost_ratio_ceiling": 1.5,
+    "seed_note": "compare_arms.py's BOOTSTRAP_SEED is 20260803 and is fixed for the witness A/B. Running this experiment sets the seed above and records the value the run used in the report."
+  },
+  "decision_rule": {
+    "source": "compare_arms.py's decide(), applied mechanically, with the mapping below fixed before any data exists",
+    "adopt": "the plugin path is at least as good as the built-in path. §7's bar closes with 'not worse'.",
+    "reject": "the plugin path is worse. §7's bar closes with the loss stated in full.",
+    "inconclusive": "no difference this sample can detect. §7's bar closes saying exactly that.",
+    "note": "all three outcomes close the bar. There is no result that leaves it open, because 'we measured and could not tell' is an answer and 'we never measured' was the defect."
+  },
+  "refusals": {
+    "wrong_build": "an arm whose trials report a commit other than the one declared for it",
+    "one_binary": "two arms reporting one binary hash, whatever their commits say",
+    "path_not_exercised": "a treatment trial that cannot report which loop it ran, or a control trial reporting the plugin path",
+    "posture_moved": "the two arms declaring different assurance arms, which means more than the build changed"
+  },
+  "rules": "no reruns, no outcome-selected stops, no task excluded, no threshold moved after data. Operational aborts are named in the report and relaunch under a new job name. A provider 402 or a host failure is not a task failure and is listed separately from the per-task table.",
+  "preconditions": {
+    "adapter_cannot_select_a_pipeline": {
+      "what": "bench/harbor_adapter/stella_harbor/loop_mode.py's loop_argv emits no --pipeline flag at all, so neither arm can be launched by today's adapter",
+      "issue": "https://github.com/macanderson/stella/issues/6178"
+    },
+    "evidence_cannot_say_which_loop_ran": {
+      "what": "score_dev_baseline.py's extract_trial does not carry stella_loop_mode into trials.jsonl, so no committed field answers the question the analysis mode above must ask",
+      "issue": "https://github.com/macanderson/stella/issues/6179"
+    },
+    "control_arm_must_build": {
+      "what": "the control arm's crate is gone from this workspace, so the build is from an old checkout with its own lockfile and toolchain pin. Budget time for getting that binary to exist at all.",
+      "issue": null
+    }
+  },
+  "to_be_recorded_before_the_first_paid_call": {
+    "prereg_url": null,
+    "registered_at": null,
+    "control_sut_commit": "f4c24c12bde5578818f1141ec4e438291ac4db55",
+    "control_binary_sha256": null,
+    "treatment_sut_commit": null,
+    "treatment_binary_sha256": null,
+    "dataset": null,
+    "worker_model": null,
+    "taskset_sha256": null,
+    "denominator": 89,
+    "loop_mode_field_values": {
+      "control": null,
+      "treatment": null
+    },
+    "adapter_revision": null
+  }
+}
