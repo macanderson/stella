@@ -115,8 +115,11 @@ pub struct ShellInvocation {
 }
 
 impl ShellInvocation {
-    /// Convenience constructor for a successful invocation (the common case in
-    /// tests and callers that only kept the command string).
+    /// Convenience constructor for a successful invocation.
+    ///
+    /// Every shipping feeder builds the struct with both fields, because it
+    /// has the exit status to hand. Only the tests want this shorthand.
+    #[cfg(test)]
     pub fn ok(command: impl Into<String>) -> Self {
         Self {
             command: command.into(),
@@ -181,6 +184,10 @@ impl ProposedTool {
     /// Always finite: a proposal is only ever built from a cluster with at
     /// least one observation, so `distinct_arguments` is at least `1`. The
     /// guard is there so a hand-built [`ProposedTool`] cannot produce a NaN.
+    ///
+    /// The detector applies the floor through `meets_reuse_ratio`, which takes
+    /// the two counts rather than a proposal, so this reads for the tests.
+    #[cfg(test)]
     pub fn reuse_ratio(&self) -> f64 {
         if self.distinct_arguments == 0 {
             return 0.0;

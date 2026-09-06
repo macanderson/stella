@@ -682,6 +682,9 @@ pub struct SyncPlan {
 
 impl SyncPlan {
     /// How many links the plan creates for `kind`.
+    ///
+    /// The sync reads `links` directly, so this counts for the tests alone.
+    #[cfg(test)]
     pub fn linked(&self, kind: ExtensionKind) -> usize {
         self.links.iter().filter(|l| l.kind == kind).count()
     }
