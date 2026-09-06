@@ -16,15 +16,25 @@
 //!
 //! # It reports; it changes nothing
 //!
-//! Every line comes from the manifests on disk and from the merged settings.
-//! Nothing is written. No process starts. No grant moves.
+//! Every line comes from the manifests on disk, from the merged settings, and
+//! from the gate this session would bind. Nothing is written. No process
+//! starts. No grant moves.
+//!
+//! # Three authorities, reported apart
+//!
+//! A seam has to clear three things. The rung a person took at install. The
+//! operator's `lanes.custom` ceiling. The session's [`AuthzGate`]. Each one
+//! can only take a seam away. The report names which one did. Only the
+//! gate's reason is one a plugin author can act on.
 
 use std::path::Path;
 
+use stella_core::ports::AuthzGate;
 use stella_plugin::{ConsentedGrade, LaneAuthority, PluginManifest};
 use stella_protocol::{LaneCapability, LaneId};
 
 use super::roster::PluginRoster;
+use crate::plugin_authz::lanes::narrowed_by_gate;
 use crate::settings::{LaneCeiling, LaneSettings, Settings};
 
 /// What a lane may hold on this machine: the rung a person accepted at
@@ -69,8 +79,12 @@ pub(super) fn doctor(workspace_root: &Path, settings: &Settings) -> Result<(), S
         println!("no plugins installed — add one with `stella plugin install <dir>`");
         return Ok(());
     }
+    // The same gate a session binds, read once here: `check_lane` is pure over
+    // what it prefetched, so the roster read happens now and the report asks a
+    // value.
+    let gate = crate::agent::tool_stack::session_gate(workspace_root);
     for plugin in roster.plugins() {
-        for line in lane_lines(&plugin.manifest, settings.lanes.as_ref()) {
+        for line in lane_lines(&plugin.manifest, settings.lanes.as_ref(), gate.as_ref()) {
             println!("{line}");
         }
     }
@@ -81,7 +95,11 @@ pub(super) fn doctor(workspace_root: &Path, settings: &Settings) -> Result<(), S
 ///
 /// Pure, and kept apart from the printing. What it says is what a test needs
 /// to read. A function that also opened directories could not have one.
-fn lane_lines(manifest: &PluginManifest, ceilings: Option<&LaneSettings>) -> Vec<String> {
+fn lane_lines(
+    manifest: &PluginManifest,
+    ceilings: Option<&LaneSettings>,
+    gate: &dyn AuthzGate,
+) -> Vec<String> {
     let mut lines = vec![manifest.name.clone()];
     let lanes = match manifest.declared_lanes() {
         Ok(lanes) => lanes,
@@ -103,7 +121,9 @@ fn lane_lines(manifest: &PluginManifest, ceilings: Option<&LaneSettings>) -> Vec
     for lane in lanes {
         let ceiling = ceilings.and_then(|settings| settings.ceiling(lane.id()));
         let authority = HostLaneAuthority { grade, ceiling };
-        let grant = lane.grant(&authority);
+        let consented = lane.grant(&authority);
+        let gated = narrowed_by_gate(&consented, gate, &manifest.name);
+        let grant = &gated.grant;
 
         lines.push(format!(
             "  lane `{}` — {}, resumed by {}",
@@ -114,13 +134,27 @@ fn lane_lines(manifest: &PluginManifest, ceilings: Option<&LaneSettings>) -> Vec
         lines.push(format!("    asks for: {}", say(grant.requested.iter())));
         lines.push(format!("    holds:    {}", say(grant.granted.iter())));
 
-        let withheld = grant.withheld();
+        let withheld: Vec<LaneCapability> = grant
+            .withheld()
+            .into_iter()
+            .filter(|capability| !gated.refused.contains_key(capability))
+            .collect();
         if !withheld.is_empty() {
             lines.push(format!(
                 "    withheld: {} — above the `{}` rung accepted at install, or \
                  outside this workspace's `lanes.custom` ceiling",
                 say(withheld.iter()),
                 manifest.loop_grant.participation
+            ));
+        }
+
+        // A gate's refusal is not the rung being too low. It is a rule an
+        // operator wrote. Its reason is the one part of the report a plugin
+        // author can act on.
+        for (capability, reason) in &gated.refused {
+            lines.push(format!(
+                "    refused:  {capability} — `{}` says: {reason}",
+                gate.name()
             ));
         }
 
@@ -162,7 +196,9 @@ fn say<'a>(capabilities: impl Iterator<Item = &'a LaneCapability>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use stella_core::ports::{AuthzDecision, AuthzEvalError, LaneSeam, NoAuthz, Principal};
     use stella_plugin::Participation;
+    use stella_protocol::ToolContract;
 
     const REPLAY: &str = r#"
         name = "acme"
@@ -181,9 +217,45 @@ mod tests {
     }
 
     fn report(text: &str, settings: &str) -> String {
+        report_under(text, settings, &NoAuthz)
+    }
+
+    /// The same report, under a gate a test supplies.
+    fn report_under(text: &str, settings: &str, gate: &dyn AuthzGate) -> String {
         let ceilings: LaneSettings =
             serde_json::from_str(settings).expect("the lane settings parse");
-        lane_lines(&manifest(text), Some(&ceilings)).join("\n")
+        lane_lines(&manifest(text), Some(&ceilings), gate).join("\n")
+    }
+
+    /// A gate that refuses the watching seam and allows the rest.
+    struct NoBus;
+
+    impl AuthzGate for NoBus {
+        fn name(&self) -> &'static str {
+            "no-bus"
+        }
+
+        fn check(
+            &self,
+            _contract: &ToolContract,
+            _principal: &Principal,
+            _input: &serde_json::Value,
+        ) -> Result<AuthzDecision, AuthzEvalError> {
+            Ok(AuthzDecision::Allow)
+        }
+
+        fn check_lane(
+            &self,
+            seam: &LaneSeam,
+            principal: &Principal,
+        ) -> Result<AuthzDecision, AuthzEvalError> {
+            if seam.capability == LaneCapability::Bus {
+                return Ok(AuthzDecision::Deny {
+                    reason: format!("{} may not watch the bus", principal.label()),
+                });
+            }
+            Ok(AuthzDecision::Allow)
+        }
     }
 
     /// **The witness for the report.** A seam nobody answered for is named.
@@ -257,7 +329,7 @@ mod tests {
     /// "the command found nothing".
     #[test]
     fn a_plugin_with_no_lane_says_so() {
-        let printed = lane_lines(&manifest("name = \"acme\"\n"), None).join("\n");
+        let printed = lane_lines(&manifest("name = \"acme\"\n"), None, &NoAuthz).join("\n");
         assert!(printed.contains("ships no lane of its own"), "{printed}");
     }
 
@@ -299,5 +371,35 @@ mod tests {
         let grant = lane.grant(&authority);
         assert_eq!(grant.withheld().len(), 1);
         assert!(grant.withheld().contains(&LaneCapability::Steering));
+    }
+
+    /// **The witness for the gate's line.** A seam the gate refused is
+    /// reported as refused. The gate's own name and reason go with it. The
+    /// old report had no third authority to name.
+    #[test]
+    fn a_seam_the_gate_refuses_is_reported_as_refused() {
+        let printed = report_under(REPLAY, "{}", &NoBus);
+        assert!(printed.contains("holds:    steering"), "{printed}");
+        assert!(
+            printed.contains("refused:  bus — `no-bus` says: plugin:acme may not watch the bus"),
+            "{printed}"
+        );
+        assert!(
+            !printed.contains("withheld: bus"),
+            "a seam the gate refused is not blamed on the rung: {printed}"
+        );
+    }
+
+    /// A gate that keeps the default `check_lane` leaves the report exactly
+    /// where it was, so a deployment whose gate governs only tool calls reads
+    /// what it always read.
+    #[test]
+    fn a_gate_with_no_lane_opinion_changes_no_line() {
+        let tool_only = stella_core::ports::RiskCeiling::new(stella_protocol::RiskLevel::Low);
+        assert_eq!(
+            report_under(REPLAY, "{}", &NoAuthz),
+            report_under(REPLAY, "{}", &tool_only)
+        );
+        assert!(!report(REPLAY, "{}").contains("refused:"));
     }
 }

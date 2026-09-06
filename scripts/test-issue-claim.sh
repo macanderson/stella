@@ -71,16 +71,54 @@ want "a fresh claim by somebody else stands this session down" \
 # shows. #5246 closed forty-four issues in one sweep with nothing on any of
 # them.
 want "an OPEN pull request closing the issue stands this session down" \
-  expect-block "5246 OPEN" check "ada" "" "5246 OPEN"
+  expect-block "5246 OPEN" check "ada" "" "5246 OPEN closes"
 
 want "and so does a MERGED one — the work is already done" \
-  expect-block "5246 MERGED" check "ada" "" "5246 MERGED"
+  expect-block "5246 MERGED" check "ada" "" "5246 MERGED closes"
 
 # The PR check runs FIRST and on its own: a claim-free issue with a live PR
 # must still block, or the stronger signal would be reachable only when the
 # weaker one happened to be absent too.
 want "a PR blocks even with no claim comments at all" \
-  expect-block "already claimed by a pull request" check "ada" "" "5246 OPEN"
+  expect-block "already claimed by a pull request" check "ada" "" "5246 OPEN closes"
+
+# ── closed-unmerged and refs-only pull requests must not block ───────────────
+
+# A pull request that was closed, not merged, is dead. It is not proof the
+# work is done or in progress. A PR closed as superseded minutes after it
+# opened is this exact shape. It must not stand a session down. That is the
+# state where the next session should move, not stop.
+want "a closed-unmerged closing pull request does not stand this session down" \
+  expect-proceed "1234 CLOSED" check "ada" "" "1234 CLOSED closes"
+
+# A closed hit next to an OPEN hit still blocks: the OPEN hit is live. Both
+# get named, each with its own state, so the closed one can be read as a
+# past, dead try at the same fix.
+#
+# The report must also say why the closed one is in the list, or a reader
+# takes it for a second live claim. Naming both states is not enough to tell
+# this run from the pre-fix one, which blocked on any hit and printed the
+# same two lines; the explanation is what only this version writes.
+out="$("$SCRIPT" check 5045 \
+  --fixture-login ada --fixture-claims "" \
+  --fixture-prs "1234 CLOSED closes
+1235 OPEN closes" 2>&1)"
+rc=$?
+case "$rc,$out" in
+1,*"1234 CLOSED"*"1235 OPEN"*"only blocks here because an OPEN or MERGED hit is"*)
+  ok "a closed-unmerged hit and an open one both get named, and the closed one is explained"
+  ;;
+*)
+  bad "expected exit 1 naming both '1234 CLOSED' and '1235 OPEN' and explaining the closed hit, got exit $rc: $out"
+  ;;
+esac
+
+# A pull request can refs an issue without closing it. `dod-check` reads
+# every linked issue's checklist, and a closing keyword would hold an
+# unrelated fix to a checklist that is not its own. So a refs-only hit is a
+# weak signal. It must not block, and it must not stay hidden either.
+want "a Refs-only pull request does not stand this session down, but is named" \
+  expect-proceed "6203 OPEN" check "ada" "" "6203 OPEN refs"
 
 # ── the negative controls: every unknown proceeds ────────────────────────────
 

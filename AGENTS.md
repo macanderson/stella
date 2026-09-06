@@ -108,9 +108,11 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + gate-parity
                          #   + schema-tier-parity (a -schema step runs at the
                          #     same rung as its base step; #5139)
-                         #   + guard-trigger-coverage (prose, hue-separation
-                         #     and transcript-surfaces each run with no
-                         #     paths: filter in at least one workflow)
+                         #   + guard-trigger-coverage (prose, hue-separation,
+                         #     transcript-surfaces and closing-keywords each
+                         #     run, in some workflow, from a job neither a
+                         #     paths: filter nor a needs.*.outputs.*-gated
+                         #     if: can skip)
                          #   + priority-scheme (the issue priority scheme is
                          #     stated once, in SCR-005, and the triage guard's
                          #     regex covers exactly the levels it names)
@@ -209,12 +211,19 @@ says nothing about which files reach it, so a `paths:` filter narrowing
 `guard-self-tests.yml`'s `pull_request:` trigger to `docs/**` would still read
 as green, and the three steps would run nowhere for a scripts-only pull
 request. Nothing held that absence in place except a comment.
-`guard-trigger-coverage` reads the trigger back: each of the three must run
-with no `paths:`/`paths-ignore:` filter in at least one workflow, so a later
-edit narrowing this one cannot reopen the gap silently. That workflow's
-`gate-steps` job — named `gate steps no other workflow runs` — is now one of
-`main`'s required status checks too,
-added after a red run of it merged into `main` and reddened every open PR.
+`guard-trigger-coverage` reads the trigger back: each watched guard must run,
+in some workflow, from a job with no `paths:`/`paths-ignore:` filter above it
+and no `if:` of its own that reads a `needs.*.outputs.*` value — the second
+half added once a guard reached `ci.yml`'s `check` job, whose own
+`if: needs.changes.outputs.rust != 'false'` skips it for a prose-only diff
+even though `ci.yml`'s trigger carries no `paths:` key at all, because that
+filter moved out of the trigger and into the job so the required contexts
+still report for a skipped job. So a later edit narrowing the trigger, or
+moving a guard into a job gated that way, cannot reopen the gap silently.
+That workflow's `gate-steps` job — named `gate
+steps no other workflow runs` — is now one of `main`'s required status
+checks too, added after a red run of it merged into `main` and reddened
+every open PR.
 
 A fifth workflow, `deck-fit.yml`, owns the decks under
 `website/public/presentations/`. Its measurement — every slide against the
@@ -383,10 +392,17 @@ only locally, in a stale worktree, clean, with no remote branch and no PR.
 
 It asks the **pull requests first**, because that is the stronger signal and
 the one the issue itself never shows: a sweep PR can close forty issues at
-once while each of them still reads unassigned, unlabelled and open. Then the
-claim comments, on the red-`main` rules — the tracker is the table so a peer
-in another worktree can see it, a comment carries its author and timestamp, a
-claim lapses so a crashed session cannot hold an issue shut, and every unknown
+once while each of them still reads unassigned, unlabelled and open. A hit
+only blocks while it can actually still be the live work: a `Closes #N` PR
+that is OPEN or MERGED stands the session down; one that is CLOSED unmerged
+is a dead attempt — reported, not blocking, because that is the state where
+the next session most needs to proceed. A `Refs #N` PR — the carrier when a
+fix uses no closing keyword so `dod-check` does not hold an unrelated
+issue's checklist against it — is named too, but only as a weaker signal
+that never blocks by itself. Then the claim comments,
+on the red-`main` rules — the tracker is the table so a peer in another
+worktree can see it, a comment carries its author and timestamp, a claim
+lapses so a crashed session cannot hold an issue shut, and every unknown
 proceeds loudly. `make issue-claim N=5045` asks by hand; `make
 issue-claim-test` covers it, both blocking branches included.
 
