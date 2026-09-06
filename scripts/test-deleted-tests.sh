@@ -175,6 +175,87 @@ else
   fail=$((fail + 1)); echo "FAIL D9 --fixture-pr-body with no value — expected exit 2, got $rc:"; echo "$out"
 fi
 
+# ── D10: the commit-message channel expires, and the guard says so ──────────
+#
+# #5894 is the recorded instance: one tree, two runs, opposite answers. The
+# branch commit that named the deleted test passed while it was the tip, and
+# failed once `gh pr update-branch` put a merge commit on top of it.
+#
+# Reproduced rather than argued. The fixture builds the same shape — a branch
+# commit naming the test, a merge on top of it, then the pull request's own
+# merge commit — and CLONES IT AT DEPTH 2, which is what ci.yml checks out. The
+# naming commit is then two generations back and outside the clone, so the
+# `git log` walk cannot read it and the acknowledgement is gone.
+d10="$tmp/expiring_ack"
+mkdir -p "$d10/scripts" "$d10/crates/x/src"
+cp "$guard" "$d10/scripts/check-deleted-tests.sh"
+git -C "$d10" init -q -b main
+git -C "$d10" config user.email t@t.invalid
+git -C "$d10" config user.name t
+git -C "$d10" config commit.gpgsign false
+printf '#[test]\nfn my_witness() { assert!(true); }\n' >"$d10/crates/x/src/lib.rs"
+git -C "$d10" add -A
+git -C "$d10" commit -q -m base
+
+git -C "$d10" checkout -q -b branch
+printf 'pub fn noop() {}\n' >"$d10/crates/x/src/lib.rs"
+git -C "$d10" add -A
+git -C "$d10" commit -q -m "drop my_witness, folded into a table test"
+
+git -C "$d10" checkout -q main
+printf 'unrelated\n' >"$d10/other.txt"
+git -C "$d10" add -A
+git -C "$d10" commit -q -m "main moves on"
+
+# The branch absorbs main — the `gh pr update-branch` step that ended the
+# acknowledgement — and then the pull request's own merge commit is built.
+git -C "$d10" checkout -q branch
+git -C "$d10" merge -q --no-ff --no-edit main -m "Merge branch 'main' into branch" >/dev/null 2>&1
+git -C "$d10" checkout -q main
+git -C "$d10" merge -q --no-ff --no-edit branch -m "Merge pull request #1" >/dev/null 2>&1
+
+shallow="$tmp/expiring_ack_shallow"
+if git clone -q --depth 2 --no-local "file://$d10" "$shallow" 2>/dev/null; then
+  out="$(cd "$shallow" && PR_BODY="" ./scripts/check-deleted-tests.sh 2>&1)"
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    fail=$((fail + 1))
+    echo "FAIL D10 — the depth-2 checkout should not have found the acknowledgement:"
+    echo "$out"
+  else
+    case "$out" in
+    *"The commit-message channel expires"*)
+      pass=$((pass + 1))
+      echo "ok   D10 a commit-message acknowledgement outside the depth-2 walk fails, and the text says why"
+      ;;
+    *)
+      fail=$((fail + 1))
+      echo "FAIL D10 — the failure text does not say the commit-message channel expires:"
+      echo "$out"
+      ;;
+    esac
+  fi
+else
+  fail=$((fail + 1))
+  echo "FAIL D10 — could not build the shallow clone the case needs"
+fi
+
+# ── D11: the same history at full depth still passes ────────────────────────
+#
+# The pair for D10: the guard itself did not stop reading commit messages, so a
+# clone that can see the naming commit still accepts it. The expiry belongs to
+# the checkout depth, which is what the failure text now tells the author.
+out="$(cd "$d10" && PR_BODY="" ./scripts/check-deleted-tests.sh 2>&1)"
+rc=$?
+if [ "$rc" -eq 0 ]; then
+  pass=$((pass + 1))
+  echo "ok   D11 the same history at full depth still finds the naming commit"
+else
+  fail=$((fail + 1))
+  echo "FAIL D11 — expected OK at full depth, got exit $rc:"
+  echo "$out"
+fi
+
 echo
 echo "passed ${pass}, failed ${fail}"
 [ "$fail" -eq 0 ]

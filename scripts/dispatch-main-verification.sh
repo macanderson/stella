@@ -20,11 +20,24 @@
 # It reads the tip of `main` and counts the `ci` runs for that exact commit.
 # One or more and it stops, because the commit has an answer or is getting
 # one. None, and it starts `ci.yml`, waits for that run to show up, then
-# starts `main-canary.yml`.
+# starts `main-canary.yml` and waits for that one.
 #
 # The canary goes second on purpose. Its last step is
 # `check-main-verified.sh`, which would name this same commit while the `ci`
 # run was still missing.
+#
+# ── It claims only the runs it saw land ──────────────────────────────────────
+#
+# `gh workflow run` starts a run on a BRANCH, and that run judges whatever the
+# tip is when it lands rather than the commit this script was asked about. So
+# starting a workflow is not evidence that the commit got one. The closing line
+# used to name the `ci` run and speak for both, and on 2026-09-05 it said
+# `67a43001` "is being checked" while the canary run it started had attached to
+# `9455eebe`, one merge later. Both workflows are polled now, and each is
+# reported on its own.
+#
+# The two waits share one deadline, so asking the second question costs no more
+# wall clock than asking the first did.
 #
 # The run it starts cannot come back here. `auto-tag.yml` acts only on a `ci`
 # run whose event was a push, and a run started this way carries the event
@@ -169,43 +182,70 @@ start() { # start <workflow file>
   return 1
 }
 
-url="-"
-started=0
-if start ci.yml; then
-  started=1
-  waited=0
+# One deadline for both waits, so polling the canary as well as `ci` costs no
+# more wall clock than polling `ci` alone did. The answer comes back in
+# `wait_url` rather than on stdout: a command substitution would run the loop
+# in a subshell and lose what it spent from the budget.
+remaining="$timeout_seconds"
+wait_url="-"
+wait_for() { # wait_for <workflow file>
+  local answer found
+  wait_url="-"
   while :; do
-    answer="$(runs_for ci.yml "$sha" || true)"
+    answer="$(runs_for "$1" "$sha" || true)"
     found="$(count_of "$answer")"
     if [ -n "$found" ] && [ "$found" -gt 0 ]; then
-      url="${answer#* }"
-      break
+      wait_url="${answer#* }"
+      return 0
     fi
-    if [ "$poll_seconds" -le 0 ] || [ "$waited" -ge "$timeout_seconds" ]; then
-      break
+    if [ "$poll_seconds" -le 0 ] || [ "$remaining" -le 0 ]; then
+      return 1
     fi
     sleep "$poll_seconds"
-    waited=$((waited + poll_seconds))
+    remaining=$((remaining - poll_seconds))
   done
+}
+
+ci_url="-"
+ci_started=0
+if start ci.yml; then
+  ci_started=1
+  wait_for ci.yml || true
+  ci_url="$wait_url"
 fi
 
-start main-canary.yml || true
+canary_url="-"
+if start main-canary.yml; then
+  wait_for main-canary.yml || true
+  canary_url="$wait_url"
+fi
 
-if [ "$url" != "-" ]; then
-  echo "dispatch-main-verification: ${short} is being checked."
-  echo "  ${url}"
+# A run that never attached is reported per workflow, because the two mean
+# different things: `ci` is the answer being asked for, and the canary is the
+# backstop the daily schedule asks again.
+missing() { # missing <workflow file> <what it means>
+  warn "no $1 run has landed on ${short}"
+  cat <<TXT
+  A started run judges whatever the tip of ${ref} is when it lands, so a merge
+  that arrived in between takes the run and ${short} keeps none. $2
+
+    gh run list --workflow $1 --branch ${ref}
+TXT
+}
+
+if [ "$ci_url" != "-" ]; then
+  echo "dispatch-main-verification: ${short} has a ci run."
+  echo "  ${ci_url}"
+  if [ "$canary_url" != "-" ]; then
+    echo "  main-canary: ${canary_url}"
+  else
+    missing main-canary.yml "The daily canary asks again; nothing else does."
+  fi
   exit 0
 fi
 
-if [ "$started" -eq 1 ]; then
-  warn "a ci run was started, but none has appeared for ${short} yet"
-  cat <<TXT
-  A started run judges whatever the tip of ${ref} is when it lands, so a merge
-  that arrived in between takes the run and ${short} keeps none. Look for it,
-  and start another if it went to a later commit:
-
-    gh run list --workflow ci.yml --branch ${ref}
-TXT
+if [ "$ci_started" -eq 1 ]; then
+  missing ci.yml "Look for it, and start another if it went to a later commit:"
   exit 0
 fi
 

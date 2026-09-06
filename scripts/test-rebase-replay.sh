@@ -74,6 +74,26 @@ want() {
   esac
 }
 
+# want_absent <name> <repo> <base> <substring> — the report must not mention
+# the substring. `want` can only assert that something IS named, which passes
+# on a guard that names everything; the mixed-branch case needs the other
+# direction to pin the per-suspect filter.
+want_absent() {
+  local name="$1" dir="$2" base="$3" sub="$4" out
+  out="$(cd "$dir" && "$GUARD" "$base" HEAD 2>&1)"
+  case "$out" in
+  *"$sub"*)
+    fail=$((fail + 1))
+    echo "FAIL $name — the report named '$sub':"
+    echo "$out"
+    ;;
+  *)
+    pass=$((pass + 1))
+    echo "ok   $name"
+    ;;
+  esac
+}
+
 # ── An ordinary branch ───────────────────────────────────────────────────────
 #
 # Without this the suite would prove the guard can fail and nothing else.
@@ -248,6 +268,105 @@ if [ "$(cat "$r/new/bar.txt")" = "beta" ]; then
 else
   fail=$((fail + 1))
   echo "FAIL R9b new/bar.txt reads $(cat "$r/new/bar.txt"), so the edit did not survive"
+fi
+
+# ── 10. Both shapes on one branch ────────────────────────────────────────────
+#
+# R9 and R1 each carry one suspect. Neither can tell whether the upstream-move
+# skip runs per suspect or clears the whole list, and a skip hoisted out of the
+# loop would turn the guard into a blanket waiver for any branch that absorbed
+# a rename — passing every case above while the hazard shipped green (#5957).
+#
+# So: one branch with an inherited rename AND a genuine edit-and-undo pair. The
+# verdict alone is not the assertion; a guard that flagged both would also fail
+# here. R10b is the half that pins the filter — the inherited path must not be
+# named.
+r="$(new_repo mixed)"
+mkdir -p "$r/old"
+printf 'alpha\n' >"$r/old/bar.txt"
+git -C "$r" add old/bar.txt
+git -C "$r" commit -qm "add old/bar.txt"
+git -C "$r" checkout -q -b b
+printf 'beta\n' >"$r/old/bar.txt"
+printf 'beta\n' >"$r/f.txt"
+git -C "$r" commit -qam "B: edit both files"
+
+git -C "$r" checkout -q main
+mkdir -p "$r/new"
+git -C "$r" mv old/bar.txt new/bar.txt
+git -C "$r" commit -qm "upstream: relocate the file"
+
+git -C "$r" checkout -q b
+git -C "$r" merge -q --no-edit main -m "merge main" >/dev/null 2>&1
+printf 'beta\n' >"$r/new/bar.txt"
+printf 'alpha\n' >"$r/f.txt"
+git -C "$r" commit -qam "B: re-land the work and undo the other edit" >/dev/null 2>&1
+want "R10 a genuine pair on a branch that also absorbed a rename is flagged" \
+  expect-fail "$r" main "f.txt"
+want_absent "R10b the inherited rename is not named alongside it" \
+  "$r" main "old/bar.txt"
+
+# ── 11. A rename the branch's own merge commit made ──────────────────────────
+#
+# R9's rename belongs to the base branch. This one belongs to the merge commit
+# on the branch, which is what happens when two branches claim one numbered
+# document and the merge resolves the collision by renumbering — #5921 added
+# ADR 0027 while 0027 landed upstream, and its merge renamed the record to
+# 0028. The branch's non-merge history still says `a.md`, the diff says
+# `b.md`, and no non-merge commit removed anything (#5954).
+r="$(new_repo merge_renamed)"
+git -C "$r" checkout -q -b b
+printf 'first\n' >"$r/a.md"
+git -C "$r" add a.md
+git -C "$r" commit -qm "B: add a.md"
+
+git -C "$r" checkout -q main
+printf 'x\n' >"$r/c.txt"
+git -C "$r" add c.txt
+git -C "$r" commit -qm "upstream: add c.txt"
+
+git -C "$r" checkout -q b
+git -C "$r" merge -q --no-commit --no-ff main >/dev/null 2>&1
+git -C "$r" mv a.md b.md
+git -C "$r" commit -qm "merge main, renumbering a.md to b.md" >/dev/null 2>&1
+want "R11 a rename performed by the branch's own merge commit is not flagged" \
+  expect-pass "$r" main "check-rebase-replay: OK"
+
+# ...and the renamed file really is what the branch now contributes, so R11 is
+# not passing because the merge lost it.
+if [ -n "$(git -C "$r" diff --name-only main b -- b.md)" ]; then
+  pass=$((pass + 1))
+  echo "ok   R11b the renamed file is in the branch's net diff"
+else
+  fail=$((fail + 1))
+  echo "FAIL R11b b.md is missing from the branch's diff against main"
+fi
+
+# ── 12. The report says which commit did which ───────────────────────────────
+#
+# An unlabelled commit list printed the same shape for a real pair and for an
+# inherited rename, and two genuine Cargo.lock pairs were read as the known
+# false positive (#5956).
+r="$(new_repo labelled)"
+git -C "$r" checkout -q -b b
+printf 'beta\n' >"$r/f.txt"
+git -C "$r" commit -qam "the edit"
+printf 'alpha\n' >"$r/f.txt"
+git -C "$r" commit -qam "the undo"
+want "R12 the report names the commit that introduced the edit" \
+  expect-fail "$r" main "introduced by"
+want "R12b it names the commit that undid it, and names the right one" \
+  expect-fail "$r" main "undone by"
+
+out="$(cd "$r" && "$GUARD" main HEAD 2>&1)"
+introduced="$(printf '%s\n' "$out" | sed -n 's/.*introduced by  *[0-9a-f]*  //p')"
+undone="$(printf '%s\n' "$out" | sed -n 's/.*undone by  *[0-9a-f]*  //p')"
+if [ "$introduced" = "the edit" ] && [ "$undone" = "the undo" ]; then
+  pass=$((pass + 1))
+  echo "ok   R12c the two labels sit on the right commits"
+else
+  fail=$((fail + 1))
+  echo "FAIL R12c introduced='$introduced' undone='$undone'"
 fi
 
 echo

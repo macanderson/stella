@@ -54,6 +54,13 @@
 # where keeping the pair is the better answer, so an acknowledgement would only
 # offer the wrong remedy in reviewable-looking clothes.
 #
+# ── The report names who did what ────────────────────────────────────────────
+#
+# Each flagged path lists its commits oldest first, labelled "introduced by"
+# and "undone by". An unlabelled list printed the same shape for a real pair
+# and for the inherited rename the filter below drops, and two genuine
+# Cargo.lock pairs were read as that known false positive (#5956).
+#
 # ── NOT in `make gate` ───────────────────────────────────────────────────────
 #
 # `make gate` runs on a working tree; this asks about a range of commits, which
@@ -199,6 +206,13 @@ if [ -z "$suspects" ]; then
   exit 0
 fi
 
+# Each flagged path prints which commit introduced the edit and which undid it,
+# rather than an undifferentiated list (#5956). Two failures used to print the
+# same shape: a real edit-and-undo pair, and the inherited rename the filter
+# above now drops. A reader who knew the second existed had no cheap way to
+# tell them apart, and read two genuine Cargo.lock pairs as the known false
+# positive. Oldest first, so "introduced by" is the first line and "undone by"
+# the last — the order the hazard happens in.
 found=0
 while IFS= read -r path; do
   [ -n "$path" ] || continue
@@ -207,10 +221,22 @@ while IFS= read -r path; do
   note "  $path"
   # Captured rather than piped into the loop: a pipeline's right-hand side runs
   # in a subshell, where `note`'s appends to `report` would be discarded.
-  commits="$(git_c log --no-merges --format='      %h  %s' "$base..$head" -- "$path")"
+  commits="$(git_c log --reverse --no-merges --format='%h  %s' "$base..$head" -- "$path")"
+  total="$(printf '%s\n' "$commits" | sed '/^$/d' | wc -l | tr -d ' ')"
+  seen=0
   while IFS= read -r line; do
     [ -n "$line" ] || continue
-    note "$line"
+    seen=$((seen + 1))
+    if [ "$total" -eq 1 ]; then
+      label="touched by   "
+    elif [ "$seen" -eq 1 ]; then
+      label="introduced by"
+    elif [ "$seen" -eq "$total" ]; then
+      label="undone by    "
+    else
+      label="also touched "
+    fi
+    note "      $label  $line"
   done <<COMMITS
 $commits
 COMMITS

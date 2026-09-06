@@ -51,6 +51,22 @@
 # they covered. So a removal fails the guard only while it is UNNAMED: writing
 # the test's name in the PR description (or in a commit message) passes it.
 #
+# ── The two channels are not equally durable (#5965) ─────────────────────────
+#
+# The description is read from the pull request itself and survives anything.
+# A commit message is read by the `git log` walk below, which on CI's
+# `fetch-depth: 2` checkout reaches the tip commit and nothing behind it. So a
+# name written in a commit message counts while that commit is the tip, and
+# stops counting the moment a merge lands on top — `gh pr update-branch` is
+# enough. #5894 is the recorded instance: one tree, two runs, opposite answers,
+# with the same deletion named in the same commit each time.
+#
+# The walk is left at depth 2 rather than deepened, because the tree comparison
+# needs no history and a full clone on every pull request costs more than the
+# channel is worth. The guard says how far it could see instead: the failure
+# text names the number of commits the walk read and points at the description
+# as the channel that does not expire.
+#
 # That is the entire mechanism, and it is weak. The goal is not to
 # adjudicate whether a deletion was correct — a script cannot — but to convert
 # an invisible deletion into a sentence a reviewer reads.
@@ -288,9 +304,14 @@ else
   ack="${PR_BODY:-}"
 fi
 
+# How far the commit-message channel could actually see. On CI's fetch-depth 2
+# checkout this is 1, and the failure text says so rather than leaving the
+# author to work out why a name that passed an hour ago no longer does.
+walked=0
 if commits="$(git log --format='%B' "$base_ref..$head_ref" 2>/dev/null)"; then
   ack="$ack
 $commits"
+  walked="$(git log --format='%H' "$base_ref..$head_ref" 2>/dev/null | wc -l | tr -d ' ')"
 fi
 
 unacknowledged=""
@@ -335,6 +356,13 @@ fi
   echo "A moved or renamed test is reported here because this guard keys on the"
   echo "bare function name; that is deliberate, and naming it in the PR is the"
   echo "whole cost."
+  echo ""
+  echo "PUT THE NAME IN THE PR DESCRIPTION. The commit-message channel expires:"
+  echo "this run's \`git log\` walk read $walked commit(s), because CI checks out"
+  echo "at fetch-depth 2. A name written in a commit message counts while that"
+  echo "commit is the tip and stops counting once a merge lands on top of it, so"
+  echo "the same deletion can pass one run and fail the next with nothing about"
+  echo "the tree having changed (#5965). The description does not expire."
   echo ""
   if [ "$stale_fallback" -eq 1 ]; then
     echo "THIS RUN READ A STALE DESCRIPTION. It could not fetch the PR's"
