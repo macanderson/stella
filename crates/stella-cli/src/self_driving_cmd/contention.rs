@@ -132,6 +132,11 @@ fn gather(root: &Path, key: &str, own_root: Option<&Path>) -> Contention {
 ///
 /// A match counts only where neither neighbouring character is a digit, which
 /// is what makes `i-43` a mention and `i-4300` not one.
+///
+/// The rule holds only over text somebody wrote. It cannot tell that part of a
+/// name is a hash. There the neighbours are hex letters, so every number is
+/// spelled sooner or later by accident. Callers reading a slug cut that suffix
+/// off with [`stella_fleet::strip_slug_hash`] first.
 #[must_use]
 fn names_issue(text: &str, key: &str) -> bool {
     if key.is_empty() {
@@ -164,7 +169,14 @@ pub(crate) fn branches_naming(ls_remote: &str, key: &str) -> Vec<String> {
         // reported that name as its evidence.
         .filter_map(|line| line.split("refs/heads/").nth(1))
         .map(str::trim)
-        .filter(|name| names_issue(name, key))
+        // The stem, not the hash on the end of it. That suffix is sixteen hex
+        // characters of FNV-1a, and hex is mostly letters, so `names_issue`'s
+        // digit-neighbour rule lets a number inside one through: issue 18
+        // matched the `18` in issue 11's branch `stella/11-8fdade18d3a4de74`
+        // and was deferred on every pass for hours, because a deferral writes
+        // no `spent` entry. The evidence string keeps the whole name — an
+        // operator looking for the branch needs the one git will show them.
+        .filter(|name| names_issue(stella_fleet::strip_slug_hash(name), key))
         .map(str::to_owned)
         .collect()
 }
@@ -189,8 +201,11 @@ pub(super) fn worktrees_naming(porcelain: &str, key: &str, own_root: Option<&Pat
         // checkouts out differently must still be seen, and a false negative
         // here is two loops on one issue where a false positive is only a
         // deferral. [`names_issue`] removes the part that was simply wrong —
-        // #43 matching a worktree for #4300.
-        .filter(|path| names_issue(path, key))
+        // #43 matching a worktree for #4300 — and `strip_slug_hash` the part
+        // that was wrong for the same reason one directory further down: a
+        // worktree's leaf is a slug, so the hash sits on the end of the path
+        // and answers for any number that happens to fall inside it.
+        .filter(|path| names_issue(stella_fleet::strip_slug_hash(path), key))
         .filter(|path| own_root.is_none_or(|own| !Path::new(path).starts_with(own)))
         .map(str::to_owned)
         .collect()
@@ -293,12 +308,11 @@ pub(super) fn ledger_claims(root: &Path, key: &str) -> Vec<String> {
 /// for the same reason: **contention is other people.** Now that this loop
 /// mints the claims it also reads, a probe that counted its own would be the
 /// #4300 shape again through the authoritative signal — the loop deferring
-/// forever on evidence only it produces. The candidate filter in `drive`
-/// already keeps a claimed or spent key out of the queue, so this is not
-/// reachable today; it is here because "the loop never defers on its own
-/// lease" should be a property of this function rather than a coincidence of
-/// a filter two modules away, and because it is the half of #4309 that a
-/// later change to that filter would silently take back.
+/// forever on evidence only it produces. Nothing reaches that today: the
+/// candidate filter in `drive` keeps a claimed or spent key out of the queue.
+/// It is here so "the loop never defers on its own lease" is a property of
+/// this function, not a lucky side effect of a filter two modules away that a
+/// later edit could take back.
 ///
 /// It is the *owner string* that is compared, not liveness: a crashed run of
 /// this loop had a different pid, so its lapsing lease is somebody else's
@@ -553,6 +567,66 @@ mod tests {
         assert!(
             branches_naming(out, "7").is_empty(),
             "no branch here names issue 7"
+        );
+    }
+
+    /// The hash on a slug is not a name, and must not be searched as one.
+    ///
+    /// The live one. `stella/11-8fdade18d3a4de74` is issue 11's branch on
+    /// `macanderson/rainforest`, left behind when its pull request merged. The
+    /// `18` inside its hash has a letter on each side, so the digit-neighbour
+    /// rule passed it and issue 18 — the only claimable issue in that repo —
+    /// read as somebody else's work. A deferral writes no `spent` entry, so
+    /// the next pass asked the same question and got the same answer, for
+    /// hours.
+    #[test]
+    fn a_hash_that_happens_to_contain_the_key_is_not_a_branch_naming_it() {
+        let out = "5e998e0dacbae5481cea564051a52acbbd0570ff\t\
+                   refs/heads/stella/11-8fdade18d3a4de74\n";
+
+        assert!(
+            branches_naming(out, "18").is_empty(),
+            "this branch is issue 11's; the 18 is inside its hash"
+        );
+        // The control: the branch still answers for the issue it is named for.
+        assert_eq!(
+            branches_naming(out, "11"),
+            vec!["stella/11-8fdade18d3a4de74"],
+            "and the evidence keeps the whole name, hash included"
+        );
+    }
+
+    /// The same collision one directory down, where a worktree path ends in a
+    /// slug and every leftover of a run carries nearly the same digits.
+    #[test]
+    fn a_hash_in_a_worktree_path_is_not_that_path_naming_the_key() {
+        let porcelain = "worktree /repo/.stella/private/self-driving/11-8fdade18d3a4de74\n";
+
+        assert!(
+            worktrees_naming(porcelain, "18", None).is_empty(),
+            "this worktree is issue 11's"
+        );
+        assert_eq!(worktrees_naming(porcelain, "11", None).len(), 1);
+    }
+
+    /// A name nobody generated keeps matching exactly as it did.
+    ///
+    /// The fix is a narrower scan, not a rule about what a branch may be
+    /// called: a human's checkout and a preserved branch mint no slug, so
+    /// stripping a hash must not stop either of them counting.
+    #[test]
+    fn stripping_the_hash_does_not_stop_a_human_or_preserved_branch_matching() {
+        let out = "abc\trefs/heads/wip-43-preserved\n\
+                   def\trefs/heads/fix-43\n\
+                   012\trefs/heads/stella/43-8fdade18d3a4de74\n";
+
+        assert_eq!(
+            branches_naming(out, "43"),
+            vec!["wip-43-preserved", "fix-43", "stella/43-8fdade18d3a4de74"]
+        );
+        assert!(
+            worktrees_naming("worktree /home/dev/checkouts/issue-43\n", "43", None).len() == 1,
+            "a person's checkout is still a peer"
         );
     }
 
