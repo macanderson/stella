@@ -10,7 +10,7 @@
 //! # The defect this exists to prevent
 //!
 //! It is a feedback loop, and it is specific to *this* repository's
-//! automation. [`crate::rank_defects`] counts an issue as a defect if it
+//! automation. [`crate::priority::triage`] counts an issue as a defect if it
 //! carries `bug` **or** `triage` — an untriaged issue is a defect nobody has
 //! classified yet. Meanwhile `.github/workflows/issue-triage.yml` adds
 //! `triage` to any issue opened without one of its `TYPE_LABELS`
@@ -40,7 +40,7 @@
 //! This crate depends on no other workspace crate, which is what lets
 //! `stella-observatory` link its folds without linking the machinery it
 //! observes. So [`conform`] takes borrowed label text rather than a
-//! `stella_protocol::Issue`, exactly as [`crate::rank_defects`] keeps its own
+//! `stella_protocol::Issue`, exactly as [`crate::priority::triage`] keeps its own
 //! [`crate::QueueIssue`] input type for the same reason, and the one mapping
 //! from a tracker's shape into this one lives in the caller.
 
@@ -529,7 +529,7 @@ mod tests {
 
     /// The witness. A filing with no type label is refused *before* it reaches
     /// the tracker, rather than being filed, stamped `triage` by
-    /// `issue-triage.yml`, and read back by `rank_defects` as an untriaged
+    /// `issue-triage.yml`, and read back by `priority::triage` as an untriaged
     /// defect the loop must now triage.
     #[test]
     fn a_filing_that_omits_the_type_axis_is_refused() {

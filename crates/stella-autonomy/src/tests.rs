@@ -751,33 +751,6 @@ fn starved_reads_the_controller_not_the_ledger() {
 }
 
 // ---------------------------------------------------------------------------
-// queue — ranked P0 > P1 > P2, oldest first inside a rank
-// ---------------------------------------------------------------------------
-
-#[test]
-fn rank_beats_age_across_ranks_triage_counts_and_features_do_not() {
-    let issues: Vec<QueueIssue> = serde_json::from_value(json!([
-        {"number": 101, "title": "fresh P1",  "createdAt": "2026-08-01T00:00:00Z", "url": "u",
-         "labels": [{"name": "bug"}, {"name": "P1"}]},
-        {"number": 102, "title": "aged P1",   "createdAt": "2026-01-01T00:00:00Z", "url": "u",
-         "labels": [{"name": "bug"}, {"name": "P1"}]},
-        {"number": 103, "title": "the P0",    "createdAt": "2026-08-01T00:00:00Z", "url": "u",
-         "labels": [{"name": "bug"}, {"name": "P0"}]},
-        {"number": 104, "title": "untriaged", "createdAt": "2025-01-01T00:00:00Z", "url": "u",
-         "labels": [{"name": "triage"}]},
-        {"number": 105, "title": "a feature", "createdAt": "2025-01-01T00:00:00Z", "url": "u",
-         "labels": [{"name": "enhancement"}]}
-    ]))
-    .expect("fixture parses");
-
-    let ranked: Vec<u64> = rank_defects(issues, &crate::escalation::EscalationPolicy::default(), 0)
-        .iter()
-        .map(|i| i.number)
-        .collect();
-    assert_eq!(ranked, [103, 102, 101, 104]);
-}
-
-// ---------------------------------------------------------------------------
 // the run fold — the status the file cannot state on its own
 // ---------------------------------------------------------------------------
 

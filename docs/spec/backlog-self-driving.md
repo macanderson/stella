@@ -317,7 +317,7 @@ wrongly is worse than not filing at all** — the queue the loop ranks is the
 queue the loop just polluted.
 
 **The defect is a feedback loop, and it is live in this repository today.**
-`rank_defects` counts an issue as a defect if it carries `bug` **or** `triage` —
+`priority::triage` counts an issue as a defect if it carries `bug` **or** `triage` —
 an untriaged issue is a defect nobody has classified yet. Meanwhile
 `.github/workflows/issue-triage.yml` adds `triage` to any issue opened without
 one of its `TYPE_LABELS`, and the comment above that rule names the exact case:
@@ -369,7 +369,7 @@ is decided by whichever label the ranker happens to test first.
 Lands in `crates/stella-autonomy/src/convention.rs` — pure, and over borrowed
 label text rather than a `stella_protocol::Issue`, so the crate keeps the
 no-workspace-dependency property that lets the Observatory link its folds. That
-is the same trade `rank_defects` already makes, and the one mapping from a
+is the same trade `priority::triage` already makes, and the one mapping from a
 tracker's shape into this one lives in the caller.
 
 ### 3.1b Sizing, readiness, and the guard's logins
@@ -948,7 +948,7 @@ The pipeline's discipline, carried forward without relaxation:
 | Decision | Deterministic | Model |
 |---|---|---|
 | How big is this cycle | `plan_cycle` | — |
-| Which issue is next | `rank_defects` over the readiness queue | — |
+| Which issue is next | `priority::triage` over the readiness queue | — |
 | Is this finding new | `finding_digest` | — |
 | What is the next PR action | `deliver next` | — |
 | Has the ladder gone dry | `dry_streak` | — |

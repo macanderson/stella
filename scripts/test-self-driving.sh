@@ -133,7 +133,7 @@ chmod +x "$STUB_BIN/gh"
 
 # A backlog holding $1 defects, of which $2 carry P0, written to $3.
 #
-# `rank_defects` counts an issue as a defect when it is labelled `bug` or
+# `priority::triage` counts an issue as a defect when it is labelled `bug` or
 # `triage`, and `demand_from` counts P0 off the same list — so a fixture is
 # the honest way to say "the queue holds N, M of them urgent". Numbers are
 # what the governor derives, never what it is told.
