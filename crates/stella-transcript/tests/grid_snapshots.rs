@@ -434,6 +434,74 @@ fn grid_snapshots_pin_a_failed_step_open_at_zoom_turns() {
     );
 }
 
+/// `suite_run_with_a_failure`'s first turn kept open, minus the failure —
+/// the same shape with a passing step and an answer instead of `None`.
+fn suite_run_without_a_failure() -> Run {
+    run(
+        "loop-detect-suite",
+        vec![
+            Turn {
+                name: "run-suite".to_string(),
+                prompt: "run the loop-detect suite".to_string(),
+                prose: Vec::new(),
+                notes: Vec::new(),
+                steps: vec![step(
+                    bash(
+                        "cargo test -p stella-core loop_detect",
+                        &["running 4 tests", "test result: ok. 4 passed; 0 failed"],
+                        Status::Ok,
+                    ),
+                    0,
+                )],
+                answer: Some("The suite passes; nothing to fix.".to_string()),
+                status: Status::Ok,
+                duration_ms: 3_400,
+            },
+            Turn {
+                name: "add-a-test".to_string(),
+                prompt: "add one more case".to_string(),
+                prose: Vec::new(),
+                notes: Vec::new(),
+                steps: vec![step(
+                    bash(
+                        "cargo test -p stella-core loop_detect",
+                        &["running 5 tests", "test result: ok. 5 passed; 0 failed"],
+                        Status::Ok,
+                    ),
+                    0,
+                )],
+                answer: Some("Added the new case; the suite still passes.".to_string()),
+                status: Status::Ok,
+                duration_ms: 2_100,
+            },
+        ],
+    )
+}
+
+/// A turn that is not the run's last and has no failing step, collapsed at
+/// `Zoom::Turns`. Neither existing `Zoom::Turns` golden covers it —
+/// `grid_snapshots_pin_a_mixed_turn_at_zoom_turns` renders a single-turn run,
+/// so `fold.rs`'s `default_open` keeps its only turn open through
+/// `is_last_turn` regardless of collapsing; `failed_step_pinned_open` above
+/// uses a non-last turn but pins it open with `Status::pins_open`, which
+/// golden shows the *escape* from collapsing, not collapsing itself. This
+/// fixture has two turns, the first finished `Status::Ok` with no failing
+/// step, so nothing pins it open and the header actually collapses.
+#[test]
+fn grid_snapshots_pin_a_collapsed_turn_header_at_zoom_turns() {
+    let r = suite_run_without_a_failure();
+    let mut state = FoldState::new();
+    state.set_zoom(Zoom::Turns);
+    let frame = grid::to_plain(&grid::render_turn_lines(&r, &state, 0, W));
+    assert_golden(
+        "collapsed_turn_at_zoom_turns",
+        "the first of two turns, neither failing — Zoom::Turns collapses it, \
+         unlike failed_step_pinned_open where a failure pins it open",
+        W,
+        &frame,
+    );
+}
+
 // ──────────────────────── a note with detail, one without ─────────────────
 
 fn notes_run() -> Run {
