@@ -80,6 +80,33 @@ pub(crate) fn session_gate(workspace_root: &std::path::Path) -> Arc<dyn AuthzGat
     }
 }
 
+/// A session's tool allowance, both halves of it: the budget the workspace
+/// declared, and the cell holding what this turn's volatile block already
+/// took of it.
+///
+/// One argument rather than two, because neither half answers the question on
+/// its own. [`budgeted`] needs the pair to hand the packer a number, and a
+/// call site that carried only the first would settle an array against a
+/// spend it never saw.
+#[derive(Clone, Copy)]
+pub(crate) struct ToolAllowance<'l> {
+    declared: ToolAdvertisement,
+    ledger: &'l SteeringLedger,
+}
+
+impl<'l> ToolAllowance<'l> {
+    /// The budget and the cell, named — the seam a witness test builds one
+    /// through.
+    pub(crate) fn new(declared: ToolAdvertisement, ledger: &'l SteeringLedger) -> Self {
+        Self { declared, ledger }
+    }
+
+    /// This session's own, off its resolved config.
+    fn of(cfg: &'l Config) -> Self {
+        Self::new(cfg.tool_advertisement, &cfg.steering_ledger)
+    }
+}
+
 /// The full session chain over `base`: custom `.stella/tools/*.toml` tools,
 /// the operator's switches, and the authorization gate, outermost-last.
 pub(crate) fn session_stack<'a>(
@@ -95,8 +122,7 @@ pub(crate) fn session_stack<'a>(
             custom_tools,
             cfg.workspace_root.clone(),
             session_tool_policy(cfg),
-            cfg.tool_advertisement,
-            &cfg.steering_ledger,
+            ToolAllowance::of(cfg),
             session_gate(&cfg.workspace_root),
             principal,
         ),
@@ -123,8 +149,7 @@ pub(crate) fn session_stack_with_gate<'a>(
     custom_tools: Vec<CustomTool>,
     workspace_root: PathBuf,
     policy: ToolPolicy,
-    advertisement: ToolAdvertisement,
-    ledger: &SteeringLedger,
+    allowance: ToolAllowance<'_>,
     gate: Arc<dyn AuthzGate>,
     principal: Principal,
 ) -> GatedToolSet<'a> {
@@ -139,13 +164,9 @@ pub(crate) fn session_stack_with_gate<'a>(
     let namespaces = contributed_server_principals(&workspace_root);
     let customs = CustomToolSet::new(base, custom_tools, workspace_root);
     let permitted = PolicyToolSet::new_boxed(Box::new(customs), policy);
-    GatedToolSet::new_boxed(
-        budgeted(Box::new(permitted), advertisement, ledger),
-        gate,
-        principal,
-    )
-    .with_tool_principals(contributed)
-    .with_prefix_principals(namespaces)
+    GatedToolSet::new_boxed(budgeted(Box::new(permitted), allowance), gate, principal)
+        .with_tool_principals(contributed)
+        .with_prefix_principals(namespaces)
 }
 
 /// The principal each plugin-contributed **MCP server's** tools authorize as,
@@ -233,8 +254,7 @@ pub(crate) fn policy_stack<'a>(
         policy_stack_with(
             base,
             session_tool_policy(cfg),
-            cfg.tool_advertisement,
-            &cfg.steering_ledger,
+            ToolAllowance::of(cfg),
             session_gate(&cfg.workspace_root),
             principal,
         ),
@@ -262,17 +282,12 @@ pub(crate) fn policy_stack<'a>(
 pub(crate) fn policy_stack_with<'a>(
     base: &'a dyn ToolExecutor,
     policy: ToolPolicy,
-    advertisement: ToolAdvertisement,
-    ledger: &SteeringLedger,
+    allowance: ToolAllowance<'_>,
     gate: Arc<dyn AuthzGate>,
     principal: Principal,
 ) -> GatedToolSet<'a> {
     let permitted = PolicyToolSet::new(base, policy);
-    GatedToolSet::new_boxed(
-        budgeted(Box::new(permitted), advertisement, ledger),
-        gate,
-        principal,
-    )
+    GatedToolSet::new_boxed(budgeted(Box::new(permitted), allowance), gate, principal)
 }
 
 /// Compose the tool allowance over `permitted`, or hand it back untouched.
@@ -281,8 +296,8 @@ pub(crate) fn policy_stack_with<'a>(
 /// filters nothing, so the lever's off state is the absence of a layer. "Off
 /// advertises the whole surface" is then a fact about the composition rather
 /// than a claim about a filter, which is what a bench arm measuring the lever
-/// needs on its control side. `ledger` is untouched on that arm too: with no
-/// tool withheld there is nothing for a shared total to decide.
+/// needs on its control side. The ledger is untouched on that arm too: with
+/// no tool withheld there is nothing for a shared total to decide.
 ///
 /// On the `Lean` arm the budget the packer receives is not the one the
 /// workspace declared — it is what this turn's volatile block left of it.
@@ -290,13 +305,12 @@ pub(crate) fn policy_stack_with<'a>(
 /// later spend cannot re-rank an array the provider is already caching.
 fn budgeted<'a>(
     permitted: Box<dyn ToolExecutor + 'a>,
-    advertisement: ToolAdvertisement,
-    ledger: &SteeringLedger,
+    allowance: ToolAllowance<'_>,
 ) -> Box<dyn ToolExecutor + 'a> {
-    match advertisement {
+    match allowance.declared {
         ToolAdvertisement::Full => permitted,
         ToolAdvertisement::Lean(declared) => {
-            let lean = LeanToolSet::new(permitted, ledger.settle(declared));
+            let lean = LeanToolSet::new(permitted, allowance.ledger.settle(declared));
             lean.report_drops();
             Box::new(lean)
         }
@@ -373,8 +387,7 @@ mod tests {
             Vec::new(),
             PathBuf::from("."),
             ToolPolicy::allow_all(),
-            ToolAdvertisement::Full,
-            &SteeringLedger::default(),
+            ToolAllowance::new(ToolAdvertisement::Full, &SteeringLedger::default()),
             gate,
             Principal::User,
         )
@@ -529,8 +542,7 @@ mod tests {
             vec![script_tool(dir.path())],
             dir.path().to_path_buf(),
             ToolPolicy::allow_all(),
-            ToolAdvertisement::Full,
-            &SteeringLedger::default(),
+            ToolAllowance::new(ToolAdvertisement::Full, &SteeringLedger::default()),
             session_gate(dir.path()),
             Principal::User,
         );
@@ -605,8 +617,7 @@ mod tests {
             vec![script_tool(dir.path())],
             dir.path().to_path_buf(),
             ToolPolicy::allow_all(),
-            ToolAdvertisement::Full,
-            &SteeringLedger::default(),
+            ToolAllowance::new(ToolAdvertisement::Full, &SteeringLedger::default()),
             session_gate(dir.path()),
             Principal::User,
         );
@@ -657,8 +668,7 @@ mod tests {
             Vec::new(),
             dir.path().to_path_buf(),
             policy,
-            ToolAdvertisement::Full,
-            &SteeringLedger::default(),
+            ToolAllowance::new(ToolAdvertisement::Full, &SteeringLedger::default()),
             session_gate(dir.path()),
             Principal::User,
         );
@@ -748,8 +758,7 @@ mod tests {
             Vec::new(),
             PathBuf::from("."),
             ToolPolicy::allow_all(),
-            ToolAdvertisement::Lean(declared),
-            ledger,
+            ToolAllowance::new(ToolAdvertisement::Lean(declared), ledger),
             Arc::new(NoAuthz),
             Principal::User,
         )
@@ -833,8 +842,7 @@ mod tests {
             Vec::new(),
             PathBuf::from("."),
             ToolPolicy::allow_all(),
-            ToolAdvertisement::Full,
-            &ledger,
+            ToolAllowance::new(ToolAdvertisement::Full, &ledger),
             Arc::new(NoAuthz),
             Principal::User,
         );
