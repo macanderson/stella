@@ -451,6 +451,74 @@ fn the_progress_ticker_arms_then_fires_once_per_interval() {
     );
 }
 
+/// The eager pass reports over a channel from its own thread, and the
+/// narration folds those reports into `stella init`'s lines. The fold keeps
+/// the order the two rungs ran in: file progress, the file summary, the chunk
+/// headline, chunk progress. Each rung's throttle starts with that rung, so
+/// the chunk rung's first tick arms rather than fires.
+#[test]
+fn the_eager_pass_events_narrate_in_rung_order() {
+    use crate::search_cmd::eager::EagerEvent;
+    use crate::search_cmd::semantic::WarmOutcome;
+
+    let start = std::time::Instant::now();
+    let seconds = |n: u64| start + std::time::Duration::from_secs(n);
+    let mut ticker = ProgressTicker::new(INDEX_PROGRESS_INTERVAL);
+    let mut lines: Vec<String> = Vec::new();
+    let mut emit = |line: InitLine| lines.push(line.text().to_string());
+
+    narrate_eager_event(
+        EagerEvent::FilesEmbedded(1),
+        seconds(0),
+        &mut ticker,
+        "concept-2",
+        &mut emit,
+    );
+    narrate_eager_event(
+        EagerEvent::FilesEmbedded(2),
+        seconds(2),
+        &mut ticker,
+        "concept-2",
+        &mut emit,
+    );
+    narrate_eager_event(
+        EagerEvent::FilesFinished(WarmOutcome::Warmed {
+            embedded: 2,
+            remaining: 0,
+            unreadable: 0,
+        }),
+        seconds(2),
+        &mut ticker,
+        "concept-2",
+        &mut emit,
+    );
+    // The chunk rung's first tick arms a fresh throttle: no line.
+    narrate_eager_event(
+        EagerEvent::ChunkFilesEmbedded(1),
+        seconds(2),
+        &mut ticker,
+        "concept-2",
+        &mut emit,
+    );
+    narrate_eager_event(
+        EagerEvent::ChunkFilesEmbedded(2),
+        seconds(4),
+        &mut ticker,
+        "concept-2",
+        &mut emit,
+    );
+
+    assert_eq!(
+        lines,
+        vec![
+            "· semantic index: 2 files embedded…",
+            "✓ semantic index: 2 files embedded by concept-2",
+            "◈ embedding code chunks for search…",
+            "· chunk index: 2 files embedded…",
+        ]
+    );
+}
+
 /// The narrated line is the live-count sentence the maintainer asked to
 /// watch increment — walked, parsed, unchanged, symbols.
 #[test]

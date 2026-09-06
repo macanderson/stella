@@ -48,101 +48,51 @@
 //!
 //! # Where it runs
 //!
-//! On a thread of its own, under a runtime of its own ([`spawn_on_own_thread`]).
-//! The pass interleaves SQLite reads and writes, file reads and hashing, and
-//! the embedder's HTTP round trips, across three modules; run as a task on
-//! the session's runtime it held a worker for every one of the synchronous
-//! parts, and on 2026-09-05 one of those — a coverage count over the graph —
-//! took eleven seconds after every batch and kept the deck's keyboard dead for
-//! six minutes. The count is fast now and the deck runs on its own thread, so
-//! the freeze cannot recur; the pass blocking a worker was still the defect
-//! AGENTS.md architecture rule 2 names. A thread puts every
-//! synchronous call in the pass off the runtime by construction, including
-//! the next one somebody adds, where `spawn_blocking` around each call would
-//! have to be re-applied by hand and forgotten once.
+//! On a thread of its own, under a runtime of its own ([`spawn_on_own_thread`],
+//! built on [`super::own_thread`]). The pass mixes SQLite, file reads and
+//! hashing with the embedder's HTTP awaits, across three modules. Run as a
+//! task on the session's runtime, it held a worker for every synchronous
+//! step. On 2026-09-05 one of those steps, a coverage count over the graph,
+//! took eleven seconds after every batch. The deck's keyboard was dead for six
+//! minutes. The count is fast now and the deck runs on its own thread, so that
+//! freeze cannot recur. The pass holding a worker was still the defect
+//! AGENTS.md architecture rule 2 names. A thread takes every synchronous call
+//! in the pass off the runtime at once, the next one somebody adds included.
+//! `spawn_blocking` around each call would have to be added by hand every
+//! time, and forgotten once.
 
 use std::path::{Path, PathBuf};
 
 use stella_embed::Embedder;
 use stella_graph::CodeGraph;
-use tokio::sync::mpsc::UnboundedReceiver;
-use tokio::sync::oneshot;
 
 use super::engine::{ChunkWarmOutcome, warm_chunks_opened};
+use super::own_thread::{self, PassThread};
 use super::readiness::{IndexReadiness, measure};
 use super::semantic::{WarmOutcome, warm_opened};
 
 /// A backfill running on its own thread, started by [`spawn_on_own_thread`].
-///
-/// Progress and the outcome both cross back as messages, so the caller's
-/// callbacks run on the caller's runtime and the thread borrows nothing from
-/// it: the same shape lets the deck session forward readiness to the deck and
-/// would let `stella init` narrate through an emitter that is not `Send`.
-pub struct BackfillThread {
-    progress: UnboundedReceiver<IndexReadiness>,
-    done: oneshot::Receiver<BackfillOutcome>,
-}
-
-impl BackfillThread {
-    /// The next readiness report, or `None` once the pass has stopped
-    /// reporting. Every report is unsettled, as [`backfill_opened`] says.
-    pub async fn progress(&mut self) -> Option<IndexReadiness> {
-        self.progress.recv().await
-    }
-
-    /// Wait for the pass to end. `None` means the thread ended without
-    /// reporting, which only a panic in the pass does.
-    pub async fn join(self) -> Option<BackfillOutcome> {
-        // Anything still queued is the pass's business, not the caller's: a
-        // caller that stopped reading progress wants the outcome alone.
-        drop(self.progress);
-        self.done.await.ok()
-    }
-}
+/// Every progress report is unsettled, as [`backfill_opened`] says.
+pub type BackfillThread = PassThread<IndexReadiness, BackfillOutcome>;
 
 /// Run [`backfill_workspace_vectors`] on a new thread under a current-thread
 /// runtime, reporting back over channels.
 ///
 /// Fails only when the OS refuses the thread; then there is no pass, and the
-/// caller says so. A runtime that cannot be built is reported as
-/// [`BackfillOutcome::Unavailable`] through the same channel as any other
-/// outcome, because to the caller it is the same fact: nothing was filled.
-///
-/// The embedder is owned by the thread and dropped with it. An HTTP client
-/// pools connections on the runtime that opened them, so the client the pass
-/// uses must not outlive the pass's runtime — which is why the caller hands
-/// one over rather than lending the session's.
+/// caller says so. The embedder is owned by the thread and dropped with it,
+/// for the reason [`own_thread::spawn`] gives.
 pub fn spawn_on_own_thread(
     root: PathBuf,
     embedder: Box<dyn Embedder>,
 ) -> std::io::Result<BackfillThread> {
-    let (progress_tx, progress) = tokio::sync::mpsc::unbounded_channel();
-    let (done_tx, done) = oneshot::channel();
-    std::thread::Builder::new()
-        .name("stella-embed-backfill".to_owned())
-        .spawn(move || {
-            let outcome = match tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            {
-                Ok(runtime) => runtime.block_on(backfill_workspace_vectors(
-                    &root,
-                    embedder.as_ref(),
-                    &mut |measured| {
-                        // A caller that stopped listening loses nothing it
-                        // wanted; the pass runs on regardless.
-                        let _ = progress_tx.send(measured);
-                    },
-                )),
-                Err(error) => BackfillOutcome::Unavailable(format!(
-                    "cannot start a runtime for the embedding pass: {error}"
-                )),
-            };
-            // The receiver reads a dropped sender as the thread ending
-            // without a report; a caller gone first has nothing to be told.
-            let _ = done_tx.send(outcome);
-        })?;
-    Ok(BackfillThread { progress, done })
+    own_thread::spawn("stella-embed-backfill", move |progress| async move {
+        backfill_workspace_vectors(&root, embedder.as_ref(), &mut |measured| {
+            // A caller that stopped listening loses nothing it wanted; the
+            // pass runs on regardless.
+            let _ = progress.send(measured);
+        })
+        .await
+    })
 }
 
 /// What one backfill pass did.
@@ -265,18 +215,20 @@ pub async fn backfill_opened<P: FnMut(IndexReadiness) + ?Sized>(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use async_trait::async_trait;
     use stella_embed::{EmbedError, Embedder, EmbedderFingerprint, Embedding, SimilarityPosture};
 
+    use super::super::own_thread::probe::{HOLD, indexed_private_fixture, probe_latency};
     use super::*;
 
     /// A backend that answers deterministically and counts its round trips —
-    /// the instrument both witnesses here read.
+    /// the instrument both witnesses here read. `pub(super)` so the eager
+    /// pass's tests can drive their rungs with the same backend.
     #[derive(Debug, Default)]
-    struct CountingEmbedder {
+    pub(in super::super) struct CountingEmbedder {
         calls: AtomicUsize,
     }
 
@@ -356,106 +308,6 @@ mod tests {
         );
         graph.shutdown();
     }
-
-    /// [`indexed_fixture`] at the path a workspace's own pass opens
-    /// (`.stella/private/codegraph.db`), for the tests that run the pass from
-    /// the root rather than against a handle they hold. Closed on return: the
-    /// pass opens its own.
-    fn indexed_private_fixture(root: &Path, files: usize) {
-        for index in 0..files {
-            std::fs::write(
-                root.join(format!("file_{index}.rs")),
-                format!("pub fn thing_{index}() -> usize {{ {index} }}\n"),
-            )
-            .expect("write a fixture file");
-        }
-        let db_path = stella_store::workspace_private_sqlite_path(root, "codegraph.db")
-            .expect("the private store path");
-        let graph = CodeGraph::open(root, &db_path).expect("open the graph");
-        graph.index_all().expect("index the fixture");
-        graph.shutdown();
-    }
-
-    /// How long the blocking embedder holds whatever thread it runs on.
-    const HOLD: std::time::Duration = std::time::Duration::from_millis(500);
-
-    /// A backend that **blocks** its thread rather than awaiting: it wakes
-    /// the probe, then sleeps with `std::thread::sleep`. It stands in for
-    /// every synchronous step in the pass — the SQLite counts, the file
-    /// reads, the hashing — with a hold long enough to measure.
-    #[derive(Debug)]
-    struct BlockingEmbedder {
-        wake: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<std::time::Instant>>>,
-    }
-
-    #[async_trait]
-    impl Embedder for BlockingEmbedder {
-        fn fingerprint(&self) -> EmbedderFingerprint {
-            EmbedderFingerprint {
-                model_id: "blocking".into(),
-                revision: "1".into(),
-                dims: 2,
-                normalization: "l2".into(),
-            }
-        }
-
-        async fn embed(&self, texts: &[String]) -> Result<Vec<Embedding>, EmbedError> {
-            if let Some(wake) = self.wake.lock().expect("the wake slot").take() {
-                let _ = wake.send(std::time::Instant::now());
-                std::thread::sleep(HOLD);
-            }
-            let fingerprint = self.fingerprint().id();
-            Ok(texts
-                .iter()
-                .map(|text| {
-                    let mut vector = vec![text.len() as f32, 1.0];
-                    stella_embed::l2_normalize(&mut vector);
-                    Embedding {
-                        fingerprint: fingerprint.clone(),
-                        vector,
-                    }
-                })
-                .collect())
-        }
-
-        fn similarity_posture(&self) -> SimilarityPosture {
-            SimilarityPosture::Semantic {
-                admission_floor: 0.2,
-            }
-        }
-    }
-
-    /// One worker, so the thread the pass blocks — if it blocks a worker — is
-    /// the only worker there is. A probe task waits for the embedder's wake
-    /// and answers; returns how long the answer took from the wake.
-    fn probe_latency(
-        host: impl FnOnce(PathBuf, Box<dyn Embedder>) -> ProbeHandle,
-    ) -> std::time::Duration {
-        let workspace = tempfile::tempdir().expect("tempdir");
-        let root = workspace.path().canonicalize().expect("canonicalize");
-        indexed_private_fixture(&root, 2);
-        let (wake_tx, wake_rx) = tokio::sync::oneshot::channel();
-        let embedder: Box<dyn Embedder> = Box::new(BlockingEmbedder {
-            wake: std::sync::Mutex::new(Some(wake_tx)),
-        });
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(1)
-            .enable_all()
-            .build()
-            .expect("runtime");
-        runtime.block_on(async move {
-            let probe = tokio::spawn(async move {
-                let woken = wake_rx.await.expect("the embedder wakes the probe");
-                woken.elapsed()
-            });
-            let pass = host(root, embedder);
-            let latency = probe.await.expect("the probe answers");
-            pass.await;
-            latency
-        })
-    }
-
-    type ProbeHandle = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
 
     /// **The witness for the thread.** The pass on its own thread blocks its own
     /// thread and nothing else: a task on the session's runtime answers a
