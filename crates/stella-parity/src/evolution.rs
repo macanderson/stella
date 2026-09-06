@@ -267,28 +267,42 @@ evolution_surfaces! {
     /// Prompts, policies, and the loop's own instructions.
     Framework => "framework",
         EvolutionPosture::Shipped {
-            mechanism: "**this row's evidence column is enforced, and today it refuses \
-                        everything the loop can offer.** All three publication paths \
+            mechanism: "this row's evidence column is enforced. All three publication paths \
                         — auto-activation, `stella proposals keep`, `stella memory promote` \
                         — ask `authorises` before they write, and a refusal names the grade \
                         it needed beside the grade it was offered. A reflection lesson grades \
                         `ModelCritique` and the pool folds by minimum, so nothing mined \
-                        reaches the `EnvironmentObservation` a directive costs: the surface \
-                        is live and its evidence bar is unmet, so a mined rule stays a \
-                        reviewable proposal until a measured producer exists. What \
-                        publishes when the grade pays: the rules miner induces directive \
-                        candidates from reflection observations, and a kept one is written as \
-                        a TOML record under `.stella/rules/`, which `FsRuleSource` loads into \
-                        the system prefix. The system prompt template itself is assembled and \
-                        never self-edited: no path writes AGENTS.md or CLAUDE.md",
-            witness: "a_rule_on_reflection_evidence_is_refused_and_nothing_lands",
+                        reaches the `EnvironmentObservation` a directive costs, and a mined \
+                        rule stays a reviewable proposal — \
+                        `a_rule_on_reflection_evidence_is_refused_and_nothing_lands` still \
+                        pins that. The measured producer that pays the bar is the rule's own \
+                        turns. Each turn records which rules it could show and which \
+                        it showed, into the shared artifact trial ledger. `measured_grade` \
+                        appraises that window, and a rule the turns say confidently helps \
+                        earns `EnvironmentObservation`. The same window runs the other way: a \
+                        mined rule whose turns say withholding it won is retracted through \
+                        the registry's own append-only door — `status = \"retracted\"` in the \
+                        record file plus a `Retired` row in `.stella/rules/promotions.jsonl`. \
+                        A rule a person wrote is kept, whatever the numbers say. What \
+                        publishes when the grade pays is a TOML record under `.stella/rules/`, \
+                        which `FsRuleSource` loads into the system prefix. The system prompt \
+                        template itself is assembled and never self-edited: no path writes \
+                        AGENTS.md or CLAUDE.md",
+            witness: "a_mined_rule_that_stops_helping_is_retracted_and_a_hand_written_one_is_kept",
         },
-        EvolutionTiming::OfflineBatch,
+        // Between turns, not offline: the sweep runs on the post-turn path,
+        // and `memory::records_refresh` digests the rule files at the next
+        // turn boundary, so the next turn in the same session reads the
+        // retracted record's new standing.
+        EvolutionTiming::BetweenTurns,
         ImpactClass::SteeringDirective,
-        "`stella proposals retract <id> --reason <why>`. Nothing is deleted: the record file \
+        "`stella proposals retract <id> --reason <why>`, which the efficacy sweep goes through \
+         too. Nothing is deleted: the record file \
          is rewritten with `status = \"retracted\"` and the retraction is appended to the \
          hash-chained `.stella/rules/promotions.jsonl`, so the registry stops selecting it on \
-         the next load while what Stella believed — and when it stopped — stays readable";
+         the next load while what Stella believed — and when it stopped — stays readable. \
+         Undoing a retraction has no command of its own yet (`#6160`): the statement is still in \
+         the file, and setting its `status` back to `active` puts it back";
 
     /// What Stella remembers between turns.
     Memory => "memory",
@@ -505,11 +519,14 @@ pub const UNWITNESSED_EVOLUTION_BASELINE: usize = 0;
 /// check it asserts the row's own mechanism.** A row is a claim like any other
 /// (CLAUDE.md), and the name of a test is not evidence for it.
 #[cfg(test)]
-fn evolution_sources() -> [&'static str; 14] {
+fn evolution_sources() -> [&'static str; 15] {
     [
         // The Memory row's witness. A window of real turns retires a mined
         // memory, and leaves a hand-written one alone.
         include_str!("../../stella-cli/src/memory/learning/memory_lifecycle.rs"),
+        // The Framework row's witness. The same window retracts a mined rule
+        // and leaves a hand-written one alone.
+        include_str!("../../stella-cli/src/memory/learning/rule_lifecycle.rs"),
         // The Delivery row's witness: what the backlog picks and the
         // ledger row it writes, proven on a fixture tracker.
         include_str!("../../stella-cli/src/self_driving_cmd/ready.rs"),
