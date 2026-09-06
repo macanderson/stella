@@ -405,16 +405,15 @@ fn register_verified_credentials(enrollment: &VerifiedEnrollment) {
     ]);
 }
 
-/// Check that every tool the registry offers is one the catalog declares.
+/// Check that every tool on offer is one the catalog lists.
 ///
-/// A name the catalog does not list is a tool nobody here has reviewed, and
-/// that is what this refuses.
+/// A tool the catalog does not list is one nobody here has checked. This
+/// turns those down.
 ///
-/// It does not show that an enrolled host cannot start a program. `bash` is a
-/// catalog row and the agent runs it. What keeps such a host narrow is the
-/// surface gate above, which admits the raw one-shot path alone, plus the
-/// pieces that path never builds: no tool servers, no custom tools, no
-/// wrapper plugin.
+/// This does not prove the agent cannot run a program. It can. `bash` is on
+/// the list. What holds it back sits elsewhere: only `stella run` with no
+/// plugin may run at all, and that path loads no tool servers, no custom
+/// tools, and no plugin.
 pub(crate) fn prove_process_free_surface(workspace_root: &Path) -> Result<(), String> {
     let registry = stella_tools::ToolRegistry::new(workspace_root.to_path_buf());
     let catalog: BTreeSet<&str> = stella_tools::catalog::ALL_NAMES.iter().copied().collect();
