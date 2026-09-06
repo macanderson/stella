@@ -370,7 +370,10 @@ mod tests {
         let fresh = finding("the writer forgets the closing brace");
         let seen = vec![crate::finding_digest(&old.title)];
 
-        let out = novel(&[old.clone(), fresh.clone()], &seen);
+        // Bound rather than passed inline: `novel` borrows from the slice, so
+        // a temporary array would be dropped before the assertion reads it.
+        let offered = [old.clone(), fresh.clone()];
+        let out = novel(&offered, &seen);
 
         assert_eq!(out, vec![&fresh]);
     }
