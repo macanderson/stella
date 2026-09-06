@@ -90,7 +90,7 @@ pub use gc::{
 };
 pub use git::{
     GitCli, GitError, GitOutput, RemoveOptions, RemoveOutcome, SystemGitCli, Worktree,
-    WorktreeEntry, WorktreeError, WorktreeManager,
+    WorktreeEntry, WorktreeError, WorktreeManager, strip_slug_hash,
 };
 pub use ledger::{
     AttemptFinish, AttemptId, AttemptStart, CommitRecord, Ledger, LedgerError, RunRecord,

@@ -281,6 +281,59 @@ fn short_hash(s: &str) -> String {
     format!("{hash:016x}")
 }
 
+/// How many hex chars [`short_hash`] writes, and therefore how long the
+/// discriminator on the tail of a slug is.
+const SLUG_HASH_HEX_LEN: usize = 16;
+
+/// `name` without the `short_hash` discriminator `worktree_slug` appends, or
+/// `name` unchanged when it does not end in one.
+///
+/// A slug is a stem somebody can read plus a hash nobody can. Only the stem
+/// carries meaning, so a reader asking what a branch or directory is *about*
+/// must ask the stem — and the hash is where FNV-1a put sixteen characters that
+/// answer nothing and match anything.
+///
+/// The self-driving loop reads these names to see whether a peer is already
+/// working an issue, matching the number as a substring and refusing a match
+/// only when a digit sits beside it. Hex is mostly letters, so issue 18 matched
+/// the `18` inside issue 11's branch `stella/11-8fdade18d3a4de74` and was
+/// deferred on every pass for hours. No wait clears that: the hash covers
+/// `run_scope` + task id, ids in one run differ only in the tail, and FNV-1a
+/// barely moves its high bytes for such inputs — so every slug a run mints
+/// carries nearly the same digits, and some issue number always collides.
+///
+/// This lives beside `short_hash` and `worktree_slug` for the reason
+/// [`crate::issue_claim_key`] gives: a reader that re-derives the shape of what
+/// a writer produced is a shared cell in two files, and it drifts.
+///
+/// Callers pass whole paths as well as bare names, so the match is anchored on
+/// the end rather than on a path component. Indexed as bytes, never split by
+/// `char`: either may hold any UTF-8, and an offset counted back from the end
+/// would land mid-character and panic. It is used only after the byte there is
+/// confirmed to be `-`, which is ASCII and therefore a boundary.
+#[must_use]
+pub fn strip_slug_hash(name: &str) -> &str {
+    let bytes = name.as_bytes();
+    let Some(stem) = bytes.len().checked_sub(SLUG_HASH_HEX_LEN + 1) else {
+        return name;
+    };
+    // A stem of its own is required, so a name that is nothing but a hash keeps
+    // it rather than stripping away to nothing.
+    if stem == 0 || bytes[stem] != b'-' {
+        return name;
+    }
+    // `short_hash`'s exact alphabet, not `is_ascii_hexdigit`: it writes
+    // lowercase, and a name matching only in uppercase is somebody else's.
+    if bytes[stem + 1..]
+        .iter()
+        .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        &name[..stem]
+    } else {
+        name
+    }
+}
+
 /// How much of the human-readable stem a slug keeps before its hash suffix.
 /// The slug is a single filesystem name *and* a branch component, and one path
 /// component maxes out at 255 bytes on ext4/APFS — a plan free-texting its task
@@ -807,6 +860,48 @@ mod tests {
         assert_ne!(a, c);
         // Deterministic across calls.
         assert_eq!(a, worktree_slug("run", "fix/the thing"));
+    }
+
+    /// The parser and the minter agree, on whatever the minter produces.
+    ///
+    /// Stated as a round trip rather than against a literal, because the thing
+    /// that would break a reader is the hash width changing here and nobody
+    /// noticing there.
+    #[test]
+    fn stripping_a_minted_slug_returns_the_stem_it_was_built_from() {
+        for id in ["t1", "fix/the thing", &"refactor ".repeat(40)] {
+            let slug = worktree_slug("run", id);
+            let stem = strip_slug_hash(&slug);
+            assert_ne!(stem, slug, "{slug} ends in a hash");
+            assert_eq!(
+                slug,
+                format!("{stem}-{}", short_hash(&format!("run\u{1f}{id}")))
+            );
+        }
+    }
+
+    /// It strips a discriminator, and nothing that merely resembles one.
+    #[test]
+    fn strip_slug_hash_leaves_every_other_name_alone() {
+        // No suffix at all, and one too short to be a full digest.
+        assert_eq!(strip_slug_hash("stella/43-fix"), "stella/43-fix");
+        assert_eq!(strip_slug_hash("wip-43-preserved"), "wip-43-preserved");
+        assert_eq!(strip_slug_hash("t1-8fdade18d3a4de7"), "t1-8fdade18d3a4de7");
+        // Hex, but not the lowercase `short_hash` writes.
+        assert_eq!(
+            strip_slug_hash("t1-8FDADE18D3A4DE74"),
+            "t1-8FDADE18D3A4DE74"
+        );
+        // Sixteen hex chars, but no stem left over to be a name.
+        assert_eq!(strip_slug_hash("-8fdade18d3a4de74"), "-8fdade18d3a4de74");
+        // A whole path, because that is what the worktree probe passes.
+        assert_eq!(
+            strip_slug_hash("/repo/.stella/private/self-driving/11-8fdade18d3a4de74"),
+            "/repo/.stella/private/self-driving/11"
+        );
+        // Multi-byte input must not panic on a byte offset counted from the end.
+        assert_eq!(strip_slug_hash("résumé"), "résumé");
+        assert_eq!(strip_slug_hash("æ-8fdade18d3a4de74"), "æ");
     }
 
     #[test]
