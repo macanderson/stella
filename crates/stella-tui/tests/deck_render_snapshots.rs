@@ -131,6 +131,12 @@ mod voice;
 #[path = "deck_render_snapshots/settings_seats.rs"]
 mod settings_seats;
 
+/// The `/models` card with a plugin seat beside the session's own role. See
+/// [`graph`]'s doc for the `#[path]`, and [`plan_economics`]'s for why this
+/// line is appended.
+#[path = "deck_render_snapshots/models_card_seats.rs"]
+mod models_card_seats;
+
 /// The command used to regenerate every golden in this file. Quoted verbatim in
 /// each snapshot header and in every failure message, so nobody has to go
 /// looking for it.

@@ -79,12 +79,16 @@ impl Config {
         }
     }
 
-    /// The four engine roles, what each will actually send, and which setting
-    /// decided it.
+    /// Every engine role — the session's own, then one per plugin-declared
+    /// seat — what each will actually send, and which setting decided it.
     ///
-    /// Printed unconditionally, including when no engine settings exist — "all
-    /// four ride the session model" is an answer, and a block that appears
-    /// only sometimes cannot be used to check anything.
+    /// Printed unconditionally, including when no engine settings exist — "the
+    /// session rides its own model, no seats declared" is an answer, and a
+    /// block that appears only sometimes cannot be used to check anything.
+    ///
+    /// Resolves through [`crate::config_wiring::resolve`], the same function
+    /// [`crate::config_wiring::deck_rows`] calls for the `/models` dialog, so
+    /// this command and that dialog cannot name a different set of roles.
     fn print_role_wiring(&self) {
         use crate::config_wiring::{render, resolve};
         let configured = super::discover_configured_providers();
@@ -93,11 +97,13 @@ impl Config {
             provider: self.provider.id.to_string(),
             model: self.model_id.clone(),
         };
+        let declared = crate::agent::seats::installed_seats(&self.workspace_root);
         let wiring = resolve(
             self.engine_settings.as_ref(),
             &session,
             self.model_pinned_by_flag,
             &is_provider,
+            &declared,
         );
         println!("\n  {}", "Engine roles".bright_cyan().bold());
         for line in render(&wiring) {

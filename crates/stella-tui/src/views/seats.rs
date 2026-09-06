@@ -126,15 +126,26 @@ const GAP: usize = 3;
 /// is always `Some`, because a resolved role has one by definition; an
 /// unassigned plugin seat stays `None` and renders as `default`.
 ///
-/// The editable rows start at `state.roles.len()`. Rows before that are
-/// resolved roles, read-only here (see `seat_at`). Rows from it on are
-/// `state.seats`, in the same order, so a combined row index always finds the
-/// right seat.
+/// `roles` resolves a row for every declared seat too, for the `/models`
+/// dialog and `stella config`. So this filters a `roles` entry out when
+/// `state.seats` already names its key: the `state.seats` entry is the one
+/// that wins, because it names the *plugin* -- what this pane's `from`
+/// column promises -- where `roles`' entry would name the *settings key*
+/// instead. Without the filter every seat would draw twice.
+///
+/// The editable rows start at `resolved_row_count`'s answer, **not**
+/// `state.roles.len()`: that count is what the filter above actually kept,
+/// and `seat_at`/`seat_at_mut` share it so a combined row index always finds
+/// the right seat. Named rather than linked: `rows` is public and those three
+/// are not, and a link from a public item to a private one is exactly the
+/// broken-doc shape `rustdoc::private_intra_doc_links` exists to catch.
 #[must_use]
 pub fn rows(state: &EngineConfigState) -> Vec<SeatRow> {
+    let seat_keys = declared_seat_keys(state);
     state
         .roles
         .iter()
+        .filter(|role| !seat_keys.contains(role.role.as_str()))
         .map(|role| SeatRow {
             key: role.role.clone(),
             model: Some(role.model.clone()),
@@ -144,17 +155,36 @@ pub fn rows(state: &EngineConfigState) -> Vec<SeatRow> {
         .collect()
 }
 
+/// The keys [`rows`] treats as already spoken for by a declared seat --
+/// shared by [`rows`] and [`resolved_row_count`] so the two can never
+/// disagree about which `roles` entries are seats.
+fn declared_seat_keys(state: &EngineConfigState) -> std::collections::HashSet<&str> {
+    state.seats.iter().map(|seat| seat.key.as_str()).collect()
+}
+
+/// How many of [`rows`]'s leading entries are read-only resolved roles:
+/// `state.roles` filtered the same way `rows` filters it. [`seat_at`] and
+/// [`seat_at_mut`] use this as the offset into `state.seats`.
+fn resolved_row_count(state: &EngineConfigState) -> usize {
+    let seat_keys = declared_seat_keys(state);
+    state
+        .roles
+        .iter()
+        .filter(|role| !seat_keys.contains(role.role.as_str()))
+        .count()
+}
+
 /// The seat at combined row `row`, or `None` when `row` is a resolved role.
 /// [`rows`] puts the resolved roles first, so the seats begin at
-/// `state.roles.len()`.
+/// [`resolved_row_count`].
 fn seat_at(state: &EngineConfigState, row: usize) -> Option<&SeatRow> {
-    row.checked_sub(state.roles.len())
+    row.checked_sub(resolved_row_count(state))
         .and_then(|i| state.seats.get(i))
 }
 
 /// The mutable counterpart of [`seat_at`], for `⏎`/`x`'s writes.
 fn seat_at_mut(state: &mut EngineConfigState, row: usize) -> Option<&mut SeatRow> {
-    let i = row.checked_sub(state.roles.len())?;
+    let i = row.checked_sub(resolved_row_count(state))?;
     state.seats.get_mut(i)
 }
 
@@ -783,6 +813,40 @@ mod tests {
         assert!(text.contains("acme/reviewer"), "{text}");
     }
 
+    /// `roles` resolves a row for a declared seat too, for the `/models`
+    /// dialog. This pane must still draw that seat once, taking
+    /// `state.seats`' own entry (named by the plugin) over `roles`' (named
+    /// by the settings key), or a seat present in both lists would draw
+    /// twice.
+    #[test]
+    fn a_role_the_driver_also_resolved_still_draws_once() {
+        let state = snapshot(
+            vec![
+                resolved("default", "zai/glm-5.2", "default_model"),
+                // The driver's own resolution of the same seat: a real
+                // model, named by the settings key rather than the plugin.
+                resolved(
+                    "acme/reviewer",
+                    "anthropic/claude-opus-5",
+                    "seat_models.acme/reviewer",
+                ),
+            ],
+            vec![seat(
+                "acme/reviewer",
+                Some("anthropic/claude-opus-5"),
+                "acme",
+            )],
+        );
+        assert_eq!(keys(&state), ["default", "acme/reviewer"]);
+        let from: Vec<String> = rows(&state).into_iter().map(|row| row.from).collect();
+        assert_eq!(
+            from,
+            ["default_model", "acme"],
+            "the seat's own entry (named by the plugin) wins over roles' (named \
+             by the settings key): {from:?}"
+        );
+    }
+
     /// A fresh install has no plugin, and the pane is the one row the session
     /// does have rather than a hint that it has none.
     #[test]
@@ -1088,6 +1152,41 @@ mod tests {
 
         crate::deck_ui::handle_deck_key(ch('x'), &crate::deck::WorkspaceModel::new(), &mut ui);
         assert_eq!(ui.engine.state.as_ref().unwrap().seats[1].model, None);
+    }
+
+    /// `state.roles` can carry a resolved row for a declared seat too (the
+    /// `/models` dialog reads it that way). The editor must still find the
+    /// right seat by counting `rows()`'s own read-only prefix, not
+    /// `state.roles.len()` -- which here would be one too many.
+    #[test]
+    fn the_editor_finds_the_right_seat_when_roles_also_resolved_it() {
+        let mut state = snapshot(
+            vec![
+                resolved("default", "zai/glm-5.2", "default_model"),
+                // The driver's own resolution of the first seat: an extra
+                // `roles` entry the offset must not count twice.
+                resolved("acme/reviewer", "zai/glm-5.2", "seat_models.acme/reviewer"),
+            ],
+            vec![
+                seat("acme/reviewer", None, "acme"),
+                seat("vera/verifier", Some("zai/glm-5.2"), "vera"),
+            ],
+        );
+        state.allowed_models = vec!["anthropic/claude-opus-5".into(), "zai/glm-5.2".into()];
+        let mut ui = ui_with(Some(state));
+        ui.settings_pane = SettingsPane::Seats;
+        ui.engine.focused = true;
+        // rows() draws default, acme/reviewer, vera/verifier -- three rows,
+        // the same order it draws when `roles` names only `default`.
+        ui.engine.row = 2; // vera/verifier
+
+        crate::deck_ui::handle_deck_key(ch('x'), &crate::deck::WorkspaceModel::new(), &mut ui);
+        let seats = &ui.engine.state.as_ref().unwrap().seats;
+        assert_eq!(seats[0].model, None, "acme/reviewer was left alone");
+        assert_eq!(
+            seats[1].model, None,
+            "vera/verifier was cleared, not miscounted onto the wrong seat"
+        );
     }
 
     /// Esc on the pane's own nav hands the keyboard back to the tab, exactly

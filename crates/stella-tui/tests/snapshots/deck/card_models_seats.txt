@@ -1,0 +1,45 @@
+# deck golden · card_models_seats
+# the /models card: the session's role, then a plugin's seat
+# viewport 160×40 · rendered through render_deck, styling stripped
+# regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
+
+ SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
+
+◉ recalled  2 frames · 210 tok  ·  34ms  ·  ann
+    symbol  engine step-driver                  crates/stella-core/src/driver.rs:88                                                      120 tok
+    memory  event-log REPL                                                                                                                90 tok
+    ⋯ ctrl+o for provenance and budget
+
+── PLAN ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  Planning the automations cluster: list, editor, triggers, workflows.
+
+☰  plan  4/7  ·  Wire the triggers API
+
+ │ ◐ model worker · 349 tok/s                                                                                                                           ⚡ 1830ms
+ │   irreducible generation
+
+── EXECUTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ │ ⊙ apps/app/automations/page.tsx                                                                                                                        ⚡ 42ms
+ │ ⎿ 312 lines                                                                                                                               42ms
+
+ │ ● edit apps/app/automations/page.tsx +4 -1                                                                                                             ⚡ 18ms
+ │ ⎿                                                                                                                                 +4 −1 · 18ms
+ │     10 -  const items = []
+ │     10 +  const items = useAutomations() ╭ models  resolved routing ────────────────────────────────────────────╮
+ │     11 +  const [q, setQ] = useState("") │session        glm-5.2                                                │
+ │     12 +  const filtered = filter(items, │auto           effort off · thinking off                              │
+ │     13 +  const onNew = () => open()     │                                                                      │
+                                            │lead           zai/glm-5.2-air                                        │
+ │ ◐ model worker · 428 tok/s               │               medium · thinking on · from default_model              │                                    ⚡ 2100ms
+ │   irreducible generation                 │acme/reviewer  anthropic/claude-opus-5                                │
+                                            │               provider default · thinking default                    │
+☰  plan  5/7  ·  Workflows canvas           │               from seat_models.acme/reviewer                         │
+                                            ╰─────────────────────────────────────────────────────────── esc close ╯
+⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files
+
+ ✓ plan ▸ execute ████░░░░ 50% · verify
+>>>
+ ⏎ queue · ↓ 2 sub-agents · ^N failure · ^Z fold turn · ^O expand · $ shell · / commands
+zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

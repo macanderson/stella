@@ -16,7 +16,7 @@
 //! precedence) rather than re-deriving the rules, because a config report that
 //! can disagree with the engine is worse than none.
 //!
-//! # One row, and why it is still a table
+//! # More than one row, and why it is still a `Vec`
 //!
 //! It reported six rows until #3908 — `default`, `worker`, `verifier`,
 //! `triage`, `research`, `plan` — of which four resolved settings keys that
@@ -25,25 +25,27 @@
 //! four roles that would never run, which is the most expensive place in the
 //! product to be wrong.
 //!
-//! The shape stays a `Vec` rather than collapsing to one struct because the
-//! rows come back as **plugin-declared seats**, resolved the same way and
-//! rendered by the same `/models` dialog (#6088).
-//! [`RoleWiring::role`] is a `String` for that reason: the deck's
-//! `envelope::roles::role_table` already renders a row for a role it has never
-//! heard of, so a seat needs no new plumbing here — only a row.
+//! It stayed a `Vec` past that collapse to one row, and #6088 is why: a
+//! plugin-declared seat resolves through the same [`resolve`] and lands in
+//! the same list, right after the `default` row. [`RoleWiring::role`] is a
+//! `String` for that reason: the deck's `envelope::roles::role_table` already
+//! renders a row for a role it has never heard of, so a seat needs no new
+//! plumbing here — only a row.
 
-use crate::engine_config::{ModelSpec, model_spec_for, tuning_for};
+use crate::engine_config::{ModelSpec, model_spec_for, parse_model_spec, tuning_for};
 use crate::settings::AgentEngineConfig;
 use stella_protocol::ReasoningEffort;
 
-/// The one role core has. Seats a plugin declares join this list in #6088.
+/// The session's own role. [`resolve`] appends one row per plugin-declared
+/// seat after it (#6088).
 pub const DEFAULT_ROLE: &str = "default";
 
 /// One role's resolved wiring.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RoleWiring {
-    /// The role's name — [`DEFAULT_ROLE`], or (from #6088) a plugin-declared
-    /// seat. A `String` because core does not enumerate the possibilities.
+    /// The role's name — [`DEFAULT_ROLE`], or a plugin-declared seat's key
+    /// (`<plugin-id>/<role>`). A `String` because core does not enumerate the
+    /// possibilities.
     pub role: String,
     /// Provider id and the slug as it goes on the wire.
     pub model: ModelSpec,
@@ -60,7 +62,7 @@ pub struct RoleWiring {
 }
 
 /// Which setting decided a role's model.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelSource {
     /// `--model` / `STELLA_MODEL`. Pins the session for this invocation and
     /// suppresses the settings spec (see `resolve_engine_wiring`).
@@ -70,19 +72,24 @@ pub enum ModelSource {
     /// `default_model`.
     DefaultModel,
     /// Nothing named it: the role rides the session's resolved model, which
-    /// is the provider row's own default when settings are silent too.
+    /// is the provider row's own default when settings are silent too. Also
+    /// what an unassigned or unresolvable seat falls back to.
     SessionDefault,
+    /// `seat_models.<key>` — a plugin-declared seat the user assigned a
+    /// model to. Carries the key so the label names the exact entry.
+    Seat(String),
 }
 
 impl ModelSource {
     /// The settings key a user would edit to change this, as they would type
     /// it. Not a description — a path.
-    pub fn label(self) -> String {
+    pub fn label(&self) -> String {
         match self {
             Self::Flag => "--model (this invocation)".to_string(),
             Self::PerAgent => format!("agents.{DEFAULT_ROLE}.model"),
             Self::DefaultModel => "default_model".to_string(),
             Self::SessionDefault => "session default".to_string(),
+            Self::Seat(key) => format!("seat_models.{key}"),
         }
     }
 }
@@ -99,24 +106,33 @@ fn model_source(engine: &AgentEngineConfig) -> ModelSource {
     }
 }
 
-/// Resolve the session's role.
+/// Resolve every role of the session: the `default` row, then one row per
+/// plugin-declared seat.
 ///
 /// `session` is the model the session actually resolved to (`Config`'s own
-/// provider + model), which is what the role falls back to when no setting
+/// provider + model), which is what a role falls back to when no setting
 /// names one — including the case where settings are absent entirely.
 ///
 /// `model_pinned_by_flag` reproduces `resolve_engine_wiring`'s rule: an
 /// explicit `--model` is a per-invocation pin, so it suppresses the settings
-/// spec. Reporting the settings value there would name a model that is not
-/// going to run.
+/// spec for the `default` row. Reporting the settings value there would name
+/// a model that is not going to run. A `--model` flag pins only the session's
+/// own role — a seat's assignment is untouched by it, matching what actually
+/// runs (`resolve_seat_models` reads `seat_models` unconditionally).
+///
+/// `declared` is `(seat key, plugin display name)` — the pairs
+/// [`crate::agent::seats::installed_seats`] builds from the installed
+/// roster. Pass `&[]` for a caller with no seats to resolve (a test, or a
+/// surface that only cares about the session's own role).
 pub fn resolve(
     engine: Option<&AgentEngineConfig>,
     session: &ModelSpec,
     model_pinned_by_flag: bool,
     is_provider: &dyn Fn(&str) -> bool,
+    declared: &[(String, String)],
 ) -> Vec<RoleWiring> {
-    let Some(engine) = engine else {
-        return vec![RoleWiring {
+    let default_row = match engine {
+        None => RoleWiring {
             role: DEFAULT_ROLE.to_string(),
             model: session.clone(),
             source: ModelSource::SessionDefault,
@@ -124,35 +140,81 @@ pub fn resolve(
             reasoning: None,
             effort_auto_replaced: None,
             reasoning_auto_replaced: None,
-        }];
+        },
+        Some(engine) => {
+            let spec = (!model_pinned_by_flag)
+                .then(|| model_spec_for(engine, is_provider))
+                .flatten();
+            let (model, source) = match spec {
+                Some(spec) => (spec, model_source(engine)),
+                None if model_pinned_by_flag => (session.clone(), ModelSource::Flag),
+                None => (session.clone(), ModelSource::SessionDefault),
+            };
+            let tuning = tuning_for(engine);
+            // What the user pinned, to compare against what auto resolved.
+            let pinned = engine.agent();
+            let effort_auto_replaced = pinned
+                .and_then(|a| a.effort)
+                .filter(|_| engine.effort_auto_on());
+            let reasoning_auto_replaced = pinned
+                .and_then(|a| a.reasoning)
+                .map(|t| t.is_on())
+                .filter(|_| engine.reasoning_auto_on());
+            RoleWiring {
+                role: DEFAULT_ROLE.to_string(),
+                model,
+                source,
+                effort: tuning.effort,
+                reasoning: tuning.reasoning,
+                effort_auto_replaced,
+                reasoning_auto_replaced,
+            }
+        }
     };
-    let spec = (!model_pinned_by_flag)
-        .then(|| model_spec_for(engine, is_provider))
-        .flatten();
-    let (model, source) = match spec {
-        Some(spec) => (spec, model_source(engine)),
-        None if model_pinned_by_flag => (session.clone(), ModelSource::Flag),
-        None => (session.clone(), ModelSource::SessionDefault),
-    };
-    let tuning = tuning_for(engine);
-    // What the user pinned, to compare against what auto resolved.
-    let pinned = engine.agent();
-    let effort_auto_replaced = pinned
-        .and_then(|a| a.effort)
-        .filter(|_| engine.effort_auto_on());
-    let reasoning_auto_replaced = pinned
-        .and_then(|a| a.reasoning)
-        .map(|t| t.is_on())
-        .filter(|_| engine.reasoning_auto_on());
-    vec![RoleWiring {
-        role: DEFAULT_ROLE.to_string(),
-        model,
-        source,
-        effort: tuning.effort,
-        reasoning: tuning.reasoning,
-        effort_auto_replaced,
-        reasoning_auto_replaced,
-    }]
+    let mut wiring = vec![default_row];
+    wiring.extend(resolve_seats(engine, declared, session, is_provider));
+    wiring
+}
+
+/// Resolve every declared seat's wiring: one [`RoleWiring`] per entry in
+/// `declared`, in order.
+///
+/// A seat's model comes from `engine.seat_models`. It is looked up and
+/// parsed the same way [`crate::agent::seats::resolve_seat_models`] does for
+/// a real turn. An unassigned seat, or one naming no configured provider,
+/// falls back to the session's own model. That is the answer the seat
+/// actually gets. This report never refuses a run; it only says what would
+/// happen.
+///
+/// A seat has no effort or reasoning setting of its own yet. Those cells
+/// read "provider default" and "thinking default", and the auto-replaced
+/// fields stay `None`.
+fn resolve_seats(
+    engine: Option<&AgentEngineConfig>,
+    declared: &[(String, String)],
+    session: &ModelSpec,
+    is_provider: &dyn Fn(&str) -> bool,
+) -> Vec<RoleWiring> {
+    let assignments = engine.and_then(|e| e.seat_models.as_ref());
+    declared
+        .iter()
+        .map(|(key, _from)| {
+            let (model, source) = assignments
+                .and_then(|map| map.get(key))
+                .and_then(|raw| parse_model_spec(raw, is_provider))
+                .map(|spec| (spec, ModelSource::Seat(key.clone())))
+                .unwrap_or_else(|| (session.clone(), ModelSource::SessionDefault));
+            RoleWiring {
+                role: key.clone(),
+                model,
+                source,
+                effort: None,
+                reasoning: None,
+                effort_auto_replaced: None,
+                reasoning_auto_replaced: None,
+            }
+        })
+        .collect()
 }
 
 /// How an effort renders, including the auto-mode's theft when it happened.
@@ -254,9 +316,15 @@ pub fn render(wiring: &[RoleWiring]) -> Vec<String> {
 /// fresh scope-chain load: a settings edit made mid-session applies to runs
 /// started from now on, and a dialog that showed it as though it were in
 /// force would misreport the very thing it exists to answer.
+///
+/// `declared` is the same `(seat key, plugin name)` list the SEATS pane's
+/// snapshot carries ([`crate::agent::seats::installed_seats`]) — passed in
+/// rather than re-read here so a caller that already loaded the roster for
+/// the SEATS pane does not load it twice.
 pub fn deck_rows(
     cfg: &crate::config::Config,
     providers: &[String],
+    declared: &[(String, String)],
 ) -> Vec<stella_tui::envelope::RoleWiringRow> {
     let is_provider = |id: &str| providers.iter().any(|p| p == id);
     let session = ModelSpec {
@@ -268,12 +336,13 @@ pub fn deck_rows(
         &session,
         cfg.model_pinned_by_flag,
         &is_provider,
+        declared,
     );
     // The same resolution against the settings **as saved on disk right now**,
     // which is what a session started from here would get. `next` is only ever
     // read to say "this cell would differ" — the running answer above is never
     // taken from it.
-    let next = next_session_wiring(cfg, &session, &is_provider);
+    let next = next_session_wiring(cfg, &session, &is_provider, declared);
 
     rows(&wiring)
         .into_iter()
@@ -301,18 +370,20 @@ fn next_session_wiring(
     cfg: &crate::config::Config,
     session: &ModelSpec,
     is_provider: &impl Fn(&str) -> bool,
+    declared: &[(String, String)],
 ) -> Option<Vec<[String; 5]>> {
     let saved = crate::settings::Settings::load(&cfg.workspace_root)
         .ok()?
         .agent_engine_config;
-    // Resolving with the *same* session pin and `--model` flag isolates the
-    // one variable in question: a difference here is a settings edit, never
-    // an artifact of comparing two differently-seeded resolutions.
+    // This uses the same session pin, `--model` flag and declared seats as
+    // the running answer. So a difference here is a settings edit, and
+    // nothing else.
     Some(rows(&resolve(
         saved.as_ref(),
         session,
         cfg.model_pinned_by_flag,
         is_provider,
+        declared,
     )))
 }
 
@@ -347,8 +418,10 @@ mod tests {
         matches!(id, "openrouter" | "anthropic" | "zai")
     }
 
+    /// Every test above resolves with no declared seats, so the `default`
+    /// row is the whole answer — this unwraps it.
     fn only(wiring: &[RoleWiring]) -> &RoleWiring {
-        assert_eq!(wiring.len(), 1, "core has one role: {wiring:#?}");
+        assert_eq!(wiring.len(), 1, "no seats declared: {wiring:#?}");
         &wiring[0]
     }
 
@@ -357,7 +430,7 @@ mod tests {
     #[test]
     fn absent_settings_report_the_session_model() {
         let session = spec("openrouter", "moonshotai/kimi-k3");
-        let wiring = resolve(None, &session, false, &known);
+        let wiring = resolve(None, &session, false, &known, &[]);
         let row = only(&wiring);
         assert_eq!(row.role, DEFAULT_ROLE);
         assert_eq!(row.model, session);
@@ -375,7 +448,7 @@ mod tests {
             ..AgentEngineConfig::default()
         };
         let session = spec("openrouter", "moonshotai/kimi-k3");
-        let wiring = resolve(Some(&engine), &session, false, &known);
+        let wiring = resolve(Some(&engine), &session, false, &known, &[]);
         let row = only(&wiring);
         assert_eq!(row.model.model, "anthropic/claude-opus-5");
         assert_eq!(row.source, ModelSource::DefaultModel);
@@ -398,7 +471,7 @@ mod tests {
             ..AgentEngineConfig::default()
         };
         let session = spec("openrouter", "moonshotai/kimi-k3");
-        let wiring = resolve(Some(&engine), &session, false, &known);
+        let wiring = resolve(Some(&engine), &session, false, &known, &[]);
         let row = only(&wiring);
         assert_eq!(row.model.model, "anthropic/claude-fable-5");
         assert_eq!(row.source.label(), "agents.default.model");
@@ -422,7 +495,7 @@ mod tests {
             ..AgentEngineConfig::default()
         };
         let session = spec("openrouter", "moonshotai/kimi-k3");
-        let wiring = resolve(Some(&engine), &session, false, &known);
+        let wiring = resolve(Some(&engine), &session, false, &known, &[]);
         let row = only(&wiring);
         assert_eq!(
             row.effort,
@@ -454,7 +527,7 @@ mod tests {
             ..AgentEngineConfig::default()
         };
         let session = spec("openrouter", "moonshotai/kimi-k3");
-        let wiring = resolve(Some(&engine), &session, false, &known);
+        let wiring = resolve(Some(&engine), &session, false, &known, &[]);
         let cell = effort_cell(only(&wiring));
         assert_eq!(cell, "medium", "no noise when nothing was replaced: {cell}");
     }
@@ -469,7 +542,7 @@ mod tests {
             ..AgentEngineConfig::default()
         };
         let session = spec("anthropic", "claude-sonnet-5");
-        let wiring = resolve(Some(&engine), &session, true, &known);
+        let wiring = resolve(Some(&engine), &session, true, &known, &[]);
         let row = only(&wiring);
         assert_eq!(row.model, session, "the flag's model is what runs");
         assert_eq!(row.source, ModelSource::Flag);
@@ -485,7 +558,7 @@ mod tests {
             ..AgentEngineConfig::default()
         };
         let session = spec("openrouter", "moonshotai/kimi-k3");
-        let lines = render(&resolve(Some(&engine), &session, false, &known));
+        let lines = render(&resolve(Some(&engine), &session, false, &known, &[]));
         assert_eq!(lines.len(), 1);
         assert!(
             lines[0].contains("default_model"),
@@ -499,5 +572,81 @@ mod tests {
         );
         // No trailing padding survives into the rendered line.
         assert_eq!(lines[0], lines[0].trim_end());
+    }
+
+    /// The #6088 witness: a declared seat becomes a second row, right after
+    /// `default`, and an unassigned one runs on the session's own model
+    /// rather than inventing one. Fails on the old `resolve` by construction
+    /// — it took no `declared` parameter at all.
+    #[test]
+    fn a_declared_seat_with_no_assignment_runs_on_the_session_model() {
+        let session = spec("openrouter", "moonshotai/kimi-k3");
+        let declared = vec![("acme/reviewer".to_string(), "acme".to_string())];
+        let wiring = resolve(None, &session, false, &known, &declared);
+        assert_eq!(wiring.len(), 2, "the default row, then the declared seat");
+        assert_eq!(wiring[0].role, DEFAULT_ROLE);
+        let seat = &wiring[1];
+        assert_eq!(seat.role, "acme/reviewer");
+        assert_eq!(seat.model, session, "unassigned rides the session model");
+        assert_eq!(seat.source, ModelSource::SessionDefault);
+    }
+
+    /// A seat the user assigned a model to names `seat_models.<key>` as its
+    /// source — the exact entry a user would edit to change it — and its row
+    /// carries that model rather than the session's.
+    #[test]
+    fn a_declared_seat_with_an_assignment_names_the_seat_models_key() {
+        let mut seat_models = std::collections::BTreeMap::new();
+        seat_models.insert(
+            "acme/reviewer".to_string(),
+            "anthropic/claude-opus-5".to_string(),
+        );
+        let engine = AgentEngineConfig {
+            seat_models: Some(seat_models),
+            ..AgentEngineConfig::default()
+        };
+        let session = spec("openrouter", "moonshotai/kimi-k3");
+        let declared = vec![("acme/reviewer".to_string(), "acme".to_string())];
+        let wiring = resolve(Some(&engine), &session, false, &known, &declared);
+        assert_eq!(wiring.len(), 2);
+        let seat = &wiring[1];
+        assert_eq!(seat.model.provider, "anthropic");
+        assert_eq!(seat.model.model, "claude-opus-5");
+        assert_eq!(seat.source.label(), "seat_models.acme/reviewer");
+    }
+
+    /// An assignment naming no configured provider cannot resolve at request
+    /// time either. `resolve_seat_models` falls back to the session model
+    /// then. This report must say the same thing, not a model that will
+    /// never run.
+    #[test]
+    fn a_seat_assignment_that_names_no_provider_falls_back_to_the_session() {
+        let mut seat_models = std::collections::BTreeMap::new();
+        seat_models.insert("acme/reviewer".to_string(), "no-such-model".to_string());
+        let engine = AgentEngineConfig {
+            seat_models: Some(seat_models),
+            ..AgentEngineConfig::default()
+        };
+        let session = spec("openrouter", "moonshotai/kimi-k3");
+        let declared = vec![("acme/reviewer".to_string(), "acme".to_string())];
+        let wiring = resolve(Some(&engine), &session, false, &known, &declared);
+        let seat = &wiring[1];
+        assert_eq!(seat.model, session);
+        assert_eq!(seat.source, ModelSource::SessionDefault);
+    }
+
+    /// Two declared seats resolve in the order they were declared, each
+    /// keeping its own key — a plugin's process can have more than one
+    /// participant and the report must not collapse or reorder them.
+    #[test]
+    fn several_declared_seats_resolve_in_order() {
+        let session = spec("openrouter", "moonshotai/kimi-k3");
+        let declared = vec![
+            ("acme/planner".to_string(), "acme".to_string()),
+            ("acme/reviewer".to_string(), "acme".to_string()),
+        ];
+        let wiring = resolve(None, &session, false, &known, &declared);
+        let roles: Vec<&str> = wiring.iter().map(|r| r.role.as_str()).collect();
+        assert_eq!(roles, [DEFAULT_ROLE, "acme/planner", "acme/reviewer"]);
     }
 }

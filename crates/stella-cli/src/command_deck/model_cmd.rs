@@ -82,11 +82,10 @@ pub fn configured_role_pins(
         .and_then(|s| s.agent_engine_config);
 
     // `PipelineRole::Worker` alone. Triage and Verifier were pinned here from
-    // `pipeline_triage_model`/`pipeline_verifier_model` until #3908 retired
-    // both: settings can no longer express a model for either, so publishing a
-    // pin for them would be the deck reporting an intent nothing recorded.
-    // They now render unconfigured, which is what they are — and what a
-    // plugin's declared seat will replace in #6088.
+    // `pipeline_triage_model`/`pipeline_verifier_model`. Settings have no key
+    // for either one. A pin here would report an intent nothing recorded, so
+    // both render unconfigured. That is correct. A plugin seat feeds the
+    // `/models` dialog and `stella config` instead, not this pin.
     [PipelineRole::Worker]
         .into_iter()
         .map(|slot| {
