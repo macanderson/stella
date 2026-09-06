@@ -85,9 +85,9 @@ impl LevelFilter {
 
 /// Which endpoint a request reached, as a **template**.
 ///
-/// The raw path is never recorded, because every `{id}` template above
-/// carries a turn or session id in it. Serde renames each case to its template
-/// so a record reads like an access log without any rendering step.
+/// The raw path is never kept. Every `{id}` template holds a turn or a
+/// session id. Serde names each case for its template, so a record reads
+/// like an access log with no work done to it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Route {
     #[serde(rename = "/healthz")]
@@ -114,8 +114,8 @@ pub enum Route {
     /// for an in-flight `provider_request`, ahead of its `provider-result`.
     #[serde(rename = "/v1/turns/{id}/provider-delta")]
     TurnProviderDelta,
-    /// The answer to a `requery_request`: the context block the host's
-    /// steering plane chose for a turn whose work has moved, or nothing.
+    /// The answer to a `requery_request`. It carries the block the host
+    /// chose for a turn whose work has moved, or nothing.
     #[serde(rename = "/v1/turns/{id}/requery-result")]
     TurnRequeryResult,
     #[serde(rename = "/v1/turns/{id}/cancel")]
@@ -468,9 +468,9 @@ impl StreamEndReason {
 pub enum ReverseKind {
     Provider,
     Tool,
-    /// A step-boundary context re-query. Distinct from the other two because
-    /// it is the one reverse request a turn survives unanswered: the step
-    /// proceeds with no extra context rather than failing.
+    /// A step-boundary context re-query. It is the one reverse request a
+    /// turn lives through unanswered. The step runs on with no extra
+    /// context, and does not fail.
     Requery,
 }
 
