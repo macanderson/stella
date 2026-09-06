@@ -60,6 +60,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::self_driving_cmd::turn_flags::TurnFlags;
 use crate::settings::{Settings, Toggle};
 
 pub(crate) mod configure;
@@ -132,12 +133,6 @@ pub enum PluginCmd {
     ///
     /// One session per invocation: what re-opens it after a `sleep` is the
     /// loop the driver is describing, not this verb (#3599 B2).
-    /// The ceiling on what this session may spend is the session-wide
-    /// `--spend-limit` global, not a flag of this verb's own. `--spend-limit`
-    /// is declared `global = true` on [`crate::cli::GlobalArgs`], so clap
-    /// already propagates it into `stella plugin drive`; redefining it here
-    /// would collide with that slot rather than shadow it, which is what
-    /// `no_subcommand_flag_reuses_a_global_name` refuses.
     Drive {
         /// The plugin's `name`, as `stella plugin list` prints it.
         #[arg(value_name = "NAME")]
@@ -165,13 +160,7 @@ impl From<ScopeArg> for PluginScope {
 }
 
 /// Run `stella plugin <cmd>`. Offline: local files only, no API key.
-///
-/// `spend_limit` is the session-wide `--spend-limit` global, read off
-/// [`crate::cli::GlobalArgs`] by the caller and passed down rather than
-/// redeclared on `drive` — see [`PluginCmd::Drive`]. `None` is observed mode:
-/// spend is still summed and reported, and nothing is refused, which is what
-/// `stella self-driving` does with the same flag absent.
-pub fn run_plugin(cmd: &PluginCmd, spend_limit: Option<f64>) -> Result<(), String> {
+pub(crate) fn run_plugin(cmd: &PluginCmd, globals: &crate::cli::GlobalArgs) -> Result<(), String> {
     let root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
     let settings = Settings::load(&root).unwrap_or_default();
@@ -185,7 +174,11 @@ pub fn run_plugin(cmd: &PluginCmd, spend_limit: Option<f64>) -> Result<(), Strin
             decide_panel(&root, name, panel_answer(*allow, *deny), &settings)
         }
         PluginCmd::Remove { name } => remove(&root, name),
-        PluginCmd::Drive { name } => drive(&root, name, spend_limit),
+        // The session-wide flags, in the form a child turn takes them. A
+        // driver that asks for `work_start` spends the operator's provider
+        // budget, and `--spend-limit` is what bounds it — the same flag, read
+        // from the same place, as every other turn this binary runs.
+        PluginCmd::Drive { name } => drive(&root, name, TurnFlags::from_globals(globals)?),
     }
 }
 
@@ -214,7 +207,7 @@ fn session_id() -> String {
 /// Whatever [`crate::driver_plugin::bind_installed`] refuses, or the session's
 /// own failure — a driver that could not be started, timed out, died, or ended
 /// without saying what should happen next.
-fn drive(workspace_root: &Path, name: &str, spend_limit: Option<f64>) -> Result<(), String> {
+fn drive(workspace_root: &Path, name: &str, flags: TurnFlags) -> Result<(), String> {
     let name = checked_name(name)?;
     let mut warn = |line: String| eprintln!("  ! {line}");
     let resolved = crate::driver_plugin::resolve(workspace_root, name, &mut warn)?;
@@ -228,15 +221,10 @@ fn drive(workspace_root: &Path, name: &str, spend_limit: Option<f64>) -> Result<
     // this is where the workspace is: the tracker adapter and the loop's own
     // configuration are both facts about the directory `stella` was run in.
     let config = crate::self_driving_cmd::config::load(workspace_root);
-    // The ceiling the operator named, in the shape a child turn takes it: a
-    // run's cap, narrowed per turn to what is left of it, never handed down
-    // whole, which is `RunBudget`'s own rule.
-    let budget = crate::self_driving_cmd::budget::RunBudget::new(
-        crate::self_driving_cmd::turn_flags::TurnFlags {
-            spend_limit,
-            ..Default::default()
-        },
-    );
+    // The ceiling the operator named, narrowed per turn to what is left of it
+    // rather than handed down whole, which is `RunBudget`'s own rule.
+    let capped = flags.spend_limit.is_some();
+    let budget = crate::self_driving_cmd::budget::RunBudget::new(flags);
     let capabilities = Box::new(
         crate::driver_plugin::capabilities::HostDriverCapabilities::new(
             name,
@@ -263,7 +251,7 @@ fn drive(workspace_root: &Path, name: &str, spend_limit: Option<f64>) -> Result<
              and `work_abandon`; every other capability this session asks for will be refused \
              as unsupported"
         );
-        if spend_limit.is_none() {
+        if !capped {
             println!(
                 "  no --spend-limit was given, so a turn this session asks for spends until it \
                  finishes"
