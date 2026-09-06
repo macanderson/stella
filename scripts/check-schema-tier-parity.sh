@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Guard: a `-schema` gate step must run at the same rung as its base step.
+# Guard: a `-schema` gate step must run at the same rung as its base step, and
+# must not destroy the build cache that base step shares.
 #
 # GATE_STEPS has two such pairs today: `lint`/`lint-schema` and
 # `doc-warnings`/`doc-warnings-schema`. `check` is a smaller rung than
@@ -19,6 +20,22 @@
 # It reads GATE_STEPS and CHECK_STEPS from the Makefile, through two
 # `print-*` targets — the same way scripts/check-gate-parity.sh reads
 # GATE_STEPS. That keeps this list derived, not a second hand-copied one.
+#
+# ## The second half: a shared cache is not a schema step's to wipe
+#
+# `doc-warnings-schema` has to clean rustdoc before it runs, because cargo's
+# freshness check can call a stale `doc` unit up to date and print nothing
+# (#5139). `cargo clean --doc` takes no package filter — cargo refuses
+# `--doc` alongside `-p` — so an unscoped one empties the whole `target/doc`
+# tree, including the workspace rustdoc `doc-warnings` had just built, and
+# every `make gate` run pays a full rebuild for it (#5991).
+#
+# The scope cargo does offer is the target directory. So a recipe line here
+# that runs `cargo clean --doc` must set its own `CARGO_TARGET_DIR` on the
+# same line. This guard reads the Makefile's recipe lines for that, because
+# the rule is invisible in the recipe it protects: dropping the environment
+# variable leaves a command that still works and quietly costs everyone else
+# their cache.
 #
 #   ./scripts/check-schema-tier-parity.sh
 #
@@ -105,5 +122,40 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
+# Recipe lines only — a line starting with a tab. The header comments above
+# the recipe name the command in order to explain it, and a guard that read
+# those would fire on its own documentation.
+clean_unscoped=0
+if [ -f Makefile ]; then
+  while IFS= read -r line; do
+    case "$line" in
+    $'\t'*) ;;
+    *) continue ;;
+    esac
+    case "$line" in
+    *"cargo clean --doc"*) ;;
+    *) continue ;;
+    esac
+    case "$line" in
+    *CARGO_TARGET_DIR=*) continue ;;
+    esac
+    note "FAIL — this recipe line runs an unscoped rustdoc clean:"
+    note ""
+    note "      ${line#	}"
+    note ""
+    note "     \`cargo clean --doc\` takes no package filter, so without its own"
+    note "     CARGO_TARGET_DIR it empties the \`target/doc\` tree that"
+    note "     \`doc-warnings\` caches the workspace rustdoc in, and every gate"
+    note "     run pays a full rebuild for it (#5991). Set CARGO_TARGET_DIR on"
+    note "     the same line, as \`doc-warnings-schema\` does."
+    clean_unscoped=1
+  done <Makefile
+fi
+
+if [ "$clean_unscoped" -ne 0 ]; then
+  emit
+  exit 1
+fi
+
 emit
-printf 'check-schema-tier-parity: OK — every schema-tier gate step agrees with its base step about the check rung.\n'
+printf 'check-schema-tier-parity: OK — every schema-tier gate step agrees with its base step about the check rung, and cleans only the cache it owns.\n'

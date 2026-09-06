@@ -127,6 +127,50 @@ print-gate-steps:
 EOF
 expect "S8  no print-check-steps target fails" 1 "$d" "could not read CHECK_STEPS"
 
+# ── The second half: the shared rustdoc cache ────────────────────────────────
+#
+# `cargo clean --doc` takes no package filter, so an unscoped one empties the
+# whole `target/doc` tree — including the workspace rustdoc `doc-warnings`
+# built minutes earlier, which every later gate run then rebuilds (#5991). The
+# scope cargo does offer is the target directory, and dropping it leaves a
+# command that still works, so nothing about the recipe shows the rule.
+
+# recipe_fixture <name> <recipe body line> — a tree whose Makefile carries
+# the two print targets the guard reads plus one recipe line to judge.
+recipe_fixture() {
+  local dir="$tmp/$1" body="$2"
+  rm -rf "$dir"
+  mkdir -p "$dir/scripts"
+  cp "$guard" "$dir/scripts/check-schema-tier-parity.sh"
+  # `$(GATE_STEPS)` is make's expansion, written into the fixture verbatim —
+  # single quotes are what keep the shell out of it.
+  # shellcheck disable=SC2016
+  {
+    printf 'GATE_STEPS := lint lint-schema\n'
+    printf 'CHECK_STEPS := lint lint-schema\n\n'
+    printf 'print-gate-steps:\n\t@echo $(GATE_STEPS)\n\n'
+    printf 'print-check-steps:\n\t@echo $(CHECK_STEPS)\n\n'
+    printf 'doc-warnings-schema:\n\t%s\n' "$body"
+  } >"$dir/Makefile"
+  printf '%s' "$dir"
+}
+
+# S9. The defect. This is the recipe as it stood before #5991.
+d="$(recipe_fixture unscoped_clean 'cargo clean --doc')"
+expect "S9  an unscoped 'cargo clean --doc' recipe line fails" 1 "$d" \
+  "runs an unscoped rustdoc clean"
+
+# S10. The fix. The same command, scoped to a directory this step owns.
+d="$(recipe_fixture scoped_clean 'CARGO_TARGET_DIR=target/doc-schema cargo clean --doc')"
+expect "S10 the same clean under its own CARGO_TARGET_DIR passes" 0 "$d"
+
+# S11. The guard reads recipe lines, not the comments that explain them. A
+# header naming the command in order to ban it must not fire the ban.
+d="$(recipe_fixture commented_clean 'CARGO_TARGET_DIR=target/doc-schema cargo clean --doc')"
+# shellcheck disable=SC2016  # a Makefile comment, written verbatim.
+printf '# never run a bare `cargo clean --doc` here\n' >>"$d/Makefile"
+expect "S11 a comment naming the command is not a recipe line" 0 "$d"
+
 echo
 echo "test-schema-tier-parity: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

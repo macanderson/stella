@@ -581,12 +581,21 @@ stays `gate`-only on purpose, paired with `doc-warnings`: at `check`, rustdoc
 never runs, for either feature set.
 
 `doc-warnings-schema` also wipes the doc output before each run
-(`cargo clean --doc`, which takes no package filter — cargo refuses `--doc`
-alongside `-p`, so the whole `target/doc` tree goes). `cargo doc`'s own
-freshness check can call a stale prior run "up to date" — and print nothing
-— even after the source changed. That let a broken doc link in
-`stella-plugin` pass a local `make doc-warnings-schema`, and show up only
-after a hand-run `rm -rf target/doc`.
+(`cargo clean --doc`). `cargo doc`'s own freshness check can call a stale
+prior run "up to date" — and print nothing — even after the source changed.
+That let a broken doc link in `stella-plugin` pass a local
+`make doc-warnings-schema`, and show up only after a hand-run
+`rm -rf target/doc`.
+
+That clean takes no package filter — cargo refuses `--doc` alongside `-p` —
+so an unscoped one empties the whole `target/doc` tree, `doc-warnings`'
+workspace rustdoc included, and every later gate run rebuilds it. The scope
+cargo does offer is the target directory, so this step builds and cleans
+under its own `CARGO_TARGET_DIR` (`target/doc-schema`) and touches nobody
+else's cache. `schema-tier-parity` holds that rule as well as the rung one:
+a recipe line running `cargo clean --doc` without `CARGO_TARGET_DIR` on it
+fails the gate, because dropping the variable leaves a command that still
+works and quietly costs everyone the cache.
 
 **Every rung needs `shellcheck` on `PATH`, and it is not vendored.** It is the
 gate's one external binary, so a machine or container image without it stops at
