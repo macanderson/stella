@@ -25,10 +25,11 @@
 //! - **No `Default`.** A default is precisely the forgotten decision this
 //!   type exists to abolish. `..Default::default()` at an assembly site would
 //!   restore the defect with better syntax. A test fixture may write
-//!   `..TurnCapabilities::none()` over the seams it binds — [`TurnCapabilities::none`] is
-//!   itself an exhaustive literal, so a new slot still stops the build until
-//!   somebody answers it there. A lane writes every field out; `stella-cli`'s
-//!   `lane_capabilities` is where they all live.
+//!   `..TurnCapabilities::none()` over the seams it binds.
+//!   [`TurnCapabilities::none`] is itself an exhaustive literal, so a new
+//!   slot still stops the build until somebody answers it there. A lane
+//!   writes every field out; `stella-cli`'s `lane_capabilities` is where
+//!   they all live.
 //! - **No `#[non_exhaustive]`.** That attribute forbids struct-literal
 //!   construction outside the defining crate, which would force every
 //!   external lane through setters — and setters are optional calls, which is
