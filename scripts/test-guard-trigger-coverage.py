@@ -10,6 +10,7 @@ repository. Not part of `make gate`; run it with
 
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
 import tempfile
@@ -17,6 +18,15 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 GUARD = HERE / "check-guard-trigger-coverage.py"
+
+# Import the guard as a module. Do not copy its watched-guard list here.
+# A fixture for "every guard but this one" then tracks `WATCHED_GUARDS` on
+# its own. Adding a fifth guard must not break every old fixture.
+_spec = importlib.util.spec_from_file_location("check_guard_trigger_coverage", GUARD)
+assert _spec is not None and _spec.loader is not None
+_guard_module = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_guard_module)
+WATCHED_GUARDS: tuple[str, ...] = _guard_module.WATCHED_GUARDS
 
 pass_count = 0
 fail_count = 0
@@ -34,6 +44,26 @@ def workflow(pull_request_body: str, run_line: str) -> str:
         "      - name: a step\n"
         f"        run: {run_line}\n"
     )
+
+
+def other_guard_steps(primary: str) -> str:
+    """Extra `run:` steps invoking every watched guard except `primary`.
+
+    A fixture that only wants to exercise `primary`'s own condition must
+    still give every other watched guard *some* unconditional invocation,
+    or it fails for the unrelated reason that a guard added later has no
+    invocation anywhere in the fixture at all.
+    """
+    return "".join(
+        f"      - name: {g}\n        run: python3 ./scripts/{g}\n"
+        for g in WATCHED_GUARDS
+        if g != primary
+    )
+
+
+def all_guard_steps() -> str:
+    """One `run:` step per watched guard, in declaration order."""
+    return "".join(f"      - name: {g}\n        run: python3 ./scripts/{g}\n" for g in WATCHED_GUARDS)
 
 
 def fixture(name: str, workflows: dict[str, str]) -> Path:
@@ -69,14 +99,13 @@ def expect(name: str, root: Path, want_rc: int, needle: str = "") -> None:
     pass_count += 1
 
 
-# ── T1  an unfiltered trigger for all three watched guards passes. ──────────
+# ── T1  an unfiltered trigger for every watched guard passes. ───────────────
 root = fixture(
     "unfiltered",
     {
         "guards.yml": (
             workflow("\n  merge_group:", "python3 ./scripts/check-prose.py")
-            + "      - name: hue\n        run: python3 ./scripts/check-hue-separation.py\n"
-            + "      - name: transcript\n        run: python3 ./scripts/check-transcript-surfaces.py\n"
+            + other_guard_steps("check-prose.py")
         )
     },
 )
@@ -97,7 +126,7 @@ expect(
     "T2 a paths: filter on the only runner fails",
     root,
     1,
-    "check-prose.py: every workflow that runs it restricts",
+    "check-prose.py: every invocation is filtered or conditionally skipped:",
 )
 
 # ── T3  paths-ignore: is caught the same way. ────────────────────────────────
@@ -115,7 +144,7 @@ expect(
     "T3 a paths-ignore: filter on the only runner fails",
     root,
     1,
-    "check-prose.py: every workflow that runs it restricts",
+    "check-prose.py: every invocation is filtered or conditionally skipped:",
 )
 
 # ── T4  one filtered copy plus one unfiltered copy still passes. ────────────
@@ -127,8 +156,7 @@ root = fixture(
         ),
         "unfiltered.yml": (
             workflow("\n  merge_group:", "python3 ./scripts/check-hue-separation.py")
-            + "      - name: prose\n        run: python3 ./scripts/check-prose.py\n"
-            + "      - name: transcript\n        run: python3 ./scripts/check-transcript-surfaces.py\n"
+            + other_guard_steps("check-hue-separation.py")
         ),
     },
 )
@@ -146,10 +174,7 @@ root = fixture(
             "jobs:\n"
             "  guards:\n"
             "    runs-on: ubuntu-latest\n"
-            "    steps:\n"
-            "      - name: prose\n        run: python3 ./scripts/check-prose.py\n"
-            "      - name: hue\n        run: python3 ./scripts/check-hue-separation.py\n"
-            "      - name: transcript\n        run: python3 ./scripts/check-transcript-surfaces.py\n"
+            "    steps:\n" + all_guard_steps()
         )
     },
 )
@@ -220,14 +245,67 @@ root = fixture(
             "jobs:\n"
             "  guards:\n"
             "    runs-on: ubuntu-latest\n"
-            "    steps:\n"
-            "      - name: prose\n        run: python3 ./scripts/check-prose.py\n"
-            "      - name: hue\n        run: python3 ./scripts/check-hue-separation.py\n"
-            "      - name: transcript\n        run: python3 ./scripts/check-transcript-surfaces.py\n"
+            "    steps:\n" + all_guard_steps()
         )
     },
 )
 expect("T8 the bare flow form of on: counts as unfiltered coverage", root, 0)
+
+# ── T9  a guard reachable only through a gated job fails. ───────────────────
+# This holds even when the trigger has no `paths:` key. It is the shape
+# `ci.yml`'s `check` job uses.
+root = fixture(
+    "job_gated",
+    {
+        "ci.yml": (
+            "name: fixture\n"
+            "on:\n"
+            "  pull_request:\n"
+            "jobs:\n"
+            "  changes:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    outputs:\n"
+            "      rust: ${{ steps.filter.outputs.rust }}\n"
+            "    steps:\n"
+            "      - id: filter\n"
+            '        run: echo "rust=true" >> "$GITHUB_OUTPUT"\n'
+            "  check:\n"
+            "    needs: changes\n"
+            "    if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n" + all_guard_steps()
+        )
+    },
+)
+expect(
+    "T9 a guard reachable only through a needs.changes.outputs-gated job fails",
+    root,
+    1,
+    "check-prose.py: every invocation is filtered or conditionally skipped:",
+)
+
+# ── T10  a job if: unrelated to the diff still counts as coverage. ──────────
+# Only a `needs.*.outputs.*` gate is a gap the guard should refuse.
+root = fixture(
+    "job_ungated",
+    {
+        "guards.yml": (
+            "name: fixture\n"
+            "on:\n"
+            "  pull_request:\n"
+            "jobs:\n"
+            "  guards:\n"
+            "    if: ${{ !cancelled() && github.event_name == 'pull_request' }}\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n" + all_guard_steps()
+        )
+    },
+)
+expect(
+    "T10 a job if: unrelated to needs.*.outputs.* still counts as unconditional",
+    root,
+    0,
+)
 
 print()
 print(f"test-guard-trigger-coverage: {pass_count} passed, {fail_count} failed")

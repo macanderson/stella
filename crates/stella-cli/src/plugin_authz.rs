@@ -76,6 +76,12 @@
 //! [`AuthzDecision::Allow`] — "this rule has no objection" — and never about a
 //! principal it was not built for. That keeps it composable with the gates a
 //! session already binds: this one can only ever *narrow*.
+//!
+//! # The other half of the plane
+//!
+//! A tool call is one of the two things a plugin holds authority over. The
+//! other is a **lane seam**, and [`lanes`] is where the session's gate is
+//! asked about one.
 
 use std::collections::BTreeMap;
 
@@ -88,6 +94,8 @@ use stella_plugin::{Capability, RiskLevel};
 use stella_protocol::ToolContract;
 
 use crate::plugin_cmd::roster::PluginRoster;
+
+pub(crate) mod lanes;
 
 /// The name every rule in this plane reports itself under.
 const GATE_NAME: &str = "plugin-capability";

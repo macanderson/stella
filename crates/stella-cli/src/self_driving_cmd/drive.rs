@@ -124,7 +124,7 @@ pub(super) fn drive(
     // and every load reads up to three scope files.
     let settings = super::hooks::settings_for(&root);
     let doctrine = cfg.doctrine;
-    let provider = crate::issue_provider::GhIssueProvider;
+    let provider = crate::issue_provider::GhIssueProvider::from_manifest(&cfg.manifest);
 
     // Answered before the session record, the label installs and the
     // claims. Checking the loop's aim must not move its hand.

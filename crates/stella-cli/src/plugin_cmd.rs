@@ -235,7 +235,9 @@ fn drive(workspace_root: &Path, name: &str, flags: TurnFlags) -> Result<(), Stri
         crate::driver_plugin::capabilities::HostDriverCapabilities::new(
             name,
             resolved.gates().cloned(),
-            Box::new(crate::issue_provider::GhIssueProvider),
+            Box::new(crate::issue_provider::GhIssueProvider::for_workspace(
+                workspace_root,
+            )),
             config.clone(),
             workspace_root.to_path_buf(),
             crate::driver_plugin::work::WorkSlot::new(Box::new(

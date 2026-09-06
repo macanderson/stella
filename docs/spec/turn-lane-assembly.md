@@ -499,20 +499,15 @@ granted = requested ∩ authorized(principal, capability)
 ```
 
 `requested` comes from the manifest. `authorized` is the authority vocabulary
-of #2716 — `ToolContract` / `AuthzGate` / `Principal` / `RiskLevel`. It has
-**zero code in the tree** (`rg -n "struct ToolContract|trait AuthzGate|enum
-RiskLevel|struct Principal" crates/` → 0 hits, verified in #3246 §2), so it is
-greenfield rather than half-built. It was closed `NOT_PLANNED` as tool-surface
-governance and **reopened on 2026-08-14 as the authority plane plugin lanes
-need** — this section is the mission tie that reopened it.
+of #2716 — `ToolContract` / `AuthzGate` / `Principal` / `RiskLevel`. It had
+**zero code in the tree** when this section was written (verified in #3246
+§2), so it was greenfield rather than half-built. It was closed `NOT_PLANNED`
+as tool-surface governance and **reopened on 2026-08-14 as the authority plane
+plugin lanes need** — this section is the mission tie that reopened it.
 
-So: a plugin lane is designable today, and **safely grantable only after
-#2716**. Until that vocabulary exists, a paid plugin and a hostile one hold
-identical authority over the turn loop, and a `Plugin` row in the lane matrix
-is a record of an intention rather than of a permission. The matrix should
-carry both columns from the start — `requested` and `granted` — so that the
-day #2716 lands, the enforcement point already has a place to write its answer
-instead of needing a schema change.
+The vocabulary landed, the two columns landed, and the gate is now asked about
+the second one. §9.8 is the shape of the question a gate is asked about a
+seam, and it is the answer this section left open.
 
 ### 9.5 The borrow question, and why `stella-serve` already answers it
 
@@ -584,6 +579,64 @@ thing that looks like a style choice and is not:
   `flatten` reads correctly and quietly drops project-scope overrides. That is
   a silent capability drop arriving through the config plane instead of the
   assembly plane, and §3 is a document about how expensive those are to find.
+
+### 9.8 What the gate is asked about a seam — decided
+
+§9.4 left `authorized` as a name with no code behind it. The authority
+vocabulary landed, and so did the split between what a manifest asks for and
+what a host grants. This is the shape of the question that joins them.
+
+`AuthzGate::check` takes a `ToolContract`. A lane seam is not a tool call, so
+one of three things had to happen: dress the seam as a contract, define a
+second port, or give the gate a second question. **The gate got a second
+question.**
+
+```rust
+// stella-core, ports::authz
+pub struct LaneSeam { pub lane: LaneId, pub capability: LaneCapability }
+
+fn check_lane(&self, seam: &LaneSeam, principal: &Principal)
+    -> Result<AuthzDecision, AuthzEvalError> { Ok(AuthzDecision::Allow) }
+```
+
+**Not a fake contract.** A `ToolContract` carries a name the model reads, an
+input schema, and a provenance grade, and a seam has none of them. It would
+also hand every tool rule an opinion nobody wrote: `plugin-capability`
+refuses any tool absent from the list a person accepted at install, so a seam
+wearing a tool's clothes would lose every lane in the tree its every seam,
+on the first run, silently.
+
+**Not a second port.** A host supplies one gate. Two would let a deployment
+implement the tool half and forget the lane half, and nothing would say so.
+
+**The default is `Allow`** — *this gate has no opinion about lane seams*.
+That is the answer every rule on this plane already gives when it is asked
+about something it was not built for, and it is what keeps a deployment whose
+gate governs tool calls reading exactly what it read before.
+
+**Where it is asked.** `stella-cli`'s `plugin_authz::lanes::narrowed_by_gate`,
+beside the tool-side exemplar and for the same reason: `AuthzGate` and
+`Principal` are `stella-core`'s, `LaneCapability` is `stella-protocol`'s,
+`LaneGrant` is `stella-plugin`'s, and the host is the only place all three are
+in scope. `DeclaredLane::grant` is unchanged, so `stella-plugin` never learns
+that `AuthzGate` exists and `stella-core` never learns that plugins do.
+
+**It narrows a grant; it cannot build one.** The function takes the grant the
+consent rung and the operator ceiling already settled and removes from it. So
+"the gate can only narrow" is structural rather than remembered — there is no
+code path that puts a seam back.
+
+**A refusal and a failure both withhold.** `Ok(Deny)` withholds with the
+gate's reason. `Err(AuthzEvalError)` withholds too, which is the fail-closed
+rule `stella_core::ports::authz` states in its own module docs: no decision
+is never a yes. `RequireApproval` withholds as well — nobody is at the
+keyboard while a manifest is read, so an ask that reaches no one would be a
+grant.
+
+**The report keeps the three apart.** `stella plugin doctor` prints a seam the
+rung or the ceiling withheld under `withheld:`, and a seam the gate refused
+under `refused:` with the gate's name and its reason. A plugin author can act
+on the third and on neither of the first two.
 
 ---
 
