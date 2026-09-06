@@ -21,6 +21,7 @@ use serde_json::Value;
 use stella_protocol::{CompletionResult, ToolCall, ToolSchema, UsageIncompleteReason};
 
 use super::super::*;
+use crate::TurnCapabilities;
 use crate::ports::{FallbackResolver, ResolvedFallback};
 use crate::retry::RetryPolicy;
 

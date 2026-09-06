@@ -27,6 +27,7 @@ use serde_json::Value;
 use stella_protocol::{CompletionResult, ToolSchema, UsageIncompleteReason};
 
 use super::super::*;
+use crate::TurnCapabilities;
 
 /// Rejects the first `overflows` calls as context overflow, then completes.
 struct OverflowThenComplete {

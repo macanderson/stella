@@ -12,6 +12,7 @@
 //! around the provider those turns watched fail.
 
 use super::super::*;
+use crate::TurnCapabilities;
 use crate::ports::Clock;
 use crate::router::{CircuitBreaker, ProviderProfile, RoleTable, Router};
 use serde_json::Value;

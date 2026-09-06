@@ -18,6 +18,7 @@ use stella_protocol::{
 use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::mpsc;
 
+use crate::TurnCapabilities;
 use crate::budget::BudgetGuard;
 use crate::driver::*;
 use crate::ports::SteeringRequery;

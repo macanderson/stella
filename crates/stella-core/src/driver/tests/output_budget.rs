@@ -24,6 +24,7 @@ use serde_json::Value;
 use stella_protocol::{CompletionResult, ToolSchema};
 
 use super::super::*;
+use crate::TurnCapabilities;
 use crate::driver::output_budget_recovery::SessionOutputCeilings;
 
 /// Rejects the first `refusals` calls as an unaffordable ceiling, naming

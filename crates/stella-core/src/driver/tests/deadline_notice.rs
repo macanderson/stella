@@ -16,6 +16,7 @@ use serde_json::Value;
 use stella_protocol::{CompletionResult, ToolSchema};
 
 use super::super::*;
+use crate::TurnCapabilities;
 
 /// Answers immediately, recording the transcript it was handed.
 #[derive(Default)]

@@ -15,6 +15,7 @@
 use std::sync::{Arc, Mutex};
 
 use super::super::*;
+use crate::TurnCapabilities;
 use crate::bus::{HookBus, HookEvent, names};
 use serde_json::Value;
 use stella_protocol::{CompletionResult, ToolSchema};
