@@ -11,29 +11,28 @@
 //!
 //! No path in this module writes a skill file, a record under
 //! `.stella/rules/`, or a line of `.stella/rules/promotions.jsonl`. That is
-//! the rule the loop is held to: it may propose any authority, and it may
-//! grant itself none. Acceptance stays where it already lives — a person
-//! reads the proposal and goes through `stella context keep` and `stella
-//! context promote`, which append to the hash-chained ledger under a real
-//! approver.
+//! the rule the loop is held to. It may propose any authority. It may grant
+//! itself none. Acceptance stays where it already lives. A person reads the
+//! proposal and goes through `stella context keep` and `stella context
+//! promote`, which append to the hash-chained ledger under a real approver.
 //!
 //! # What the evidence is
 //!
 //! Every step the loop could not take is already a line in `audit.jsonl`: a
 //! check that failed, a rule it waived, an issue it handed back, a command it
 //! retried. [`WALLS`] names the actions that count and the surface each one
-//! points at. A line's session is the run it happened in, and the recurrence
-//! count is over distinct runs, so an afternoon spent retrying one command is
-//! one observation rather than forty.
+//! points at. A line's session is the run it happened in. The recurrence
+//! count is over distinct runs. So an afternoon spent retrying one command is
+//! one observation, not forty.
 //!
 //! # What a proposal costs
 //!
 //! Nothing here restates what the evidence has to be worth. The surface's
-//! impact class comes from `stella-parity`'s evolution matrix — the map in
+//! impact class comes from `stella-parity`'s evolution matrix. The map in
 //! [`impact_of`] is pinned against those rows by
-//! `the_loop_proposes_at_the_impact_its_evolution_row_declares` — and the
-//! grade and authority that impact requires come from
-//! `stella_protocol::provenance`, the one place that policy lives.
+//! `the_loop_proposes_at_the_impact_its_evolution_row_declares`. The grade and
+//! authority that impact requires come from `stella_protocol::provenance`,
+//! the one place that policy lives.
 //!
 //! `doc:backlog-self-driving` §3.5 is the design.
 
@@ -53,10 +52,10 @@ use super::state::LoopState as Durable;
 ///
 /// Not a number chosen here. `EvidencePool::from_observations` lifts a pool to
 /// `ProvenanceGrade::TrajectoryAbstraction` only once its evidence spans
-/// `TRAJECTORY_ABSTRACTION_MIN_DISTINCT_TASKS` distinct tasks, and that is the
+/// `TRAJECTORY_ABSTRACTION_MIN_DISTINCT_TASKS` distinct tasks. That is the
 /// weakest grade any of the three surfaces below accepts. Under the floor a
-/// proposal could not be published however a person decided, so making one
-/// would be noise with somebody's attention as its cost.
+/// proposal could not be published however a person decided. Making one would
+/// be noise, with somebody's attention as its cost.
 const RECURRENCE_THRESHOLD: usize = TRAJECTORY_ABSTRACTION_MIN_DISTINCT_TASKS as usize;
 
 /// The most proposals one pass may make.
@@ -85,7 +84,7 @@ const JOURNAL_READ_LIMIT: usize = 5_000;
 ///   command is a tool's job, so the ask is a tool.
 ///
 /// The grouping is also what makes [`grade_of`] answerable per target rather
-/// than per line: every action pointing at one surface is the same kind of
+/// than per line. Every action pointing at one surface is the same kind of
 /// claim.
 const WALLS: &[(Audit, Target)] = &[
     (Audit::WorkFailed, Target::Skill),
@@ -99,17 +98,17 @@ const WALLS: &[(Audit, Target)] = &[
 /// What the loop's evidence for one target is worth.
 ///
 /// A failed turn, a failed check and a retried command are the environment
-/// answering — an exit status, a tracker's refusal — which is
+/// answering — an exit status, a tracker's refusal. That is
 /// [`ProvenanceGrade::EnvironmentObservation`] exactly. A waiver, a deferral
-/// or an escalation is the loop's own judgement about a run, which is
-/// [`ProvenanceGrade::ModelCritique`]; it grades down for the reason the
-/// provenance policy grades down, that under-grading parks a proposal until
-/// somebody re-derives it while over-grading publishes on evidence that was
-/// never there.
+/// or an escalation is the loop's own judgement about a run. That is
+/// [`ProvenanceGrade::ModelCritique`], and it grades down for the reason the
+/// provenance policy grades down. Under-grading parks a proposal until
+/// somebody re-derives it. Over-grading publishes on evidence that was never
+/// there.
 ///
-/// Recurrence moves neither answer. Aggregation never promotes evidence, so
-/// ten runs agreeing that the loop waived the same rule is still one class of
-/// claim — which is why a rule proposal from this journal can never reach the
+/// Recurrence moves neither answer. Aggregation never promotes evidence. Ten
+/// runs agreeing that the loop waived the same rule is still one class of
+/// claim. So a rule proposal from this journal can never reach the
 /// `EnvironmentObservation` a steering directive costs.
 fn grade_of(target: Target) -> ProvenanceGrade {
     match target {
@@ -120,15 +119,15 @@ fn grade_of(target: Target) -> ProvenanceGrade {
 
 /// What a wrong change to the surface a target names can break.
 ///
-/// One line per row of `stella-parity`'s evolution matrix: a skill is that
-/// matrix's `Skill` row (`ImpactClass::AdvisoryRecord`), a rule is its
-/// `Framework` row (`ImpactClass::SteeringDirective`), a custom tool is its
-/// `Tool` row (`ImpactClass::ExecutableTool`). The matrix is the declaration
-/// and this is a reader of it, held to it by
+/// One line per row of `stella-parity`'s evolution matrix. A skill is that
+/// matrix's `Skill` row (`ImpactClass::AdvisoryRecord`). A rule is its
+/// `Framework` row (`ImpactClass::SteeringDirective`). A custom tool is its
+/// `Tool` row (`ImpactClass::ExecutableTool`). The matrix declares; this
+/// reads. It is held to those rows by
 /// `the_loop_proposes_at_the_impact_its_evolution_row_declares` in
 /// `crates/stella-parity/src/evolution/tests.rs`, which reads this source.
 ///
-/// The grade and the authority an impact costs are not written here at all:
+/// The grade and the authority an impact costs are not written here at all.
 /// `ImpactClass::required_grade` and `ImpactClass::required_authority` answer
 /// those, out of the one policy that holds them.
 fn impact_of(target: Target) -> ImpactClass {
@@ -141,8 +140,8 @@ fn impact_of(target: Target) -> ImpactClass {
 
 /// One proposal, as the loop writes it down.
 ///
-/// Every field is something the loop observed or read out of the policy. No
-/// field says the proposal was applied, because no path here applies one.
+/// Every field is something the loop saw, or read out of the policy. No field
+/// says the proposal was applied. No path here applies one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct ProposalRow {
     /// The dedup key, taken from the grouped shape rather than the whole line,
@@ -175,10 +174,10 @@ pub(super) struct ProposalRow {
 
 /// The recurring walls this journal shows that are not written down yet.
 ///
-/// The journal is read twice per run: once to count, because the machine's
-/// ladder consults the count before it asks for a curate step, and once to
-/// write, when it does ask. Both go through here, so the two can never
-/// disagree about what a pass would produce.
+/// The journal is read twice per run. Once to count, because the machine's
+/// ladder reads the count before it asks for a curate step. Once to write,
+/// when it does ask. Both go through here, so the two can never disagree
+/// about what a pass would produce.
 pub(super) fn fresh(durable: &Durable) -> Vec<Proposal> {
     let walls = sightings(&durable.audit_path());
     let already: Vec<String> = durable
@@ -195,9 +194,9 @@ pub(super) fn fresh(durable: &Durable) -> Vec<Proposal> {
 
 /// How many proposals a pass would make right now.
 ///
-/// What the machine reads before it decides whether to spend an idle step on
-/// curating. Zero for a loop that has never hit the same wall in three runs,
-/// which is the ordinary case and the one that must cost nothing.
+/// What the machine reads before it spends an idle step on curating. Zero for
+/// a loop that has never hit the same wall in three runs. That is the usual
+/// case, and the one that must cost nothing.
 pub(super) fn pending(durable: &Durable) -> u32 {
     u32::try_from(fresh(durable).len()).unwrap_or(u32::MAX)
 }
@@ -205,15 +204,15 @@ pub(super) fn pending(durable: &Durable) -> u32 {
 /// Write down every recurring wall this journal shows. `true` when anything
 /// reached the file.
 ///
-/// Best-effort per proposal: a row that cannot be appended is reported and the
-/// rest are still written, on the rule the audit trail itself follows — a
-/// failure to write the paperwork must not cost the work.
+/// Best-effort per proposal. A row that cannot be appended is reported, and
+/// the rest are still written. That is the rule the audit trail itself
+/// follows: failing to write the paperwork must not cost the work.
 pub(super) fn pass(durable: &Durable, root: &Path) -> bool {
     let governance = match crate::context_records::read_governance(root) {
         Ok(governance) => governance.mode.as_str().to_owned(),
-        // A governance file that will not parse fails closed everywhere else,
-        // and it does here too: the loop records what it could not establish
-        // rather than writing down the permissive default as a fact.
+        // A governance file that will not parse fails closed everywhere
+        // else, and it does here too. The loop records what it could not
+        // settle, rather than writing the permissive default down as a fact.
         Err(error) => {
             audit::record(
                 durable,

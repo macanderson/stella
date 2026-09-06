@@ -9,27 +9,27 @@
 //! and a habit is the only thing here worth asking a person about.
 //!
 //! This module holds the rules that turn those lines into proposals. It reads
-//! nothing and writes nothing — `stella-cli`'s `self_driving_cmd::curate` is
+//! nothing and writes nothing. `stella-cli`'s `self_driving_cmd::curate` is
 //! the half that touches the journal.
 //!
 //! # A proposal is a suggestion, never a change
 //!
 //! [`Proposal`] carries a statement, the surface a person would change, and
-//! the evidence behind it. There is no arm here that applies anything, which
-//! is how the loop proposes an authority it cannot grant itself.
+//! the evidence behind it. No arm here applies anything. That is how the loop
+//! proposes an authority it cannot grant itself.
 //!
 //! # Why the statement is cut back before it is grouped
 //!
 //! Journal lines carry the particulars: an issue key, an error string, a
 //! branch name. Two runs blocked by the same thing say it with different
-//! particulars, so grouping the raw lines finds nothing. The leading clause is
-//! what repeats, so [`shape`] keeps that and drops the rest.
+//! particulars. So grouping the raw lines finds nothing. The leading clause is
+//! what repeats. [`shape`] keeps that and drops the rest.
 //!
 //! # The threshold is the caller's
 //!
 //! [`propose`] takes the recurrence floor rather than declaring one. The
 //! number belongs to the provenance policy, and this crate is a leaf that
-//! cannot read it — a constant here would be a second copy free to drift.
+//! cannot read it. A constant here would be a second copy free to drift.
 //!
 //! `doc:backlog-self-driving` §3.5 is the design.
 
@@ -43,7 +43,7 @@ pub struct Sighting {
     /// What the loop said it could not do.
     pub statement: String,
     /// The run it happened in. The recurrence count is over distinct values
-    /// of this, so a run that hits one wall thirty times still counts once.
+    /// of this. A run that hits one wall thirty times still counts once.
     pub run: String,
     /// Where a reader finds the line — a timestamp, an issue key.
     pub evidence: String,
@@ -53,10 +53,9 @@ pub struct Sighting {
 
 /// The three things this repository steers itself with.
 ///
-/// A proposal names one. What each costs — the evidence grade and the
-/// authority that may publish it — is not declared here: it is derived from
-/// the evolution matrix's own impact class by the caller, so this crate holds
-/// no copy of a policy it cannot read.
+/// A proposal names one. What each costs is not declared here. The caller
+/// derives the grade and the authority from the evolution matrix's own impact
+/// class. So this crate holds no copy of a policy it cannot read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Target {
@@ -101,17 +100,17 @@ pub struct Proposal {
 
 /// Longest leading clause a statement is grouped by, in characters.
 ///
-/// Long enough to tell two walls apart, short enough that a sentence which
+/// Long enough to tell two walls apart. Short enough that a sentence which
 /// keeps going cannot split one wall into several.
 const SHAPE_CHARS: usize = 80;
 
 /// The part of a statement that repeats across runs.
 ///
 /// Everything from the first particular onwards is dropped: a parenthesis, a
-/// colon, a dash, a backtick. Each of those opens the detail — an error
-/// string, an issue key, a branch — that makes two sightings of one wall look
-/// like two walls. What is left is lowercased and its whitespace collapsed,
-/// so a message reflowed by an editor still groups with its earlier self.
+/// colon, a dash, a backtick. Each of those opens a detail — an error string,
+/// an issue key, a branch. Those details make two sightings of one wall look
+/// like two walls. What is left is lowercased and its whitespace collapsed. So
+/// a message reflowed by an editor still groups with its earlier self.
 ///
 /// An empty result means the line was nothing but particulars, and it is not
 /// evidence of anything.
@@ -135,10 +134,9 @@ pub fn shape(statement: &str) -> String {
 /// The walls that recur, with the evidence behind each.
 ///
 /// A group is kept when it was met in at least `min_distinct_runs` separate
-/// runs. Repetition inside one run counts once, because a loop that retried
-/// the same command forty times in one afternoon has one observation and not
-/// forty — the same distinct-task rule the provenance policy applies to
-/// mined evidence.
+/// runs. Repetition inside one run counts once. A loop that retried the same
+/// command forty times in one afternoon has one observation, not forty. That
+/// is the distinct-task rule the provenance policy applies to mined evidence.
 ///
 /// Output is ordered by target and then by shape, so two passes over one
 /// journal propose the same things in the same order.
