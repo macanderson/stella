@@ -108,9 +108,11 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + gate-parity
                          #   + schema-tier-parity (a -schema step runs at the
                          #     same rung as its base step; #5139)
-                         #   + guard-trigger-coverage (prose, hue-separation
-                         #     and transcript-surfaces each run with no
-                         #     paths: filter in at least one workflow)
+                         #   + guard-trigger-coverage (prose, hue-separation,
+                         #     transcript-surfaces and closing-keywords each
+                         #     run, in some workflow, from a job neither a
+                         #     paths: filter nor a needs.*.outputs.*-gated
+                         #     if: can skip)
                          #   + priority-scheme (the issue priority scheme is
                          #     stated once, in SCR-005, and the triage guard's
                          #     regex covers exactly the levels it names)
@@ -209,12 +211,19 @@ says nothing about which files reach it, so a `paths:` filter narrowing
 `guard-self-tests.yml`'s `pull_request:` trigger to `docs/**` would still read
 as green, and the three steps would run nowhere for a scripts-only pull
 request. Nothing held that absence in place except a comment.
-`guard-trigger-coverage` reads the trigger back: each of the three must run
-with no `paths:`/`paths-ignore:` filter in at least one workflow, so a later
-edit narrowing this one cannot reopen the gap silently. That workflow's
-`gate-steps` job — named `gate steps no other workflow runs` — is now one of
-`main`'s required status checks too,
-added after a red run of it merged into `main` and reddened every open PR.
+`guard-trigger-coverage` reads the trigger back: each watched guard must run,
+in some workflow, from a job with no `paths:`/`paths-ignore:` filter above it
+and no `if:` of its own that reads a `needs.*.outputs.*` value — the second
+half added once a guard reached `ci.yml`'s `check` job, whose own
+`if: needs.changes.outputs.rust != 'false'` skips it for a prose-only diff
+even though `ci.yml`'s trigger carries no `paths:` key at all, because that
+filter moved out of the trigger and into the job so the required contexts
+still report for a skipped job. So a later edit narrowing the trigger, or
+moving a guard into a job gated that way, cannot reopen the gap silently.
+That workflow's `gate-steps` job — named `gate
+steps no other workflow runs` — is now one of `main`'s required status
+checks too, added after a red run of it merged into `main` and reddened
+every open PR.
 
 A fifth workflow, `deck-fit.yml`, owns the decks under
 `website/public/presentations/`. Its measurement — every slide against the
