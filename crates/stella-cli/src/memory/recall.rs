@@ -204,7 +204,7 @@ impl OpeningRecall {
 /// shares with the tool array. The cost is measured over the injected bytes,
 /// so what the plane records and what the provider is sent are one number. It
 /// is charged only when the block is really appended. A block the dedup
-/// refuses is one an earlier turn paid for, and spent here.
+/// refuses costs this turn nothing, since the model already carries it.
 ///
 /// **This is the turn boundary the allowance is measured on.** The allowance
 /// is what one turn's volatile block may take. Every driver opens a turn
