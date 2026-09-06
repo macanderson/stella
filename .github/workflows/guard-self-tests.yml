@@ -71,6 +71,14 @@ jobs:
   gate-steps:
     name: gate steps no other workflow runs
     runs-on: ubuntu-latest
+    # `pull-requests: read` is this job's alone, and only the closing-keywords
+    # step uses it: that guard reads the PR's live description and commit
+    # messages through the API, and the workflow-level `contents: read` sets
+    # every other scope to `none`, which would leave it on the event-payload
+    # snapshot an edited description never reaches (#4495).
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -93,12 +101,38 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 ./scripts/check-transcript-surfaces.py
 
-      # The three steps above run here because this trigger carries no
-      # `paths:` filter at all -- that is what lets them fire on a
-      # scripts-only pull request. Nothing enforced that absence except a
-      # comment, so this reads it back: at least one workflow must run each
-      # of the three with an unfiltered `pull_request:` trigger, or a future
-      # edit narrowing this one would silently reopen the gap (#5448).
+      # ci.yml runs this guard too, but as a step in its `check` job, which is
+      # gated on `needs.changes.outputs.rust != 'false'`. A prose-only diff
+      # answers `rust=false`, so `check` is skipped and the guard never reads
+      # the body -- and a prose-only pull request, being almost entirely
+      # narrative text, is the shape most likely to carry a negated closing
+      # keyword. That is the same reason `prose` sits in this job rather than
+      # that one (#6190).
+      #
+      # `github.event_name == 'pull_request'` because `merge_group` carries no
+      # PR to read; the guard prints "nothing to check" and exits 0 there, and
+      # this skips the step rather than logging that on every queued entry.
+      - name: no negated closing keyword still closes the issue
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: python3 ./scripts/check-closing-keywords.py
+
+      # The steps above run here because this trigger carries no `paths:`
+      # filter at all -- that is what lets them fire on a scripts-only pull
+      # request. Nothing enforced that absence except a comment, so this reads
+      # it back: at least one workflow must run each guard it names with an
+      # unfiltered `pull_request:` trigger, or a future edit narrowing this one
+      # would silently reopen the gap (#5448).
+      #
+      # It does not cover the closing-keywords step above, and adding it to
+      # `WATCHED_GUARDS` would read as protection it cannot give: this guard
+      # reads a workflow's *trigger*, and ci.yml's `pull_request:` trigger
+      # carries no `paths:` key either, so that copy alone would satisfy it
+      # while the job-level `if:` still skipped the guard. #6248 is where that
+      # blind spot is tracked.
       - name: each guard above still runs with no paths filter somewhere
         if: ${{ !cancelled() }}
         run: python3 ./scripts/check-guard-trigger-coverage.py
