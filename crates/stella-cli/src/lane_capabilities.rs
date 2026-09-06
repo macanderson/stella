@@ -235,12 +235,35 @@ mod tests {
         }
     }
 
+    struct NoRequery;
+
+    #[async_trait::async_trait]
+    impl SteeringRequery for NoRequery {
+        async fn requery(&self, _signal: &stella_core::steering::TurnSignal<'_>) -> Option<String> {
+            None
+        }
+    }
+
     struct QuietOutcomes;
 
     impl ProviderOutcomes for QuietOutcomes {
         fn record_success(&self, _provider_id: &str) {}
 
         fn record_failure(&self, _provider_id: &str) {}
+    }
+
+    struct RefusingApprovals;
+
+    #[async_trait::async_trait]
+    impl ApprovalRoute for RefusingApprovals {
+        async fn resolve(
+            &self,
+            _request: &stella_core::hooks::decision::ApprovalRouteRequest,
+        ) -> stella_core::hooks::decision::ApprovalRouteResolution {
+            stella_core::hooks::decision::ApprovalRouteResolution::Denied {
+                reason: "no human is at this test".to_string(),
+            }
+        }
     }
 
     struct NoFallback;
@@ -324,17 +347,39 @@ mod tests {
     /// `Engine::assemble` may not change one of these. An engine that gained
     /// a gate would park where nothing parked before. One that lost its
     /// calibration map would start each turn from a raw estimate.
+    ///
+    /// Both directions, for every seam a caller may or may not hand in: a
+    /// lane must pass on what it is given and must not invent what it is
+    /// not. `stella-parity`'s lane matrix names this test as the witness for
+    /// each of these rows, and a row is only worth its name if the test
+    /// exercises the seam it claims.
     #[test]
     fn each_lane_binds_what_its_call_site_bound_before() {
         let runner = HostHookRunner;
         let calibration = CalibrationMap::default();
         let gate = OpenGate;
         let steering = QuietSteering;
+        let hooks = Hooks::default();
+        let plane = NoRequery;
 
         let deck = lead(None, &runner, &calibration, &gate, &steering, None);
         assert!(deck.calibration.is_some() && deck.gate.is_some() && deck.steering.is_some());
         assert!(deck.requery.is_none(), "no plane was handed in");
         assert!(deck.hooks.is_none(), "no hooks were given");
+        assert_eq!(deck.call_role, ModelCallRole::Worker);
+
+        let deck_with_both = lead(
+            Some(&hooks),
+            &runner,
+            &calibration,
+            &gate,
+            &steering,
+            Some(&plane),
+        );
+        assert!(
+            deck_with_both.hooks.is_some() && deck_with_both.requery.is_some(),
+            "the lead turn must pass on the seams its caller handed it",
+        );
 
         let replayed = resume(None, &runner, &calibration);
         assert!(replayed.calibration.is_some());
@@ -342,15 +387,28 @@ mod tests {
             replayed.gate.is_none() && replayed.steering.is_none(),
             "a replayed turn binds neither, and must not grow one here",
         );
+        assert_eq!(replayed.call_role, ModelCallRole::Worker);
+        assert!(
+            resume(Some(&hooks), &runner, &calibration).hooks.is_some(),
+            "a replayed turn must run the hooks its caller handed it",
+        );
 
         let worker = sub_session(&calibration, &gate, &steering);
         assert!(worker.calibration.is_some() && worker.gate.is_some() && worker.steering.is_some(),);
+        assert_eq!(worker.call_role, ModelCallRole::Worker);
 
         let fleet = fleet_attempt(None, &runner, &calibration, &gate);
         assert!(fleet.calibration.is_some() && fleet.gate.is_some());
         assert!(
             fleet.steering.is_none(),
             "a fleet attempt has no input channel to steer from",
+        );
+        assert_eq!(fleet.call_role, ModelCallRole::Worker);
+        assert!(
+            fleet_attempt(Some(&hooks), &runner, &calibration, &gate)
+                .hooks
+                .is_some(),
+            "a fleet attempt must run the hooks its caller handed it",
         );
 
         let controls = TurnControls::none()
@@ -375,6 +433,22 @@ mod tests {
             "the gate and the tap are whatever the caller published",
         );
         assert!(raw.hooks.is_none() && raw.hook_approvals.is_none());
+        assert_eq!(raw.call_role, ModelCallRole::Worker);
+
+        let with_hooks = raw_turn(
+            Some((&hooks, &runner, &RefusingApprovals)),
+            &calibration,
+            &QuietOutcomes,
+            &NoFallback,
+            Some(&plane),
+            &controls,
+        );
+        assert!(
+            with_hooks.hooks.is_some()
+                && with_hooks.hook_approvals.is_some()
+                && with_hooks.requery.is_some(),
+            "the raw turn must pass on the seams its caller handed it",
+        );
 
         let unbound = TurnControls::none();
         let bare = raw_turn(
@@ -400,6 +474,13 @@ mod tests {
         assert!(
             arc.outcomes.is_none() && arc.fallback.is_none(),
             "an arc resolves its provider once and drives every round on it",
+        );
+        assert_eq!(arc.call_role, ModelCallRole::Worker);
+        assert!(
+            goal_arc(Some(&hooks), &runner, &calibration, &steering)
+                .hooks
+                .is_some(),
+            "an arc must run the hooks its caller handed it",
         );
     }
 

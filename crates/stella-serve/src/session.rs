@@ -1144,6 +1144,12 @@ mod tests {
             "the host runs its own hooks; this engine has no authority to",
         );
 
+        assert_eq!(
+            host_supplied_nothing.call_role,
+            stella_protocol::ModelCallRole::Worker,
+            "a served turn's own calls are worker calls; its verifier announces its own role",
+        );
+
         let calibration = stella_core::estimator::CalibrationMap::default();
         let bus = stella_core::bus::HookBus::new("serve-lane-test");
         let requery = SilentRequery;
