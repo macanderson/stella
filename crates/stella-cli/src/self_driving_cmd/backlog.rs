@@ -62,8 +62,18 @@ pub(super) const QUEUE_READ_LIMIT: usize = 1_000;
 ///
 /// A function rather than an inline print, so what an operator is told can be
 /// asserted without running a loop.
+/// Whether a read of `total` issues filled its page.
+///
+/// One predicate behind three answers, so they cannot drift: the warning an
+/// operator reads, the word the queue listing puts on its count, and the flag
+/// in the snapshot. A filled page makes the count a floor. The tracker held
+/// at least that many. The loop cannot say how many more.
+pub(super) fn read_filled_the_page(total: usize) -> bool {
+    total >= QUEUE_READ_LIMIT
+}
+
 fn truncation_notice(total: usize, provider: &str) -> Option<String> {
-    (total >= QUEUE_READ_LIMIT).then(|| {
+    read_filled_the_page(total).then(|| {
         format!(
             "warning: `{provider}` returned {total} open issues, which fills this read. \
              The ladder ranks that page alone, and the tracker chose it by its own order. \
@@ -147,11 +157,18 @@ pub(super) fn render_queue(
             .unwrap_or("");
         println!("{prio:>2}  #{:<6} {area:<18} {}", i.number, i.title);
     }
+    // "read", not "total". The number is one page. At the ceiling it is the
+    // ceiling, so "total" would name the read's own limit as the backlog.
     eprintln!(
-        "\n{} of {} ranked defects ({} open issues total, {} awaiting triage)",
+        "\n{} of {} ranked defects ({} open issues {}, {} awaiting triage)",
         picked.len(),
         defects.len(),
         total_issues,
+        if read_filled_the_page(total_issues) {
+            "read, and the page filled — there may be more"
+        } else {
+            "read"
+        },
         queue.unassessed.len()
     );
     Ok(())
@@ -1234,6 +1251,38 @@ mod tests {
         assert!(
             notice.contains(&QUEUE_READ_LIMIT.to_string()),
             "the notice names how many issues crossed: {notice}"
+        );
+    }
+
+    /// **Witness.** The count a surface draws is labelled as the read's size
+    /// at the page boundary, on both sides of it.
+    ///
+    /// Call the number "open issues total" and this fails. A backlog of ten
+    /// thousand and one of exactly a page both report the page. That figure
+    /// is the read's own ceiling under the tracker's name.
+    #[test]
+    fn the_page_boundary_is_the_same_answer_everywhere() {
+        assert!(
+            !read_filled_the_page(QUEUE_READ_LIMIT - 1),
+            "a page with room left is a complete read"
+        );
+        assert!(
+            read_filled_the_page(QUEUE_READ_LIMIT),
+            "a page exactly filled is a floor, not a total"
+        );
+        assert!(
+            read_filled_the_page(QUEUE_READ_LIMIT + 1),
+            "and so is anything past it"
+        );
+        assert_eq!(
+            read_filled_the_page(QUEUE_READ_LIMIT),
+            truncation_notice(QUEUE_READ_LIMIT, "github").is_some(),
+            "the warning and the label answer the same question"
+        );
+        assert_eq!(
+            read_filled_the_page(QUEUE_READ_LIMIT - 1),
+            truncation_notice(QUEUE_READ_LIMIT - 1, "github").is_some(),
+            "…on the other side of the boundary too"
         );
     }
 
