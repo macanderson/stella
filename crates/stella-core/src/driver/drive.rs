@@ -209,7 +209,7 @@ mod tests {
     use crate::event_sender::EventSender;
     use crate::retry::Sleeper;
     use crate::step::{BudgetSnapshot, CHECKPOINT_VERSION, Checkpoint, TurnState};
-    use crate::{Engine, EngineConfig, TurnOutcome};
+    use crate::{Engine, EngineConfig, TurnCapabilities, TurnOutcome};
     use stella_protocol::{
         BudgetMode, CompletionMessage, CompletionRequestRef, CompletionResult, CompletionUsage,
         Provider, ProviderError, ToolCall, ToolOutput, ToolSchema,
@@ -337,7 +337,8 @@ mod tests {
             ..EngineConfig::default()
         };
         let mut state = TurnState::from_checkpoint(restored_at_step_one(), &config);
-        let engine = Engine::with_sleeper(&provider, &tools, config, &NoopSleeper);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&provider, &tools, config, &NoopSleeper, seams);
         let (tx, _rx) = mpsc::unbounded_channel();
         let events = EventSender::new(tx);
 
@@ -366,7 +367,8 @@ mod tests {
         let tools = OkTool;
         let config = EngineConfig::default();
         let mut state = TurnState::from_checkpoint(restored_at_step_one(), &config);
-        let engine = Engine::with_sleeper(&provider, &tools, config, &NoopSleeper);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&provider, &tools, config, &NoopSleeper, seams);
         let (tx, _rx) = mpsc::unbounded_channel();
         let events = EventSender::new(tx);
 
@@ -396,7 +398,8 @@ mod tests {
             turn_halt: Some(Arc::new(AlwaysHalt)),
             ..EngineConfig::default()
         };
-        let engine = Engine::with_sleeper(&provider, &tools, config, &NoopSleeper);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&provider, &tools, config, &NoopSleeper, seams);
         let mut state = engine.new_turn(
             vec![
                 CompletionMessage::system("sys"),

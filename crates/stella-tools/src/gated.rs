@@ -215,9 +215,9 @@ impl<'a> GatedToolSet<'a> {
     /// `stella-tools::hook_bridge`'s broker-backed implementation in
     /// production, stamped with this gate's `name()` via
     /// [`crate::hook_bridge::BrokerApprovalRoute::with_gate_name`] so the
-    /// audit trail names the producer. Opt-in like the engine's
-    /// `with_hook_approval_route`; a set without one refuses such calls
-    /// with a grant-path message instead of asking.
+    /// audit trail names the producer. Opt-in, like the engine's own
+    /// `hook_approvals` seam. A set with no route refuses such a call. It
+    /// sends back a grant-path message, and asks nobody.
     #[must_use]
     pub fn with_approval_route(mut self, route: Arc<dyn ApprovalRoute>) -> Self {
         self.approvals = Some(route);

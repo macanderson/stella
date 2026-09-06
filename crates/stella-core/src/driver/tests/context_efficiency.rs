@@ -64,7 +64,8 @@ async fn a_long_turn_ages_old_tool_results_far_below_the_compaction_budget() {
         compaction_budget_tokens: 20_000,
         ..EngineConfig::default()
     };
-    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, config, &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("the task"),
@@ -147,7 +148,8 @@ async fn a_spent_allowance_retains_an_elided_partial_not_the_scratchpad() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("the task"),
@@ -212,7 +214,8 @@ async fn a_truncated_step_with_tool_calls_retains_elided_narration() {
         calls: tool_calls.clone(),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("the task"),

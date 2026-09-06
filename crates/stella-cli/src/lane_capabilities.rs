@@ -7,11 +7,11 @@
 //! all. Built here: the deck's lead turn, a resumed turn, a deck worker lane,
 //! a fleet attempt, the shared raw turn, and a judged goal arc.
 //!
-//! Each one goes to the engine through `Engine::assemble`. Its
-//! `TurnCapabilities` carries the lane name. The other way in,
-//! `Engine::with_sleeper` and a chain of `with_*` calls, cannot: it always
-//! writes `lane: None`. A turn with no lane lands in the `null` group with
-//! every other one, and a report keyed by lane then has nothing to show.
+//! Each one goes to the engine through `Engine::assemble`, the only
+//! constructor. Its `TurnCapabilities` carries the lane name. A seam set that
+//! leaves `lane` unset lands its turns in the `null` group with every other
+//! door that names none, and a report keyed by lane has nothing to show for
+//! them.
 //!
 //! Each function below answers every seam. Every literal is written out in
 //! full. So a new slot on [`TurnCapabilities`] breaks this file until someone
@@ -114,11 +114,16 @@ pub(crate) fn sub_session<'a>(
 }
 
 /// One fleet attempt — `BuiltinLane::FleetWorker`.
+///
+/// `requery` is an `Option` because the plane exists only where the attempt
+/// has a memory to query. The worker builds it per attempt from its own
+/// `WorkerSteering`, so it arrives as an argument rather than being made here.
 pub(crate) fn fleet_attempt<'a>(
     hooks: Option<&'a Hooks>,
     runner: &'a dyn HookRunner,
     calibration: &'a CalibrationMap,
     gate: &'a dyn TurnGate,
+    requery: Option<&'a dyn SteeringRequery>,
 ) -> TurnCapabilities<'a> {
     TurnCapabilities {
         hooks: hooks.map(|hooks| (hooks, runner)),
@@ -128,7 +133,7 @@ pub(crate) fn fleet_attempt<'a>(
         // A fleet worker has no input channel. Nobody is at a keyboard to
         // steer it, so this stays unbound.
         steering: None,
-        requery: None,
+        requery,
         bus: None,
         outcomes: None,
         fallback: None,
@@ -277,10 +282,10 @@ mod tests {
     /// **The lane witnesses.** Every lane this crate assembles says which
     /// lane it is.
     ///
-    /// This fails on a tree whose sites use `Engine::with_sleeper`. The
-    /// reason is structural, not behavioural. That call takes no lane and
-    /// always writes `lane: None`. There is no function to call, and nothing
-    /// that could answer.
+    /// This failed on the tree whose sites used the sleeper-only
+    /// constructor. The reason is structural, not behavioural. That call took
+    /// no lane and always wrote `lane: None`. There was no function to call,
+    /// and nothing that could answer.
     ///
     /// `stella-core`'s `a_turn_stamps_the_lane_that_assembled_it` covers what
     /// a named lane then does: it reaches `agent.turn.started` on the wire.
@@ -310,7 +315,7 @@ mod tests {
             ),
             (
                 "fleet_attempt",
-                fleet_attempt(None, &runner, &calibration, &gate).lane,
+                fleet_attempt(None, &runner, &calibration, &gate, None).lane,
                 BuiltinLane::FleetWorker,
             ),
             (
@@ -397,18 +402,19 @@ mod tests {
         assert!(worker.calibration.is_some() && worker.gate.is_some() && worker.steering.is_some(),);
         assert_eq!(worker.call_role, ModelCallRole::Worker);
 
-        let fleet = fleet_attempt(None, &runner, &calibration, &gate);
+        let fleet = fleet_attempt(None, &runner, &calibration, &gate, None);
         assert!(fleet.calibration.is_some() && fleet.gate.is_some());
         assert!(
             fleet.steering.is_none(),
             "a fleet attempt has no input channel to steer from",
         );
+        assert!(fleet.requery.is_none(), "no plane was handed in");
         assert_eq!(fleet.call_role, ModelCallRole::Worker);
+        let fleet_with_both =
+            fleet_attempt(Some(&hooks), &runner, &calibration, &gate, Some(&plane));
         assert!(
-            fleet_attempt(Some(&hooks), &runner, &calibration, &gate)
-                .hooks
-                .is_some(),
-            "a fleet attempt must run the hooks its caller handed it",
+            fleet_with_both.hooks.is_some() && fleet_with_both.requery.is_some(),
+            "a fleet attempt must pass on the seams its caller handed it",
         );
 
         let controls = TurnControls::none()
@@ -500,11 +506,11 @@ mod tests {
     /// **The call-site witnesses.** Each door that is not the deck reaches
     /// the engine through `Engine::assemble` and its own seams.
     ///
-    /// Fails on a tree where the three files build with the sleeper
-    /// constructor: that call takes no lane, so it writes `lane: None` and no
-    /// argument can say otherwise. The needles are built rather than written
-    /// out, so `turn_files`' driver fence reads this file as prose about a
-    /// constructor instead of a door that builds one.
+    /// Failed on the tree where the three files built with the sleeper-only
+    /// constructor: that call took no lane, so it wrote `lane: None` and no
+    /// argument could say otherwise. The needles are built rather than
+    /// written out, so `turn_files`' driver fence reads this file as prose
+    /// about a constructor instead of a door that builds one.
     #[test]
     fn each_door_that_is_not_the_deck_assembles_through_its_lane() {
         let blessed = format!("Engine::{}(", "assemble");
@@ -537,6 +543,42 @@ mod tests {
                  binds is one written literal rather than a chain",
             );
         }
+    }
+
+    /// **The host-engine witness.** The one engine this crate builds that is
+    /// not a lane still goes through the blessed constructor.
+    ///
+    /// `subagent.rs`'s `SessionSubAgents` builds an engine it never runs a
+    /// turn on. `run_sub_agent` builds the child that does, and that child
+    /// stamps `BuiltinLane::SubagentFork`. So this site binds no seam and
+    /// names no lane. It writes both answers down. `TurnCapabilities::none`
+    /// names every slot, so a new slot stops this site compiling too.
+    ///
+    /// It failed on a tree that built this engine through a constructor that
+    /// answered no seam. There, "no seam" and "no seam anyone chose" read the
+    /// same. `stella-serve`'s `subagents.rs` is the same shape one crate
+    /// over. It carries the same test beside its own source, the way the two
+    /// copies of the accept policy each carry theirs.
+    #[test]
+    fn the_host_engine_this_crate_builds_assembles_with_a_written_seam_set() {
+        let source = include_str!("subagent.rs");
+        let blessed = format!("Engine::{}(", "assemble");
+        let bare = format!("TurnCapabilities::{}()", "none");
+
+        assert!(
+            source.contains(&blessed),
+            "subagent.rs builds a host engine and must assemble it, or a seam added to the \
+             engine reaches it as a silent `None`",
+        );
+        assert!(
+            source.contains(&bare),
+            "subagent.rs must say in one written value that it binds no seam — `{bare}` is \
+             that value, and it is exhaustive, so a new slot stops this site compiling",
+        );
+        assert!(
+            !source.contains(&format!("Engine::with_{}(", "sleeper")),
+            "subagent.rs is back on a constructor that answers no seam and takes no lane",
+        );
     }
 
     /// `agent/turn.rs` assembles twice — once with the hook layer stripped by

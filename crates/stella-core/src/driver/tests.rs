@@ -9,6 +9,7 @@ use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::mpsc;
 
 use super::{CONTINUATION_MARKER_PREFIX as NUDGE, *};
+use crate::TurnCapabilities;
 use crate::hooks::{HookAction, HookExecError, HookExecResult, HookMatcher};
 use crate::retry::Sleeper;
 
@@ -237,7 +238,8 @@ async fn run_speculation_turn(
     tools: &dyn ToolExecutor,
 ) -> (TurnOutcome, Vec<AgentEvent>) {
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(provider, tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(provider, tools, EngineConfig::default(), &sleeper, seams);
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut messages = vec![CompletionMessage::user("read a.rs")];
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
@@ -428,7 +430,8 @@ async fn budget_abort_after_speculation_discards_the_pool() {
     };
 
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut messages = vec![CompletionMessage::user("read a.rs")];
     // The step-0 cost ($0.0001) crosses the enforced $0.00005 turn limit, so
@@ -540,7 +543,8 @@ async fn a_failed_attempts_speculative_pool_emits_discarded_events() {
         executed,
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![CompletionMessage::user("read a.rs")];
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -599,7 +603,8 @@ async fn text_deltas_precede_the_authoritative_text_and_concatenate_to_it() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut messages = vec![CompletionMessage::user("say hello")];
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
@@ -722,7 +727,8 @@ async fn a_wedged_generation_trips_the_deadline_once_instead_of_burning_the_retr
         model_timeout: Some(Duration::from_millis(50)),
         ..EngineConfig::default()
     };
-    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, config, &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -758,7 +764,8 @@ async fn simple_turn_with_no_tool_calls_completes() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -831,7 +838,8 @@ async fn a_halt_ends_the_turn_at_the_next_step_boundary_as_completed() {
         turn_halt: Some(Arc::new(AlwaysHalt)),
         ..EngineConfig::default()
     };
-    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, config, &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -878,7 +886,8 @@ async fn a_halt_that_never_fires_leaves_the_turn_exactly_as_it_was() {
         turn_halt: Some(Arc::new(NeverHalt)),
         ..EngineConfig::default()
     };
-    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, config, &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -977,8 +986,11 @@ async fn steered_messages_inject_before_the_next_model_call() {
         stop_after_drains: None,
         drains: AtomicU32::new(0),
     };
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_steering(&steering);
+    let seams = TurnCapabilities {
+        steering: Some(&steering),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("the task"),
@@ -1034,8 +1046,11 @@ async fn soft_stop_ends_the_turn_keeping_completed_steps() {
         stop_after_drains: Some(1),
         drains: AtomicU32::new(0),
     };
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_steering(&steering);
+    let seams = TurnCapabilities {
+        steering: Some(&steering),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("the task"),
@@ -1071,7 +1086,8 @@ async fn overflow_of_protected_content_is_summarized_and_metered() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, overflow_config(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("the task"),
@@ -1139,7 +1155,8 @@ async fn summarization_disabled_leaves_history_untouched() {
         summarize_overflow: false,
         ..overflow_config()
     };
-    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, config, &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("the task"),
@@ -1174,7 +1191,8 @@ async fn summarizer_failure_is_non_fatal_and_leaves_history() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, overflow_config(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("the task"),
@@ -1212,7 +1230,8 @@ async fn summarization_never_orphans_tool_results_at_the_span_edge() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, overflow_config(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     // The naive span end (len - keep_recent) lands ON the tool-result
     // message; the summarizer must walk back so the assistant call and
     // its result stay together in the kept tail.
@@ -1297,7 +1316,8 @@ async fn empty_completion_aborts_with_a_visible_message_not_a_silent_success() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("build the feature"),
@@ -1347,7 +1367,8 @@ async fn a_step_out_of_time_completes_with_a_truthful_partial_instead_of_abortin
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(
         &provider,
         &tools,
         EngineConfig {
@@ -1355,6 +1376,7 @@ async fn a_step_out_of_time_completes_with_a_truthful_partial_instead_of_abortin
             ..EngineConfig::default()
         },
         &sleeper,
+        seams,
     );
     let mut messages = vec![
         CompletionMessage::system("sys"),
@@ -1439,7 +1461,8 @@ async fn a_length_truncated_tool_less_step_continues_the_turn_instead_of_complet
         calls: tool_calls.clone(),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("build the feature"),
@@ -1498,7 +1521,8 @@ async fn length_continuations_are_bounded_per_turn() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("build the feature"),
@@ -1554,7 +1578,8 @@ async fn tool_calls_execute_and_feed_back_into_history() {
         calls: tool_calls.clone(),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -1606,7 +1631,8 @@ async fn retry_never_re_executes_a_tool_call() {
         calls: tool_calls.clone(),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -1653,7 +1679,8 @@ async fn malformed_tool_call_input_is_repaired_not_executed_blindly() {
         calls: tool_calls.clone(),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -1696,7 +1723,8 @@ async fn stuck_loop_aborts_the_turn_cleanly_before_the_step_cap() {
         calls: tool_calls.clone(),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -1734,7 +1762,8 @@ async fn stuck_loop_steers_once_then_aborts_on_re_detection() {
         calls: tool_calls.clone(),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -1855,7 +1884,8 @@ async fn identical_polls_with_changing_output_complete_without_abort() {
         calls: tool_calls.clone(),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("run the build and wait for it"),
@@ -1929,7 +1959,8 @@ async fn period_three_cycle_with_no_progress_steers_then_aborts() {
         },
         ..EngineConfig::default()
     };
-    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, config, &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("fix the test"),
@@ -1968,7 +1999,8 @@ async fn enforced_budget_aborts_the_turn_cleanly_between_steps() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -2103,7 +2135,8 @@ async fn run_synthetic_survival_turn(dialect: &str, id_style: fn(u32) -> String)
         compaction_budget_tokens: 4_000,
         ..EngineConfig::default()
     };
-    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, config, &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("run the long task"),
@@ -2215,7 +2248,8 @@ async fn read_only_calls_in_one_step_execute_concurrently() {
         barrier: tokio::sync::Barrier::new(2),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("read two files"),
@@ -2312,7 +2346,8 @@ async fn mutating_calls_are_barriers_and_history_keeps_call_order() {
         read2_done: tokio::sync::Notify::new(),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("work"),
@@ -2414,7 +2449,8 @@ async fn every_committed_step_emits_exactly_one_step_usage_record() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("do work"),
@@ -2508,7 +2544,8 @@ async fn a_wedged_tool_trips_the_dispatch_ceiling_instead_of_hanging() {
         tool_timeout: Some(Duration::from_secs(900)),
         ..EngineConfig::default()
     };
-    let engine = Engine::with_sleeper(&provider, &WedgedTools, config, &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &WedgedTools, config, &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -2563,7 +2600,8 @@ async fn a_none_ceiling_leaves_tool_dispatch_unbounded() {
         tool_timeout: None,
         ..EngineConfig::default()
     };
-    let engine = Engine::with_sleeper(&provider, &WedgedTools, config, &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &WedgedTools, config, &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -2598,186 +2636,12 @@ mod parked_wait;
 mod provider_outcomes;
 mod requery;
 mod steer_midturn;
+mod streaming_deadline;
 mod unbounded_by_default;
 mod usage_anchor;
 mod usage_completeness;
 mod user_hooks;
 mod zero_copy_request;
-
-/// A provider that streams a fragment every `interval` forever: answering the
-/// whole time, never finishing. The shape a reasoning model at high effort
-/// presents on a hard task, where a single call can legitimately stream for
-/// far longer than any fixed wall-clock bound.
-struct SlowStreamingProvider {
-    interval: Duration,
-    calls: Arc<AtomicU32>,
-}
-#[async_trait]
-impl Provider for SlowStreamingProvider {
-    fn id(&self) -> &str {
-        "slow-streaming"
-    }
-    async fn complete_ref(
-        &self,
-        _req: CompletionRequestRef<'_>,
-    ) -> Result<CompletionResultAlias, ProviderError> {
-        unreachable!("the engine always takes the observed path")
-    }
-    async fn complete_observed_ref(
-        &self,
-        _req: CompletionRequestRef<'_>,
-        observer: &dyn stella_protocol::provider::ToolCallObserver,
-    ) -> Result<CompletionResultAlias, ProviderError> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        loop {
-            tokio::time::sleep(self.interval).await;
-            observer.text_delta("thinking…");
-        }
-    }
-}
-
-/// The distinction the deadline is supposed to draw. This provider streams a
-/// fragment every 20ms against a 50ms deadline: under a wall-clock bound the
-/// call dies the moment total duration passes 50ms, even though something
-/// arrived 20ms ago. Under an idle bound it runs indefinitely, which is
-/// correct — it is answering.
-///
-/// Asserted by *not* aborting within a window many multiples of the deadline:
-/// the turn is still running when the timeout fires, so the future is dropped
-/// with the call still in flight.
-#[tokio::test]
-async fn a_streaming_generation_outlives_the_deadline_because_it_is_not_stalled() {
-    let calls = Arc::new(AtomicU32::new(0));
-    let provider = SlowStreamingProvider {
-        interval: Duration::from_millis(20),
-        calls: calls.clone(),
-    };
-    let tools = CountingTools {
-        calls: Arc::new(AtomicU32::new(0)),
-    };
-    let sleeper = NoopSleeper;
-    let config = EngineConfig {
-        model_timeout: Some(Duration::from_millis(50)),
-        ..EngineConfig::default()
-    };
-    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
-    let mut messages = vec![
-        CompletionMessage::system("sys"),
-        CompletionMessage::user("hi"),
-    ];
-    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
-    let (tx, mut rx) = mpsc::unbounded_channel();
-
-    let outcome = tokio::time::timeout(
-        Duration::from_millis(600),
-        engine.run_turn(&mut messages, &mut budget, &tx),
-    )
-    .await;
-
-    assert!(
-        outcome.is_err(),
-        "a provider that keeps streaming must not trip the deadline: {outcome:?}"
-    );
-    assert_eq!(
-        calls.load(Ordering::SeqCst),
-        1,
-        "the streaming call is never re-issued"
-    );
-    drain_events(&mut rx);
-}
-
-/// A provider whose entire output streams as TOOL-CALL content — argument
-/// fragments and announced mutating calls, never a text or reasoning delta.
-/// The shape of a model emitting one large `write_file`, where the old
-/// text-only idle tap saw total silence.
-struct CallOnlyStreamingProvider {
-    interval: Duration,
-    calls: Arc<AtomicU32>,
-}
-#[async_trait]
-impl Provider for CallOnlyStreamingProvider {
-    fn id(&self) -> &str {
-        "call-only-streaming"
-    }
-    async fn complete_ref(
-        &self,
-        _req: CompletionRequestRef<'_>,
-    ) -> Result<CompletionResultAlias, ProviderError> {
-        unreachable!("the engine always takes the observed path")
-    }
-    async fn complete_observed_ref(
-        &self,
-        _req: CompletionRequestRef<'_>,
-        observer: &dyn stella_protocol::provider::ToolCallObserver,
-    ) -> Result<CompletionResultAlias, ProviderError> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        let mut announced = false;
-        loop {
-            tokio::time::sleep(self.interval).await;
-            // Alternate the two tool-side signals: per-fragment argument
-            // liveness, and a whole announced MUTATING call (which the gate
-            // fences — it must still count as the provider answering).
-            if announced {
-                observer.tool_input_delta();
-            } else {
-                observer.tool_call_streamed(&ToolCall {
-                    call_id: "call_w".into(),
-                    name: "bash".into(),
-                    input: serde_json::json!({"cmd": "true"}),
-                });
-                announced = true;
-            }
-        }
-    }
-}
-
-/// The idle deadline's blind spot, witnessed: a healthy generation streaming
-/// ONLY tool-call content — no text, no reasoning — must not be killed as
-/// "stalled". The tick used to ride the gate's event sender, which only
-/// text/reasoning deltas traverse; a call-only stream (one large `write_file`
-/// spanning minutes) read as total silence and died at the deadline, after
-/// paying for the whole generation.
-#[tokio::test]
-async fn a_call_only_stream_outlives_the_deadline_because_it_is_not_stalled() {
-    let calls = Arc::new(AtomicU32::new(0));
-    let provider = CallOnlyStreamingProvider {
-        interval: Duration::from_millis(20),
-        calls: calls.clone(),
-    };
-    let tools = CountingTools {
-        calls: Arc::new(AtomicU32::new(0)),
-    };
-    let sleeper = NoopSleeper;
-    let config = EngineConfig {
-        model_timeout: Some(Duration::from_millis(50)),
-        ..EngineConfig::default()
-    };
-    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
-    let mut messages = vec![
-        CompletionMessage::system("sys"),
-        CompletionMessage::user("hi"),
-    ];
-    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
-    let (tx, mut rx) = mpsc::unbounded_channel();
-
-    let outcome = tokio::time::timeout(
-        Duration::from_millis(600),
-        engine.run_turn(&mut messages, &mut budget, &tx),
-    )
-    .await;
-
-    assert!(
-        outcome.is_err(),
-        "a call-only stream is still an answering provider — the deadline \
-         must not fire: {outcome:?}"
-    );
-    assert_eq!(
-        calls.load(Ordering::SeqCst),
-        1,
-        "the streaming call is never re-issued"
-    );
-    drain_events(&mut rx);
-}
 
 /// A [`CheckpointSink`] that records what a turn wrote and how often it
 /// cleared, so a test can assert both halves of the durability contract.
@@ -2830,7 +2694,8 @@ async fn a_turn_checkpoints_at_every_step_boundary_and_clears_when_it_ends() {
         checkpoint_sink: Some(sink.clone() as Arc<dyn crate::step::CheckpointSink>),
         ..EngineConfig::default()
     };
-    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, config, &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("go"),
@@ -2890,7 +2755,8 @@ async fn a_turn_without_a_sink_is_unchanged() {
         EngineConfig::default().checkpoint_sink.is_none(),
         "durability is opt-in: a default engine writes no checkpoints"
     );
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("go"),

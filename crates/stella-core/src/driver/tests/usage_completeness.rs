@@ -15,7 +15,8 @@ async fn exhausted_worker_call_emits_one_content_free_incompleteness_event() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("work"),
@@ -97,7 +98,8 @@ async fn a_failed_call_names_the_model_that_made_it() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("work"),
@@ -163,7 +165,8 @@ async fn a_failed_attempts_recovered_usage_reaches_the_event_stream() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("work"),
@@ -219,7 +222,8 @@ async fn exhausted_retries_emit_typed_reasons_before_the_error() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("work"),
@@ -278,7 +282,8 @@ async fn auth_failure_on_first_attempt_reports_not_retryable() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("work"),
@@ -338,7 +343,8 @@ async fn successful_retry_keeps_the_failed_attempt_usage_incomplete() {
         retry_policy: RetryPolicy::new(1, 0, 0),
         ..EngineConfig::default()
     };
-    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, config, &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("work"),
@@ -394,7 +400,8 @@ async fn step_usage_carries_the_requests_effort_and_output_ceiling() {
         max_output_tokens: Some(32_000),
         ..EngineConfig::default()
     };
-    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, config, &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("work"),
@@ -455,7 +462,8 @@ async fn step_usage_carries_the_requests_generation_params() {
         params: Some(asked),
         ..EngineConfig::default()
     };
-    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, config, &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("work"),
@@ -513,7 +521,8 @@ async fn overflow_summarizer_emits_its_own_usage_envelope() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, overflow_config(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     let mut messages = overflow_messages();
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -547,7 +556,8 @@ async fn failed_overflow_summarizer_emits_content_free_incompleteness() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, overflow_config(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     let mut messages = overflow_messages();
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -604,7 +614,8 @@ async fn two_calls_at_one_step_are_separable_by_their_usage_rows() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams)
         .with_turn_instance(TURN);
     let mut messages = vec![
         CompletionMessage::system("sys"),

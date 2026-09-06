@@ -71,7 +71,8 @@ async fn compaction_fired_with_report(usage: CompletionUsage) -> bool {
         summarize_overflow: false,
         ..EngineConfig::default()
     };
-    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, config, &sleeper, seams);
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
     let (tx, mut rx) = mpsc::unbounded_channel();
     let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;

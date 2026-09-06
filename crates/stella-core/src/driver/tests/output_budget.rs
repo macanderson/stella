@@ -24,6 +24,7 @@ use serde_json::Value;
 use stella_protocol::{CompletionResult, ToolSchema};
 
 use super::super::*;
+use crate::TurnCapabilities;
 use crate::driver::output_budget_recovery::SessionOutputCeilings;
 
 /// Rejects the first `refusals` calls as an unaffordable ceiling, naming
@@ -175,7 +176,8 @@ async fn run_turn_with_ceiling_and_carry(
         session_output_ceilings: carry.cloned(),
         ..EngineConfig::default()
     };
-    let engine = Engine::with_sleeper(provider, &tools, config, &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(provider, &tools, config, &sleeper, seams);
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let mut messages = vec![CompletionMessage::user("do the thing")];
     let mut budget = BudgetGuard::new(stella_protocol::BudgetMode::Off, None, None);

@@ -273,7 +273,7 @@ mod tests {
     use crate::event_sender::EventSender;
     use crate::retry::Sleeper;
     use crate::step::{BudgetSnapshot, CHECKPOINT_VERSION, Checkpoint, TurnState};
-    use crate::{Engine, EngineConfig, TurnOutcome};
+    use crate::{Engine, EngineConfig, TurnCapabilities, TurnOutcome};
     use stella_protocol::{
         AgentEvent, BudgetMode, CompletionMessage, CompletionRequestRef, CompletionResult,
         CompletionUsage, Provider, ProviderError, ToolCall, ToolOutput, ToolSchema,
@@ -440,7 +440,8 @@ mod tests {
             ..EngineConfig::default()
         };
         let mut state = TurnState::from_checkpoint(step_one(), &config);
-        let engine = Engine::with_sleeper(&provider, &tools, config, &NoopSleeper);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&provider, &tools, config, &NoopSleeper, seams);
         let (tx, mut rx) = mpsc::unbounded_channel();
         let events = EventSender::new(tx);
 
@@ -494,7 +495,8 @@ mod tests {
         let tools = FlagAndHang { flag, hang: false };
         let config = EngineConfig::default();
         let mut state = TurnState::from_checkpoint(step_one(), &config);
-        let engine = Engine::with_sleeper(&provider, &tools, config, &NoopSleeper);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&provider, &tools, config, &NoopSleeper, seams);
         let (tx, mut rx) = mpsc::unbounded_channel();
         let events = EventSender::new(tx);
 

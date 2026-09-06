@@ -24,7 +24,8 @@ async fn summarize_keep_recent_zero_does_not_panic() {
         summarize_keep_recent: 0,
         ..overflow_config()
     };
-    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, config, &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("the task"),
@@ -61,7 +62,8 @@ async fn observed_budget_breach_emits_a_warning_event() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -115,7 +117,8 @@ async fn budget_abort_synthetic_results_are_visible_in_the_event_stream() {
         calls: tool_calls.clone(),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -158,7 +161,8 @@ async fn whitespace_only_completion_aborts_without_a_text_event() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -332,7 +336,8 @@ async fn hard_cancel_mid_stream_emits_a_cancelled_usage_envelope() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![CompletionMessage::user("secret prompt text")];
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -411,7 +416,8 @@ async fn hard_cancel_during_a_backoff_sleep_emits_no_phantom_cancelled_envelope(
     let sleeper = HangingSleeper {
         sleeping: sleeping.clone(),
     };
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![CompletionMessage::user("go")];
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -483,7 +489,8 @@ async fn overflow_summarizer_retries_a_transient_error() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, overflow_config(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     let mut messages = overflow_messages();
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
     let mut health = SummarizerHealth::default();
@@ -536,7 +543,8 @@ async fn budget_aborted_summary_is_applied_not_discarded() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, overflow_config(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     let mut messages = overflow_messages();
     let before_len = messages.len();
     // The single summarizer call overruns the enforced limit → budget abort
@@ -599,7 +607,8 @@ async fn overflow_summary_names_the_folded_tool_result_blocks() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, overflow_config(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
 
     // A tool-result block sits in the interior of the summarizable span,
     // paired with its assistant tool_call and surrounded by big assistant
@@ -699,7 +708,8 @@ async fn repeated_summarizer_failures_emit_events_and_latch() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, overflow_config(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
     let mut health = SummarizerHealth::default();
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -796,7 +806,8 @@ async fn observed_budget_breach_warns_once_per_axis_per_turn() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -852,7 +863,8 @@ async fn enforced_session_breach_abort_reason_names_the_axis() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -886,7 +898,8 @@ async fn enforced_session_breach_at_step_boundary_names_the_axis() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("hi"),
@@ -1246,7 +1259,8 @@ async fn a_recycled_speculation_call_id_reports_the_execution_it_displaces() {
         executions: executions.clone(),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut messages = vec![CompletionMessage::user("read some files")];
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
@@ -1372,7 +1386,8 @@ async fn the_system_prefix_stays_byte_stable_across_a_compacting_turn() {
         max_steps: Some(8),
         ..EngineConfig::default()
     };
-    let engine = Engine::with_sleeper(&provider, &BulkyTools, config, &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &BulkyTools, config, &sleeper, seams);
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut messages = vec![
         CompletionMessage::system(SYSTEM),

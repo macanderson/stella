@@ -20,7 +20,7 @@ use crate::{
     AgentEvent, BudgetGuard, BudgetMode, CANCELLED_REASON, CancelToken, CompletionMessage,
     CompletionRequestRef, CompletionResult, CompletionUsage, Engine, EngineConfig, EventSender,
     MessageRole, Provider, ProviderError, Sleeper, StepOutcome, ToolCall, ToolExecutor, ToolOutput,
-    ToolSchema, TurnOutcome,
+    ToolSchema, TurnCapabilities, TurnOutcome,
 };
 
 /// A `Sleeper` that records but never actually waits.
@@ -209,7 +209,8 @@ async fn new_turn_then_run_step_drives_a_turn_to_done() {
     let tools = CountingTools::new();
     let tool_calls = tools.calls.clone();
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
 
     let (tx, mut rx) = mpsc::unbounded_channel();
     let events = EventSender::new(tx);
@@ -265,7 +266,8 @@ async fn run_turn_is_exactly_a_loop_over_run_step() {
         let provider = ScriptedProvider::new(script());
         let tools = CountingTools::new();
         let sleeper = NoopSleeper;
-        let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
         let (tx, mut rx) = mpsc::unbounded_channel();
         let events = EventSender::new(tx);
         let mut state = engine.new_turn(prompt(), free_budget());
@@ -280,7 +282,8 @@ async fn run_turn_is_exactly_a_loop_over_run_step() {
         let provider = ScriptedProvider::new(script());
         let tools = CountingTools::new();
         let sleeper = NoopSleeper;
-        let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
         let (tx, mut rx) = mpsc::unbounded_channel();
         let events = EventSender::new(tx);
         let mut messages = prompt();
@@ -333,7 +336,8 @@ async fn a_turn_resumed_from_a_checkpoint_emits_the_same_downstream_events() {
         let provider = ScriptedProvider::new(vec![tool_call_result("c1"), text_result("all done")]);
         let tools = CountingTools::new();
         let sleeper = NoopSleeper;
-        let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
         let (tx, mut rx) = mpsc::unbounded_channel();
         let events = EventSender::new(tx);
         let mut state = engine.new_turn(prompt(), free_budget());
@@ -353,7 +357,8 @@ async fn a_turn_resumed_from_a_checkpoint_emits_the_same_downstream_events() {
         let provider = ScriptedProvider::new(vec![tool_call_result("c1")]);
         let tools = CountingTools::new();
         let sleeper = NoopSleeper;
-        let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+        let seams = TurnCapabilities::none();
+        let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
         let (tx, _rx) = mpsc::unbounded_channel();
         let events = EventSender::new(tx);
         let mut state = engine.new_turn(prompt(), free_budget());
@@ -376,7 +381,8 @@ async fn a_turn_resumed_from_a_checkpoint_emits_the_same_downstream_events() {
     let tools = CountingTools::new();
     let resumed_tool_calls = tools.calls.clone();
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let (tx, mut rx) = mpsc::unbounded_channel();
     let events = EventSender::new(tx);
     let mut state = engine.resume_turn(checkpoint);
@@ -440,7 +446,8 @@ async fn a_mid_turn_cancel_stops_at_the_next_boundary_with_a_valid_transcript() 
     tools.cancel_on_call = Some(cancel.clone());
     let tool_calls = tools.calls.clone();
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let provider_calls = provider.calls.clone();
 
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -512,7 +519,8 @@ async fn a_cancel_before_the_first_step_costs_nothing() {
     let provider_calls = provider.calls.clone();
     let tools = CountingTools::new();
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
 
     let (tx, _rx) = mpsc::unbounded_channel();
     let events = EventSender::new(tx);
@@ -536,7 +544,8 @@ async fn a_checkpoint_taken_between_steps_round_trips_through_the_facade() {
     let provider = ScriptedProvider::new(vec![tool_call_result("c1"), text_result("done")]);
     let tools = CountingTools::new();
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let (tx, _rx) = mpsc::unbounded_channel();
     let events = EventSender::new(tx);
 

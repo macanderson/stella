@@ -700,6 +700,18 @@ most want measured before the loop is trusted unattended for long stretches.
 §9's B4 therefore ships the sweep behind a per-supply switch that defaults to
 queue-only.
 
+**A mechanical read of a lens is opt-in, per lens.** The driver runs
+the open lens itself, so something has to turn a tool's output into findings.
+Most `interpret` lines ask for a judgement a model makes — "each listed file
+that holds pure decision logic" — and reading those mechanically would file
+the noise this section is about. So a lens declares a `Reading` only when its
+output can be read without one, and `supply-chain` is the only lens that does
+today: its own `interpret` line says every advisory, ban, source or license
+finding is a defect, which leaves nothing to judge. A lens with no reading is
+still the audit phase's, and the driver says so rather than reporting an empty
+sweep. `stella_autonomy::supply::MAX_LENS_FINDINGS` bounds what one pass
+offers, so a broken tool cannot become a hundred issues.
+
 ---
 
 ## 5. Re-audit, and what makes a `done` falsifiable later
@@ -945,7 +957,7 @@ The pipeline's discipline, carried forward without relaxation:
 | **Fixing the code** | — | ✔ `work` |
 | **Writing the witness** | — | ✔ (verifier resolution, never the worker) |
 | **Writing an issue body** | — | ✔ |
-| **Interpreting an audit lens's output** | — | ✔ where the lens is `ModelOnly` |
+| **Interpreting an audit lens's output** | `supply::read`, where the lens declares a `Reading` | ✔ where it declares none (§4.4) |
 
 Every row in the left column that could plausibly have been a model call and is
 not is a place this loop is cheaper and more replayable than the alternative.

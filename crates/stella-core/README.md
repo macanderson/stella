@@ -284,10 +284,11 @@ system message and the latest user message are never touched.
   or `modify` before any `Engine` exists. `SubagentStart`/`SubagentStop` are
   the opposite case: they fire from inside this crate
   ([`src/subagent.rs`](src/subagent.rs)), around a child turn, observe-only.
-- **`Engine::with_sleeper` is the only *public* constructor,** and it cannot
-  carry `gate`/`steering`/`hooks` — those are builder-set private fields. A
-  nested turn built through it silently drops all three, which is the bug
-  `goal.rs::assess` shipped with. Do not hand-roll a child engine: call
+- **`Engine::assemble` is the only constructor,** and its `TurnCapabilities`
+  answers every optional seam. Nothing else can build an engine. So no site
+  can leave a seam unanswered. That is the bug `goal.rs::assess` shipped
+  with: a nested turn that dropped `gate`, `steering` and `hooks` at once.
+  Do not hand-roll a child engine. Call
   [`src/subagent.rs`](src/subagent.rs)'s `run_sub_agent`, which constructs the
   child in-crate and carries every seam. The crate still exports the `Sleeper`
   port with no production implementation — wiring a real one is the binary's
@@ -343,9 +344,10 @@ here. An intended change edits the pin in the same pull request
 
 1. Define the trait next to the decision it serves — [`src/ports.rs`](src/ports.rs)
    for engine-wide seams, otherwise module-local like `hooks::HookRunner`.
-2. Attach it with a `with_*` builder on `Engine` that stores an `Option`, so an
-   engine built without it takes exactly the old path
-   (`with_hooks`/`with_calibration`/`with_gate`/`with_steering` are the pattern).
+2. Add an `Option` slot to `TurnCapabilities`
+   ([`src/driver/capabilities.rs`](src/driver/capabilities.rs)). Wire it
+   through `Engine::assemble`. The struct has no `Default`. So every site
+   that builds an engine stops compiling until someone answers the new slot.
 3. Implement it in `stella-cli` or `stella-tools`. Never here.
 4. Test it in-crate against a fake implementation.
 

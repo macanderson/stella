@@ -16,6 +16,7 @@ use serde_json::Value;
 use stella_protocol::{CompletionResult, ToolSchema};
 
 use super::super::*;
+use crate::TurnCapabilities;
 
 /// Answers immediately, recording the transcript it was handed.
 #[derive(Default)]
@@ -87,7 +88,8 @@ async fn run_turn_with_deadline(
 ) {
     let tools = NoTools;
     let sleeper = NoSleep;
-    let engine = Engine::with_sleeper(provider, &tools, EngineConfig::default(), &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(provider, &tools, EngineConfig::default(), &sleeper, seams);
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let mut messages = vec![CompletionMessage::user("do the thing")];
     let mut budget = BudgetGuard::new(stella_protocol::BudgetMode::Off, None, None);

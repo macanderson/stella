@@ -14,8 +14,8 @@
 //! trait it must implement. `stella-serve` had already reached around the
 //! facade with `use stella_core::step::CheckpointSink;`.
 //!
-//! The same shape recurred at `Engine::with_requery` (#3715): the method was
-//! reachable through the facade and callable by nobody, because neither the
+//! The same shape recurred at the re-query seam (#3715): it was reachable
+//! through the facade and bindable by nobody, because neither the
 //! `SteeringRequery` it takes nor the `TurnSignal` that port's one method names
 //! could be spelled from this crate. `a_host_can_requery_its_context_plane`
 //! below is that gap's witness.
@@ -47,8 +47,8 @@ use stella_engine::{
     AbortKind, AgentEvent, BudgetGuard, BudgetMode, CheckpointSink, CompletionMessage,
     CompletionRequestRef, CompletionResult, CompletionUsage, DispatchAdmission, DispatchGate,
     Engine, EngineConfig, LiveService, Provider, ProviderError, RECALL_MARKER, Sleeper,
-    SteeringRequery, ToolCall, ToolContract, ToolExecutor, ToolOutput, ToolSchema, TurnOutcome,
-    TurnSignal, WaitCall, WaitRequest, admit_dispatch,
+    SteeringRequery, ToolCall, ToolContract, ToolExecutor, ToolOutput, ToolSchema,
+    TurnCapabilities, TurnOutcome, TurnSignal, WaitCall, WaitRequest, admit_dispatch,
 };
 
 /// The one tool the host advertises. Its only job is to make the model's first
@@ -405,7 +405,8 @@ async fn a_host_can_drive_a_turn_through_the_facade_alone() {
     let provider = HostProvider::default();
     let tools = HostTools::default();
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, config, &sleeper, seams);
 
     let (tx, _rx) = mpsc::unbounded_channel::<AgentEvent>();
     let mut messages = vec![CompletionMessage::user("say done")];
@@ -445,21 +446,24 @@ async fn a_host_can_drive_a_turn_through_the_facade_alone() {
 }
 
 /// **Witness (#3715).** A host implements the step-boundary re-query port and
-/// attaches it with `Engine::with_requery`, naming nothing but
-/// `stella_engine::` paths.
+/// binds it in its `TurnCapabilities`, naming nothing but `stella_engine::`
+/// paths.
 ///
 /// This test does not compile on the pre-fix crate: `SteeringRequery` and the
 /// `TurnSignal` its one method takes were both unreachable through the facade,
-/// so the `impl` block could not be written at all — which is what made
-/// `with_requery` a method callable by nobody who took the facade at its word.
+/// so the `impl` block could not be written at all — which is what made the
+/// re-query seam bindable by nobody who took the facade at its word.
 #[tokio::test]
 async fn a_host_can_requery_its_context_plane_through_the_facade_alone() {
     let provider = HostProvider::default();
     let tools = HostTools::default();
     let sleeper = NoopSleeper;
     let requery = HostRequery::default();
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
-        .with_requery(&requery);
+    let seams = TurnCapabilities {
+        requery: Some(&requery),
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
 
     let (tx, _rx) = mpsc::unbounded_channel::<AgentEvent>();
     let mut messages = vec![CompletionMessage::user("probe then say done")];
@@ -517,10 +521,9 @@ mod hook_plane {
 /// The closure rule's other half: what must stay *out*.
 ///
 /// The rule says a host names nothing but `stella_engine::` paths to fill
-/// every builder argument, and `Engine::with_hooks` / `Engine::with_bus` are
-/// the two arguments it cannot fill (`src/lib.rs`, "The hook
-/// plane is the wrong layer, by design"). A declaration in prose is a
-/// reviewer's note; this module is the guard.
+/// every `TurnCapabilities` seam, and `hooks` / `bus` are the two it cannot
+/// fill (`src/lib.rs`, "The hook plane is the wrong layer, by design"). A
+/// declaration in prose is a reviewer's note; this module is the guard.
 mod the_exclusion_is_enforced {
     use super::hook_plane::*;
     use stella_engine::*;

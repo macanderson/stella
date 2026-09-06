@@ -203,10 +203,9 @@ impl<'a> Engine<'a> {
     /// pause and the stop while keeping it from stealing the parent's queued
     /// messages.
     ///
-    /// Absent seams are left absent rather than overwritten: an engine
-    /// already carrying a per-turn `&dyn` gate keeps it if `controls` has
-    /// none, so this composes with [`Engine::with_gate`] instead of racing
-    /// it.
+    /// Absent seams are left absent rather than overwritten. An engine that
+    /// already carries a per-turn `&dyn` gate keeps it when `controls` has
+    /// none. So a gate the seam set bound stays bound. The two do not race.
     #[must_use]
     pub fn with_turn_controls(mut self, controls: &'a TurnControls) -> Self {
         if let Some(gate) = controls.gate.as_deref() {

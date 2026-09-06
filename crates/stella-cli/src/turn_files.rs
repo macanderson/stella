@@ -791,10 +791,9 @@ mod tests {
     /// `run_goal` and the resume path are three different entries and
     /// building an engine is the one thing all of them do first.
     ///
-    /// **Both** constructors count: `Engine::with_sleeper` and
-    /// [`stella_core::Engine::assemble`], the blessed one a named lane uses.
-    /// A fence that saw only one spelling would read every driver on the
-    /// other as not building an engine at all.
+    /// Keyed on [`stella_core::Engine::assemble`]. That call is the only way
+    /// to build an engine. So a door has no second spelling to hide behind,
+    /// and this fence sees them all.
     ///
     /// Shipping files only. A `#[cfg(test)]` engine is a fixture, and the
     /// question here is which *door* drives a turn.
@@ -803,11 +802,8 @@ mod tests {
         // Built rather than written out, so this file is not its own match,
         // and with the open paren so a doc comment naming a constructor is
         // prose rather than a driver.
-        let constructors = [
-            format!("Engine::with_{}(", "sleeper"),
-            format!("Engine::{}(", "assemble"),
-        ];
-        let builds = |body: &str| constructors.iter().any(|ctor| body.contains(ctor));
+        let constructor = format!("Engine::{}(", "assemble");
+        let builds = |body: &str| body.contains(&constructor);
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
 
         for (file, posture) in ENGINE_DRIVERS {

@@ -234,6 +234,9 @@ fn aperture_list_names_the_tooling_and_admits_the_model_only_lenses() {
     assert!(text.contains("make supply-chain"), "{text}");
     assert!(text.contains("model-only"), "{text}");
     assert!(text.contains("[heavy tier]"), "{text}");
+    // The lens the driver runs and reads on its own says so, so an operator
+    // can tell it from the ones the audit phase still owns.
+    assert!(text.contains("[driver reads]"), "{text}");
     assert!(text.contains("watch"), "{text}");
 }
 

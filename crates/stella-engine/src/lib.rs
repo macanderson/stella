@@ -108,8 +108,8 @@
 //! It re-exports and documents; it opens no sockets, spawns no processes and
 //! touches no files, exactly like the `stella-core` it fronts. Everything the
 //! engine needs from the outside world arrives through the ports, which the
-//! host implements: [`Sleeper`], which [`Engine::with_sleeper`] requires
-//! because it is the only constructor, and then [`Provider`],
+//! host implements: [`Sleeper`], which the only constructor
+//! [`Engine::assemble`] requires, and then [`Provider`],
 //! [`ToolExecutor`], [`TurnGate`], [`TurnSteering`], [`SteeringRequery`],
 //! [`TurnHalt`], [`ProviderOutcomes`], [`FallbackResolver`] and
 //! [`CheckpointSink`], each of which is optional.
@@ -144,10 +144,10 @@
 //!
 //! ## The hook plane is the wrong layer, by design
 //!
-//! Two of [`Engine`]'s builder methods are **not** closed over:
+//! Two of [`TurnCapabilities`]'s seams are **not** closed over:
 //!
-//! - **[`Engine::with_hooks`]** (`stella_core::hooks::{Hooks, HookRunner}`)
-//!   and **`Engine::with_bus`** (`stella_core::bus::HookBus`). Their closure
+//! - **`hooks`** (`stella_core::hooks::{Hooks, HookRunner}`) and **`bus`**
+//!   (`stella_core::bus::HookBus`). Their closure
 //!   is the shell-command hook plane — `HookAction`, `HookExecResult`,
 //!   `HookExecError`, `HookMatcher`, `HookEvent`, `HookDecision`,
 //!   `HookEventDraft` — an extension surface whose whole purpose is to
@@ -158,9 +158,9 @@
 //!   above this facade precisely because two of its four points do I/O.
 //!
 //! #3768 asked whether that is a permanent exclusion, whether the observer
-//! half (`with_bus`) should cross, or whether both should. **The answer is
+//! half (`bus`) should cross, or whether both should. **The answer is
 //! the first**, and this is the decision rather than a gap someone has yet to
-//! close. Closing over either method would let a host reach the engine's
+//! close. Closing over either seam would let a host reach the engine's
 //! shell-execution authority by naming `stella_engine::` paths alone, which
 //! is the one thing a facade over an I/O-free engine must not make look
 //! ordinary.
@@ -227,10 +227,10 @@ pub use stella_core::loop_detect::LoopDetectionConfig;
 
 // ── what a host has to supply, and what it gets back ──────────────────────
 //
-// Three of the ports here are builder methods the closure rule reaches that
-// the pre-#3715 list did not: `SteeringRequery` (`Engine::with_requery`)
+// Three of the ports here are seams the closure rule reaches that
+// the pre-#3715 list did not: `SteeringRequery` (`TurnCapabilities::requery`)
 // together with the `TurnSignal` its one method takes — neither was nameable
-// here, so the method could be called by nobody — plus `ProviderOutcomes` and
+// here, so the seam could be bound by nobody — plus `ProviderOutcomes` and
 // `FallbackResolver`, whose `ResolvedFallback` return type borrows a
 // `Provider` this crate already exports.
 //

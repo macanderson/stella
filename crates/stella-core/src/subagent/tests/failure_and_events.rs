@@ -28,7 +28,14 @@ async fn an_aborted_child_salvages_the_last_answer_it_paid_for() {
         Ok(tool_call_result("read_file", "c2", 0.01)),
     ]);
     let tools = MixedTools::default();
-    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep);
+    let seams = TurnCapabilities::none();
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &NoSleep,
+        seams,
+    );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, _rx) = mpsc::unbounded_channel();
 
@@ -60,7 +67,14 @@ async fn a_failed_child_never_becomes_an_error_the_parent_has_to_handle() {
     let parent_provider = ScriptedProvider::new(vec![]);
     let child_provider = ScriptedProvider::new(vec![]);
     let tools = MixedTools::default();
-    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep);
+    let seams = TurnCapabilities::none();
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &NoSleep,
+        seams,
+    );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, _rx) = mpsc::unbounded_channel();
 
@@ -87,7 +101,14 @@ async fn nesting_deeper_than_the_cap_is_refused_before_spending() {
     let parent_provider = ScriptedProvider::new(vec![]);
     let child_provider = ScriptedProvider::new(vec![Ok(text_result("hi", 0.01))]);
     let tools = MixedTools::default();
-    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep);
+    let seams = TurnCapabilities::none();
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &NoSleep,
+        seams,
+    );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, _rx) = mpsc::unbounded_channel();
 
@@ -123,7 +144,14 @@ async fn the_childs_stage_and_narration_never_reach_the_parents_stream() {
         Ok(text_result("the answer", 0.01)),
     ]);
     let tools = MixedTools::default();
-    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep);
+    let seams = TurnCapabilities::none();
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &NoSleep,
+        seams,
+    );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, mut rx) = mpsc::unbounded_channel();
 
@@ -177,7 +205,14 @@ async fn a_childs_metering_records_name_the_child_that_spent_them() {
     let parent_provider = ScriptedProvider::new(vec![]);
     let child_provider = ScriptedProvider::new(vec![Ok(text_result("done", 0.02))]);
     let tools = MixedTools::default();
-    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep);
+    let seams = TurnCapabilities::none();
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &NoSleep,
+        seams,
+    );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, mut rx) = mpsc::unbounded_channel();
 
@@ -218,7 +253,8 @@ async fn a_childs_metering_records_name_the_child_that_spent_them() {
 async fn the_leads_own_calls_name_no_sub_agent() {
     let provider = ScriptedProvider::new(vec![Ok(text_result("answered", 0.05))]);
     let tools = MixedTools::default();
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &NoSleep);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &NoSleep, seams);
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut messages = vec![CompletionMessage::user("do it")];
@@ -246,7 +282,14 @@ async fn step_usage_and_tool_activity_reach_the_parent_so_cost_rolls_up() {
         Ok(text_result("done", 0.02)),
     ]);
     let tools = MixedTools::default();
-    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep);
+    let seams = TurnCapabilities::none();
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &NoSleep,
+        seams,
+    );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, mut rx) = mpsc::unbounded_channel();
 
@@ -304,7 +347,14 @@ async fn a_childs_tool_calls_name_the_child_that_ran_them() {
         Ok(text_result("done", 0.02)),
     ]);
     let tools = MixedTools::default();
-    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep);
+    let seams = TurnCapabilities::none();
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &NoSleep,
+        seams,
+    );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, mut rx) = mpsc::unbounded_channel();
 
@@ -345,7 +395,8 @@ async fn the_leads_own_tool_calls_name_no_sub_agent() {
         Ok(text_result("answered", 0.02)),
     ]);
     let tools = MixedTools::default();
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &NoSleep);
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &NoSleep, seams);
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut messages = vec![CompletionMessage::user("do it")];

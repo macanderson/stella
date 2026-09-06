@@ -1112,18 +1112,19 @@ async fn run_task(
             }
             let calibration = agent::seed_calibration(&store, &cfg);
             let hooks = cfg.hooks.as_ref();
-            let seams =
-                lane_capabilities::fleet_attempt(hooks, &hook_runner, &calibration, gate.as_ref());
-            let mut engine = Engine::assemble(&*provider, &scoped, config, &TokioSleeper, seams);
-            // Attached above the arms, not inside one: a `--pipeline` round
-            // drives this same engine, so a wrapped attempt re-queries too.
-            // It rides here rather than in `fleet_attempt`'s seam set because
-            // the port is built per attempt from this worker's own
-            // `WorkerSteering`, which the lane's capability constructor has no
-            // handle on.
-            if let Some(requery) = &requery {
-                engine = engine.with_requery(requery);
-            }
+            // The re-query plane rides the lane's seam set, not a call after
+            // it: a `--pipeline` round drives this same engine, so a wrapped
+            // attempt re-queries too.
+            let seams = lane_capabilities::fleet_attempt(
+                hooks,
+                &hook_runner,
+                &calibration,
+                gate.as_ref(),
+                requery
+                    .as_ref()
+                    .map(|requery| requery as &dyn stella_core::ports::SteeringRequery),
+            );
+            let engine = Engine::assemble(&*provider, &scoped, config, &TokioSleeper, seams);
             // A fleet worker owns its lane's stage vocabulary — the opener is
             // here; the closer rides `worker_event_sender` below, ahead of
             // the engine's `TurnComplete` (#3416, #3428).

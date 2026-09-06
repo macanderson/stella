@@ -21,6 +21,7 @@ use serde_json::Value;
 use stella_protocol::{CompletionResult, ToolCall, ToolSchema, UsageIncompleteReason};
 
 use super::super::*;
+use crate::TurnCapabilities;
 use crate::ports::{FallbackResolver, ResolvedFallback};
 use crate::retry::RetryPolicy;
 
@@ -181,10 +182,11 @@ async fn run_turn_collecting(
 ) -> (TurnOutcome, Vec<AgentEvent>) {
     let tools = NoTools;
     let sleeper = NoSleep;
-    let mut engine = Engine::with_sleeper(provider, &tools, config, &sleeper);
-    if let Some(resolver) = resolver {
-        engine = engine.with_fallback_resolver(resolver);
-    }
+    let seams = TurnCapabilities {
+        fallback: resolver,
+        ..TurnCapabilities::none()
+    };
+    let engine = Engine::assemble(provider, &tools, config, &sleeper, seams);
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let mut budget = BudgetGuard::new(stella_protocol::BudgetMode::Off, None, None);
     let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;

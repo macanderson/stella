@@ -247,45 +247,44 @@ pub struct Engine<'a> {
     pub(crate) config: EngineConfig,
     pub(crate) call_role: stella_protocol::ModelCallRole,
     /// Which lane assembled this engine (#3386/#3410), stamped onto
-    /// `agent.turn.started`. `None` means the engine came through
-    /// [`Engine::with_sleeper`] and the individual builders, which have no
-    /// lane to report -- an honest "unattributed", not a forgotten one.
+    /// `agent.turn.started`. `None` is an answer somebody wrote in the
+    /// assembling [`TurnCapabilities`](crate::TurnCapabilities) -- an honest
+    /// "unattributed", not a forgotten one.
     pub(crate) lane: Option<stella_protocol::TurnLane>,
-    /// Lifecycle hooks, off by default. Attached via [`Engine::with_hooks`]
-    /// so `with_sleeper` keeps its existing signature. When `None`,
+    /// Lifecycle hooks, off by default. Bound by the `hooks` slot of the
+    /// assembling [`TurnCapabilities`](crate::TurnCapabilities). When `None`,
     /// no hook is ever consulted and the turn path adds zero work.
     pub(crate) hooks: Option<HooksHandle<'a>>,
     /// Where a `PreToolUse` hook's `require_approval` decision parks
-    /// (#2684), off by default. Attached via
-    /// [`Engine::with_hook_approval_route`] (`driver::user_hooks`); when
+    /// (#2684), off by default. Bound by the `hook_approvals` slot; when
     /// `None` such a decision is refused with a grant-path message.
     pub(crate) hook_approvals: Option<&'a dyn crate::hooks::decision::ApprovalRoute>,
     /// Token-drift calibration (`crate::estimator::CalibrationMap`), off by
-    /// default. Attached via [`Engine::with_calibration`]; the caller owns
+    /// default. Bound by the `calibration` slot; the caller owns
     /// the map across turns (seeded from persisted telemetry at session
     /// start), the engine feeds it every committed step's (estimated,
     /// actual) pair and reads the correction back into the compaction
     /// decision. When `None` the turn path is the uncalibrated engine.
     pub(crate) calibration: Option<&'a CalibrationMap>,
     /// Boundary pause gate ([`crate::ports::TurnGate`]), off by default.
-    /// Attached via [`Engine::with_gate`]; consulted once per step, before
+    /// Bound by the `gate` slot; consulted once per step, before
     /// any model call — a paused turn parks at that safe boundary and
     /// spends nothing until resumed. `None` adds zero work.
     pub(crate) gate: Option<&'a dyn crate::ports::TurnGate>,
     /// Step-boundary steering ([`crate::ports::TurnSteering`]), off by
-    /// default. Attached via [`Engine::with_steering`]; drained once per
+    /// default. Bound by the `steering` slot; drained once per
     /// step at the same boundary as the pause gate — queued user messages
     /// become the model's next observation, and a latched soft stop ends
     /// the turn keeping every completed step. `None` adds zero work.
     pub(crate) steering: Option<&'a dyn crate::ports::TurnSteering>,
     /// Step-boundary context re-query ([`crate::ports::SteeringRequery`]),
-    /// off by default (#3243 Phase 3). Attached via [`Engine::with_requery`];
+    /// off by default (#3243 Phase 3). Bound by the `requery` slot;
     /// consulted once per step at the same boundary as steering, with the
     /// TurnSignal assembled from this turn's transcript. `None` adds zero
     /// work.
     pub(crate) requery: Option<&'a dyn crate::ports::SteeringRequery>,
     /// Extension hook bus ([`crate::bus::HookBus`]), off by default.
-    /// Attached via [`Engine::with_bus`]; receives the turn/step/model-call
+    /// Bound by the `bus` slot; receives the turn/step/model-call
     /// lifecycle events an out-of-process host uses to observe and, per
     /// ADR-033, apply policy at (#1133). `None` adds zero work — every emit
     /// site is behind the same `if let Some(bus)`.
@@ -296,12 +295,12 @@ pub struct Engine<'a> {
     /// points stay where they already are, on the tool-call path.
     pub(crate) bus: Option<&'a crate::bus::HookBus>,
     /// Call-outcome feedback ([`crate::ports::ProviderOutcomes`]), off by
-    /// default. Attached via [`Engine::with_provider_outcomes`]; each logical
+    /// default. Bound by the `outcomes` slot; each logical
     /// model call reports its terminal verdict against `provider.id()` so a
     /// router's circuit breaker trips from observed outcomes (#2673).
     pub(crate) outcomes: Option<&'a dyn crate::ports::ProviderOutcomes>,
     /// Mid-turn fallback resolution ([`crate::ports::FallbackResolver`]), off
-    /// by default. Attached via [`Engine::with_fallback_resolver`]; consulted
+    /// by default. Bound by the `fallback` slot; consulted
     /// at the retries-exhausted settlement boundary, at most once per engine
     /// (`driver::model_fallback`, #2679). `None` keeps the abort exactly as
     /// it always was.
@@ -375,39 +374,6 @@ struct CommittedStep {
 }
 
 impl<'a> Engine<'a> {
-    /// Construct an engine with an injected [`Sleeper`]. This is the only
-    /// constructor — `stella-core` exports the port, never a production
-    /// impl, so the caller wires a real sleeper (the CLI's tokio-backed
-    /// one) and tests wire a no-op to run retries with zero real
-    /// wall-clock delay.
-    pub fn with_sleeper(
-        provider: &'a dyn Provider,
-        tools: &'a dyn ToolExecutor,
-        config: EngineConfig,
-        sleeper: &'a dyn Sleeper,
-    ) -> Self {
-        Self {
-            provider,
-            tools,
-            sleeper,
-            config,
-            call_role: stella_protocol::ModelCallRole::Worker,
-            // The legacy builder path names no lane. `assemble` is where a
-            // lane is declared.
-            lane: None,
-            hooks: None,
-            hook_approvals: None,
-            calibration: None,
-            gate: None,
-            steering: None,
-            requery: None,
-            bus: None,
-            outcomes: None,
-            fallback: None,
-            provider_override: Arc::new(std::sync::OnceLock::new()),
-        }
-    }
-
     /// Attribute this engine's provider calls to a concrete pipeline role.
     /// Ordinary execution defaults to [`stella_protocol::ModelCallRole::Worker`].
     /// The role this engine attributes its model calls to — the reader for
@@ -507,74 +473,6 @@ impl<'a> Engine<'a> {
         }
     }
 
-    /// Attach lifecycle hooks (`crate::hooks`) to an engine, opt-in. Kept a
-    /// builder so [`Engine::with_sleeper`] retains its signature and every
-    /// existing call site is unchanged — an engine
-    /// built without this is exactly the pre-hooks engine. Takes both the
-    /// parsed [`Hooks`] config and the [`HookRunner`] that executes the
-    /// commands, because [`crate::hooks::run_hooks`] needs the port to run
-    /// anything (the config alone spawns nothing).
-    pub fn with_hooks(mut self, hooks: &'a Hooks, runner: &'a dyn HookRunner) -> Self {
-        self.hooks = Some(HooksHandle { hooks, runner });
-        self
-    }
-
-    /// Attach token-drift calibration, opt-in and by reference for the same
-    /// reason `run_turn` borrows `messages`: the caller (CLI session, REPL,
-    /// fleet worker) owns state that outlives any single turn — engines are
-    /// constructed per turn, calibration accumulates per session. An engine
-    /// built without this estimates exactly as before.
-    pub fn with_calibration(mut self, calibration: &'a CalibrationMap) -> Self {
-        self.calibration = Some(calibration);
-        self
-    }
-
-    /// Attach call-outcome feedback, opt-in: every logical model call
-    /// (retries collapsed) reports success or terminal failure against
-    /// `provider.id()`, so a [`crate::router::Router`]'s circuit breaker
-    /// trips failover from observed outcomes, not configuration (#2673).
-    pub fn with_provider_outcomes(
-        mut self,
-        outcomes: &'a dyn crate::ports::ProviderOutcomes,
-    ) -> Self {
-        self.outcomes = Some(outcomes);
-        self
-    }
-
-    /// Attach mid-turn provider fallback, opt-in: when a model call's retry
-    /// ladder exhausts, the engine re-resolves through this port and
-    /// continues the turn on the replacement instead of aborting — at most
-    /// one swap per engine (`driver::model_fallback`, #2679).
-    pub fn with_fallback_resolver(
-        mut self,
-        fallback: &'a dyn crate::ports::FallbackResolver,
-    ) -> Self {
-        self.fallback = Some(fallback);
-        self
-    }
-
-    /// Attach a boundary pause gate — Pause/Resume at step granularity,
-    /// never mid-tool.
-    pub fn with_gate(mut self, gate: &'a dyn crate::ports::TurnGate) -> Self {
-        self.gate = Some(gate);
-        self
-    }
-
-    /// Attach step-boundary steering — mid-turn user messages and the soft
-    /// stop, at step granularity, never mid-tool.
-    pub fn with_steering(mut self, steering: &'a dyn crate::ports::TurnSteering) -> Self {
-        self.steering = Some(steering);
-        self
-    }
-
-    /// Attach the step-boundary context re-query (#3243 Phase 3) — the
-    /// steering plane asked again when the turn's own evidence says the work
-    /// has moved, at step granularity, never mid-tool.
-    pub fn with_requery(mut self, requery: &'a dyn crate::ports::SteeringRequery) -> Self {
-        self.requery = Some(requery);
-        self
-    }
-
     /// The step cap this engine enforces, if its config carries one — the
     /// loop bound a host driving [`Engine::run_step`] itself must apply, since
     /// the cap belongs to the engine's config and a host tracking its own copy
@@ -582,18 +480,6 @@ impl<'a> Engine<'a> {
     #[must_use]
     pub fn max_steps(&self) -> Option<usize> {
         self.config.max_steps
-    }
-
-    /// Attach an extension hook bus, so the turn, step and model-call
-    /// boundaries this engine already crosses become observable (#1133).
-    /// Before this the only production emitter on the bus was the tool
-    /// registry — the catalog and `emit_named` existed, the call sites did
-    /// not, and they are here because this is where the boundaries are.
-    ///
-    /// Observer-only, by construction: see the `bus` field.
-    pub fn with_bus(mut self, bus: &'a crate::bus::HookBus) -> Self {
-        self.bus = Some(bus);
-        self
     }
 
     /// Emit one lifecycle event, if a bus is attached.
