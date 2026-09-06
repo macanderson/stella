@@ -42,10 +42,11 @@
 //!
 //! **Declared**, before the call: [`mutating_path`] reads the path out of the
 //! call's own arguments, and the tap claims it or refuses. It keys on the tool
-//! NAME, so it covers the shipped file tools `write_file`, `edit_file`,
-//! `delete_file` and the conventional `apply_edits`, plus any workspace custom
-//! tool adopting one of those names. An MCP tool can never match — its wire
-//! name carries the `mcp__<server>__` prefix.
+//! NAME, so it covers the shipped file tools `write_file`, `edit_file` and
+//! `delete_file`, the retired `apply_edits`, and any workspace custom tool
+//! adopting one of those names. An MCP tool can never match — its wire name
+//! carries the `mcp__<server>__` prefix. [`mutating_path`] is the list; this
+//! sentence is a summary of it and a test holds the two together.
 //!
 //! **Observed**, after the call: a shell command's writes cannot be read out
 //! of its arguments, and guessing them from a command line would refuse work
@@ -178,11 +179,25 @@ fn pid_alive(pid: u32) -> bool {
     }
 }
 
-/// The conventional tool names whose successful call mutates the path in
-/// their `path` input. No built-in carries these names; a workspace custom
-/// tool that adopts one is claim-gated by construction (an MCP tool cannot —
-/// its wire name is `mcp__`-prefixed), and anything else writes outside
-/// claim tracking (the witness/verify ladder covers it).
+/// The tool names whose successful call mutates the path in their `path`
+/// input. **This match is the coverage list**; prose that restates it drifts.
+///
+/// It keys on the tool NAME, not on a schema. Three of the arms are shipped
+/// built-ins — `write_file`, `edit_file` and `delete_file` are rows in
+/// `stella_tools::catalog` — so claim-on-first-write is live for the file
+/// CRUD surface, not merely for conventions. `apply_edits` is a retired name
+/// (`stella_tools::catalog::RETIRED_TOOL_NAMES`), kept because nothing
+/// reserves a retired name: a workspace custom tool may still adopt it, and
+/// an unclaimed batch edit is the failure this module exists to stop.
+///
+/// A workspace custom tool adopting any of these names is claim-gated by the
+/// same arm. An MCP tool never can — its wire name is `mcp__`-prefixed.
+/// Anything else writes outside declared claim tracking; [`ShellWatch`]'s
+/// observed route is what covers `bash`.
+///
+/// `the_declared_route_only_names_tools_the_catalog_knows` pins every arm
+/// here to that catalog, so a name can neither drift out of the tree nor be
+/// invented here.
 fn mutating_path<'i>(name: &str, input: &'i Value) -> Option<&'i str> {
     match name {
         "write_file" | "edit_file" | "delete_file" => input.get("path").and_then(Value::as_str),
@@ -1196,6 +1211,64 @@ mod tests {
                 assert!(message.contains(&live_holder), "{message}")
             }
             other => panic!("a live holder's claim must refuse, got {other:?}"),
+        }
+    }
+
+    /// Every name [`mutating_path`] accepts, as prose claims them.
+    const DECLARED_MUTATORS: &[&str] = &["write_file", "edit_file", "delete_file", "apply_edits"];
+
+    /// An input carrying a path in both shapes the match arms read.
+    fn mutating_input() -> Value {
+        serde_json::json!({
+            "path": "src/lib.rs",
+            "edits": [{ "path": "src/lib.rs", "old_string": "a", "new_string": "b" }],
+        })
+    }
+
+    /// **The coverage witness.** Every declared mutator is a name the tree
+    /// knows, and no other catalog tool takes the declared route.
+    ///
+    /// Without it the prose above and this match drift apart in silence: a
+    /// module doc claiming no built-in carries these names reads as a dead
+    /// mechanism, and this asserts three of them are live rows in
+    /// `catalog::ALL_NAMES`. A name invented here — a typo, or a tool renamed
+    /// in the catalog and not here — is in neither the live nor the retired
+    /// list and fails too.
+    #[test]
+    fn the_declared_route_only_names_tools_the_catalog_knows() {
+        use stella_tools::catalog::{ALL_NAMES, RETIRED_TOOL_NAMES};
+
+        let input = mutating_input();
+        for name in DECLARED_MUTATORS {
+            assert!(
+                mutating_path(name, &input).is_some(),
+                "`{name}` is claimed as a declared mutator and the match does not read it"
+            );
+            assert!(
+                ALL_NAMES.contains(name) || RETIRED_TOOL_NAMES.contains(name),
+                "`{name}` is neither a live tool nor a retired one; the catalog never knew it"
+            );
+        }
+
+        assert!(
+            ["write_file", "edit_file", "delete_file"]
+                .iter()
+                .all(|name| ALL_NAMES.contains(name)),
+            "the file CRUD tools ship, so this coverage reaches built-ins"
+        );
+        assert!(
+            RETIRED_TOOL_NAMES.contains(&"apply_edits"),
+            "apply_edits is kept as a retired name; if it came back the doc above is wrong"
+        );
+
+        for name in ALL_NAMES {
+            if DECLARED_MUTATORS.contains(name) {
+                continue;
+            }
+            assert!(
+                mutating_path(name, &input).is_none(),
+                "`{name}` takes the declared route and the doc above does not say so"
+            );
         }
     }
 }

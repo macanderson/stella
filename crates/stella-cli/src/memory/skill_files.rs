@@ -24,8 +24,8 @@ fn slash_path(path: &Path) -> String {
 struct FsSkillSource;
 
 impl SkillSource for FsSkillSource {
-    fn read_skill_files(&self, roots: &[String]) -> Vec<skills::SkillFile> {
-        let mut files = Vec::new();
+    fn read_skill_files(&self, roots: &[String]) -> skills::SkillFiles {
+        let mut found = skills::SkillFiles::default();
         for root in roots {
             // Flat layout: <root>/<slug>.md
             if let Ok(entries) = std::fs::read_dir(root) {
@@ -42,26 +42,41 @@ impl SkillSource for FsSkillSource {
                 paths.sort();
                 for path in paths {
                     if path.extension().is_some_and(|e| e == "md") {
-                        if let Ok(content) = std::fs::read_to_string(&path) {
-                            files.push(skills::SkillFile {
+                        match std::fs::read_to_string(&path) {
+                            Ok(content) => found.files.push(skills::SkillFile {
                                 path: slash_path(&path),
                                 content,
-                            });
+                            }),
+                            Err(error) => found.unreadable.push(skills::UnreadableSkillFile {
+                                path: slash_path(&path),
+                                reason: error.to_string(),
+                            }),
                         }
                     } else if path.is_dir() {
                         // Ecosystem layout: <root>/<slug>/SKILL.md
                         let nested = path.join("SKILL.md");
-                        if let Ok(content) = std::fs::read_to_string(&nested) {
-                            files.push(skills::SkillFile {
+                        match std::fs::read_to_string(&nested) {
+                            Ok(content) => found.files.push(skills::SkillFile {
                                 path: slash_path(&nested),
                                 content,
-                            });
+                            }),
+                            // A directory with no `SKILL.md` is not a skill
+                            // and never was — other agents keep working
+                            // directories here. One whose `SKILL.md` exists
+                            // and will not read is the loss this reports.
+                            Err(error) if nested.symlink_metadata().is_ok() => {
+                                found.unreadable.push(skills::UnreadableSkillFile {
+                                    path: slash_path(&nested),
+                                    reason: error.to_string(),
+                                });
+                            }
+                            Err(_) => {}
                         }
                     }
                 }
             }
         }
-        files
+        found
     }
 }
 
@@ -196,4 +211,79 @@ fn append_plugin_skills(workspace_root: &Path, loaded: &mut skills::LoadedSkills
 #[cfg(test)]
 pub(crate) fn load_workspace_skills(workspace_root: &Path) -> Vec<Skill> {
     load_workspace_skills_with_authority(workspace_root, true).skills
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `SKILL.md` in both layouts, one of them holding bytes that are not
+    /// UTF-8.
+    fn workspace_with_a_broken_skill() -> tempfile::TempDir {
+        let ws = tempfile::tempdir().expect("tmp");
+        let root = ws.path().join("skills");
+        std::fs::create_dir_all(root.join("nested")).expect("mkdir");
+        std::fs::write(
+            root.join("good.md"),
+            "---\nname: good\ndescription: d\n---\nbody",
+        )
+        .expect("write");
+        std::fs::write(root.join("flat-broken.md"), [0xffu8, 0xfe, 0xfd]).expect("write");
+        std::fs::write(root.join("nested/SKILL.md"), [0xffu8, 0xfe, 0xfd]).expect("write");
+        ws
+    }
+
+    /// **The unreadable-skill witness.** Both layouts report a file they
+    /// could not read, and the readable skill beside them still loads.
+    ///
+    /// Write either read site as `if let Ok(content)` and this fails by
+    /// construction: a file holding bad bytes is dropped inside the source
+    /// and `SkillFiles` has no second list for it to appear in. The reader
+    /// sees a short skill list and no word about the loss.
+    ///
+    /// Against `FsSkillSource` directly rather than
+    /// [`load_workspace_skills_with_authority`], which reads the user's real
+    /// `~/.stella/skills` and would make the result depend on the machine.
+    #[test]
+    fn an_unreadable_skill_file_is_reported_in_both_layouts() {
+        let ws = workspace_with_a_broken_skill();
+        let root = slash_path(&ws.path().join("skills"));
+
+        let found = FsSkillSource.read_skill_files(&[root]);
+
+        assert_eq!(found.files.len(), 1, "the readable skill still loads");
+        assert!(found.files[0].path.ends_with("good.md"));
+
+        let named: Vec<&str> = found
+            .unreadable
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect();
+        assert!(
+            named.iter().any(|path| path.ends_with("flat-broken.md")),
+            "the flat layout must name it: {named:?}"
+        );
+        assert!(
+            named.iter().any(|path| path.ends_with("nested/SKILL.md")),
+            "the nested layout must name it: {named:?}"
+        );
+        assert!(
+            found.unreadable.iter().all(|file| !file.reason.is_empty()),
+            "each one carries the reason the read gave"
+        );
+    }
+
+    /// A directory with no `SKILL.md` is not a skill and is not a loss.
+    /// Other agents keep working directories under `skills/`.
+    #[test]
+    fn a_directory_with_no_skill_file_reports_nothing() {
+        let ws = tempfile::tempdir().expect("tmp");
+        let root = ws.path().join("skills");
+        std::fs::create_dir_all(root.join("scratch")).expect("mkdir");
+
+        let found = FsSkillSource.read_skill_files(&[slash_path(&root)]);
+
+        assert!(found.files.is_empty());
+        assert!(found.unreadable.is_empty(), "{:?}", found.unreadable);
+    }
 }

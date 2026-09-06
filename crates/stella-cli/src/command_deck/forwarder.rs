@@ -48,6 +48,7 @@ pub(crate) fn warn_audit_record_incomplete(
     inbound: &UnboundedSender<Inbound>,
     lane: &str,
     persistence_complete: bool,
+    detail: &AuditWriteDetail<'_>,
 ) {
     if !persistence_complete {
         return;
@@ -55,12 +56,45 @@ pub(crate) fn warn_audit_record_incomplete(
     let _ = inbound.send(Inbound::Event {
         agent: lane.to_string(),
         event: AgentEvent::Error {
-            message: "store write failed — the audit record (files touched / memory \
-                      citations / outcome) for this execution is incomplete"
-                .to_string(),
+            message: audit_record_incomplete_message(detail),
             retryable: true,
         },
     });
+}
+
+/// What a deck close-out knows about a refused audit write.
+///
+/// The deck has no stderr, so it cannot call `warn_dropped_audit_writes`. It
+/// carries the same two facts that function reads and renders them into the
+/// lane's own error text.
+pub(crate) struct AuditWriteDetail<'a> {
+    /// The writes that were given up on, each with the error that refused it.
+    pub(crate) dropped: &'a [crate::agent::DroppedWrite],
+    /// The database file they were meant for, or `None` for a memory store.
+    pub(crate) db_path: Option<&'a std::path::Path>,
+}
+
+/// The lane's message: what went wrong, then the result code, the retries and
+/// the file.
+///
+/// The bare half — the record is incomplete — is a fact nobody can act on. A
+/// person watching a deck lane needs the SQLite code, because that is what
+/// says where to look: `DatabaseBusy` points at whatever else holds the file,
+/// `ReadOnly` at its mode, `Full` at the disk. A close-out with nothing
+/// dropped says only the first half, since the record is short for some other
+/// reason — a cancelled turn, an event that never reached the journal.
+fn audit_record_incomplete_message(detail: &AuditWriteDetail<'_>) -> String {
+    let head = "store write failed — the audit record (files touched / memory citations / \
+                outcome) for this execution is incomplete";
+    if detail.dropped.is_empty() {
+        return head.to_owned();
+    }
+    format!(
+        "{head}\n{}",
+        crate::agent::dropped_write_report(detail.db_path, detail.dropped)
+            .trim_end()
+            .to_owned()
+    )
 }
 
 /// Persist each event (via the shared [`agent::persist_event`] write path)
@@ -773,5 +807,62 @@ mod tests {
         assert_eq!(proposal.gate, "tests");
         assert_eq!(proposal.subject, "repair a_short_cycle_is_detected");
         assert_eq!(proposal.revision.to_string(), "r2");
+    }
+
+    /// **The deck-detail witness.** A lane whose audit write was refused
+    /// names the SQLite code, not just that the record is short.
+    ///
+    /// Send the head line alone and this fails by construction: "the audit
+    /// record is incomplete" is a fact a person watching the lane cannot act
+    /// on, while `ConstraintViolation` says where to look. The refusal is a
+    /// real one — the MCP usage table turns away a second row at a `seq` it
+    /// already holds.
+    #[test]
+    fn a_refused_deck_audit_write_names_the_sqlite_code() {
+        let store = stella_store::Store::in_memory().expect("store");
+        let id = store
+            .begin_execution("run", "p", "anthropic", "claude")
+            .expect("execution");
+        let root = tempfile::tempdir().expect("root");
+        let registry = stella_tools::ToolRegistry::new(root.path().to_path_buf());
+        stella_store::mcp_usage::push_usage(
+            &registry.mcp_usage_ledger(),
+            stella_store::mcp_usage::McpUsageRecord::new("github", "search_issues", "", 1),
+        );
+        store
+            .record_mcp_usage(
+                id,
+                &[stella_store::McpUsageRow {
+                    server: "github".into(),
+                    tool: "search_issues".into(),
+                    reason: String::new(),
+                    called_at_ms: 1,
+                }],
+            )
+            .expect("occupy the seq the closeout will write");
+
+        let end = crate::agent::record_execution_end(&store, id, &registry, "completed", 0.0, true);
+        assert!(!end.dropped.is_empty(), "the write must have been refused");
+
+        let message = super::audit_record_incomplete_message(&AuditWriteDetail {
+            dropped: &end.dropped,
+            db_path: store.db_path(),
+        });
+
+        assert!(message.contains("incomplete"), "{message}");
+        assert!(message.contains("MCP usage"), "{message}");
+        assert!(message.contains("ConstraintViolation"), "{message}");
+    }
+
+    /// A close-out with nothing dropped says only what it knows. The record is
+    /// short for some other reason, and there is no code to name.
+    #[test]
+    fn a_close_out_with_no_refused_write_says_only_that_much() {
+        let message = super::audit_record_incomplete_message(&AuditWriteDetail {
+            dropped: &[],
+            db_path: None,
+        });
+        assert!(message.contains("incomplete"), "{message}");
+        assert!(!message.contains("store:"), "{message}");
     }
 }

@@ -538,3 +538,53 @@ fn the_consent_text_names_the_script_and_the_witness() {
         "and what the witness does NOT establish: {text}"
     );
 }
+
+/// **The retired-claim witness.** The no-terminal refusal describes the
+/// draft-only path, and no source file in this crate still carries the claim
+/// it replaced.
+///
+/// Call enabling a self-authored tool the one approval in this protocol a
+/// machine never grants for itself and this fails by construction. ADR 0023
+/// makes that claim false: `foundry.autonomy = "auto"` has the foundry enable
+/// a tool with no human in the loop. The scan is what stops the sentence
+/// coming back somewhere else in the crate.
+#[test]
+fn the_no_terminal_refusal_describes_draft_only_mode() {
+    let message = no_terminal_to_ask("cat");
+    assert!(message.contains("draft-only"), "{message}");
+    assert!(message.contains("foundry.autonomy"), "{message}");
+    assert!(message.contains("--yes"), "{message}");
+
+    // Split so this file's own source does not match the scan below.
+    let retired = [concat!("never grants", " itself")];
+    for path in rust_sources(Path::new(env!("CARGO_MANIFEST_DIR")).join("src")) {
+        let body = std::fs::read_to_string(&path).expect("a source file is readable");
+        for claim in retired {
+            assert!(
+                !body.contains(claim),
+                "{} still claims `{claim}`; autonomy = \"auto\" grants it",
+                path.display()
+            );
+        }
+    }
+}
+
+/// Every `.rs` file under a directory.
+fn rust_sources(root: std::path::PathBuf) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    let mut pending = vec![root];
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                found.push(path);
+            }
+        }
+    }
+    found
+}

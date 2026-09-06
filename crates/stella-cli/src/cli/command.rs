@@ -342,8 +342,9 @@ pub(crate) enum Command {
         #[arg(long, value_name = "NAME", conflicts_with = "validate")]
         adopt: Option<String>,
 
-        /// Enable an adopted tool — the one approval in the protocol a
-        /// machine never grants itself. Refused if the tool's bytes changed
+        /// Enable an adopted tool by hand. This is the draft-only path. Take
+        /// it when `foundry.autonomy` is off, or when the sandbox the auto
+        /// path needs is missing. Refused if the tool's bytes changed
         /// since its witness ran, and refused with no terminal attached
         /// unless --yes says a human already read the declaration.
         #[arg(long, value_name = "NAME", conflicts_with_all = ["validate", "adopt"])]

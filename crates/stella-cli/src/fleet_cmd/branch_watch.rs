@@ -12,6 +12,10 @@
 //! those have finished. The parent crossed the 1500-line ceiling (#4821) and
 //! this is the seam that was already there.
 
+// Named here, not taken from `super::*`. The parent stopped using this type
+// when the report moved to `report.rs`.
+use stella_fleet::FleetRunReport;
+
 use super::*;
 
 /// One fleet branch's post-fanout verdict: the capped CI watch outcome plus

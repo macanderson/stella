@@ -764,6 +764,15 @@ pub(crate) fn start(
             budget.cap().unwrap_or_default(),
         )),
         WorkerKind::Claude => super::claude_worker::run_claude(&created.path, &prompt, worker),
+        // The file named a worker and did not parse. Running the default
+        // agent here is the substitution the typed setting exists to stop,
+        // and this loop runs unattended, so the warning the config reader
+        // already printed is not a stop.
+        WorkerKind::Unreadable => Err("stella.toml declares [self_driving.worker] and could not \
+                                       be read, so which agent you asked for is unknown. Fix the \
+                                       document — the parse error is on stderr above — and run \
+                                       again."
+            .to_owned()),
     };
     let change = tree_change(&created.path, &base);
     let outcome = classify(turn, change, &wt);

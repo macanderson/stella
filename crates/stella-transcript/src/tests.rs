@@ -935,6 +935,42 @@ fn html_escapes_model_output_that_looks_like_markup() {
     assert!(markup.contains("&lt;script&gt;"));
 }
 
+/// **The policy witness.** The standalone page declares what it may load,
+/// beside the escaping rather than instead of it.
+///
+/// Emit a head with only a charset and a viewport and this fails. The page is
+/// built from model and tool text. Escaping is then all that stands between
+/// that text and a browser. The export file has no server to send a header,
+/// so the page says it itself.
+#[test]
+fn the_standalone_page_declares_a_content_security_policy() {
+    let call = bash(
+        "echo",
+        &["</script><img src=x onerror=alert(1)>"],
+        Status::Ok,
+    );
+    let run = run_with(vec![step(call, 0)]);
+    let mut state = FoldState::new();
+    state.set_zoom(Zoom::Everything);
+
+    let page = html::render_page(&run, &state);
+
+    assert!(
+        page.contains(&format!(
+            "<meta http-equiv=\"Content-Security-Policy\" content=\"{}\">",
+            html::CSP
+        )),
+        "the page carries no policy: {page}"
+    );
+    assert!(
+        html::CSP.contains("default-src 'none'"),
+        "a page with no script and no fetches starts from nothing: {}",
+        html::CSP
+    );
+    assert!(!page.contains("<img src=x"), "the escaping still holds");
+    assert!(page.contains("&lt;/script&gt;"), "the escaping still holds");
+}
+
 #[test]
 fn the_word_tint_reaches_the_ansi_encoder_as_a_background_span() {
     let run = run_with(vec![step(edit("main.tex", "{15pt}\n", "{12pt}\n"), 0)]);

@@ -97,10 +97,21 @@ pub(super) fn close_dropped_execution(
     if outcome.write_ok {
         return;
     }
+    // The result code, the retries and the file, on the same terms the run
+    // path prints them: "not recorded" is a fact nobody can act on, and the
+    // code is what says where to look.
+    let detail = if outcome.dropped.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n{}",
+            agent::dropped_write_report(store.db_path(), &outcome.dropped).trim_end()
+        )
+    };
     let _ = in_tx.send(Inbound::Event {
         agent: LEAD.to_string(),
         event: AgentEvent::Error {
-            message: format!("store write failed — this {noun} execution was not recorded"),
+            message: format!("store write failed — this {noun} execution was not recorded{detail}"),
             retryable: true,
         },
     });
