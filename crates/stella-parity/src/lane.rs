@@ -21,8 +21,17 @@
 //! stamps a lane. It is also enough to fail when a site goes back to the
 //! builder path.
 //!
+//! The second column answers a different question: what a lane leaves behind
+//! when it dies. [`stella_protocol::ResumeAuthority`] decides who owes that —
+//! a lane that resumes itself owes nothing, a lane read by its parent or
+//! re-run by a supervisor owes a terminal frame. The authority is not stored
+//! here. It is read out of `BuiltinLane::resume_authority`, so a row can say
+//! what the lane *does about* its authority and cannot invent the authority
+//! itself.
+//!
 //! What a lane *binds* is the neighbouring table, [`capability`]. This one
-//! answers who names a lane; that one answers what a lane takes.
+//! answers who names a lane and what it leaves; that one answers what a lane
+//! takes.
 
 use stella_protocol::BuiltinLane;
 
@@ -51,13 +60,51 @@ pub enum LaneBinding {
     },
 }
 
-/// One builtin lane and how it is produced.
+/// What a lane's [`stella_protocol::ResumeAuthority`] obliges it to leave
+/// behind when it dies,
+/// and what proves the obligation is met.
+///
+/// The authority itself is not stored. It is read out of
+/// [`BuiltinLane::resume_authority`], so this column cannot claim one the type
+/// does not hold — the tests below check the two agree.
+#[derive(Debug)]
+pub enum FrameObligation {
+    /// The lane re-enters its own turn, so its record is a resume point and no
+    /// terminal frame is owed. Legal only under
+    /// [`stella_protocol::ResumeAuthority::Own`].
+    ResumesItself {
+        /// Where the lane picks its own turn back up, as prose for the reader.
+        how: &'static str,
+    },
+    /// The lane writes a terminal frame when it dies. Checked: the writer must
+    /// name `LaneRecorder::new`, the reader must name `TerminalFrame::read`,
+    /// and the witness must exist.
+    Frames {
+        /// The workspace-relative file that gives this lane a recorder.
+        writer: &'static str,
+        /// The workspace-relative file that reads the frame back, which is
+        /// what stops a write side landing with nothing to consume it.
+        reader: &'static str,
+        /// Name of the test proving a dead lane's frame reaches that reader.
+        witness: &'static str,
+    },
+    /// The lane owes a frame under its authority and writes none. The row
+    /// carries the reason and cites where the gap is decided.
+    Unframed {
+        /// Why no frame, with the issue.
+        reason: &'static str,
+    },
+}
+
+/// One builtin lane: how it is produced, and what it leaves when it dies.
 #[derive(Debug)]
 pub struct Lane {
     /// The builtin lane this row is about.
     pub lane: BuiltinLane,
     /// Whether something stamps it, and what proves that.
     pub binding: LaneBinding,
+    /// What this lane's resume authority obliges it to leave behind.
+    pub frame: FrameObligation,
 }
 
 /// Every builtin lane, with its producer or its written reason for having
@@ -74,6 +121,10 @@ pub const LANES: &[Lane] = &[
                   `lane_capabilities::lead`",
             witness: "every_lane_this_crate_assembles_declares_itself",
         },
+        frame: FrameObligation::ResumesItself {
+            how: "the deck's own session record. `session_persist::restore_conversation` \
+                  re-enters it at the next start of the same session",
+        },
     },
     Lane {
         lane: BuiltinLane::Resume,
@@ -82,6 +133,10 @@ pub const LANES: &[Lane] = &[
             how: "a turn replayed from a checkpoint, assembled in `agent::resume` from \
                   `lane_capabilities::resume`",
             witness: "every_lane_this_crate_assembles_declares_itself",
+        },
+        frame: FrameObligation::ResumesItself {
+            how: "this lane is the re-entry itself — `agent::resume` replays the checkpoint \
+                  a prior turn of the same session left",
         },
     },
     Lane {
@@ -92,6 +147,11 @@ pub const LANES: &[Lane] = &[
                   `lane_capabilities::sub_session`",
             witness: "every_lane_this_crate_assembles_declares_itself",
         },
+        frame: FrameObligation::Frames {
+            writer: "crates/stella-cli/src/subsession.rs",
+            reader: "crates/stella-cli/src/subsession/terminal_frame.rs",
+            witness: "a_lane_that_failed_leaves_its_parent_a_frame_naming_the_last_committed_step",
+        },
     },
     Lane {
         lane: BuiltinLane::SubagentFork,
@@ -101,6 +161,14 @@ pub const LANES: &[Lane] = &[
                   and the reason the engine carries the field at all",
             witness: "a_forked_child_stamps_the_subagent_fork_lane",
         },
+        frame: FrameObligation::Unframed {
+            reason: "`Engine::run_sub_agent` strips the checkpoint sink from the child config \
+                     it builds, so a fork holds no durable record to write a frame into, and \
+                     a killed child's talk reaches the parent only as the tool result the \
+                     dispatch returns. A fork also has no identity a later process can name — \
+                     it opens no execution row — so a key to bind a record under has to be \
+                     decided before this row can move. Refs #6201",
+        },
     },
     Lane {
         lane: BuiltinLane::FleetWorker,
@@ -109,6 +177,11 @@ pub const LANES: &[Lane] = &[
             how: "one fleet attempt, assembled in `fleet_cmd::run_task` from \
                   `lane_capabilities::fleet_attempt`",
             witness: "every_lane_this_crate_assembles_declares_itself",
+        },
+        frame: FrameObligation::Frames {
+            writer: "crates/stella-cli/src/fleet_cmd/durability.rs",
+            reader: "crates/stella-cli/src/fleet_cmd/durability.rs",
+            witness: "a_redispatched_attempt_re_enters_the_transcript_the_engine_discarded",
         },
     },
     Lane {
@@ -122,6 +195,12 @@ pub const LANES: &[Lane] = &[
                      deleting it would fail a recording made before the removal outright \
                      instead of demoting it. Refs #3881",
         },
+        frame: FrameObligation::Unframed {
+            reason: "no turn runs on this lane, so none can die on it. The row above says why \
+                     the case is kept for reading rather than writing, and a lane with no \
+                     producer owes nothing. A verification plugin that stages its turns owes \
+                     the frame under its own plugin lane. Refs #3881",
+        },
     },
     Lane {
         lane: BuiltinLane::ServeSession,
@@ -130,6 +209,11 @@ pub const LANES: &[Lane] = &[
             how: "a turn a remote host drives over the wire, assembled from \
                   `session::served_capabilities`",
             witness: "a_served_turn_declares_the_serve_session_lane",
+        },
+        frame: FrameObligation::ResumesItself {
+            how: "the host that opened the session drives its next turn, so the session's own \
+                  record is the resume point and the host is never a reader of somebody \
+                  else's report",
         },
     },
     Lane {
@@ -140,6 +224,10 @@ pub const LANES: &[Lane] = &[
                   `lane_capabilities::raw_turn`",
             witness: "each_door_that_is_not_the_deck_assembles_through_its_lane",
         },
+        frame: FrameObligation::ResumesItself {
+            how: "`SessionPresence::announce` binds the door's own session record, and \
+                  `stella resume` re-enters it",
+        },
     },
     Lane {
         lane: BuiltinLane::GoalArc,
@@ -148,6 +236,10 @@ pub const LANES: &[Lane] = &[
             how: "a judged goal arc, assembled in `agent::goal` and its wrapped arm from \
                   `lane_capabilities::goal_arc`",
             witness: "each_door_that_is_not_the_deck_assembles_through_its_lane",
+        },
+        frame: FrameObligation::ResumesItself {
+            how: "a goal arc runs on the door's own session record, the same one the raw \
+                  turn above binds, and `stella resume` re-enters it",
         },
     },
 ];
@@ -169,7 +261,7 @@ pub fn row(lane: BuiltinLane) -> Option<&'static Lane> {
 /// Shared with [`capability`], which reads the same files to check what each
 /// lane binds.
 #[cfg(test)]
-pub(crate) fn lane_sources() -> [(&'static str, &'static str); 4] {
+pub(crate) fn lane_sources() -> [(&'static str, &'static str); 7] {
     [
         // Where most of this workspace's lanes declare what they bind,
         // and where their shared witnesses live.
@@ -193,6 +285,21 @@ pub(crate) fn lane_sources() -> [(&'static str, &'static str); 4] {
             "crates/stella-serve/src/session.rs",
             include_str!("../../stella-serve/src/session.rs"),
         ),
+        // The deck lane's frame: the writer that gives it a recorder…
+        (
+            "crates/stella-cli/src/subsession.rs",
+            include_str!("../../stella-cli/src/subsession.rs"),
+        ),
+        // …and the reader the deck driver calls, with its witness.
+        (
+            "crates/stella-cli/src/subsession/terminal_frame.rs",
+            include_str!("../../stella-cli/src/subsession/terminal_frame.rs"),
+        ),
+        // The fleet attempt's frame, writer and reader in one file.
+        (
+            "crates/stella-cli/src/fleet_cmd/durability.rs",
+            include_str!("../../stella-cli/src/fleet_cmd/durability.rs"),
+        ),
     ]
 }
 
@@ -209,6 +316,8 @@ pub(crate) fn source_named(path: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use stella_protocol::ResumeAuthority;
 
     /// Completeness, from the compiler's side and the table's.
     ///
@@ -277,6 +386,100 @@ mod tests {
                 "witness for `{}` not found: {witness}",
                 row.lane,
             );
+        }
+    }
+
+    /// **The frame witness, and the `Own` arm's.** A row's obligation must
+    /// match the authority the type holds: only a self-resuming lane may say
+    /// it resumes itself, and every other lane must say what it writes or why
+    /// it writes nothing.
+    ///
+    /// This is the check that could not exist before `ResumeAuthority` did.
+    /// The three answers lived in prose — two doc comments naming a type the
+    /// tree did not have — so nothing could disagree with anything.
+    #[test]
+    fn every_lane_declares_the_frame_its_authority_obliges() {
+        for row in LANES {
+            let authority = row.lane.resume_authority();
+            let resumes_itself = matches!(row.frame, FrameObligation::ResumesItself { .. });
+            assert_eq!(
+                resumes_itself,
+                authority == ResumeAuthority::Own,
+                "`{}` resumes as `{authority}`, which does not match its frame row — a lane \
+                 read by somebody else owes a frame, and one that comes back to its own turn \
+                 must not leave a dead attempt's talk beside the live resume point",
+                row.lane,
+            );
+            assert_eq!(
+                !resumes_itself,
+                authority.owes_a_terminal_frame(),
+                "`{}` and its authority disagree about whether a frame is owed",
+                row.lane,
+            );
+        }
+    }
+
+    /// A `Frames` row's writer really gives the lane a recorder, its reader
+    /// really reads a frame back, and its witness exists.
+    ///
+    /// A write side with nothing reading it costs a serialization per dead
+    /// lane and buys nothing, so a row names its reader and this check holds
+    /// the name to a file that really reads a frame.
+    #[test]
+    fn every_framed_lane_writes_and_is_read() {
+        for row in LANES {
+            let FrameObligation::Frames {
+                writer,
+                reader,
+                witness,
+            } = &row.frame
+            else {
+                continue;
+            };
+            assert!(
+                source_named(writer).contains("LaneRecorder::new"),
+                "`{}` is declared to frame at {writer}, which gives no lane a recorder",
+                row.lane,
+            );
+            assert!(
+                source_named(reader).contains("TerminalFrame::read"),
+                "`{}`'s frame is declared read at {reader}, which reads none — a write side \
+                 with no reader is the trade this column exists to refuse",
+                row.lane,
+            );
+            let needle = format!("fn {witness}(");
+            assert!(
+                lane_sources()
+                    .iter()
+                    .any(|(_, source)| source.contains(&needle)),
+                "frame witness for `{}` not found: {witness}",
+                row.lane,
+            );
+        }
+    }
+
+    /// A lane that owes a frame and writes none says why, and cites where that
+    /// is decided. A lane with no producer at all can only be unframed: it
+    /// runs no turn, so none can die on it.
+    #[test]
+    fn an_unframed_lane_says_why_and_a_lane_with_no_producer_is_one() {
+        for row in LANES {
+            if let FrameObligation::Unframed { reason } = &row.frame {
+                assert!(
+                    reason.contains("Refs #"),
+                    "`{}` owes a frame, writes none, and cites nothing. A silence is what \
+                     this column exists to refuse.",
+                    row.lane,
+                );
+            }
+            if matches!(row.binding, LaneBinding::NoProducer { .. }) {
+                assert!(
+                    matches!(row.frame, FrameObligation::Unframed { .. }),
+                    "`{}` has no producer, so no turn of it can die — it cannot claim to \
+                     write anything",
+                    row.lane,
+                );
+            }
         }
     }
 

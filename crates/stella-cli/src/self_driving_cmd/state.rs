@@ -288,6 +288,9 @@ impl LoopState {
     fn closures_path(&self) -> PathBuf {
         self.dir.join("closures.json")
     }
+    fn proposals_path(&self) -> PathBuf {
+        self.dir.join("proposals.jsonl")
+    }
 
     /// Snapshot the ranked queue as the loop last saw it.
     ///
@@ -563,6 +566,31 @@ impl LoopState {
     pub fn write_tracker_closures(&self, ledger: &super::closures::Ledger) -> Result<(), String> {
         let value = serde_json::to_value(ledger).map_err(|e| e.to_string())?;
         write_json_atomic(&self.closures_path(), &value)
+    }
+
+    // -- curation proposals -------------------------------------------------
+
+    /// Every proposal the loop has written down, oldest first.
+    ///
+    /// A line that does not parse is skipped, the same rule the receipts
+    /// beside it read by: one bad line must not hide the rest.
+    pub(super) fn proposals(&self) -> Vec<super::curate::ProposalRow> {
+        read_jsonl(&self.proposals_path())
+            .values
+            .into_iter()
+            .filter_map(|value| serde_json::from_value(value).ok())
+            .collect()
+    }
+
+    /// Write down one proposal.
+    ///
+    /// Append-only, like the receipts. A proposal is a suggestion with its
+    /// evidence attached, so a later pass adds to the record rather than
+    /// rewriting what the loop said before — and nothing loads this file into
+    /// a session, which is what keeps a proposal from being a change.
+    pub(super) fn append_proposal(&self, row: &super::curate::ProposalRow) -> Result<(), String> {
+        let line = serde_json::to_string(row).map_err(|e| e.to_string())?;
+        append_line(&self.proposals_path(), &line)
     }
 
     // -- the run lifecycle ---------------------------------------------------

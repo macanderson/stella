@@ -32,6 +32,7 @@ pub(crate) mod config;
 // Only `branches_naming` is widened inside; the rest stays `pub(super)`.
 pub(crate) mod contention;
 mod convention;
+mod curate;
 mod deliver;
 mod drive;
 pub(crate) mod governor;

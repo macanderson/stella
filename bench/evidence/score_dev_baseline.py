@@ -172,6 +172,14 @@ def extract_trial(result_path: Path) -> dict[str, Any]:
         "binary_sha256": metadata.get("stella_binary_sha256"),
         "source_commit": metadata.get("stella_source_commit"),
         "harbor_version": metadata.get("stella_harbor_version"),
+        # Which loop the binary ran. `assurance_arm` above says which
+        # verification tiers the posture wants, not which loop ran. A
+        # launcher that drops the plugin selector can still make a full,
+        # believable arm that ran the wrong path. Only this field can catch
+        # that. A missing value stays `None`. `compare_arms.py
+        # --treatment-fired` refuses a run that cannot say which path it
+        # took, and a guessed default would hide that.
+        "loop_mode": metadata.get("stella_loop_mode"),
     }
 
 
