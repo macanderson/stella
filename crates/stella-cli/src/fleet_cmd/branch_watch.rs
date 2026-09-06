@@ -12,9 +12,8 @@
 //! those have finished. The parent crossed the 1500-line ceiling (#4821) and
 //! this is the seam that was already there.
 
-// Imported here rather than inherited through `super::*`: the parent stopped
-// naming the run report when the report rendering moved to `report.rs`, so
-// this module and the tests are its only remaining users.
+// Named here, not taken from `super::*`. The parent stopped using this type
+// when the report moved to `report.rs`.
 use stella_fleet::FleetRunReport;
 
 use super::*;
