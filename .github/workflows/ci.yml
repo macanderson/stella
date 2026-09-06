@@ -485,6 +485,15 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-reserved-paths.sh
 
+      # ADR 0030 says this repository ships no plugin SDK because the plugins
+      # under `plugins/` are the wire contract's canary: a test here spawns
+      # each of them, so a wire change reddens this run instead of a
+      # stranger's install. That only holds while every one of them has such
+      # a test.
+      - name: every first-party plugin is spawned by a test
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-plugin-graded.sh
+
       - name: no library crate returns Result<_, String>
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: python3 ./scripts/check-typed-errors.py

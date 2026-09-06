@@ -20,6 +20,29 @@ delivery loop's already-held authority expressible and showable before
 install, not to extract a pipeline stage; see its own README for what it is
 and, as pointedly, what it is not yet.
 
+## What an author writes against
+
+There is no plugin SDK, in Python or any other language, and one is not coming
+from this repository (ADR 0030, `#6148`). The whole author-facing contract is
+the `plugin.toml` manifest and the socket: a JSON request on stdin, a JSON
+response on stdout, the points the manifest declared.
+
+Three generated declarations of that wire are committed under
+[`../docs/wire/`](../docs/wire/), written by
+`crates/stella-plugin/src/bin/export_wrapper_wire.rs` and re-diffed by the
+gate's `wire-schema` step:
+
+| File | What it is |
+| --- | --- |
+| `wrapper.schema.json` | JSON Schema 2020-12 for the request and the response. No language owns it; this is the one to read from Python, Go or anything else. |
+| `wrapper.wire.json` | Every message in its fullest and its emptiest legal form, serialized by the same `Serialize` impls the transport uses. |
+| `wrapper.d.ts` | The same contract as TypeScript declarations. |
+
+`doc:wrapper-socket` is the prose behind them, and
+`macanderson/stella-examples` carries `verify-rs` / `verify-py` / `verify-ts` —
+one plugin written three times over this socket, with no library in any of the
+three.
+
 ## Why these are not workspace members
 
 `Cargo.toml`'s `members` list names twenty-five crates and none of them is
@@ -57,6 +80,16 @@ repository cannot fail the PR that broke it.
 `cargo test --workspace` — the gate's `test` step and `ci.yml`'s required job —
 runs the harnesses in `crates/stella-runtime/tests/`, which spawn these plugins
 through the host's own `SubprocessWrapper` and grade their answers against
-committed vectors. Nothing here is compiled by cargo; the plugins are data and
-a program, and the test is the consumer. A diff that touches only `plugins/**`
-is not a prose path, so it starts the Rust gate like any other change.
+committed vectors. Two live elsewhere for the surface they answer:
+`stella-hello`'s panels in `crates/stella-tui/tests/`, and `stella-selfdriving`'s
+consent text in `crates/stella-cli/tests/`. Nothing here is compiled by cargo;
+the plugins are data and a program, and the test is the consumer. A diff that
+touches only `plugins/**` is not a prose path, so it starts the Rust gate like
+any other change.
+
+That every one of them has such a test is checked rather than claimed:
+`scripts/check-plugin-graded.sh` (`make plugin-graded`, a gate step) fails when
+a directory here holds a `plugin.toml` and no `crates/*/tests/**/*.rs` names it
+outside a comment. It is what keeps ADR 0030's argument true — a wire change
+reddens this repository's CI rather than a stranger's install — as plugins are
+added.

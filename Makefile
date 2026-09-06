@@ -49,7 +49,8 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     bench-suites wire-paths \
                     tokens hue-separation contrast light-clamp transcript-surfaces prose \
                     line-citations \
-                    deck-fit-all-test deck-paths css-vars reserved-paths rendering-facts
+                    deck-fit-all-test deck-paths css-vars reserved-paths rendering-facts \
+                    plugin-graded
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 # The cargo steps that resolve or parse but never build. They are not in
@@ -551,6 +552,14 @@ rendering-facts: ## Assert no v2 rendering draws a fact design/tui-v2/SPEC.md re
 .PHONY: rendering-facts-test
 rendering-facts-test: ## Test the rendering-facts guard's directions (hermetic; not part of `gate`)
 	@./scripts/test-rendering-facts.sh
+
+.PHONY: plugin-graded
+plugin-graded: ## Assert every first-party plugin is spawned by an in-tree test (ADR 0030, #6148)
+	@./scripts/check-plugin-graded.sh
+
+.PHONY: plugin-graded-test
+plugin-graded-test: ## Test the plugin-graded guard's directions (hermetic; not part of `gate`)
+	@./scripts/test-plugin-graded.sh
 
 .PHONY: dead-code-allows
 dead-code-allows: ## Assert every #[allow(dead_code)] says why, and that the count only shrinks (#3949)

@@ -116,6 +116,7 @@ python3 ./scripts/check-deck-paths.py
 python3 ./scripts/check-css-vars.py
 ./scripts/check-reserved-paths.sh
 ./scripts/check-rendering-facts.sh
+./scripts/check-plugin-graded.sh
 ./scripts/check-wire-schema.sh
 ./scripts/check-lockfile-sync.sh
 cargo fmt --check
