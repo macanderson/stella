@@ -304,7 +304,10 @@ def main() -> int:
         )
         retired = sorted(baseline - set(unreached))
         for name in retired:
-            print(f"check-core-reachability: retired {name} — the engine reaches it now")
+            print(
+                f"check-core-reachability: retired {name} — "
+                "it left the crate, or the engine reaches it now"
+            )
         print(f"check-core-reachability: baseline holds {len(kept)} module(s)")
         return 0
 
@@ -329,7 +332,8 @@ def main() -> int:
 
     if reachable_now:
         print("check-core-reachability: baseline is STALE\n")
-        print("The engine now reaches these, so their baseline entries are dead:\n")
+        print("These left the crate or the engine reaches them, so their")
+        print("baseline entries are dead:\n")
         for name in reachable_now:
             print(f"  {name}")
         print("\nRun ./scripts/check-core-reachability.py --update and commit the diff.")

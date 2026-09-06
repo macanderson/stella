@@ -25,7 +25,7 @@ use stella_tools::search::Search;
 /// the truth.
 ///
 /// Depth 6 because `Facet::Importers` first appears at 5
-/// (`stella_core::search::facets_at`); at the default depth the assertion
+/// (`stella_tools::search::budget::facets_at`); at the default depth the assertion
 /// would pass by rendering neither list.
 #[tokio::test]
 async fn an_importer_added_mid_session_reaches_the_next_search() {
@@ -44,7 +44,7 @@ async fn an_importer_added_mid_session_reaches_the_next_search() {
         .expect("write imported");
 
     let tool = Search::with_config(stella_tools::search::SearchConfig {
-        depth: stella_core::search::Depth::new(6),
+        depth: stella_tools::search::budget::Depth::new(6),
         budget: 200_000,
     });
     let ctx = ToolCtx::bare(root.to_path_buf());

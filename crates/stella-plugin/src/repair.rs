@@ -8,10 +8,16 @@
 //! still has room to act on it (#1479).
 //!
 //! Room is the whole of the decision, so this module is where it is decided,
-//! and it is decided the same way [`crate::driver`]'s length-continuation
-//! allowance is: pure synchronous functions over owned data, with the caller
-//! supplying the measurements. Nothing here reads a clock, a budget guard, or
-//! a config file.
+//! and it is decided the same way the engine's length-continuation allowance
+//! is: pure synchronous functions over owned data, with the caller supplying
+//! the measurements. Nothing here reads a clock, a budget guard, or a config
+//! file.
+//!
+//! It lives here because the caller it serves is a verification plugin. The
+//! old caller was the staged pipeline, since deleted; `candidate_grant`, the
+//! other pure piece that survived, came to this crate too. Nothing in the
+//! workspace calls it today. Either a host wires it to the verification path
+//! or it goes; Refs #6264 is where that is decided.
 //!
 //! # Bounded three ways
 //!
@@ -33,7 +39,7 @@
 //! configured abstains rather than approving. A caller that declared no
 //! ceiling and no deadline therefore keeps its old bound exactly, which is
 //! the conservative default the same reasoning gives
-//! [`crate::driver::EngineConfig::turn_budget`]: only a caller that knows its
+//! `stella_core::driver::EngineConfig::turn_budget`: only a caller that knows its
 //! own limits can say there is room left, and inventing one here would spend
 //! money and wall clock nobody agreed to.
 //!
@@ -102,9 +108,9 @@ pub struct RepairHeadroom {
     /// (`BudgetGuard::headroom_usd`), or `None` when the guard is unmetered.
     pub budget_usd: Option<f64>,
     /// Wall clock left before the caller's own deadline — one whose
-    /// denominator matches what elapsed time is measured against (the
-    /// pipeline's `run_budget` covers a whole run; a per-turn allowance like
-    /// [`crate::driver::EngineConfig::turn_budget`] does not, #1507) — or
+    /// denominator matches what elapsed time is measured against (a run
+    /// budget covers a whole run; a per-turn allowance like
+    /// `stella_core::driver::EngineConfig::turn_budget` does not, #1507) — or
     /// `None` when the caller declared no deadline.
     pub wall_clock: Option<Duration>,
 }

@@ -61,9 +61,9 @@ mod tests;
 use std::path::Path;
 use std::sync::Mutex;
 
+use crate::tool_foundry::detect::{GapDetectionConfig, ShellInvocation, detect_tool_gaps};
 use async_trait::async_trait;
 use stella_context::{Clock, FixedClock};
-use stella_core::tool_foundry::{GapDetectionConfig, ShellInvocation, detect_tool_gaps};
 use stella_protocol::{
     CompletionMessage, CompletionRequestRef, CompletionResult, CompletionUsage, Provider,
     ProviderError,

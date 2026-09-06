@@ -17,6 +17,8 @@
 pub(crate) mod adopt;
 pub(crate) mod author;
 pub(crate) mod autonomy;
+// The pure detector [`gaps`] feeds: shell shapes in, proposals out, no I/O.
+pub(crate) mod detect;
 pub(crate) mod gaps;
 pub(crate) mod ops;
 

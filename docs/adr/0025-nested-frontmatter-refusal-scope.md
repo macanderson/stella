@@ -24,7 +24,7 @@ for any record that has one. A rule is policy. A mangled policy file that
 loads looks just like a sound one.
 
 A command or an agent is refused only for `tools:`. See
-`ExtensionProblem::NestedToolbelt` in `crates/stella-core/src/extensions.rs`.
+`ExtensionProblem::NestedToolbelt` in `crates/stella-cli/src/extensions/plan.rs`.
 
 Should the second loader copy the first and refuse every nested header?
 

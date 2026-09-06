@@ -19,8 +19,8 @@
 use std::fs;
 use std::path::Path;
 
+use crate::search::budget::{Depth, allocate, facets_at};
 use async_trait::async_trait;
-use stella_core::search::{Depth, allocate, facets_at};
 use stella_embed::{EmbedError, Embedder, EmbedderFingerprint, Embedding, SimilarityPosture};
 use stella_graph::CodeGraph;
 use stella_protocol::tool::ToolOutput;

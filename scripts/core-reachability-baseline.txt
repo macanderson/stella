@@ -5,10 +5,5 @@
 # under #5113 deletes a line here. It is meant to reach empty.
 #
 # Regenerate after an eviction:  ./scripts/check-core-reachability.py --update
-extensions
 goal
-repair
-scoreboard
-search
 subagent
-tool_foundry

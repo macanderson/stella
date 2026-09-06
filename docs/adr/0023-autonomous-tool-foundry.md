@@ -12,7 +12,7 @@ status: implemented
 
 ## Context
 
-`stella_core::tool_foundry::detect_tool_gaps` had no production caller: its
+`detect_tool_gaps` had no production caller: its
 only consumer compiled out of the shipped binary, while the live
 `stella tools --adopt/--enable/--foundry` verbs governed a staging directory
 nothing fed. `#3629` had retired the authoring connector unused. `#5433` put the

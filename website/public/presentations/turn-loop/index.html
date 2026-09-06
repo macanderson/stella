@@ -1260,7 +1260,7 @@ text{font-family:var(--sans);fill:var(--ink2)}
     <tr><td>The goal loop</td><td class="mono">stella-core/src/goal.rs</td></tr>
     <tr><td>The port boundary</td><td class="mono">stella-core/src/ports.rs</td></tr>
     <tr><td>Hook decision folding</td><td class="mono">stella-core/src/hooks/decision.rs</td></tr>
-    <tr><td>The tool foundry detector</td><td class="mono">stella-core/src/tool_foundry.rs</td></tr>
+    <tr><td>The tool foundry detector</td><td class="mono">stella-cli/src/tool_foundry/detect.rs</td></tr>
     <tr><td>Wrapper socket — before_turn/after_turn, judge/again, transports</td><td class="mono">crates/stella-runtime/src/wrapper/</td></tr>
     <tr><td>Plugin manifest, evidence, wire contract</td><td class="mono">crates/stella-plugin/src/{manifest,evidence,wire}.rs</td></tr>
     <tr><td>Door → wrapper choice</td><td class="mono">crates/stella-cli/src/wrapper_plugin.rs</td></tr>
@@ -2190,7 +2190,7 @@ var FCASES=[
     st.innerHTML=c.sig; g.appendChild(st);
     txt(g,500,116,c.ok?"✓ proposed as a reusable tool":"✗ no proposal",13.5,c.ok?"#5fcf94":"#f0736a","start",600);
     txt(g,500,138,c.ok?"the holes become its parameters":"and that is the correct answer",11.5,"#6f7c95","start");
-    setDetail(det,c.n,c.d,"crates/stella-core/src/tool_foundry.rs — proposes only; installs nothing");
+    setDetail(det,c.n,c.d,"crates/stella-cli/src/tool_foundry/detect.rs — proposes only; installs nothing");
   }
   FCASES.forEach(function(c,i){
     var b=document.createElement("button"); b.className="btn sm"; b.textContent=c.n;

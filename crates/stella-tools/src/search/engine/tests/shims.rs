@@ -16,7 +16,7 @@
 
 use std::path::Path;
 
-use stella_core::search::Depth;
+use crate::search::budget::Depth;
 use stella_graph::CodeGraph;
 use stella_protocol::tool::ToolOutput;
 

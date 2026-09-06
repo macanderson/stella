@@ -31,7 +31,7 @@ a clock.
 | 1 | Memory formation | `SessionMemory::reflect_and_record` — `crates/stella-cli/src/memory/learning.rs:57` | **exactly one** (`reflect_on_turn`, `learning.rs:66`) |
 | 2 | Skill learning | `SessionMemory::auto_create_skills` — `learning.rs:372` (typed `:606`, lexical `:756`) → `stella_learn::skills::mine_skill_candidates` (`crates/stella-learn/src/skills.rs:650`), `decide_auto_creation` (`:833`) | none |
 | 3 | Rules mining | `extract_reflection_observations` (`crates/stella-cli/src/memory/observations.rs:81`) → `induce_rule_proposals` (`crates/stella-cli/src/memory/rules_mining.rs:104`) → `write_rule` (`:188`) | none |
-| 4 | Tool foundry | `stella_core::detect_tool_gaps` — `crates/stella-core/src/tool_foundry.rs:198`; CLI adapter `crates/stella-cli/src/tool_foundry.rs:56` | none, **by design** |
+| 4 | Tool foundry | `detect_tool_gaps` — `crates/stella-cli/src/tool_foundry/detect.rs`; CLI adapter `crates/stella-cli/src/tool_foundry.rs` | none, **by design** |
 | 5 | Selection / lifecycle | `four_class_certification` and `time_lapse_certification` — `crates/stella-records/src/records/tests.rs:462`, `:709` | none — landed in #2306 |
 
 So exactly one seam needs a test double, and the double already exists:

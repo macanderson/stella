@@ -117,6 +117,10 @@ mod package;
 mod panel;
 mod program;
 mod progressive;
+/// Whether a refuted success claim earns another attempt, and what refuses
+/// it. Pure arithmetic over measurements the caller supplies; the caller is a
+/// verification plugin, which is why it sits in this crate.
+pub mod repair;
 mod runtime;
 mod seat;
 mod wire;

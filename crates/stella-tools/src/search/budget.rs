@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
 //! The depth ladder and the context budget behind the `search` tool — the
-//! decision half, with no I/O in it (AGENTS.md #2).
+//! decision half, with no I/O in it. It sits beside the tool it serves.
 //!
 //! # What this module decides
 //!
@@ -70,8 +70,8 @@ impl Depth {
     /// budget: signature, doc, callers and body could never render at any
     /// budget, a three-hit answer spent under a tenth of its allowance, and
     /// the agent then paid a `read_file` for the body the tool's own default
-    /// budget was explicitly sized to carry (`stella-tools`'
-    /// `DEFAULT_BUDGET_CHARS`). The budget is the honest governor — it
+    /// budget was explicitly sized to carry
+    /// (`engine::DEFAULT_BUDGET_CHARS`). The budget is the honest governor — it
     /// degrades gracefully and reports what it dropped, where a depth cap is
     /// silent — so the default intent is "everything affordable".
     pub const DEFAULT: Depth = Depth::MAX;

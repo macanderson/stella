@@ -14,7 +14,7 @@
 //! `ScriptedReflection::Lessons(Vec<ReflectionLesson>)` directly. Neither
 //! survives contact with the types:
 //!
-//! - `stella_core::tool_foundry::ShellInvocation` derives no serde impls, and
+//! - `crate::tool_foundry::detect::ShellInvocation` derives no serde impls, and
 //!   giving it one would put a fixture-format concern in the engine. [`TraceShell`]
 //!   is the two-field mirror, converted at the boundary.
 //! - A `ReflectionLesson` carries `occurred_at` and `task_id`, which the
@@ -26,8 +26,8 @@
 
 use std::collections::BTreeMap;
 
+use crate::tool_foundry::detect::ShellInvocation;
 use serde::{Deserialize, Serialize};
-use stella_core::tool_foundry::ShellInvocation;
 use stella_protocol::CompletionMessage;
 
 use crate::memory::LessonKind;

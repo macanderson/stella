@@ -1,12 +1,11 @@
-//! Filesystem glue for custom extensions (`stella_core::extensions`): the
-//! init-time symlink sync that adopts `.claude/`- and `.agents/`-authored
-//! commands/skills/agents into stella's own directories, and the loaders the
-//! chat surfaces use to offer them (⚡ slash-menu rows, `/agents`).
+//! Filesystem glue for custom extensions: the init-time symlink sync that
+//! adopts `.claude/`- and `.agents/`-authored commands/skills/agents into
+//! stella's own directories, and the loaders the chat surfaces use to offer
+//! them (⚡ slash-menu rows, `/agents`).
 //!
-//! All planning and parsing is pure and lives in `stella-core`; this module
-//! owns exactly the I/O halves: directory
-//! scanning with symlink detection, symlink creation, and definition-file
-//! reads.
+//! All planning and parsing is pure and lives in [`plan`]; this module owns
+//! exactly the I/O halves: directory scanning with symlink detection,
+//! symlink creation, and definition-file reads.
 //!
 //! ## Scopes
 //!
@@ -20,10 +19,15 @@
 //! `.stella`-side directories only — user-global first, workspace last, so a
 //! workspace definition wins a name collision (same precedence as skills).
 
+// The pure half: parsing a definition file and planning the sync. It only
+// plans and parses, so it can be tested with no filesystem at all. It moved
+// down from `stella-core`, which never called it from the step path.
+pub(crate) mod plan;
+
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
-use stella_core::extensions::{
+use crate::extensions::plan::{
     AgentDef, CommandDef, ExtensionKind, SyncEntry, SyncSource, agent_from_file, command_from_file,
     command_from_toml, expand_command, merge_by_name, plan_extension_sync,
 };
@@ -146,8 +150,8 @@ fn scan_source(source_root: &Path, kind: ExtensionKind) -> SyncSource {
 /// What already occupies one kind's destination directory: every entry
 /// basename — real files, dirs, and symlinks alike (a dangling symlink still
 /// occupies the name) — plus the names those definitions load under.
-fn existing_targets(dir: &Path, kind: ExtensionKind) -> stella_core::extensions::ExistingTargets {
-    let mut targets = stella_core::extensions::ExistingTargets::default();
+fn existing_targets(dir: &Path, kind: ExtensionKind) -> plan::ExistingTargets {
+    let mut targets = plan::ExistingTargets::default();
     for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
         if !name.starts_with('.') {
@@ -165,7 +169,7 @@ fn existing_targets(dir: &Path, kind: ExtensionKind) -> stella_core::extensions:
 /// this reason exists to fix (#104) is exactly a silently-adopted entry;
 /// folding it into "N already present" would also misdescribe it, since
 /// nothing with this name was actually present anywhere.
-fn describe_unloadable_skip(skip: &stella_core::extensions::SyncSkip) -> String {
+fn describe_unloadable_skip(skip: &plan::SyncSkip) -> String {
     format!(
         "{} ({}): namespaced directory — no {}.md or {} found, not loadable",
         skip.name,
@@ -242,7 +246,7 @@ impl SyncOutcome {
 /// Idempotent: symlink sources, already-present names, duplicate names, and
 /// unloadable entries (namespace directories with no nested definition
 /// file) are skipped by the plan
-/// (`stella_core::extensions::plan_extension_sync`).
+/// ([`plan::plan_extension_sync`]).
 fn sync_into(dest_root: &Path, source_roots: &[PathBuf]) -> SyncOutcome {
     let sources: Vec<SyncSource> = ExtensionKind::ALL
         .iter()
@@ -256,12 +260,12 @@ fn sync_into(dest_root: &Path, source_roots: &[PathBuf]) -> SyncOutcome {
         skipped: plan
             .skips
             .iter()
-            .filter(|s| s.reason != stella_core::extensions::SyncSkipReason::NotLoadable)
+            .filter(|s| s.reason != plan::SyncSkipReason::NotLoadable)
             .count(),
         unloadable: plan
             .skips
             .iter()
-            .filter(|s| s.reason == stella_core::extensions::SyncSkipReason::NotLoadable)
+            .filter(|s| s.reason == plan::SyncSkipReason::NotLoadable)
             .map(describe_unloadable_skip)
             .collect(),
         ..SyncOutcome::default()
@@ -443,12 +447,12 @@ fn read_definition_files(
 }
 
 /// One human-readable line for a parse diagnostic.
-fn describe_diagnostic(diag: &stella_core::extensions::ExtensionDiagnostic) -> String {
+fn describe_diagnostic(diag: &plan::ExtensionDiagnostic) -> String {
     let why = match diag.problem {
-        stella_core::extensions::ExtensionProblem::MissingName => "no usable name",
-        stella_core::extensions::ExtensionProblem::EmptyBody => "empty body",
-        stella_core::extensions::ExtensionProblem::Malformed => "not valid TOML",
-        stella_core::extensions::ExtensionProblem::NestedToolbelt => {
+        plan::ExtensionProblem::MissingName => "no usable name",
+        plan::ExtensionProblem::EmptyBody => "empty body",
+        plan::ExtensionProblem::Malformed => "not valid TOML",
+        plan::ExtensionProblem::NestedToolbelt => {
             "`tools:` is a nested mapping, which would have granted every tool — \
              write it as a list, like `tools: read, search`"
         }

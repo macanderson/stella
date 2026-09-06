@@ -9,12 +9,12 @@
 //! rating field — `execution_reflection.self_rating` — and it is deliberately
 //! not used: it is the model grading its own homework.
 //!
-//! The arithmetic lives in [`stella_core::scoreboard`] and is unit-tested there.
-//! This module reads rows, maps a PR status to a verdict, and renders.
+//! The arithmetic lives in [`stella_learn::scoreboard`] and is unit-tested
+//! there. This module reads rows, maps a PR status to a verdict, and renders.
 
 use colored::Colorize;
 
-use stella_core::scoreboard::{Event, Scoreboard, Trend, Verdict, VerdictSource, summarize};
+use stella_learn::scoreboard::{Event, Scoreboard, Trend, Verdict, VerdictSource, summarize};
 use stella_store::Store;
 use stella_store::scoreboard::SessionRollup;
 

@@ -399,7 +399,7 @@ async fn the_real_corpus_adapts_when_opted_in() {
 /// hard-coding a bound for it would be asserting a hope.
 #[tokio::test]
 async fn the_real_corpus_measures_the_foundry_inbox_when_opted_in() {
-    use stella_core::tool_foundry::{GapDetectionConfig, ShellInvocation, detect_tool_gaps};
+    use crate::tool_foundry::detect::{GapDetectionConfig, ShellInvocation, detect_tool_gaps};
 
     let Some(root) = opted_in_corpus_root() else {
         return;

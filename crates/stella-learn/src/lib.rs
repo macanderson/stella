@@ -7,7 +7,8 @@
 //! the text miner both of them share. `comparison` and `self_tuning` answer
 //! whether arm B beat arm A. `holdout` is the schedule that makes the arm
 //! they compare against, and `ledger` is the row those turns are filed under.
-//! `redact` strips secrets out of text.
+//! `scoreboard` is the yardstick they read. `redact` strips secrets out of
+//! text.
 //!
 //! No I/O. Every entry point is a plain function. A caller reads the file
 //! and hands the text in. `RuleSource` and `SkillSource` are the ports for
@@ -26,6 +27,7 @@ pub mod ledger;
 pub(crate) mod mining;
 pub mod redact;
 pub mod rules;
+pub mod scoreboard;
 pub mod self_tuning;
 pub mod skills;
 
