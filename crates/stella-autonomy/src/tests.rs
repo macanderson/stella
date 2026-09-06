@@ -751,30 +751,37 @@ fn starved_reads_the_controller_not_the_ledger() {
 }
 
 // ---------------------------------------------------------------------------
-// queue — ranked P0 > P1 > P2, oldest first inside a rank
+// queue — the superseded ranker must not come back
 // ---------------------------------------------------------------------------
 
+/// The witness for deleting `rank_defects`/`priority_rank`. They reproduced
+/// exactly the bug `priority.rs`'s module docs describe as the reason that
+/// module exists — an issue with no priority label sorted at rank 3, mixed
+/// below every real `P2`, instead of being separated out as unassessed.
+/// They had zero non-test callers once `priority::triage` replaced them,
+/// yet stayed `pub`, so the next reader reaching for the obvious `lib.rs`
+/// export got the wrong semantics back.
+///
+/// The fix *is* the removal, so the witness scans this crate's own source
+/// rather than calling an API — the same technique
+/// `stella-observatory`/`stella-serve`'s
+/// `the_two_copies_of_this_policy_have_not_drifted` already uses to hold a
+/// fact about text rather than about a running value. This fails on the
+/// prior `lib.rs`, which defines both as `pub`, and passes once they are
+/// gone.
 #[test]
-fn rank_beats_age_across_ranks_triage_counts_and_features_do_not() {
-    let issues: Vec<QueueIssue> = serde_json::from_value(json!([
-        {"number": 101, "title": "fresh P1",  "createdAt": "2026-08-01T00:00:00Z", "url": "u",
-         "labels": [{"name": "bug"}, {"name": "P1"}]},
-        {"number": 102, "title": "aged P1",   "createdAt": "2026-01-01T00:00:00Z", "url": "u",
-         "labels": [{"name": "bug"}, {"name": "P1"}]},
-        {"number": 103, "title": "the P0",    "createdAt": "2026-08-01T00:00:00Z", "url": "u",
-         "labels": [{"name": "bug"}, {"name": "P0"}]},
-        {"number": 104, "title": "untriaged", "createdAt": "2025-01-01T00:00:00Z", "url": "u",
-         "labels": [{"name": "triage"}]},
-        {"number": 105, "title": "a feature", "createdAt": "2025-01-01T00:00:00Z", "url": "u",
-         "labels": [{"name": "enhancement"}]}
-    ]))
-    .expect("fixture parses");
-
-    let ranked: Vec<u64> = rank_defects(issues, &crate::escalation::EscalationPolicy::default(), 0)
-        .iter()
-        .map(|i| i.number)
-        .collect();
-    assert_eq!(ranked, [103, 102, 101, 104]);
+fn rank_defects_and_priority_rank_are_not_a_public_export() {
+    let source = include_str!("lib.rs");
+    assert!(
+        !source.contains("pub fn rank_defects"),
+        "rank_defects must not come back as a public export -- rank a queue \
+         through priority::triage, which does not mis-sort an unranked issue"
+    );
+    assert!(
+        !source.contains("fn priority_rank"),
+        "priority_rank must not come back -- it mapped an unranked issue to \
+         rank 3, indistinguishable from a real P2"
+    );
 }
 
 // ---------------------------------------------------------------------------

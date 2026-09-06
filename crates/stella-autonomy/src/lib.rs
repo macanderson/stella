@@ -2,12 +2,13 @@
 //!
 //! `self-driving` is a cycle: fix a batch of defects, audit what is left, file
 //! what it cannot fix, benchmark against the comparator, ship, and repeat.
-//! Everything a machine can decide without a model lives here, so the model
-//! never has to re-derive it and cannot get it subtly wrong: the AIMD
-//! controller that sizes a cycle to its machine, the aperture ladder that
-//! keeps "no defects" a statement about a lens rather than the code, the
-//! dry-streak oracle that advances the ladder, the digest normalization the
-//! dedup set rests on, and the folds that turn the ledger into evidence.
+//! Everything a machine can decide without a model lives here. The model
+//! never has to re-derive it, and cannot get it subtly wrong. This crate
+//! holds the AIMD controller that sizes a cycle to its machine, the aperture
+//! ladder that keeps "no defects" a statement about a lens rather than the
+//! code, the dry-streak oracle that advances the ladder, the digest
+//! normalization the dedup set rests on, and the folds that turn the ledger
+//! into evidence.
 //!
 //! No I/O: every function here is synchronous over owned data — the same
 //! discipline AGENTS.md #2 requires of `stella-core`, kept here by choice
@@ -246,11 +247,11 @@ pub enum CycleOutcome {
     ResourceFail,
 }
 
-/// One AIMD step. Additive increase on a clean cycle (+2 batch; one more
-/// worktree only after three consecutive clean cycles, because parallelism is
-/// the knob that hurts most when it is wrong), multiplicative decrease on a
-/// resource failure (halve, and drop straight back to serial) — the
-/// controller shape that provably converges instead of oscillating.
+/// One AIMD step. A clean cycle brings additive increase: +2 batch, and one
+/// more worktree only after three clean cycles in a row, because parallelism
+/// is the knob that hurts most when it is wrong. A resource failure brings
+/// multiplicative decrease: halve, and drop straight back to serial. This is
+/// the controller shape that provably converges instead of oscillating.
 pub fn calibrate(cal: &mut Calibration, outcome: CycleOutcome, limits: &AimdLimits) {
     match outcome {
         CycleOutcome::Ok => {
@@ -647,10 +648,10 @@ pub struct CyclePlan {
 /// has right now) x demand (what the queue needs) x calibration (what
 /// previous cycles proved this box survives) -> a tier and concrete knobs.
 ///
-/// The rung order is the contract: floors and contention outrank everything,
-/// including heavy-class hardware; demand overrides supply in exactly one
-/// direction (a P0 is worth a degraded cycle, never a skipped one — it
-/// shrinks the batch to what will fit rather than standing down); and demand
+/// The rung order is the contract. Floors and contention outrank everything,
+/// including heavy-class hardware. Demand overrides supply in exactly one
+/// direction: a P0 is worth a degraded cycle, never a skipped one — it
+/// shrinks the batch to what will fit rather than standing down. Demand
 /// never upgrades the tier or widens the batch.
 pub fn plan_cycle(
     supply: Supply,
@@ -928,45 +929,6 @@ impl QueueIssue {
         self.has_label(ESCALATION_LABEL)
             && !escalation::may_retry(self.escalation.as_ref(), policy, now_unix)
     }
-
-    /// P0 ranks 0, P1 ranks 1, P2 ranks 2, everything else 3 — an aged P1 is
-    /// a worse thing to be carrying than a fresh one, so age only breaks ties
-    /// inside a rank.
-    pub fn priority_rank(&self) -> u8 {
-        ["P0", "P1", "P2"]
-            .iter()
-            .position(|p| self.has_label(p))
-            .map_or(3, |i| i as u8)
-    }
-}
-
-/// Filter to defects and rank them. `bug` and `triage` both count: an
-/// untriaged issue is a defect nobody has classified yet, not a non-defect.
-/// Feature work is excluded — this loop closes defects, and
-/// mixing the two makes the batch unreviewable.
-///
-/// An escalated issue is held back while its cooldown runs, and comes back on
-/// its own once that is over ([`QueueIssue::escalation_holds`]). The record in
-/// its body is how that survives across processes — `spent` in the drive loop
-/// is process-local and cannot.
-pub fn rank_defects(
-    issues: Vec<QueueIssue>,
-    escalation: &escalation::EscalationPolicy,
-    now_unix: i64,
-) -> Vec<QueueIssue> {
-    let mut defects: Vec<QueueIssue> = issues
-        .into_iter()
-        .filter(|i| {
-            (i.has_label("bug") || i.has_label("triage"))
-                && !i.escalation_holds(escalation, now_unix)
-        })
-        .collect();
-    defects.sort_by(|a, b| {
-        a.priority_rank()
-            .cmp(&b.priority_rank())
-            .then_with(|| crate::priority::by_age(&a.created_at, &b.created_at))
-    });
-    defects
 }
 
 // ---------------------------------------------------------------------------

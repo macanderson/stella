@@ -50,7 +50,7 @@
 //! `stella-protocol`. This crate depends on no workspace crate — that is what
 //! lets `stella-observatory` link its folds without linking the machinery it
 //! observes — so the references here are local newtypes and the caller maps.
-//! Exactly the trade [`crate::rank_defects`] already makes with
+//! Exactly the trade [`crate::priority::triage`] already makes with
 //! [`crate::QueueIssue`].
 
 use serde::{Deserialize, Serialize};

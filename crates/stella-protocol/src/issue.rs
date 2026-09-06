@@ -33,7 +33,7 @@
 //! - **There is no `priority` field.** Priority is expressed as a label here,
 //!   because that is how the trackers this must span actually carry it, and a
 //!   dedicated field would force every provider to invent a mapping into it.
-//!   Ranking reads labels (`stella_autonomy::rank_defects`).
+//!   Ranking reads labels (`stella_autonomy::priority::triage`).
 //!
 //! # Why the kernel is here and the ranking is not
 //!
@@ -372,7 +372,7 @@ pub trait IssueProvider: Send + Sync {
     ///
     /// **Order decides membership as soon as a backlog outgrows `limit`.**
     /// Ranking is the loop's job and is deterministic
-    /// (`stella_autonomy::rank_defects`). It runs after this read, though, over
+    /// (`stella_autonomy::priority::triage`). It runs after this read, though, over
     /// whatever arrived. A full page is picked by the tracker's own order and
     /// ranked only inside that set. A tracker that hands back the newest issues
     /// first therefore hides the oldest ones from the ranker. An old P0 is the
