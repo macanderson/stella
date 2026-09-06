@@ -1,21 +1,16 @@
-//! Schema versioning for `.stella/private/store.db`: the ordered [`MIGRATIONS`]
-//! list, the fresh-file bootstrap ([`create_latest_schema`]), and the
-//! transactional runner ([`apply_migration`]) that stamps
-//! `PRAGMA user_version` inside the same transaction as the reshape — a
-//! crash mid-migration rolls the file back to the old version and old
-//! shape, never a mix. The DDL itself lives in [`crate::ddl`]; the
-//! fresh-vs-legacy disambiguation and the step loop that drives this
-//! module live in `Store::migrate` (see the crate docs' "Schema
-//! versioning" section).
+//! Schema versioning for `.stella/private/store.db`: the ordered [`MIGRATIONS`] list, the fresh-file bootstrap
+//! ([`create_latest_schema`]), and the transactional runner ([`apply_migration`]) that stamps `PRAGMA user_version`
+//! inside the same transaction as the reshape — a crash mid-migration rolls the file back to the old version and old
+//! shape, never a mix. The DDL itself lives in [`crate::ddl`]; the fresh-vs-legacy disambiguation and the step loop
+//! that drives this module live in `Store::migrate` (see the crate docs' "Schema versioning" section).
 //!
 //! # Where a step lives
 //!
-//! This file holds the **ladder and nothing that can grow**: the index-ordered
-//! [`MIGRATIONS`] array with its append point, [`SCHEMA_VERSION`],
-//! [`create_latest_schema`], the shared probes, and the runner. Every step's
-//! body lives in a submodule, grouped by what it does to the schema — so the
-//! one file every migration PR must edit stays a table of contents rather
-//! than a 1500-line accumulation (#3397).
+//! This file holds the **ladder and nothing that can grow**: the index-ordered [`MIGRATIONS`] array
+//! with its append point, [`SCHEMA_VERSION`], [`create_latest_schema`], the shared probes, and the
+//! runner. Every step's body lives in a submodule, grouped by what it does to the schema — so the one
+//! file every migration PR must edit stays a table of contents rather than a 1500-line accumulation
+//! (#3397).
 //!
 //! | Submodule | Steps | What they have in common |
 //! |---|---|---|
@@ -31,12 +26,17 @@
 //! | [`task_contract`] | v28 → v29 | what a task promised, beside what became of it |
 //! | [`task_events`] | v38 → v39 | which task an event is evidence for |
 //! | [`agent_use_kind`] | v30 → v31 | which of two writers minted an `agent_uses` name |
-//! | [`enable_authority`] | v41 → v42 | which mechanism enabled a foundry tool |
+//! | [`partial_reflection`] | v31 → v32 | if the turn stopped early |
+//! | [`sub_agent_calls`], [`sub_agent_tool_calls`] | v32 → v33, v34 → v35 | which child made the call |
+//! | [`dispatched_executions`] | v35 → v36 | which turn started this run |
+//! | [`telemetry_call_identity`] | v36 → v37 | new turn and call id columns |
+//! | [`delivered_runs`] | v37 → v38 | whether the run shipped anything |
+//! | [`foundry_plane`] | v40 → v41 | new tool version and launch data |
+//! | [`enable_authority`] | v41 → v42 | which mechanism enabled a foundry tool. |
 //!
-//! A new step gets a new module (or joins the group whose shape it shares),
-//! declares itself here, and takes the next slot in the ladder. It does not
-//! get an inline function: an inline body is how this file reached the
-//! ratchet the first time.
+//! A new step gets a new module (or joins the group whose shape it shares), declares itself here, and
+//! takes the next slot in the ladder. It does not get an inline function: an inline body is how this
+//! file reached the ratchet the first time.
 
 use rusqlite::{Connection, TransactionBehavior, params};
 
