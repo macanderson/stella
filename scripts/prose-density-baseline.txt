@@ -24,9 +24,9 @@
 # many sentences. A file can be entirely within the first and three times
 # longer than it needs to be.
 crates/stella-autonomy 38.25
-crates/stella-cli 23.22
+crates/stella-cli 23.45
 crates/stella-context 18.11
-crates/stella-core 28.44
+crates/stella-core 29.97
 crates/stella-diag 25.12
 crates/stella-diff 27.80
 crates/stella-embed 18.00
@@ -34,18 +34,18 @@ crates/stella-engine 71.00
 crates/stella-fleet 24.15
 crates/stella-graph 21.56
 crates/stella-home 33.00
-crates/stella-learn 21.61
+crates/stella-learn 21.64
 crates/stella-mcp 18.73
 crates/stella-model 18.08
 crates/stella-observatory 22.28
 crates/stella-parity 35.00
-crates/stella-plugin 34.95
+crates/stella-plugin 35.08
 crates/stella-protocol 26.43
 crates/stella-records 24.33
 crates/stella-runtime 35.64
 crates/stella-serve 25.96
 crates/stella-store 24.08
-crates/stella-tools 35.11
+crates/stella-tools 34.99
 crates/stella-transcript 24.62
 crates/stella-tty 21.00
 crates/stella-tui 19.87
