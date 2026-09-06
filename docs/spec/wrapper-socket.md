@@ -487,11 +487,11 @@ not create.
 ## 7. What this design does not do
 
 - **It does not let a plugin emit a trace, or an event of its own.** A
-  plugin's facts cross as evidence, and the host turns them into typed journal
-  events that name their consumers — `AgentEvent::Proof`,
+  plugin's facts cross as evidence. The host turns them into typed journal
+  events that name their consumers: `AgentEvent::Proof`,
   `AgentEvent::Verdict`, `AgentEvent::GateBoard`. There is no free-form event
-  channel: the `plugin.<id>.*` namespace was retired with the trace fold it
-  pointed at, because nothing could send a name in it
+  channel. The `plugin.<id>.*` namespace went out with the trace fold it
+  pointed at, since nothing could send a name in it
   (`doc:pipeline-as-plugins` A9). A plugin writing its own journal would route
   around redaction and around the consumer ledger.
 - **It does not give a plugin an `Engine`, a provider, or a credential.** A

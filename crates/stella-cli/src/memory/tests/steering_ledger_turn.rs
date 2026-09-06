@@ -4,9 +4,9 @@
 //! `stella_core::steering::ledger` holds the arithmetic and tests it there.
 //! This asks the other half of the question. Every driver opens a turn
 //! through `inject_opening_recall`, so that is where the ledger is told a new
-//! turn began. Leave the call out and the arithmetic is still right and
-//! nothing ever resets: the spend grows all session, and an operator who
-//! raises the allowance is charged for every turn behind them.
+//! turn began. Leave the call out and the arithmetic is still right. Nothing
+//! resets, so the spend grows all session. An operator who raises the
+//! allowance is then charged for every turn behind them.
 
 use stella_core::steering::ledger::SteeringLedger;
 use stella_core::steering::tools::ToolBudget;
@@ -14,8 +14,8 @@ use stella_core::steering::tools::ToolBudget;
 use crate::memory::recall::RecalledBlock;
 use crate::memory::{RECALL_MARKER, inject_opening_recall};
 
-/// A block shaped the way a rendered one is — marked, so the injection's own
-/// dedup reads it as a recall block rather than as ordinary talk.
+/// A block shaped the way a rendered one is. It carries the marker, so the
+/// injection's dedup reads it as a recall block and not as ordinary talk.
 fn rendered(body: &str) -> String {
     format!("{RECALL_MARKER}\n{body}")
 }
@@ -32,9 +32,9 @@ fn block(text: &str) -> RecalledBlock {
 /// **The witness.** Two turns, two distinct blocks, one ledger.
 /// The allowance is charged for the turn that is open, not for both.
 ///
-/// Before the turn boundary the spend was a running total, so this read the
-/// sum of the two blocks. Twenty turns in, the sum was larger than the
-/// allowance itself and the tool array emptied.
+/// Before the turn boundary the spend was a running total. This test read the
+/// sum of both blocks. Twenty turns in, that sum passed the allowance and the
+/// tool array emptied.
 #[test]
 fn a_turn_charges_the_allowance_for_its_own_block_alone() {
     let ledger = SteeringLedger::new();

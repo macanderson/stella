@@ -26,16 +26,9 @@
 //! `/reload` that moves the budget settles a new one. That is a cold write an
 //! operator asked for.
 //!
-//! # The spend is one turn's, the answer is the session's
-//!
-//! The two halves have different clocks, and reading one on the other's is
-//! the bug this ledger shipped with. The allowance is what a single
-//! turn's volatile block may take, so the spend resets every turn
-//! ([`SteeringLedger::open_turn`]). The answer is cache prefix, so it is kept
-//! for as long as the budget it was asked for stands. Add every turn's spend
-//! up instead and the operator who raises the allowance is billed for the
-//! whole session: twenty turns of recall against a raised budget left less
-//! room than the old one, and far enough in, none at all.
+//! The two halves keep different clocks. The allowance is one turn's, so the
+//! spend resets each turn ([`SteeringLedger::open_turn`]). The answer is cache
+//! prefix, so it stands while the budget it was asked for stands.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};

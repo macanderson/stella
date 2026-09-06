@@ -201,19 +201,18 @@ impl OpeningRecall {
 /// reaches a turn, so no call site can inject the block and drop the seed.
 ///
 /// It is also where the block's cost reaches `ledger`, the allowance it
-/// shares with the tool array. Measured over the injected bytes, so what the
-/// plane records and what the provider is sent are one number; and charged
-/// only when the block is genuinely appended, since a block the dedup refuses
-/// is one the model is already carrying in the cached prefix, and this turn
-/// pays nothing to show it again.
+/// shares with the tool array. The cost is measured over the injected bytes,
+/// so what the plane records and what the provider is sent are one number. It
+/// is charged only when the block is really appended. A block the dedup
+/// refuses is one an earlier turn paid for, and spent here.
 ///
-/// **This is the turn boundary the allowance is measured on.** That
-/// allowance is what one turn's volatile block may take, and this is the one
-/// seam every driver reaches a turn through, so
-/// [`stella_core::steering::ledger::SteeringLedger::open_turn`] belongs here
-/// rather than threaded through each of them. A ledger that added every turn
-/// up instead charged an operator who raised the allowance for the whole
-/// session, and far enough in advertised no tools at all.
+/// **This is the turn boundary the allowance is measured on.** The allowance
+/// is what one turn's volatile block may take. Every driver opens a turn
+/// through this seam, so
+/// [`stella_core::steering::ledger::SteeringLedger::open_turn`] is called
+/// here rather than in each driver. A ledger that added every turn up would
+/// charge one turn for what the whole session spent, and far enough in would
+/// advertise no tools at all.
 pub(crate) fn inject_opening_recall(
     messages: &mut Vec<CompletionMessage>,
     recalled: RecalledBlock,
@@ -1433,10 +1432,9 @@ pub(super) fn render_today_section(unix_secs: i64) -> String {
 /// on. `None` (nothing relevant, or an A/B-suppressed turn) adds nothing
 /// and touches nothing.
 ///
-/// Answers whether the block was appended, which is what
-/// [`inject_opening_recall`] charges the steering ledger on: a block the
-/// dedup below refuses costs this turn nothing, because the model is already
-/// carrying it.
+/// Answers whether the block was appended. That is what
+/// [`inject_opening_recall`] charges the steering ledger on. A block the dedup
+/// below refuses costs this turn nothing, since the model already carries it.
 #[must_use]
 pub fn inject_recall_block(messages: &mut Vec<CompletionMessage>, block: Option<String>) -> bool {
     let is_marker =

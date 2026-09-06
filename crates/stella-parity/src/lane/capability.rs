@@ -379,7 +379,7 @@ const SERVE_HOST_OWNS_CALLS: &str = "the host owns the model calls, so this is t
                                      rather than this engine's";
 
 lane_capabilities! {
-    // The deck's lead turn. The one lane that binds the re-query plane.
+    // The deck's lead turn. The CLI lane that binds the re-query plane.
     Lead => LaneOrigin::Builtin,
         Some(LaneSite {
             file: "crates/stella-cli/src/lane_capabilities.rs",
@@ -548,10 +548,7 @@ lane_capabilities! {
         calibration: SeamClaim::bound("calibration,", SERVE_SEAMS),
         gate: SeamClaim::bound("gate: Some(gate)", SERVE_SEAMS),
         steering: SeamClaim::bound("steering: Some(steering)", SERVE_SEAMS),
-        requery: SeamClaim::deferred(
-            "Refs #6158",
-            "a decision on whether the host supplies a re-query port over the wire",
-        ),
+        requery: SeamClaim::bound("requery,", SERVE_SEAMS),
         bus: SeamClaim::bound("bus,", SERVE_SEAMS),
         outcomes: SeamClaim::declined(SERVE_HOST_OWNS_CALLS),
         fallback: SeamClaim::declined(SERVE_HOST_OWNS_CALLS),
