@@ -64,7 +64,9 @@ pub(super) fn seen(
     if !digest.is_empty() {
         println!("{}", stella_autonomy::finding_digest(&digest.join(" ")));
     } else if !new.is_empty() {
-        let known = st.seen();
+        // The live set, so this verb answers what the filing paths would do.
+        // A digest whose issue closed on a cited fix reads as new again.
+        let known = st.live_seen();
         for d in new {
             if !known.iter().any(|k| k == d) {
                 println!("{d}");
