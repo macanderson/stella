@@ -118,7 +118,7 @@ pub async fn warm_file_vectors(root: &Path, embedder: &dyn Embedder, limit: usiz
 /// a long pass can be narrated while it happens instead of summarised after.
 /// Display-only — the callback cannot affect the pass.
 ///
-/// Generic over the callback, for the reason [`warm_opened`] gives. Each
+/// Generic over the callback, for the reason `warm_opened` gives. Each
 /// caller's closure decides whether the future is `Send`.
 pub async fn warm_file_vectors_with_progress<P: FnMut(usize) + ?Sized>(
     root: &Path,
