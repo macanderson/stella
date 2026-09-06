@@ -193,6 +193,19 @@ test-cli: ## Test stella-cli only (the shipping binary)
 test-protocol: ## Test stella-protocol only (shared types)
 	cargo test -p stella-protocol
 
+# `doc:roleless-core` §9's acceptance script (#6144, epic #3903). It installs a
+# fixture plugin that declares one stage and one role, runs a turn with it off,
+# on, and on with a model assigned to its seat, and checks the two comparisons
+# §9 names. A scripted provider answers every call, so it costs no money and
+# needs no key.
+#
+# Not a `make gate` step: `cargo test --workspace` already runs it, and this
+# target exists so a reader can watch the observations rather than only the
+# verdict — `replay-learning` below is the same shape for the same reason.
+.PHONY: roleless-acceptance
+roleless-acceptance: ## Run doc:roleless-core §9's acceptance script and print what it saw (#6144)
+	cargo test -p stella-cli --test roleless_core_acceptance_cli -- --nocapture
+
 # The trace-replay learning harness (#2304, `doc:trace-replay-learning-harness`
 # §8). Deliberately NOT a `make gate` step: the assertions are ordinary in-crate
 # tests already covered by the gate's existing `test` step, and a target whose
