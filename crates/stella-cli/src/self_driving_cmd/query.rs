@@ -39,7 +39,15 @@ pub(super) fn aperture(
                 Tooling::Command { run, .. } => collapse_ws(run),
                 Tooling::ModelOnly { note } => format!("model-only — {}", collapse_ws(note)),
             };
-            println!("  {marker} {:<13} {backing}{heavy}", l.name);
+            // Which lens the driver can run and read on its own, and which one
+            // waits for the model-driven audit phase.
+            let driver_reads = match l.tooling {
+                Tooling::Command {
+                    reading: Some(_), ..
+                } => " [driver reads]",
+                _ => "",
+            };
+            println!("  {marker} {:<13} {backing}{driver_reads}{heavy}", l.name);
         }
         let marker = if open == stella_autonomy::WATCH {
             "*"
