@@ -162,18 +162,40 @@ elif ! open_prs="$(gh pr list --state open --limit "$limit" \
   exit 0
 fi
 
-# The last `dod-check` run on this head, and only if it failed. A re-run
-# updates the run in place, so `[0]` is that run, and its conclusion is the
-# verdict the branch rules read.
+# The last `dod-check` run on this head. A re-run updates the run in place, so
+# `[0]` is that run, and its conclusion is the verdict the branch rules read.
+#
+# Three answers, because "nothing failed" and "the lookup did not answer" are
+# different facts. One empty string for both lets the caller read an
+# unanswered lookup as a passing check and print `its dod check is not
+# failing` about a check it never read — which is how a pull request with
+# every box ticked stayed red through three sweeps that each reported success.
+# Prints the run id when the last run failed, `none` when it did not, and `?`
+# when the question went unanswered.
 failed_run_for() {
   head="$1"
   if [ "$use_fixture" -eq 1 ]; then
+    # No entry for this head is the green case, matching the live `none`. A
+    # fixture entry of `?` is how a test drives the unanswered branch.
     printf '%s\n' "$fixture_failed_runs" |
-      awk -v head="$head" '$1 == head { print $2; exit }'
+      awk -v head="$head" '$1 == head { print $2; hit = 1; exit }
+                           END { if (!hit) print "none" }'
     return 0
   fi
-  gh api "repos/{owner}/{repo}/actions/workflows/$workflow/runs?head_sha=$head&per_page=20" \
-    --jq '.workflow_runs[0] | select(.conclusion == "failure") | .id' 2>/dev/null || true
+  if ! run_answer="$(gh api \
+    "repos/{owner}/{repo}/actions/workflows/$workflow/runs?head_sha=$head&per_page=20" \
+    --jq '.workflow_runs[0] | if .conclusion == "failure" then .id else "none" end' \
+    2>/dev/null)"; then
+    printf '?\n'
+    return 0
+  fi
+  # An empty body from a call that exited 0 is the same unknown: the filter
+  # above yields `none` for a head with no runs at all, so nothing legitimate
+  # comes back blank.
+  case "$run_answer" in
+  "") printf '?\n' ;;
+  *) printf '%s\n' "$run_answer" ;;
+  esac
 }
 
 rerun=0
@@ -186,10 +208,19 @@ while read -r pr head rest; do
   printf '%s' "$rest" | grep -Eq "#${issue}([^0-9]|\$)" || continue
   named=$((named + 1))
   run="$(failed_run_for "$head")"
-  if [ -z "$run" ]; then
+  case "$run" in
+  "?" | "")
+    # Fail open, out loud. Reporting this as a passing check would say the
+    # checklist is met on evidence this never read.
+    note "could not read the dod check on PR #$pr (head $head), so nothing was"
+    note "run again for it. A push to the branch still re-runs it."
+    continue
+    ;;
+  none)
     say "PR #$pr names the issue and its dod check is not failing — left alone."
     continue
-  fi
+    ;;
+  esac
   if [ "$dry_run" -eq 1 ]; then
     say "would re-run the dod check on PR #$pr (head $head, run $run)"
     rerun=$((rerun + 1))
