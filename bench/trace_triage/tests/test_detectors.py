@@ -13,9 +13,14 @@ make, because every one of them has been got wrong in this repository before:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from detectors import run_all
 from fixtures import err, ok, proof, tool_pair, write_run
 from run_trace import load_run
+
+# `tests/test_detectors.py` -> `tests` -> `trace_triage` -> `bench` -> repo root.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _findings(root, code):
@@ -533,3 +538,24 @@ def test_every_detector_declares_its_contract():
         assert det.code and det.title, det
         assert det.search_terms, f"{det.code} needs terms for the de-duplication search"
         assert det.code == det.code.lower().replace(" ", "-")
+
+
+def test_every_declared_site_names_a_file_that_exists():
+    """`site` is hashed into the fingerprint, so a stale string is not
+    prose — it silently repartitions every issue this detector has ever filed.
+
+    This catches a `site` left stale after a rename; it cannot catch the
+    opposite direction (a rename that updates `site` to match, which changes
+    the digest and is a separate problem). A detector with nothing to
+    implicate declares `site=""`, which this skips by design — see
+    `detectors.py`'s "Adding a detector".
+    """
+    from detectors import DETECTORS
+
+    missing = [
+        (det.code, det.site) for det in DETECTORS if det.site and not (_REPO_ROOT / det.site).is_file()
+    ]
+    assert not missing, (
+        "these detectors declare a `site` that names no file in the tree — "
+        f"fix the string or the file, never leave it stale: {missing}"
+    )

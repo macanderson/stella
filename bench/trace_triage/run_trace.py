@@ -49,6 +49,23 @@ from typing import Any
 
 S3_BUCKET = "arenabench-artifacts-578673726240"
 
+# Named once so every read below, and `--fetch`'s include-list, spell each
+# filename the same way. `result.json` and `results.json` hold different
+# data — see `_exception_types` for why both names stay on the list.
+_RESULTS_JSON = "results.json"
+_RESULT_JSON = "result.json"
+_REWARD_TXT = "reward.txt"
+_EXCEPTION_TXT = "exception.txt"
+_EVENTS_JSONL = "stella-events.jsonl"
+
+READ_FILENAMES: tuple[str, ...] = (
+    _RESULTS_JSON,
+    _RESULT_JSON,
+    _REWARD_TXT,
+    _EXCEPTION_TXT,
+    _EVENTS_JSONL,
+)
+
 # Event tags this module indexes eagerly. Everything else stays in `events` and
 # is still reachable — the index is a convenience, never a filter.
 _INDEXED = (
@@ -208,7 +225,7 @@ class Trial:
 
     @property
     def events_path(self) -> Path:
-        return self.root / "agent" / "stella-events.jsonl"
+        return self.root / "agent" / _EVENTS_JSONL
 
 
 @dataclass
@@ -272,7 +289,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _read_reward(task_dir: Path) -> float | None:
-    path = task_dir / "verifier" / "reward.txt"
+    path = task_dir / "verifier" / _REWARD_TXT
     try:
         return float(path.read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
@@ -321,10 +338,10 @@ def load_trial(run_id: str, run_root: Path, trial_uuid: str, task_dir: Path) -> 
         reward=_read_reward(task_dir),
         # The job directory is the task directory's parent.
         exception_types=_exception_types(
-            _read_json(task_dir.parent / "result.json"), task_dir.name
+            _read_json(task_dir.parent / _RESULT_JSON), task_dir.name
         ),
     )
-    exception_path = task_dir / "exception.txt"
+    exception_path = task_dir / _EXCEPTION_TXT
     if exception_path.exists():
         trial.exception_text = exception_path.read_text(encoding="utf-8", errors="replace")
 
@@ -414,7 +431,7 @@ def load_run(root: Path, run_id: str | None = None) -> Run:
     root = root.resolve()
     run = Run(run_id=run_id or root.name, root=root)
     for trial_dir in sorted(p for p in root.iterdir() if p.is_dir()):
-        results = _read_json(trial_dir / "results.json")
+        results = _read_json(trial_dir / _RESULTS_JSON)
         if not run.declared_worker_model:
             worker, roles, sut_ref, name, bare = _declared_seat(results)
             if worker:

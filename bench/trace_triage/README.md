@@ -87,6 +87,16 @@ issue never named, a higher rate — instead of restating the issue. When an
 occurrence adds nothing, nothing is posted; the run is still recorded so the
 next comparison is against the truth.
 
+`posture` says whether a fingerprint should still be *proposed* as a new
+issue. `tracked` is the default: search, then comment or open one. `accepted`
+and `wontfix` mean a human read this finding. It is real. It should stop
+coming back. Neither needs a real `issue` number — a fake one would be a lie.
+
+Set `posture` by hand (add an entry with `issue: null` if none exists) and
+every run after that prints a `SUPPRESSED (ledger posture)` decision. It
+never searches, comments, or opens an issue, but it still records the run.
+Delete `posture` later and the record is still true.
+
 ## Detectors
 
 | Code | Fires on |

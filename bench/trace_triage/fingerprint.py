@@ -63,6 +63,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from dataclasses import field as dc_field
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -130,6 +131,21 @@ def markers_in(text: str) -> list[str]:
     return re.findall(r"<!--\s*stella-trace-fingerprint:\s*(fp_[0-9a-f]{12})\s*-->", text)
 
 
+class LedgerPosture(StrEnum):
+    """Should the tool still propose this fingerprint as a new issue?
+
+    `TRACKED` is the old default. `plan_actions` still searches and files.
+
+    `ACCEPTED` and `WONTFIX` mean a human read the finding. It is real. It
+    should stop coming back as a new issue. `issue` may stay `None`. Binding
+    it to a fake number just to hide it would be a lie.
+    """
+
+    TRACKED = "tracked"
+    ACCEPTED = "accepted"
+    WONTFIX = "wontfix"
+
+
 @dataclass
 class LedgerEntry:
     """One defect's binding, plus the incidence already on the record.
@@ -149,10 +165,16 @@ class LedgerEntry:
     first_seen_run: str
     note: str = ""
     source: str = "auto"
+    posture: LedgerPosture = LedgerPosture.TRACKED
     runs: list[str] = dc_field(default_factory=list)
     tasks: list[str] = dc_field(default_factory=list)
     peak_count: int = 0
     peak_denominator: int = 0
+
+    @property
+    def silenced(self) -> bool:
+        """Whether this posture stops the tool proposing a new issue."""
+        return self.posture in (LedgerPosture.ACCEPTED, LedgerPosture.WONTFIX)
 
     def novelty(self, run_id: str, tasks: Iterable[str], count: int, denominator: int) -> list[str]:
         """What this occurrence adds that the record did not already have."""
@@ -194,11 +216,22 @@ class LedgerEntry:
             "first_seen_run": self.first_seen_run,
             "note": self.note,
             "source": self.source,
+            "posture": self.posture.value,
             "runs": self.runs,
             "tasks": self.tasks,
             "peak_count": self.peak_count,
             "peak_denominator": self.peak_denominator,
         }
+
+
+def _posture_or_default(raw: Any) -> LedgerPosture:
+    """`raw` as a `LedgerPosture`, or `TRACKED` when it is absent or unknown."""
+    if isinstance(raw, str):
+        try:
+            return LedgerPosture(raw)
+        except ValueError:
+            pass
+    return LedgerPosture.TRACKED
 
 
 class Ledger:
@@ -214,6 +247,10 @@ class Ledger:
     def __init__(self, path: Path = LEDGER_PATH) -> None:
         self.path = path
         self.entries: dict[str, LedgerEntry] = {}
+        # Every top-level key `save()` does not manage — today just
+        # `_comment`, a note a human writes at the top of the file. `save()`
+        # writes this back. Before this fix, `--apply` deleted it.
+        self._extra: dict[str, Any] = {}
         self._load()
 
     def _load(self) -> None:
@@ -223,6 +260,10 @@ class Ledger:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return
+        if isinstance(raw, dict):
+            self._extra = {
+                key: value for key, value in raw.items() if key not in ("schema", "updated_at", "fingerprints")
+            }
         for digest, value in (raw.get("fingerprints") or {}).items():
             if not isinstance(value, dict):
                 continue
@@ -236,6 +277,9 @@ class Ledger:
                 first_seen_run=str(value.get("first_seen_run") or ""),
                 note=str(value.get("note") or ""),
                 source=str(value.get("source") or "auto"),
+                # An old file has no `posture` key. A typo has a bad one. Both
+                # fall back to `tracked` rather than raising.
+                posture=_posture_or_default(value.get("posture")),
                 runs=[str(r) for r in (value.get("runs") or [])],
                 tasks=[str(t) for t in (value.get("tasks") or [])],
                 peak_count=int(value.get("peak_count") or 0),
@@ -277,12 +321,13 @@ class Ledger:
         return entry
 
     def save(self) -> None:
-        payload = {
+        payload: dict[str, Any] = {
             "schema": 1,
             "updated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "fingerprints": {
-                digest: self.entries[digest].to_json() for digest in sorted(self.entries)
-            },
+        }
+        payload.update(self._extra)
+        payload["fingerprints"] = {
+            digest: self.entries[digest].to_json() for digest in sorted(self.entries)
         }
         self.path.write_text(
             json.dumps(payload, indent=2, sort_keys=False) + "\n", encoding="utf-8"

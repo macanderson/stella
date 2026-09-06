@@ -22,8 +22,10 @@ that are re-renderings of the event stream:
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import subprocess
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -38,19 +40,17 @@ from issues import (  # noqa: E402
     apply_actions,
     plan_actions,
 )
-from run_trace import S3_BUCKET, Run, load_run  # noqa: E402
+from run_trace import READ_FILENAMES, S3_BUCKET, Run, load_run  # noqa: E402
 
 DEFAULT_MIRROR = Path(".trace-mirror")
 
 # What a mirror needs. `stella-run.json` and `stella-run.stdout.txt` are
 # re-renderings of the event stream and can each exceed 70 MB per trial, so
 # fetching them would cost gigabytes to answer questions the JSONL answers.
-_INCLUDES = (
-    "*stella-events.jsonl",
-    "*reward.txt",
-    "*exception.txt",
-    "*/result.json",
-    "*/results.json",
+#
+# The `load_run` half is built from `run_trace.READ_FILENAMES`, not copied
+# by hand, and a test checks this. The other four names are extra.
+_INCLUDES: tuple[str, ...] = tuple(f"*{name}" for name in READ_FILENAMES) + (
     "*config.json",
     "*spec.json",
     "*seat.json",
@@ -58,9 +58,30 @@ _INCLUDES = (
 )
 
 
-def fetch_run(run_id: str, mirror: Path) -> Path:
-    destination = mirror / run_id
-    destination.mkdir(parents=True, exist_ok=True)
+def missing_includes(argv: list[str], filenames: Iterable[str]) -> list[str]:
+    """Which of `filenames` no `--include` pattern in `argv` would fetch.
+
+    A pure check over argv, never over the live filesystem or S3 — so the
+    de-duplication test in `tests/test_run_trace.py` can hold `--fetch`'s
+    include-list to `run_trace.READ_FILENAMES` with no network at all. The
+    probe path (`a/b/c/<name>`) exists only so `fnmatch` has something to
+    match a pattern like `*reward.txt` against; a real S3 key is always at
+    least that deep, so a pattern that matches the probe matches the key.
+    """
+    includes = [argv[i + 1] for i, arg in enumerate(argv) if arg == "--include" and i + 1 < len(argv)]
+    return [
+        name
+        for name in filenames
+        if not any(fnmatch.fnmatch(f"a/b/c/{name}", pattern) for pattern in includes)
+    ]
+
+
+def fetch_argv(run_id: str, destination: Path) -> list[str]:
+    """The `aws s3 sync` command line `--fetch` runs.
+
+    Extracted from `fetch_run` so it is testable on its own — no network, no
+    `aws` binary on PATH, just the argv `fetch_run` would hand to it.
+    """
     args = [
         "aws",
         "s3",
@@ -73,7 +94,13 @@ def fetch_run(run_id: str, mirror: Path) -> Path:
     ]
     for pattern in _INCLUDES:
         args += ["--include", pattern]
-    result = subprocess.run(args, check=False)
+    return args
+
+
+def fetch_run(run_id: str, mirror: Path) -> Path:
+    destination = mirror / run_id
+    destination.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(fetch_argv(run_id, destination), check=False)
     if result.returncode != 0:
         raise SystemExit(f"aws s3 sync failed for run {run_id} (exit {result.returncode})")
     return destination
@@ -112,6 +139,16 @@ def _print_action(action: Action, index: int, total: int) -> None:
             "already hold, and a comment restating the issue is noise on it. The run and\n"
             "task list are still recorded in the ledger under --apply, so the next run's\n"
             "novelty check is measured against the truth. Force it with --comment-anyway."
+        )
+        print("-" * 78)
+        return
+    if action.decision is Decision.POSTURE_SUPPRESSED:
+        print(f"matched by  : {action.matched_by}")
+        print(
+            "\nNothing would be posted: a human has marked this fingerprint accepted or\n"
+            "wontfix in the ledger, so it never proposes a new issue and never searches\n"
+            "GitHub. The occurrence is still recorded under --apply. Delete the ledger\n"
+            "entry (fingerprints.json) to let it flow through the normal decision again."
         )
         print("-" * 78)
         return
