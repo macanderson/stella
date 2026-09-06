@@ -20,13 +20,10 @@ pub mod driver;
 pub mod engine_markers;
 pub mod estimator;
 pub mod event_sender;
-pub mod event_stream;
 pub mod extensions;
 pub mod goal;
 pub mod hooks;
 pub mod loop_detect;
-pub mod mcp_usage;
-pub mod plan_graph;
 pub mod ports;
 pub mod receipts;
 pub mod repair;
@@ -45,9 +42,7 @@ pub mod subagent;
 mod summarize;
 pub mod tasks;
 pub mod tool_foundry;
-pub mod turn_slots;
 pub mod waiting;
-pub mod workspace_scope;
 
 pub use budget::{BudgetGuard, BudgetOutcome};
 // `bus::HookEvent` (the extension-bus envelope) stays module-qualified: the
@@ -71,8 +66,6 @@ pub use hooks::{HookEvent, HookPayload, HookRunOutcome, HookRunner, Hooks, run_h
 pub use loop_detect::{
     CallRecord, LoopDetectionConfig, LoopIdentity, LoopVerdict, ToolOrigin, detect_loop,
 };
-pub use mcp_usage::{McpUsageLedger, McpUsageRecord, drain_usage, push_usage};
-pub use plan_graph::{PlanGraph, PlanGraphError, RevisionError, RevisionGate};
 pub use ports::{Clock, LiveService, ToolExecutor};
 pub use repair::{RepairCost, RepairHeadroom, RepairPlan, RepairRefusal, plan_repair};
 pub use retry::{RetryOutcome, RetryPolicy, retry_with_backoff};

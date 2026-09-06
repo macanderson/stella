@@ -128,10 +128,15 @@ under Extending it) — never a new crate, and never an engine edit, because
 the engine sees only `schemas()` and `execute(name, input)`.
 
 Two neighbours take what this crate must not. Deciding *whether* or *when* a
-tool runs — speculation, retry, compaction, budget, hook *matching*,
-permission policy evaluation — is I/O-free engine logic and belongs in
-[`stella-core`](../stella-core) behind a port (AGENTS.md invariant #2): this
-crate implements `ToolExecutor`; it never drives it. A tool whose
+tool runs — speculation, retry, compaction, budget, hook *matching* — is
+I/O-free engine logic and belongs in [`stella-core`](../stella-core) behind a
+port (AGENTS.md invariant #2): this crate implements `ToolExecutor`; it never
+drives it. The test is whether the engine asks the question. It does not ask
+what a session may write, which is why
+[`src/workspace_scope.rs`](src/workspace_scope.rs) came here from
+`stella-core`: the file tools enforce that policy and `stella-cli`'s
+`--allow-dir` reads the same answer through this crate, so one copy serves
+both. A tool whose
 implementation lives in an external server process is an MCP tool, reached
 through [`stella-mcp`](../stella-mcp)'s client — do not teach this crate a
 wire protocol just to reach a tool. Cheaper than either, a tool that needs
@@ -177,6 +182,7 @@ landing in `registry.rs`.
 | [`src/input.rs`](src/input.rs) | Typed reads of a tool's JSON input (#1267) — the "absent" vs "present but wrong type" distinction the dispatch validator and the tools share. |
 | [`src/loop_comparability.rs`](src/loop_comparability.rs) | One row per catalog name declaring how its output relates to loop comparison (#2706), plus the sentinel that drives every non-exempt tool twice through the real registry and compares what came back. The `stella-core` loop detector's input contract, enforced instead of assumed — see the Gotchas entry below. |
 | [`src/agent_use.rs`](src/agent_use.rs) | The per-session agent-invocation ledger. |
+| [`src/workspace_scope.rs`](src/workspace_scope.rs) | What a session may see and what it may change: reads are open, writes are confined to the workspace plus operator grants, and the origin project of a worktree session is hidden from both. Pure predicates over already-resolved paths — [`src/rootfd.rs`](src/rootfd.rs) does the resolving, and closes the race this cannot. |
 
 ## Key concepts
 

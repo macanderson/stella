@@ -447,7 +447,7 @@ impl<W> CandidateFanouts<W> {
             width_ceiling: DEFAULT_HOST_MAX_FANOUT_WIDTH,
             fanout_ceiling: DEFAULT_HOST_MAX_FANOUTS,
             budget_usd: None,
-            turn_lane: stella_core::turn_slots::FANOUT_LANE,
+            turn_lane: stella_protocol::turn_slots::FANOUT_LANE,
             spent: AtomicU32::new(0),
             live: Mutex::new(Vec::new()),
             ledger: Mutex::new(Vec::new()),
@@ -502,7 +502,7 @@ impl<W> CandidateFanouts<W> {
     /// fan-out are told apart by `call_seq` within it, because a width the host
     /// clamps is not a number that may reach a database key.
     ///
-    /// Defaults to [`stella_core::turn_slots::FANOUT_LANE`].
+    /// Defaults to [`stella_protocol::turn_slots::FANOUT_LANE`].
     #[must_use]
     pub fn in_turn_lane(mut self, lane: u32) -> Self {
         self.turn_lane = lane;
@@ -511,7 +511,7 @@ impl<W> CandidateFanouts<W> {
 
     /// The `turn_instance` the `seq`-th fan-out of this plane lands on.
     fn slot_for(&self, seq: u32) -> u32 {
-        stella_core::turn_slots::slot(self.turn_lane, seq)
+        stella_protocol::turn_slots::slot(self.turn_lane, seq)
     }
 
     /// The effective ceiling on one fan-out's width, after the clamp.

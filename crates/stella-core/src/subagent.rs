@@ -223,7 +223,7 @@ impl<'a> Engine<'a> {
 ///
 /// Written by whatever dispatches children, drained once per step-boundary
 /// budget check through [`ToolExecutor::drain_sub_agent_spend_usd`]. Mirrors
-/// [`crate::mcp_usage::McpUsageLedger`]'s shape and its drain-once discipline
+/// `stella-store`'s `McpUsageLedger` shape and its drain-once discipline
 /// for the same reason: charging the same dollars twice is worse than
 /// charging them late.
 pub type SubAgentSpendLedger = Arc<Mutex<f64>>;

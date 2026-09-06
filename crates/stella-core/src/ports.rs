@@ -59,9 +59,9 @@ pub trait ToolExecutor: Send + Sync {
     /// `ToolExecutor::execute`, while the engine holds the budget guard
     /// mutably for the whole turn — so the tool structurally cannot charge
     /// the parent as it goes. This is the same "written by one object,
-    /// drained by another" seam [`crate::mcp_usage`] uses, and the executor
-    /// that dispatched the child is exactly the thing that knows what it
-    /// cost. Draining at the *step boundary* (rather than after the turn) is
+    /// drained by another" seam `stella-store`'s `mcp_usage::ledger` uses, and
+    /// the executor that dispatched the child is exactly the thing that knows
+    /// what it cost. Draining at the *step boundary* (rather than after the turn) is
     /// what keeps `--spend-limit` a hard ceiling once turns nest: the parent's
     /// `evaluate()` always sees child spend to date.
     ///

@@ -50,9 +50,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::Value;
-use stella_core::mcp_usage::{McpUsageLedger, McpUsageRecord, push_usage};
 use stella_core::ports::{DispatchAdmission, ToolExecutor, admit_dispatch};
 use stella_protocol::{ToolOutput, ToolSchema};
+use stella_store::mcp_usage::{McpUsageLedger, McpUsageRecord, push_usage};
 
 use crate::client::{McpClient, McpToolInfo, ServerHealth};
 use crate::config::{McpServerConfig, McpTransport};

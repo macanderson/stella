@@ -57,14 +57,14 @@
 //! from inside a worktree would hand back exactly the tree the worktree exists
 //! to stay out of, and it would look like configuration rather than a bug.
 //!
-//! # No I/O (AGENTS.md #2)
+//! # No I/O
 //!
 //! Every function here is a pure predicate over already-resolved, absolute,
 //! lexically-normalized paths — including [`origin_of`], which recovers the
 //! origin by *looking at the path*, never by reading `.git`. Resolution
-//! belongs to the caller (`stella_tools::rootfd` for the file tools). That
-//! split is what makes this property-testable, and it is the honest boundary:
-//! this decides policy and cannot by itself close a TOCTOU race.
+//! belongs to the caller ([`crate::rootfd`] for the file tools). That is what
+//! makes this property-testable. It decides policy. The file tools beside it
+//! enforce that policy, and close the race it cannot.
 
 use std::path::{Component, Path, PathBuf};
 

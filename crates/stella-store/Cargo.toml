@@ -30,4 +30,7 @@ libc.workspace = true
 
 [dev-dependencies]
 serde_json = { workspace = true }
+# The plan-graph composition property tests moved here with the module they
+# cover; the workspace's one property-test crate, used by six siblings.
+proptest.workspace = true
 tempfile.workspace = true

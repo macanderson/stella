@@ -3558,6 +3558,7 @@ version = "0.9.352"
 dependencies = [
  "base64 0.23.1",
  "libc",
+ "proptest",
  "rand 0.10.2",
  "rusqlite",
  "serde",

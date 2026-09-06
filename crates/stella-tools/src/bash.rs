@@ -26,7 +26,7 @@
 //!
 //! # Read the machine; change only what this session owns
 //!
-//! The policy is [`stella_core::workspace_scope`]'s and the reasoning is
+//! The policy is [`crate::workspace_scope`]'s and the reasoning is
 //! there. In short: reads reach the whole filesystem, because an agent fixing
 //! a build needs system headers, the toolchain and a dependency's source, and
 //! a read cannot damage the user's tree. Writes are confined to the session's
@@ -154,7 +154,7 @@ fn shell_write_audit(command: &str, ctx: &crate::ctx::ToolCtx) -> Option<String>
     let mut index = 0usize;
 
     // The denied tree is refused for READING too, which is the one place this
-    // audit checks a non-write. `stella_core::workspace_scope` hides the origin
+    // audit checks a non-write. `crate::workspace_scope` hides the origin
     // project from a worktree session, and hides worktrees from everyone else,
     // because a parallel checkout answers questions about the wrong tree. That
     // reason applies just as much to `cat ../../src/main.rs` as it does to

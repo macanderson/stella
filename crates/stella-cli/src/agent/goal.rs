@@ -596,7 +596,7 @@ pub async fn run_goal_cmd(
     // `run_raw_one_shot` documents: a `--pipeline` naming nothing installed
     // must fail as a typo before a paid call, while a child-turn plane needs
     // this session's dispatcher, which needs the provider built above. It
-    // allocates its receipt slots through `stella_core::turn_slots`, whose
+    // allocates its receipt slots through `stella_protocol::turn_slots`, whose
     // lanes are what let a plane counting its own calls run beside a goal
     // round's own worker/verifier pair without overwriting either.
     let bound = match resolved {

@@ -57,7 +57,7 @@
 //! loop deciding how many rounds run. [`reject_arbiter_wrapper_on_goal`]
 //! refuses an arbiter-grade wrapper there, because a hold-open round inside an
 //! already-judged goal round is a second round-holder judging the same round.
-//! Child slots come from [`stella_core::turn_slots`], which reads
+//! Child slots come from [`stella_protocol::turn_slots`], which reads
 //! `turn_instance` as a lane plus a sequence within it, so a plane counting
 //! only its own calls can never land where a door's rounds will; `stella
 //! fleet` reaches `child_turn` through the same assembly.

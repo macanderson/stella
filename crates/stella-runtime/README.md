@@ -160,7 +160,7 @@ Neither could while the plane pinned every child turn to one fixed
 those doors run several rounds under **one** execution row, so a fixed slot
 collided with whichever round landed on it and a wrapper naming `child_turn`
 there was answered `Unavailable`. `ChildTurns::in_turn_lane` is the
-allocation that lifts it — `stella_core::turn_slots` partitions
+allocation that lifts it — `stella_protocol::turn_slots` partitions
 `turn_instance` by residue, so a plane counting only its own calls can never
 land where a door's rounds will, without either counter knowing the other's.
 One limit stands on every door that attaches the plane. It is a consent

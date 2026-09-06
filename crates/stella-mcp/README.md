@@ -35,10 +35,11 @@ to `stella-cli`.
 ## Where it sits
 
 It depends on `stella-protocol` (`ToolOutput`, `ToolSchema`), `stella-core`
-(the [`ports::ToolExecutor`](../stella-core/src/ports.rs) trait it implements
-and the [`mcp_usage`](../stella-core/src/mcp_usage.rs) ledger it records calls
-into), and `stella-store` (for the one shared atomic file-write helper,
-`stella_store::durable::write_atomic`) — nothing else in the workspace.
+(the [`ports::ToolExecutor`](../stella-core/src/ports.rs) trait it implements),
+and `stella-store` (the one shared atomic file-write helper,
+`stella_store::durable::write_atomic`, and the
+[`mcp_usage`](../stella-store/src/mcp_usage/ledger.rs) ledger it records calls
+into) — nothing else in the workspace.
 `stella-cli` and `stella-runtime` depend on it. It also builds its own binary,
 `mcp-fixture-server`, which exists purely for `tests/` and is excluded from
 dist (`[package.metadata.dist] dist = false`).

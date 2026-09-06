@@ -57,6 +57,16 @@ that is the facts-not-policy boundary stated above, and it is why a
 `stella-model` dependency can never appear in this crate's manifest — the
 policy goes to the caller, and the raw rows stay here.
 
+One rule sits beside that one: **the crate that records a thing owns the rules
+that thing has to obey.** Whether a row is well formed is a fact about its
+shape. It is not a reading of what the row meant. Put the rule anywhere else
+and the writer and the checker hold two copies, which drift.
+[`src/content_free.rs`](src/content_free.rs) and
+[`src/forget.rs`](src/forget.rs) are the older cases.
+[`src/event_stream.rs`](src/event_stream.rs) and
+[`src/plan_graph/graph.rs`](src/plan_graph/graph.rs) came from `stella-core`,
+where the engine never reached them.
+
 Three neighboring stores look like this crate and are not it.
 Retrieval-flavored storage — embeddings, episodes, recallable memories,
 anything answering "what should the model see next" — is
@@ -130,7 +140,9 @@ escape hatch for an irreducible line (a module declaration in an oversized
 | [`src/private.rs`](src/private.rs), [`src/home.rs`](src/home.rs), [`src/identity.rs`](src/identity.rs) | Where state is allowed to live (`.stella/private/`: 0700 dirs, 0600 files, writes through [`durable`](src/durable.rs); `~/.stella` resolution) and the `org_id`/`workspace_id`/`repo_id`/`project_id` scoping that is infallible by design. |
 | [`src/receipts.rs`](src/receipts.rs), [`src/reconstruct.rs`](src/reconstruct.rs) | Context-receipt writes (block registry, per-step manifest) and the byte-exact reconstruction of what a model actually saw. |
 | [`src/telemetry.rs`](src/telemetry.rs) | `TelemetryRow`, the per-call write path, and the execution-level accounting boundary. |
-| [`src/plan_graph.rs`](src/plan_graph.rs) | The `plan_revisions` and `plan_edges` tables — one turn's plan graph: every revision, the `[:NEXT]` chain each authored, and the `[:THEN]` chain of what ran (SPEC §7.4). Why the record lives here and not in `context.db` is `doc:adr/0017-plan-graph-persistence`. |
+| [`src/plan_graph.rs`](src/plan_graph.rs) + [`src/plan_graph/`](src/plan_graph) | The `plan_revisions` and `plan_edges` tables — one turn's plan graph: every revision, the `[:NEXT]` chain each authored, and the `[:THEN]` chain of what ran (SPEC §7.4). Why the record lives here and not in `context.db` is `doc:adr/0017-plan-graph-persistence`. `plan_graph/graph.rs` builds the graph back: `PlanGraph` says who may write a `[:NEXT]` or `[:THEN]` edge, when a revision is written, and what counts as drift. Approval is its only constructor. A revision is written beside the one before it, never over it. `ran` refuses a task the current revision lacks. So every gap between the two lanes is a revision somebody gave a reason for. Drift is worked out on demand, never stored. |
+| [`src/event_stream.rs`](src/event_stream.rs) | `validate_stream` / `conform_jsonl` — the four rules an emitted `AgentEvent` stream obeys: stages move in order, a `tool_start` is answered, one `run_complete` ends it, spend never drops. With them, the JSONL reader that lets a torn tail pass and refuses a broken line in the middle. This is the half of the wire contract JSON Schema cannot state. |
+| [`src/mcp_usage.rs`](src/mcp_usage.rs) + [`src/mcp_usage/`](src/mcp_usage) | The `mcp_usage` call log and its fold. `mcp_usage/ledger.rs` holds the in-memory record `stella-mcp` adds on every call, and the handle the CLI drains into the table once per execution. |
 | [`src/forget.rs`](src/forget.rs) | The tombstone surfaces (`ContextSurface`) and the token-set restatement check that keeps a re-mined paraphrase from walking back in. The `forgotten` table's write/read surface lives on `Store` in `lib.rs`. |
 | [`src/cache_gaps.rs`](src/cache_gaps.rs), [`src/cache_trend.rs`](src/cache_trend.rs) | Read-only folds over `telemetry` + `executions` — per-call cache gaps and per-session cache totals. Facts only; the TTL/pricing policy is the caller's. |
 | `src/tests.rs` (+ `src/tests/`), `src/forget/tests.rs`, `src/tool_calls/tests.rs` | `#[cfg(test)]` modules, each beside the code it covers. `src/tests/` holds the crate-wide witnesses for private-state permissions, quarantine behaviour, and fail-closed accounting. |
@@ -298,11 +310,14 @@ cargo test -p stella-store
 
 No crate-specific `make` target exists; `make gate` runs `cargo test --workspace`.
 Most tests are `#[cfg(test)]` modules inside `src/` (`src/tests.rs` is the bulk),
-built on `Store::in_memory()` and `tempfile` — no fixtures, flags, or env vars
-needed. The one integration test,
-[`tests/enterprise_telemetry.rs`](tests/enterprise_telemetry.rs), exercises the
-spool's lease/quarantine/clock behaviour against a real file. The content-free
-gate's tests sit inside `src/content_free.rs` and include negative witnesses
+built on `Store::in_memory()` and `tempfile` — no flags or env vars needed.
+Three integration tests drive the crate the way a caller does.
+[`tests/enterprise_telemetry/`](tests/enterprise_telemetry) covers the spool's
+lease, quarantine and clock against a real file.
+[`tests/tree_anchored_code_graph.rs`](tests/tree_anchored_code_graph.rs) covers
+code-graph anchoring. [`tests/stream_conformance.rs`](tests/stream_conformance.rs)
+runs `event_stream`'s rules over a recording on disk, not over a stream a test
+just built. The content-free gate's tests sit inside `src/content_free.rs` and include negative witnesses
 (`harness_catches_a_leaking_encoder`, `harness_catches_an_unreviewed_key`) that
 fail if the harness itself stops catching leaks.
 

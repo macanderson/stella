@@ -260,8 +260,7 @@ fn linked_issue(text: &str) -> Option<String> {
 }
 
 /// The id the next task in `planned` would take, on the task board's own
-/// scheme: per-session ordinals, counting up, never reused
-/// (`crate::tasks::TaskBoard::create`).
+/// scheme: per-session ordinals, counting up, never reused.
 ///
 /// Derived from the plan rather than minted here, so an approved insertion
 /// lands on the id the board would give it and the two id spaces stay one.

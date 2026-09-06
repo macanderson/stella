@@ -11,8 +11,8 @@ publish.workspace = true
 [dependencies]
 stella-protocol = { path = "../stella-protocol" }
 stella-core = { path = "../stella-core" }
-# The tool-foundry adoption ledger (`foundry_gate` re-exports
-# `stella_store::AdoptedTool`) — the one persistence type this crate reads.
+# Two ledgers. `foundry_gate` re-exports `stella_store::AdoptedTool` for tool
+# adoption. The registry carries the `mcp_usage` handle.
 stella-store = { path = "../stella-store" }
 # The single implementation of `~/.stella` resolution, so the user-global
 # custom-tool directory moves with `STELLA_HOME` like every other user-tier

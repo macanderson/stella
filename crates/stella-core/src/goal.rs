@@ -181,15 +181,16 @@ pub fn verifier_feedback_text(goal: &str, verdict: &GoalVerifierVerdict) -> Stri
 }
 
 /// The receipt turn-slot offset of `round`'s worker calls: round `n` takes
-/// the `n`-th slot of [`crate::turn_slots::WORKER_LANE`] and its verifier the
-/// `n`-th of [`crate::turn_slots::VERIFIER_LANE`] beside it ([`Engine::assess`]
+/// the `n`-th slot of [`WORKER_LANE`](stella_protocol::turn_slots::WORKER_LANE)
+/// and its verifier the `n`-th of
+/// [`VERIFIER_LANE`](stella_protocol::turn_slots::VERIFIER_LANE) beside it ([`Engine::assess`]
 /// adds the `+ 1`), so no two model calls in a goal arc share a
 /// `(turn_instance, step, call_seq)` receipt key within one execution.
 ///
 /// The two lanes beside them are not spare: they belong to the `child_turn`
 /// and `candidate_fanout` planes a wrapper plugin's host serves while this
 /// loop runs, which is the whole reason the stride is
-/// [`crate::turn_slots::TURN_LANES`] rather than the 2 a goal round needs for
+/// [`TURN_LANES`](stella_protocol::turn_slots::TURN_LANES) rather than the 2 a goal round needs for
 /// itself (#3833). See that module for the rule and for why the host cannot
 /// be handed a per-round window instead.
 ///
@@ -199,7 +200,7 @@ pub fn verifier_feedback_text(goal: &str, verdict: &GoalVerifierVerdict) -> Stri
 #[must_use]
 pub fn goal_round_turn_offset(round: usize) -> u32 {
     let index = u32::try_from(round.saturating_sub(1)).unwrap_or(u32::MAX);
-    crate::turn_slots::slot(crate::turn_slots::WORKER_LANE, index)
+    stella_protocol::turn_slots::slot(stella_protocol::turn_slots::WORKER_LANE, index)
 }
 
 /// Public so the CLI's goal loop can pin its tool allowlist against this
@@ -243,7 +244,7 @@ impl Engine<'_> {
         for round in 1..=goal_config.max_rounds {
             budget.begin_turn();
             // Each round is its own turn for receipt purposes — see
-            // `goal_round_turn_offset`, and `crate::turn_slots` for the lane
+            // `goal_round_turn_offset`, and `stella_protocol::turn_slots` for the lane
             // rule it allocates through.
             let round_offset = goal_round_turn_offset(round);
             let round_engine =
@@ -364,7 +365,7 @@ impl Engine<'_> {
         goal_config: &GoalConfig,
     ) -> Result<(GoalVerifierVerdict, f64), GoalAssessError> {
         let transcript = render_transcript_tail(messages, goal_config.verifier_transcript_chars);
-        // The slot beside this engine's turn — `crate::turn_slots`'
+        // The slot beside this engine's turn — `stella_protocol::turn_slots`'
         // `VERIFIER_LANE`, which is the worker's lane plus one for exactly this
         // addition. The verifier's own step loop restarts at step 0 with
         // call_seq 0, so without a turn of its own its manifests would
@@ -690,7 +691,7 @@ mod tests {
             })
             .collect();
         // Two worker rounds + two verifier turns, one committed step each, on
-        // the worker and verifier lanes of `crate::turn_slots`: worker r1 = 0,
+        // the worker and verifier lanes of `stella_protocol::turn_slots`: worker r1 = 0,
         // verifier r1 = 1, worker r2 = 4, verifier r2 = 5. The two slots each
         // round skips are the host's own lanes, kept free so a wrapper
         // plugin's child turns and fan-outs can run beside this loop without
@@ -1345,21 +1346,21 @@ mod tests {
         assert_eq!(goal_round_turn_offset(3), 8);
         for round in 1..=8 {
             assert_eq!(
-                crate::turn_slots::lane_of(goal_round_turn_offset(round)),
-                crate::turn_slots::WORKER_LANE,
+                stella_protocol::turn_slots::lane_of(goal_round_turn_offset(round)),
+                stella_protocol::turn_slots::WORKER_LANE,
                 "round {round} left the worker lane"
             );
             assert_eq!(
-                crate::turn_slots::lane_of(goal_round_turn_offset(round) + 1),
-                crate::turn_slots::VERIFIER_LANE,
+                stella_protocol::turn_slots::lane_of(goal_round_turn_offset(round) + 1),
+                stella_protocol::turn_slots::VERIFIER_LANE,
                 "round {round}'s verifier left the verifier lane"
             );
         }
         // Saturation stays in the worker's lane rather than landing on
         // `u32::MAX`, which belongs to the fan-out lane alone.
         assert_eq!(
-            crate::turn_slots::lane_of(goal_round_turn_offset(usize::MAX)),
-            crate::turn_slots::WORKER_LANE
+            stella_protocol::turn_slots::lane_of(goal_round_turn_offset(usize::MAX)),
+            stella_protocol::turn_slots::WORKER_LANE
         );
     }
 }

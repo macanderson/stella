@@ -628,7 +628,7 @@ pub enum Inbound {
     /// A failing gate has put a plan revision up for `agent` — SPEC 8.1 item 3.
     ///
     /// Out-of-band view-and-model state like [`Inbound::GraphSnapshot`], not
-    /// an [`Inbound::Event`]: `stella_core::plan_graph::RevisionGate` authors
+    /// an [`Inbound::Event`]: `stella_store::plan_graph::RevisionGate` authors
     /// it host-side from a `GateBoard` the host already evaluated, so the
     /// journal keeps the board and the proposal is the host's reading of it.
     /// Routing it as an event would put a host-side decision into the durable

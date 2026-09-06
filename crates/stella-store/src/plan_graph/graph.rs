@@ -5,10 +5,11 @@
 //! edge, when a revision is authored, and what counts as drift
 //! (`design/tui-v2/SPEC.md` §7.4).
 //!
-//! Pure, owned data, no I/O (AGENTS.md rule #2), which is what makes the
-//! claims below testable without a store, a runtime or a terminal. The types
-//! live in [`stella_protocol::plan_graph`]; this is the only place that
-//! decides how they fit together.
+//! Pure, owned data, no I/O. The sibling module reads and writes the rows.
+//! This decides what they may say, so every claim below is testable with no
+//! store, no runtime and no terminal. The types live in
+//! [`stella_protocol::plan_graph`]. This is the only place that decides how
+//! they fit together.
 //!
 //! # Approval writes the planned path
 //!
@@ -47,12 +48,12 @@
 //!
 //! # Replay
 //!
-//! [`PlanGraph::restore`] takes the nodes and edges back from a store and
-//! rebuilds the graph, refusing anything that is not a graph this module could
-//! have produced. It is strict because a plan graph read back *slightly*
-//! wrong is a replay that quietly disagrees with the run it claims to
-//! reproduce, and a loud refusal is the only version of that failure anybody
-//! ever notices.
+//! [`PlanGraph::restore`] takes the nodes and edges
+//! [`Store::plan_graph`](crate::Store::plan_graph) read back and builds the
+//! graph again. It refuses anything this module could not have produced. Strict,
+//! because a plan graph read back *slightly* wrong is a replay that quietly
+//! disagrees with the run it claims to repeat. A loud refusal is the only
+//! version of that failure anybody ever notices.
 
 use std::collections::HashSet;
 
@@ -113,7 +114,7 @@ pub enum PlanGraphError {
 /// A plan and what became of it: one plan node per revision, the `[:NEXT]`
 /// chain each revision authored, and the `[:THEN]` chain of what actually ran.
 ///
-/// Insertion-ordered and owned throughout, like [`crate::TaskBoard`]: all
+/// Insertion-ordered and owned throughout, like `stella-core`'s `TaskBoard`: all
 /// mutation goes through the methods below so the rules in the module docs
 /// hold by construction rather than by review.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -5,7 +5,7 @@
 //!
 //! # Why the confinement stops short of here
 //!
-//! [`stella_core::workspace_scope`] confines writes because a write outside
+//! [`crate::workspace_scope`] confines writes because a write outside
 //! the session's tree is what turns a bad turn into lost work. The system temp
 //! directory is the one place on the machine where that reason does not hold:
 //! nothing the user owns lives there, the operating system reclaims it, and

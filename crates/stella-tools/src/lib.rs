@@ -84,6 +84,7 @@ pub mod subprocess_env;
 pub mod tasks;
 pub mod temp_roots;
 pub mod validate;
+pub mod workspace_scope;
 pub mod write;
 
 pub use registry::ToolRegistry;

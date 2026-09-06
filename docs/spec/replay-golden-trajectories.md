@@ -26,7 +26,7 @@ gates) — both deleted in #3865.
 
 One piece of it came back. `validate_stream` — the four structural rules over
 an event stream, and the JSONL reader that feeds it — lives in
-`crates/stella-core/src/event_stream.rs` since #4585, because those rules are
+`crates/stella-store/src/event_stream.rs` since #4585, because those rules are
 about the event vocabulary every door emits rather than about the deleted
 pipeline. `structural_diff`, `streams_equivalent` and the golden-fixture
 format did **not** come back: they are about comparing two recordings of the

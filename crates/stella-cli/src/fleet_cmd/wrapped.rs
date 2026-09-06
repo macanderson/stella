@@ -58,10 +58,10 @@
 //! each turn — so this door's rounds and any host-made call beside them have
 //! to be told apart by `turn_instance` alone.
 //!
-//! The rule is [`stella_core::turn_slots`]', stated once there and used
+//! The rule is [`stella_protocol::turn_slots`]', stated once there and used
 //! unchanged by every door that has this shape: a `turn_instance` is a **lane**
 //! plus a sequence within that lane. This door's rounds take successive slots
-//! of [`stella_core::turn_slots::WORKER_LANE`]
+//! of [`stella_protocol::turn_slots::WORKER_LANE`]
 //! (`AttemptDriver::run_turn`); a wrapper plugin's child turns take successive
 //! slots of `CHILD_TURN_LANE`, allocated by the plane itself. Neither counter
 //! can see the other and neither has to: two lanes never share a slot however
@@ -407,8 +407,8 @@ impl TurnDriver for AttemptDriver<'_, '_> {
         // (#3882); the sequence within it is this attempt's round count.
         let round_engine = self
             .engine
-            .with_turn_instance(stella_core::turn_slots::slot(
-                stella_core::turn_slots::WORKER_LANE,
+            .with_turn_instance(stella_protocol::turn_slots::slot(
+                stella_protocol::turn_slots::WORKER_LANE,
                 self.rounds,
             ));
         self.rounds += 1;

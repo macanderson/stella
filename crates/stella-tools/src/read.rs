@@ -548,7 +548,7 @@ impl ReadFile {
 
         // The one read the scope refuses: another session's git worktree. Not
         // a security boundary — it is a correctness one. See
-        // `stella_core::workspace_scope` on why a parallel checkout of the
+        // `crate::workspace_scope` on why a parallel checkout of the
         // same repository is the read an agent must not silently get.
         if let Some(refusal) = ctx.refuse_read(path) {
             return ToolOutput::classified_error(
@@ -571,7 +571,7 @@ impl ReadFile {
             Some(resolved) => resolved,
             // Outside every root: fall back to the session root and let
             // `rootfd` answer. Reads are not scope-confined (see
-            // `stella_core::workspace_scope`), so this preserves the previous
+            // `crate::workspace_scope`), so this preserves the previous
             // behaviour exactly rather than inventing a new refusal.
             None => (root.to_path_buf(), path.to_string()),
         };

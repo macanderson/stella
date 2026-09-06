@@ -20,14 +20,19 @@
 //! properties of the event stream it owns. That crate's own boundary rule
 //! settles it the other way: it admits "a serde type — or a field on one — …
 //! plus at most a total, allocation-light helper over that type's own data",
-//! and refuses "a `match` that decides what the program *does* next", naming
-//! `stella-core` as the home for "decision logic over events"
-//! (`crates/stella-protocol/README.md`). [`validate_stream`] is a fold over a
-//! whole stream with a rank table, a legal-back-edge rule and a violation
-//! vocabulary of its own — decision logic by that test, not a helper on a
-//! type. It lands here, beside [`crate::loop_detect`] and
-//! [`crate::compaction`], as what AGENTS.md's `no I/O in the engine` rule asks
-//! for: a plain synchronous function over owned data, with no I/O in it.
+//! and refuses "a `match` that decides what the program *does* next".
+//! [`validate_stream`] is a fold over a whole stream with a rank table, a
+//! legal-back-edge rule and a violation vocabulary of its own — decision logic
+//! by that test, not a helper on a type.
+//!
+//! ## Why here and not in `stella-core`
+//!
+//! It lived in the engine crate, and the engine never reached it there. This
+//! crate is where a stream becomes a recording:
+//! [`Store::record_event`](crate::Store::record_event) writes an execution's
+//! whole `AgentEvent` stream and
+//! [`Store::session_events`](crate::Store::session_events) reads it back. The
+//! crate that records a stream owns the rules a recording obeys.
 //!
 //! ## The violations are typed
 //!

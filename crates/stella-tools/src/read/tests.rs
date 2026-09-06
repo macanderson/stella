@@ -782,7 +782,7 @@ async fn missing_file_returns_error() {
 /// behaviour when `read_file` opened only the session root, and it is the
 /// behaviour that was deliberately changed: an agent fixing a build needs
 /// system headers, the toolchain and a dependency's source, and a read
-/// cannot damage the user's tree (`stella_core::workspace_scope`).
+/// cannot damage the user's tree (`crate::workspace_scope`).
 ///
 /// Worth noting how it was passing on macOS while the change was already
 /// in: `std::env::temp_dir()` there is `/var/folders/…/T/`, so

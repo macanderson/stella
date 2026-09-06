@@ -93,7 +93,7 @@ pub struct ToolRegistry {
     /// to the `McpToolSet` at connect, which appends, and drains it per
     /// execution via [`ToolRegistry::take_mcp_usage`]. The registry is just the
     /// carrier so `record_execution_end` has one handle for every ledger.
-    mcp_usage: stella_core::mcp_usage::McpUsageLedger,
+    mcp_usage: stella_store::mcp_usage::McpUsageLedger,
     /// The session task board, shared with the six registered `task_*` tool
     /// instances. The CLI snapshots it into `AgentEvent::TaskUpdate` after
     /// executions via [`ToolRegistry::task_board`].
@@ -304,13 +304,13 @@ impl ToolRegistry {
     /// It lives outside the workspace by design (a `tempfile::TempDir`, so it
     /// leaves nothing behind), which is exactly why it needs naming here.
     #[must_use]
-    pub fn write_scope(&self) -> stella_core::workspace_scope::SessionScope {
+    pub fn write_scope(&self) -> crate::workspace_scope::SessionScope {
         let root = self
             .root
             .canonicalize()
             .unwrap_or_else(|_| self.root.clone());
         let scratch = self.scratch_dir.iter().cloned();
-        stella_core::workspace_scope::SessionScope::new(root).with_additional(
+        crate::workspace_scope::SessionScope::new(root).with_additional(
             scratch.chain(crate::temp_roots::system_temp_roots()).chain(
                 self.extra_write_dirs
                     .read()
@@ -782,14 +782,14 @@ impl ToolRegistry {
     /// A clone of the MCP usage-ledger handle, for handing to the `McpToolSet`
     /// at connect so its successful calls are recorded against this registry's
     /// ledger (which [`ToolRegistry::take_mcp_usage`] later drains).
-    pub fn mcp_usage_ledger(&self) -> stella_core::mcp_usage::McpUsageLedger {
+    pub fn mcp_usage_ledger(&self) -> stella_store::mcp_usage::McpUsageLedger {
         self.mcp_usage.clone()
     }
 
     /// Drain the MCP tool calls recorded since the last drain — persisted
     /// under exactly one execution id so per-call counts never inflate.
-    pub fn take_mcp_usage(&self) -> Vec<stella_core::mcp_usage::McpUsageRecord> {
-        stella_core::mcp_usage::drain_usage(&self.mcp_usage)
+    pub fn take_mcp_usage(&self) -> Vec<stella_store::mcp_usage::McpUsageRecord> {
+        stella_store::mcp_usage::drain_usage(&self.mcp_usage)
     }
 
     /// Comma-separated sorted list of registered tool names, for error

@@ -520,7 +520,7 @@ impl SessionSubAgents {
     /// N candidates concurrently in N disjoint trees, so a registry whose
     /// `root` were re-pointed per dispatch would be re-pointed by every
     /// sibling underneath the others — and `root` is what every path fence
-    /// resolves against (`stella_core::workspace_scope`), so the failure mode
+    /// resolves against (`stella_tools::workspace_scope`), so the failure mode
     /// is not a confused tool but a candidate writing into its sibling's tree
     /// while both report isolation. A registry per candidate has one root for
     /// its whole life, which is the only shape that is true.

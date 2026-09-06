@@ -4,7 +4,7 @@
 //! `/add-dir` — grant this session a directory it may write to.
 //!
 //! The interactive half of the write scope
-//! ([`stella_core::workspace_scope`]). The other two ways in are
+//! ([`stella_tools::workspace_scope`]). The other two ways in are
 //! `--allow-dir` on the command line and `[workspace] allowed_dirs` in
 //! `stella.toml`; this is the one for the moment you discover mid-session that
 //! the work needs a directory nobody thought to list.
@@ -35,7 +35,7 @@
 
 use std::path::{Path, PathBuf};
 
-use stella_core::workspace_scope::SessionScope;
+use stella_tools::workspace_scope::SessionScope;
 
 /// A parsed `/add-dir` invocation.
 #[derive(Debug, Clone, PartialEq, Eq)]

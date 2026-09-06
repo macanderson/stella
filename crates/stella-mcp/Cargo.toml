@@ -12,7 +12,8 @@ publish.workspace = true
 stella-protocol = { path = "../stella-protocol" }
 stella-core = { path = "../stella-core" }
 # For the workspace's single durable-write contract (`stella_store::durable`,
-# #617) — one implementation of temp + fsync + rename, not one per crate.
+# #617) — one implementation of temp + fsync + rename, not one per crate — and
+# the `mcp_usage` ledger this crate appends every call to.
 stella-store = { path = "../stella-store" }
 serde.workspace = true
 serde_json.workspace = true
