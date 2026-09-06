@@ -392,10 +392,17 @@ only locally, in a stale worktree, clean, with no remote branch and no PR.
 
 It asks the **pull requests first**, because that is the stronger signal and
 the one the issue itself never shows: a sweep PR can close forty issues at
-once while each of them still reads unassigned, unlabelled and open. Then the
-claim comments, on the red-`main` rules — the tracker is the table so a peer
-in another worktree can see it, a comment carries its author and timestamp, a
-claim lapses so a crashed session cannot hold an issue shut, and every unknown
+once while each of them still reads unassigned, unlabelled and open. A hit
+only blocks while it can actually still be the live work: a `Closes #N` PR
+that is OPEN or MERGED stands the session down; one that is CLOSED unmerged
+is a dead attempt — reported, not blocking, because that is the state where
+the next session most needs to proceed. A `Refs #N` PR — the carrier when a
+fix uses no closing keyword so `dod-check` does not hold an unrelated
+issue's checklist against it — is named too, but only as a weaker signal
+that never blocks by itself. Then the claim comments,
+on the red-`main` rules — the tracker is the table so a peer in another
+worktree can see it, a comment carries its author and timestamp, a claim
+lapses so a crashed session cannot hold an issue shut, and every unknown
 proceeds loudly. `make issue-claim N=5045` asks by hand; `make
 issue-claim-test` covers it, both blocking branches included.
 
