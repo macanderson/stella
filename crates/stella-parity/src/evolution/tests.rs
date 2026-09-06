@@ -5,17 +5,15 @@
 //!
 //! Totality is the compiler's job here — [`EvolutionSurface`] and
 //! [`EVOLUTION_SURFACES`] come out of one macro, so a surface with no row is
-//! not a case these tests have to catch. What they catch is everything the
-//! generator cannot: a witness that has been renamed away, a gap citing
-//! nothing, a declared grade drifting from the policy that defines it, and the
-//! unwitnessed debt creeping upward.
+//! not a case these tests have to catch. They catch what the generator
+//! cannot. A witness renamed away. A gap citing nothing. A declared grade
+//! drifting from the policy that defines it. Unwitnessed debt creeping up.
 
 use super::*;
 
-/// A witness exists if the swept sources declare a function by that name —
-/// the same substring check [`crate`]'s matrix and `provider_parity` use, and
-/// not an AST walk: a moved witness should fail loudly rather than be quietly
-/// re-resolved.
+/// A witness exists if the swept sources declare a function by that name.
+/// This is the substring check [`crate`]'s matrix and `provider_parity` use,
+/// not an AST walk. A moved witness should fail loudly, not be re-resolved.
 fn witness_exists(sources: &[&str], witness: &str) -> bool {
     let needle = format!("fn {witness}(");
     sources.iter().any(|source| source.contains(&needle))
@@ -141,9 +139,9 @@ fn every_prohibited_row_cites_a_design_document_by_id() {
     }
 }
 
-/// Unwitnessed debt is a down-only ratchet, checked for exact equality so that
-/// raising it is an edit a reviewer sees rather than a threshold quietly
-/// absorbing a new row.
+/// Unwitnessed debt is a down-only ratchet. It is checked for exact equality,
+/// so raising it is an edit a reviewer sees. A threshold that merely bounded
+/// it would absorb a new row in silence.
 #[test]
 fn unwitnessed_rows_match_the_declared_baseline_exactly() {
     let count = EVOLUTION_SURFACES
@@ -247,5 +245,34 @@ fn liveness_and_witnesses_agree() {
                 assert!(row.posture.witness().is_none());
             }
         }
+    }
+}
+
+/// **The self-driving loop proposes at the impact its row declares.**
+///
+/// `stella-cli`'s `self_driving_cmd::curate` writes a proposal for one of
+/// three surfaces and reads what that surface costs out of the provenance
+/// policy. Which impact class each of its targets carries is a second reading
+/// of this matrix, and nothing in `stella-cli` can see the matrix — that crate
+/// does not link this one, because this one links `stella-serve`, which the
+/// shipping binary must not. So the pin runs from this side, over the source
+/// text, the way every witness above is checked.
+#[test]
+fn the_loop_proposes_at_the_impact_its_evolution_row_declares() {
+    let curate = include_str!("../../../stella-cli/src/self_driving_cmd/curate.rs");
+
+    for (target, surface) in [
+        ("Target::Skill", EvolutionSurface::Skill),
+        ("Target::Rule", EvolutionSurface::Framework),
+        ("Target::Tool", EvolutionSurface::Tool),
+    ] {
+        let arm = format!("{target} => ImpactClass::{:?},", surface.row().impact);
+        assert!(
+            curate.contains(&arm),
+            "the {} row declares {:?}, so curate.rs's `impact_of` should read \
+             `{arm}` — the two have drifted",
+            surface.as_str(),
+            surface.row().impact,
+        );
     }
 }

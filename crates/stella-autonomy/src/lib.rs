@@ -54,6 +54,7 @@
 mod attribution;
 mod closure;
 mod convention;
+pub mod curate;
 mod deliver;
 mod doctrine;
 pub mod escalation;
