@@ -49,6 +49,13 @@ mod skill_lifecycle;
 #[cfg(test)]
 mod memory_lifecycle;
 
+/// The rule lifecycle twin: a measured window retracts a mined rule, leaves a
+/// hand-written one alone, and earns the grade a directive costs. A child
+/// module for [`guarantees`]'s reason — it drives
+/// [`SessionMemory::auto_create_skills`] without widening its visibility.
+#[cfg(test)]
+mod rule_lifecycle;
+
 /// What [`SessionMemory::partition_known`] stores, diverts to the mining log,
 /// and drops. A child module for the same reason as [`guarantees`]: the split
 /// is private, and it is the split itself that needs pinning, not the turn
@@ -879,6 +886,38 @@ impl SessionMemory {
         }
     }
 
+    /// Retract every mined rule whose own turns say it stopped helping — the
+    /// rule twin of [`Self::retire_failing_context`].
+    ///
+    /// The third consumer of the shared trial ledger. Rules produced rows and
+    /// read none, so a third of what the holdout schedule costs bought
+    /// nothing. The work is [`super::rule_efficacy::sweep`]; this is the seam
+    /// that runs it and says what it did.
+    ///
+    /// Gated on `include_workspace_skills` for the reason `induce_rules` is.
+    /// A workspace this session may not take prompts from never loads its
+    /// records into the prompt, so there is no steering to remove — and
+    /// rewriting its Git-tracked governance files uninvited would be the same
+    /// escalation the write gate refuses in the other direction.
+    fn retract_failing_rules(&self, quiet: bool) {
+        if !self.include_workspace_skills {
+            return;
+        }
+        let sweep = super::rule_efficacy::sweep(&self.workspace_root);
+        if quiet {
+            return;
+        }
+        for lineage in &sweep.retracted {
+            eprintln!(
+                "rules: retracted {lineage} — it stopped helping. The record file keeps \
+                 the statement, marked retracted."
+            );
+        }
+        for (lineage, why) in &sweep.refused {
+            eprintln!("rules: {lineage} earned retraction and could not be written: {why}");
+        }
+    }
+
     /// Write out whichever candidates the caller decided to keep, under the
     /// per-session cap and the no-clobber guard.
     ///
@@ -1020,6 +1059,7 @@ impl SessionMemory {
             super::uses::extract_context_uses(&store, &self.store);
         }
         self.retire_failing_context(quiet);
+        self.retract_failing_rules(quiet);
 
         // 1. Evidence → typed, redacted, replay-idempotent observations.
         super::observations::extract_reflection_observations(&self.store, log_path);
@@ -1145,6 +1185,20 @@ impl SessionMemory {
             if !self.include_workspace_skills {
                 continue;
             }
+            // The grade the gate weighs: the stronger of two
+            // derivations against two sources — the same `published_grade`
+            // fold `stella proposals keep` uses for the mining and the
+            // reviewer. Here the second source is the environment: a rule
+            // whose own recorded turns confidently beat the turns that
+            // withheld it stands on `EnvironmentObservation`, which is what a
+            // steering directive costs. With no measured window the mining
+            // grade is all there is — `ModelCritique` for a reflection lesson
+            // — and the gate refuses it. Each half is read off records rather
+            // than asserted here.
+            let grade = stella_records::context_record::published_grade(
+                rule.proposal.provenance,
+                super::rule_efficacy::measured_grade(&self.workspace_root, &rule.candidate.id),
+            );
             // `Agent`: nobody is in the loop for an auto-activation. The
             // evidence gate is asked inside the writer, and on
             // reflection-mined evidence it says no — so this arm reports the
@@ -1152,7 +1206,7 @@ impl SessionMemory {
             match super::rules_mining::write_rule(
                 &self.workspace_root,
                 &rule.candidate,
-                rule.proposal.provenance,
+                grade,
                 stella_protocol::provenance::PublicationAuthority::Agent,
             ) {
                 Ok(RulePublication::Written(path)) => {

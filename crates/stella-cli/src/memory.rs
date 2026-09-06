@@ -78,6 +78,9 @@ mod records_refresh;
 pub(crate) mod replay;
 // Phase 4 (#715): reversible retirement of context that stops helping.
 pub(crate) mod retirement;
+// The reader of the rule half of the trial ledger — the retraction sweep, and
+// the grade a measured window earns.
+pub(crate) mod rule_efficacy;
 pub(crate) mod rules_mining;
 pub(crate) mod self_tuning;
 pub(crate) mod skill_files;

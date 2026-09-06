@@ -218,7 +218,7 @@ hand-rolled child engine silently drops all three, and goal mode shipped with
 exactly that bug. If a plugin can only get an engine through one blessed
 constructor, that whole class stops being possible. #3274 is the epic that makes
 lane assembly a single place; this is the reason it has to cover plugin lanes
-and not just the seven builtin ones.
+and not just the builtin ones.
 
 ---
 

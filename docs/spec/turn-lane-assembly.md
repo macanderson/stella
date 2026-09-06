@@ -76,6 +76,17 @@ Plus `stella-core/src/goal.rs:240`, which is a lane-shaped *derivation*
 (`with_turn_instance`) rather than a fresh assembly, and is the one site that
 already does the right thing.
 
+> **The table above missed two sites, and they are now named.** `stella run`
+> assembles its own engine in `stella-cli/src/agent/turn.rs` — twice, once
+> under process-free authority — and `stella goal` assembles one in
+> `agent/goal.rs` and again in its wrapped arm. Each binds a set no row above
+> binds: the raw turn takes the session router's call outcomes and its
+> mid-turn fallback, and the goal arc takes steering and calibration alone. So
+> they are lanes of their own rather than the deck's, and
+> `stella_protocol::BuiltinLane` carries `RawTurn` and `GoalArc` for them.
+> `BuiltinLane`'s own doc comment carries the argument. Everything else in
+> §1–§3 stays as it was measured.
+
 ---
 
 ## 3. Three vocabularies, twelve slots, no table

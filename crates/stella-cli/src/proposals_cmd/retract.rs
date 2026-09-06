@@ -72,6 +72,32 @@ impl Published {
 /// `ctx.<set>.<id>` lineage when the short form is ambiguous — the same two
 /// spellings [`super::resolve_proposal`] accepts, for the same reason.
 pub(super) fn retract_rule(workspace_root: &Path, id: &str, reason: &str) -> Result<(), String> {
+    let (lineage_id, path) = retract_published(workspace_root, id, reason)?;
+
+    println!("  {} retracted {}", "✓".green(), lineage_id.bold());
+    println!(
+        "    {} {} keeps the record, marked retracted — the loader stops \
+         selecting it on the next load",
+        "·".dimmed(),
+        path.display()
+    );
+    Ok(())
+}
+
+/// The retraction itself, with nothing printed — the door a caller with no
+/// screen goes through.
+///
+/// Returns the lineage that was retracted and the file it lives in, so a
+/// caller that does have a screen says it in its own words. The efficacy sweep
+/// (`memory::rule_efficacy`) is the other caller: a rule the turns say has
+/// stopped helping must leave selection the same way a person's `stella
+/// proposals retract` does, through one door, and not by a second mechanism
+/// that could disagree with this one about what a retraction is.
+pub(crate) fn retract_published(
+    workspace_root: &Path,
+    id: &str,
+    reason: &str,
+) -> Result<(String, PathBuf), String> {
     if reason.trim().is_empty() {
         return Err("a retraction must carry a reason — a governance decision \
                     with none is not auditable"
@@ -93,15 +119,7 @@ pub(super) fn retract_rule(workspace_root: &Path, id: &str, reason: &str) -> Res
 
     retract_in_place(&mut published)?;
     record_retraction(workspace_root, &lineage_id, reason)?;
-
-    println!("  {} retracted {}", "✓".green(), lineage_id.bold());
-    println!(
-        "    {} {} keeps the record, marked retracted — the loader stops \
-         selecting it on the next load",
-        "·".dimmed(),
-        published.path.display()
-    );
-    Ok(())
+    Ok((lineage_id, published.path))
 }
 
 /// Find the published record `id` names, reading `.stella/rules/` rather than
