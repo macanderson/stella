@@ -405,12 +405,16 @@ fn register_verified_credentials(enrollment: &VerifiedEnrollment) {
     ]);
 }
 
-/// Prove the built-in tool surface is closed over the declared catalog — the
-/// process-free posture's structural claim. Every advertised tool must be a
-/// catalog row, and no catalog row executes a subprocess: the registry's
-/// dispatchable surface is coordination, session state, and the environment
-/// report, so a registry whose surface equals the catalog cannot spawn.
-/// A stray name would mean a tool this proof has never audited.
+/// Check that every tool the registry offers is one the catalog declares.
+///
+/// A name the catalog does not list is a tool nobody here has reviewed, and
+/// that is what this refuses.
+///
+/// It does not show that an enrolled host cannot start a program. `bash` is a
+/// catalog row and the agent runs it. What keeps such a host narrow is the
+/// surface gate above, which admits the raw one-shot path alone, plus the
+/// pieces that path never builds: no tool servers, no custom tools, no
+/// wrapper plugin.
 pub(crate) fn prove_process_free_surface(workspace_root: &Path) -> Result<(), String> {
     let registry = stella_tools::ToolRegistry::new(workspace_root.to_path_buf());
     let catalog: BTreeSet<&str> = stella_tools::catalog::ALL_NAMES.iter().copied().collect();
