@@ -36,24 +36,32 @@ grant be *expressible* and *showable before install* — which the manifest is.
 time, and a `next` that ends the session. It holds no forge token, no provider
 key and no worktree. Every capability it needs, it asks Stella for.
 
-One cycle today: read the ranked queue (`backlog_next`), and if there is work
-at the top of it, ask to claim it (`backlog_claim`). The claim is refused,
-because no host serves it yet, and the program stops rather than working an
-issue it cannot know is unclaimed. Two loops taking one issue is what a claim
-prevents, and proceeding without one would trade a correct refusal for a
-silent race.
+One cycle today: read the ranked queue (`backlog_next`), claim the top of it
+(`backlog_claim`), and ask Stella to work that issue (`work_start`) in a
+checkout of its own. It will not work an issue it cannot know is unclaimed —
+two loops taking one issue is what a claim prevents, and proceeding without one
+would trade a correct refusal for a silent race.
+
+The cycle ends at the diff. No host serves `deliver_open` yet. So the `halt`
+names the branch the work sits on. A person, or the shell script, opens the
+pull request.
 
 ## The grant binds
 
 An ask outside `[driver] calls` comes back `err` with `refusal: "undeclared"`
 and the session keeps going. That is the channel's own gate.
 
-The tracker read goes through a second one. Stella performs it as
+The tracker read and the work go through a second one. Stella performs each as
 `Principal::Plugin("stella-selfdriving")`, and asks the rule
 `crates/stella-cli/src/plugin_authz.rs` built out of the `[[capabilities]]`
 list you accepted at install whether that principal was granted `bash` — the
-capability that shells out to `gh`. A manifest without it is refused the read,
-and the refusal names the plugin.
+capability that shells out to `gh`. A manifest without it is refused both, and
+the refusal names the plugin.
+
+A `work_start` spends your provider budget. You set the ceiling:
+`stella plugin drive stella-selfdriving --spend-limit 25`. With no ceiling,
+spend is added up and reported, and nothing is refused. That is what
+`stella self-driving` does with the same flag absent.
 
 ## What this is not
 
@@ -61,11 +69,11 @@ and the refusal names the plugin.
 working driver and is deliberately untouched: §10's rule is that the shell
 driver is not deleted until its replacement is proven.
 
-What has moved onto the channel: reading the ranked defect queue. What has
-not: the claim, the worktree, the turn, the pull request, the merge, the
-benchmark, the `brew` upgrade, the `~/.zshrc` line and the daemon. All of
-those are still the shell script's, running as you, which is why the
-`[[capabilities]]` list still declares them.
+What has moved onto the channel: reading the ranked defect queue, the
+cooperative claim, and the worktree and the turn behind `work_start`. What has
+not: the pull request, the merge, the sweep, the benchmark, the `brew` upgrade,
+the `~/.zshrc` line and the daemon. All of those are still the shell script's,
+running as you, which is why the `[[capabilities]]` list still declares them.
 
 ## What keeps it honest
 
@@ -76,9 +84,10 @@ it. A power the loop drops must leave the grant; a power the grant drops must
 leave the loop.
 
 `crates/stella-cli/src/driver_plugin/tests.rs` drives `main.py` through the
-real transport twice: once with the shipped grant, where the queue read is
-served, and once with a grant that omits `backlog_next`, where the host refuses
-it and the session still ends with a `next` instead of a crash.
+real transport twice. Once with a grant that carries the read and the claim:
+both are served, and the program gets as far as asking for the work. Once with
+a grant that omits `backlog_next`: the host refuses it, and the session still
+ends with a `next` rather than a crash.
 
 The consent check is an enumeration, so it catches drift in a power somebody
 already thought of. A driver that grew a capability nobody listed would pass

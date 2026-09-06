@@ -14,8 +14,10 @@ do it, and says what should happen next:
     host   {"point": "drive", "body": {"session": "cycle-7"}}
  -> plugin {"call": "backlog_next", "id": 1}
  -> host   {"result": 1, "ok": {"backlog": {"issues": [...]}}}
- -> plugin {"call": "backlog_claim", "id": 2}
- -> host   {"result": 2, "err": {"refusal": "unsupported", "detail": "..."}}
+ -> plugin {"call": "backlog_claim", "id": 2, "args": {...}}
+ -> host   {"result": 2, "ok": {"claim": {"issue": "41", "held": true}}}
+ -> plugin {"call": "work_start", "id": 3, "args": {...}}
+ -> host   {"result": 3, "ok": {"work": {"state": "changed", ...}}}
  -> plugin {"point": "drive", "body": {"next": {"halt": {"reason": "..."}}}}
 
 One JSON message per line, both ways. `crates/stella-plugin/src/driver.rs` is
@@ -33,33 +35,47 @@ say so. Never to go get the thing some other way.
 
 # What a cycle does now
 
-The host serves `backlog_next`. Nothing else is built yet. So a cycle reads the
-ranked queue. If there is work at the top, it asks to claim it.
+The host serves `backlog_next`, `backlog_claim` and the three `work` verbs. So
+a cycle reads the ranked queue, claims the top of it, and asks Stella to work
+that one issue in a checkout of its own.
 
-The claim is turned down today. This program stops there. It will not work an
-issue it cannot know is free. Two loops on one issue is what a claim is for,
-and going ahead without one would trade a good refusal for a quiet race.
+It will not work an issue it cannot know is free. Two loops on one issue is
+what a claim is for, and going ahead without one would trade a good refusal for
+a quiet race.
 
-So a cycle ends in a `halt` that names what the host would not do. It becomes a
-real loop once `work` and `deliver` are served. Nothing in this file changes
-shape for that. Only the stage it reaches before it stops.
+A cycle ends at the diff, because nothing serves `deliver_open` yet. So the
+`halt` names the branch the work is sitting on, and a person or the shell
+script takes it from there. Nothing in this file changes shape for that. Only
+the stage it reaches before it stops.
+
+# Arguments
+
+An ask that is about a unit of work carries that unit:
+
+    {"call": "work_start", "id": 3, "args": {"work_start": {"issue": "41"}}}
+
+The table is named for the verb that reads it, and an ask carries its own
+verb's table and no other. A verb that reads nothing sends no `args` key.
 
 # `scripts/self-driving.sh` still exists
 
 That shell script is the working driver. It holds the powers this package's
 `[[capabilities]]` list names — `bash`, `write_file`, `process_spawn` — as
 you, straight out. This program holds none of them. It asks. The shell script
-stays until this one can do what it does, which is §10's own rule.
+stays until this one can do what it does, which is §10's own rule. What has
+moved across so far is the queue read, the claim, and the work; the pull
+request, the merge and the sweep are still the shell script's.
 """
 
 import json
 import sys
 
-# The verbs a cycle asks for, in the order it needs them. Both are on
+# The verbs a cycle asks for, in the order it needs them. Every one is on
 # `plugin.toml`'s `[driver] calls`. An ask that is not on that list would be
 # turned down, and writing one here would be a bug, not a test of the gate.
 BACKLOG_NEXT = "backlog_next"
 BACKLOG_CLAIM = "backlog_claim"
+WORK_START = "work_start"
 
 # How long to wait for the next cycle when there is nothing to do. Fifteen
 # minutes is the shell driver's own idle pause. The host clamps it either way,
@@ -76,8 +92,8 @@ class Channel:
         self._next_id = 1
         self.refusals = []
 
-    def ask(self, call):
-        """Ask the host for `call`.
+    def ask(self, call, args=None):
+        """Ask the host for `call`, with `args` when the verb reads them.
 
         Returns the `ok` table, or `None` when the host refused. A refusal is
         recorded and returned as an absence: it is an answer this program reads
@@ -85,7 +101,10 @@ class Channel:
         """
         request_id = self._next_id
         self._next_id += 1
-        self._write({"call": call, "id": request_id})
+        message = {"call": call, "id": request_id}
+        if args is not None:
+            message["args"] = args
+        self._write(message)
         answer = self._read("an answer to %s" % call)
         if answer.get("result") != request_id:
             fail("the host answered %r with result %r" % (call, answer.get("result")))
@@ -152,16 +171,26 @@ def queue_of(ok):
     return page.get("issues") or []
 
 
+def refused_halt(channel, said):
+    """Stop, naming the ask the host would not perform.
+
+    `said` is what this cycle was doing when it asked, so the reason a person
+    reads says which stage the loop got to, not only which verb came back.
+    """
+    call, refusal, detail = channel.refusals[-1]
+    return {"halt": {"reason": "%s: %s was refused (%s): %s" % (said, call, refusal, detail)}}
+
+
+def report_of(ok):
+    """The unit a served `work` verb answered with."""
+    return (ok or {}).get("work") or {}
+
+
 def cycle(channel):
     """One cycle's decision, as the `next` it ends with."""
     served = channel.ask(BACKLOG_NEXT)
     if served is None:
-        call, refusal, detail = channel.refusals[-1]
-        return {
-            "halt": {
-                "reason": "%s was refused (%s): %s" % (call, refusal, detail)
-            }
-        }
+        return refused_halt(channel, "reading the queue")
 
     issues = queue_of(served)
     if not issues:
@@ -172,24 +201,45 @@ def cycle(channel):
     title = top.get("title", "")
     sys.stderr.write("stella-selfdriving: next is %s %s\n" % (key, title))
 
-    if channel.ask(BACKLOG_CLAIM) is None:
-        call, refusal, detail = channel.refusals[-1]
+    claimed = channel.ask(BACKLOG_CLAIM, {"backlog_claim": {"issue": key}})
+    if claimed is None:
+        return refused_halt(
+            channel,
+            "%s is ready, and this loop does not work an issue it cannot claim, "
+            "because two loops taking one issue is what the claim prevents" % key,
+        )
+
+    claim = (claimed or {}).get("claim") or {}
+    if not claim.get("held"):
+        holder = claim.get("holder") or "another worker"
+        sys.stderr.write("stella-selfdriving: %s is held by %s\n" % (key, holder))
+        return {"sleep": {"secs": IDLE_SECS}}
+
+    worked = channel.ask(WORK_START, {"work_start": {"issue": key}})
+    if worked is None:
+        return refused_halt(channel, "%s is claimed" % key)
+
+    report = report_of(worked)
+    state = report.get("state")
+    if state == "changed":
         return {
             "halt": {
                 "reason": (
-                    "%s is ready, and %s was refused (%s): %s — this loop does not "
-                    "work an issue it cannot claim, because two loops taking one "
-                    "issue is what the claim prevents" % (key, call, refusal, detail)
+                    "%s is worked: %s on branch %s. No host serves `deliver_open` "
+                    "yet, so the branch is where this cycle stops"
+                    % (key, report.get("stat", "a change"), report.get("branch", "?"))
                 )
             }
         }
-
+    if state == "no_change":
+        return {
+            "halt": {
+                "reason": "%s needed no change: %s" % (key, report.get("detail", ""))
+            }
+        }
     return {
         "halt": {
-            "reason": (
-                "%s is claimed, and no host serves `work_start` yet — "
-                "scripts/self-driving.sh is still the driver that works an issue" % key
-            )
+            "reason": "%s did not finish: %s" % (key, report.get("detail", state))
         }
     }
 

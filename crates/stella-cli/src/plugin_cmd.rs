@@ -60,6 +60,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::self_driving_cmd::turn_flags::TurnFlags;
 use crate::settings::{Settings, Toggle};
 
 pub(crate) mod configure;
@@ -159,7 +160,7 @@ impl From<ScopeArg> for PluginScope {
 }
 
 /// Run `stella plugin <cmd>`. Offline: local files only, no API key.
-pub fn run_plugin(cmd: &PluginCmd) -> Result<(), String> {
+pub(crate) fn run_plugin(cmd: &PluginCmd, globals: &crate::cli::GlobalArgs) -> Result<(), String> {
     let root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
     let settings = Settings::load(&root).unwrap_or_default();
@@ -173,7 +174,11 @@ pub fn run_plugin(cmd: &PluginCmd) -> Result<(), String> {
             decide_panel(&root, name, panel_answer(*allow, *deny), &settings)
         }
         PluginCmd::Remove { name } => remove(&root, name),
-        PluginCmd::Drive { name } => drive(&root, name),
+        // The session-wide flags, in the form a child turn takes them. A
+        // driver that asks for `work_start` spends the operator's provider
+        // budget, and `--spend-limit` is what bounds it — the same flag, read
+        // from the same place, as every other turn this binary runs.
+        PluginCmd::Drive { name } => drive(&root, name, TurnFlags::from_globals(globals)?),
     }
 }
 
@@ -197,12 +202,18 @@ fn session_id() -> String {
 /// Before this returns, the plugin, the refusals, and the ending are all
 /// written down through [`crate::driver_plugin::session_log::record`].
 ///
+/// `flags` is what a work turn inherits. A driver that asks for `work_start`
+/// spends the operator's provider budget, and `--spend-limit` is the ceiling
+/// on it. It is the session-wide flag, not one this verb defines: a second
+/// flag of that name would collide with the global clap propagates into every
+/// subcommand, which is what `no_subcommand_flag_reuses_a_global_name` refuses.
+///
 /// # Errors
 ///
 /// Whatever [`crate::driver_plugin::bind_installed`] refuses, or the session's
 /// own failure — a driver that could not be started, timed out, died, or ended
 /// without saying what should happen next.
-fn drive(workspace_root: &Path, name: &str) -> Result<(), String> {
+fn drive(workspace_root: &Path, name: &str, flags: TurnFlags) -> Result<(), String> {
     let name = checked_name(name)?;
     let mut warn = |line: String| eprintln!("  ! {line}");
     let resolved = crate::driver_plugin::resolve(workspace_root, name, &mut warn)?;
@@ -215,6 +226,11 @@ fn drive(workspace_root: &Path, name: &str) -> Result<(), String> {
     // The capabilities are built here rather than inside the binder because
     // this is where the workspace is: the tracker adapter and the loop's own
     // configuration are both facts about the directory `stella` was run in.
+    let config = crate::self_driving_cmd::config::load(workspace_root);
+    // The ceiling the operator named, narrowed per turn to what is left of it
+    // rather than handed down whole, which is `RunBudget`'s own rule.
+    let capped = flags.spend_limit.is_some();
+    let budget = crate::self_driving_cmd::budget::RunBudget::new(flags);
     let capabilities = Box::new(
         crate::driver_plugin::capabilities::HostDriverCapabilities::new(
             name,
@@ -222,19 +238,33 @@ fn drive(workspace_root: &Path, name: &str) -> Result<(), String> {
             Box::new(crate::issue_provider::GhIssueProvider::for_workspace(
                 workspace_root,
             )),
-            crate::self_driving_cmd::config::load(workspace_root),
+            config.clone(),
+            workspace_root.to_path_buf(),
+            crate::driver_plugin::work::WorkSlot::new(Box::new(
+                crate::driver_plugin::work::SpawnedWorkRunner::new(
+                    workspace_root.to_path_buf(),
+                    config,
+                    budget,
+                ),
+            )),
         ),
     );
     let bound = resolved.serving(capabilities);
-    // Said before the session rather than inferred from the refusals after it:
-    // this host serves the tracker read and nothing else yet, so an operator
-    // should learn which asks will degrade from the host rather than from a
-    // driver's own halt message.
+    // Said before the session rather than inferred from the refusals after it,
+    // so an operator learns which asks will degrade from the host rather than
+    // from a driver's own halt message.
     if bound.offers_calls() {
         println!(
-            "  this build serves `backlog_next`; every other capability this session asks for \
-             will be refused as unsupported"
+            "  this build serves `backlog_next`, `backlog_claim`, `work_start`, `work_status` \
+             and `work_abandon`; every other capability this session asks for will be refused \
+             as unsupported"
         );
+        if !capped {
+            println!(
+                "  no --spend-limit was given, so a turn this session asks for spends until it \
+                 finishes"
+            );
+        }
     }
     let next = bound.open(&session);
     let refusals = bound.refusals();

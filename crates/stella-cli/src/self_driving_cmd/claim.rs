@@ -147,7 +147,7 @@ impl Drop for Lease {
 ///
 /// Every failure is [`Claim::Unavailable`] rather than an error: see that
 /// variant for why a probe that cannot answer must not defer.
-pub(super) fn acquire(root: &Path, key: &str) -> Claim {
+pub(crate) fn acquire(root: &Path, key: &str) -> Claim {
     acquire_as(root, key, &owner())
 }
 

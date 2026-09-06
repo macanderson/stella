@@ -158,9 +158,10 @@ pub use consent::{
     Capability, PANEL_GRANT_ASK, RiskLevel, consent_text, highest_risk, panel_handshake_text,
 };
 pub use driver::{
-    BacklogEntry, BacklogPage, DriveNext, DrivePoint, DriveRequest, DriveResponse, DriveSession,
-    DriverCall, DriverCallOutcome, DriverCallRequest, DriverCallResponse, DriverFamily,
-    DriverGrant, DriverMessage, DriverOk,
+    AbandonArgs, BacklogEntry, BacklogPage, ClaimReport, DriveNext, DrivePoint, DriveRequest,
+    DriveResponse, DriveSession, DriverArgs, DriverCall, DriverCallOutcome, DriverCallRequest,
+    DriverCallResponse, DriverFamily, DriverGrant, DriverMessage, DriverOk, UnitArgs, WorkReport,
+    WorkState,
 };
 pub use error::ManifestError;
 pub use evidence::{CheckOutcome, MeasurementRule, OracleCheck, UnmetCheck};

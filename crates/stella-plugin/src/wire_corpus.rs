@@ -78,17 +78,18 @@ use serde_json::{Value, json};
 use stella_protocol::candidate::CandidateHandle;
 
 use crate::{
-    AdoptCandidateArgs, AdoptCandidateResult, AfterTurnRequest, AfterTurnResponse, BacklogEntry,
-    BacklogPage, BeforeTurnRequest, BeforeTurnResponse, CandidateFanoutArgs, CandidateFanoutResult,
-    CandidateGrant, ChildTurnArgs, ChildTurnResult, DriveNext, DriveRequest, DriveResponse,
-    DriverCall, DriverCallRequest, DriverCallResponse, DriverOk, FanoutCandidate, FlipObservation,
-    HostCall, HostCallArgs, HostCallFailure, HostCallOk, HostCallRefusal, HostCallRequest,
-    HostCallResponse, HostStage, ObservedEvidence, PROTOCOL_VERSION, PanelDenial, PanelEmphasis,
-    PanelFrame, PanelInk, PanelLease, PanelLine, PanelPaint, PanelPatch, PanelPoint, PanelRect,
-    PanelRequest, PanelResponse, PanelSpan, PanelStyle, PanelSurface, PanelText, PublishedSignal,
-    RecallArgs, RecallFrame, RecallResult, RunTestArgs, Signal, SignalKind, SignalValue, StageName,
-    TestBaseline, TestPlan, TestRunResult, TurnOutcome, VolatileContext, WrapperPoint,
-    WrapperRequest, WrapperResponse,
+    AbandonArgs, AdoptCandidateArgs, AdoptCandidateResult, AfterTurnRequest, AfterTurnResponse,
+    BacklogEntry, BacklogPage, BeforeTurnRequest, BeforeTurnResponse, CandidateFanoutArgs,
+    CandidateFanoutResult, CandidateGrant, ChildTurnArgs, ChildTurnResult, ClaimReport, DriveNext,
+    DriveRequest, DriveResponse, DriverArgs, DriverCall, DriverCallRequest, DriverCallResponse,
+    DriverOk, FanoutCandidate, FlipObservation, HostCall, HostCallArgs, HostCallFailure,
+    HostCallOk, HostCallRefusal, HostCallRequest, HostCallResponse, HostStage, ObservedEvidence,
+    PROTOCOL_VERSION, PanelDenial, PanelEmphasis, PanelFrame, PanelInk, PanelLease, PanelLine,
+    PanelPaint, PanelPatch, PanelPoint, PanelRect, PanelRequest, PanelResponse, PanelSpan,
+    PanelStyle, PanelSurface, PanelText, PublishedSignal, RecallArgs, RecallFrame, RecallResult,
+    RunTestArgs, Signal, SignalKind, SignalValue, StageName, TestBaseline, TestPlan, TestRunResult,
+    TurnOutcome, UnitArgs, VolatileContext, WorkReport, WorkState, WrapperPoint, WrapperRequest,
+    WrapperResponse,
 };
 
 /// The committed artifact's filename.
@@ -306,19 +307,66 @@ fn driver_session() -> Result<Value, serde_json::Error> {
     ]))
 }
 
-/// A capability ask, in the one shape it has at B0.
+/// A capability ask, in both of its shapes.
 ///
-/// No `args` key, and no `full`/`minimal` pair, because the request carries no
-/// optional member — the arguments land with the verb that needs them, and an
-/// `args` appearing here later is exactly the diff that should be reviewed.
+/// `args` is the request's one optional member, so the pair is what makes a
+/// change between required and optional a diff here: `backlog_next` reads no
+/// arguments and sends no key, and `work_start` names the unit it is about.
+/// A table for each remaining verb that reads one, because each is a separate
+/// wire contract a driver author writes against.
 fn driver_calls() -> Result<Value, serde_json::Error> {
-    Ok(Value::Array(vec![case(
-        "backlog_next",
-        &DriverCallRequest {
-            id: 1,
-            call: DriverCall::BacklogNext,
-        },
-    )?]))
+    Ok(Value::Array(vec![
+        case(
+            "backlog_next",
+            &DriverCallRequest {
+                id: 1,
+                call: DriverCall::BacklogNext,
+                args: None,
+            },
+        )?,
+        case(
+            "backlog_claim",
+            &DriverCallRequest {
+                id: 2,
+                call: DriverCall::BacklogClaim,
+                args: Some(DriverArgs {
+                    backlog_claim: Some(UnitArgs {
+                        issue: "1234".into(),
+                    }),
+                    work_start: None,
+                    work_abandon: None,
+                }),
+            },
+        )?,
+        case(
+            "work_start",
+            &DriverCallRequest {
+                id: 3,
+                call: DriverCall::WorkStart,
+                args: Some(DriverArgs {
+                    backlog_claim: None,
+                    work_start: Some(UnitArgs {
+                        issue: "1234".into(),
+                    }),
+                    work_abandon: None,
+                }),
+            },
+        )?,
+        case(
+            "work_abandon",
+            &DriverCallRequest {
+                id: 4,
+                call: DriverCall::WorkAbandon,
+                args: Some(DriverArgs {
+                    backlog_claim: None,
+                    work_start: None,
+                    work_abandon: Some(AbandonArgs {
+                        reason: "the base moved under it".into(),
+                    }),
+                }),
+            },
+        )?,
+    ]))
 }
 
 /// The host's answers to those asks.
@@ -328,8 +376,8 @@ fn driver_results() -> Result<Value, serde_json::Error> {
         // it is still the bytes every driver written against B0 reads: every
         // member of `DriverOk` is omitted when absent.
         case("ok/empty", &DriverCallResponse::ok(1, DriverOk::default()))?,
-        // The one verb this host serves. A member appearing here is a wire
-        // change, which is what the corpus exists to put on the screen.
+        // One case per verb this host reports on. A member appearing here is a
+        // wire change, which is what the corpus exists to put on the screen.
         case(
             "ok/backlog",
             &DriverCallResponse::ok(
@@ -343,6 +391,53 @@ fn driver_results() -> Result<Value, serde_json::Error> {
                             url: "https://example.invalid/1234".into(),
                         }],
                     }),
+                    claim: None,
+                    work: None,
+                },
+            ),
+        )?,
+        case(
+            "ok/claim",
+            &DriverCallResponse::ok(
+                5,
+                DriverOk {
+                    backlog: None,
+                    claim: Some(ClaimReport {
+                        issue: "1234".into(),
+                        held: false,
+                        holder: "self-driving:8412".into(),
+                    }),
+                    work: None,
+                },
+            ),
+        )?,
+        case(
+            "ok/work",
+            &DriverCallResponse::ok(
+                6,
+                DriverOk {
+                    backlog: None,
+                    claim: None,
+                    work: Some(WorkReport {
+                        issue: "1234".into(),
+                        state: WorkState::Changed,
+                        branch: "stella/1234".into(),
+                        stat: " 2 files changed, 31 insertions(+)".into(),
+                        detail: String::new(),
+                    }),
+                },
+            ),
+        )?,
+        // The emptiest legal report: a slot with nothing in it. Every optional
+        // member is omitted, so `state` alone is what a driver reads.
+        case(
+            "ok/work/idle",
+            &DriverCallResponse::ok(
+                7,
+                DriverOk {
+                    backlog: None,
+                    claim: None,
+                    work: Some(WorkReport::default()),
                 },
             ),
         )?,

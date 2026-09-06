@@ -15,7 +15,7 @@
 
 mod audit;
 mod backlog;
-mod budget;
+pub(crate) mod budget;
 pub(crate) mod claim;
 mod claim_mirror;
 mod claude_worker;
@@ -53,7 +53,7 @@ mod supply;
 mod surface;
 mod triage;
 pub(crate) mod turn_flags;
-mod work;
+pub(crate) mod work;
 
 use std::collections::BTreeMap;
 use std::process::Command;

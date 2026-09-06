@@ -1167,7 +1167,9 @@ fn a_driver_session_leaves_a_durable_record_of_what_it_asked_and_how_it_ended() 
         "nothing recorded before any session ran"
     );
 
-    drive(&root, "watcher").expect("a session that sleeps is not an error");
+    // No ceiling and no routing: this fixture asks for no capability, so it
+    // spends nothing and there is nothing for a ceiling to bound.
+    drive(&root, "watcher", TurnFlags::default()).expect("a session that sleeps is not an error");
 
     let sessions = crate::driver_plugin::session_log::read_sessions(&root);
     assert_eq!(sessions.len(), 1, "{sessions:?}");
