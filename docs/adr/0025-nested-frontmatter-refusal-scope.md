@@ -54,8 +54,17 @@ record.
 The two loaders stay apart. A reader who spots that and reaches for one rule
 should read this first.
 
-The check is weaker than the rule. `nested_keys` holds the child names, not
-the parent's. So the check asks whether `tools:` is empty and whether
-anything is nested at all. A file with a bare `tools:` and a nested
-`description:` is refused, and nothing widened. That is `#5737`. Fixing it is
-what would let the rule hold per field.
+The check now asks the rule's own question. `Frontmatter::nested_parents`
+records the key a nested mapping sat under, beside the child names in
+`nested_keys`, so `plan.rs`'s `nests_a_toolbelt_key` can ask whether the
+nesting was under a toolbelt key rather than whether anything was nested at
+all. A file with a bare `tools:` and a nested `description:` loads, because
+nothing widened. That was `#5737`.
+
+`command_from_file` asks the same question now. A nested `allowed-tools:`
+leaves that key empty, and an empty one means no restriction, so the command
+loader had the widening the agent loader was already refusing.
+
+A rule record is still refused for any nesting. `rule_from_file` reads
+`nested_keys` and does not care which parent held them, because a record is
+policy and every field of it steers.

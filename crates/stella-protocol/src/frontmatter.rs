@@ -20,16 +20,11 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Frontmatter {
     pub data: HashMap<String, String>,
-    /// Keys that showed up more than once, first repeat first. The last
-    /// value still wins in `data`, as it always has. A caller that checks a
-    /// schema can turn that around and refuse the file.
-    pub duplicate_keys: Vec<String>,
     /// Keys **indented under another key**. That is a nested map, and one
     /// line at a time cannot hold it.
     ///
-    /// Noted here, acted on elsewhere, for the reason `duplicate_keys` is:
-    /// skills, rules and extensions all read this, and a nested key means a
-    /// different thing to each of them.
+    /// Noted here, acted on elsewhere: skills, rules and extensions all read
+    /// this, and a nested key means a different thing to each of them.
     /// `stella_learn::rules::rule_from_file` refuses a rule that has any.
     ///
     /// Why it matters (ADR 0011, Consequences): the parser drops the
@@ -45,6 +40,20 @@ pub struct Frontmatter {
     /// have. That is the shape of a guard script that prints OK and skips
     /// most of its input.
     pub nested_keys: Vec<String>,
+    /// The top-level keys those nested children sat under, first parent
+    /// first.
+    ///
+    /// A caller that must decide per field needs the parent, not the child:
+    /// ADR 0025 refuses a nested value only where reading it wrong would
+    /// widen what the file may do, and `tools:` is such a key while
+    /// `description:` is not. `nested_keys` alone cannot tell those apart, so
+    /// `stella-cli`'s `agent_from_file` used to refuse an agent for nesting
+    /// under any key at all.
+    ///
+    /// A set of parents, not pairs. Every caller so far asks whether one
+    /// named key was nested, and a pair list would answer that no better
+    /// while making the common `is_empty` read longer.
+    pub nested_parents: Vec<String>,
     pub body: String,
 }
 
@@ -70,8 +79,9 @@ pub(crate) fn strip_matched_quotes(value: &str) -> &str {
 /// the author wrote it.
 ///
 /// A key **indented under another key** goes to
-/// [`Frontmatter::nested_keys`]. It is not raised to the top level. That
-/// field's own docs say why raising it was a bug.
+/// [`Frontmatter::nested_keys`], and the key it sat under goes to
+/// [`Frontmatter::nested_parents`]. Neither is raised to the top level. The
+/// first field's own docs say why raising it was a bug.
 pub fn parse_frontmatter(raw: &str) -> Frontmatter {
     let text = raw.strip_prefix('\u{feff}').unwrap_or(raw);
     if !text.starts_with("---") {
@@ -97,8 +107,8 @@ pub fn parse_frontmatter(raw: &str) -> Frontmatter {
         .to_string();
 
     let mut data = HashMap::new();
-    let mut duplicate_keys = Vec::new();
     let mut nested_keys = Vec::new();
+    let mut nested_parents = Vec::new();
     // The key whose scalar value was empty on its own line — the head of a
     // possible YAML block sequence (`tools:` followed by `- Read` lines).
     let mut pending_list_key: Option<String> = None;
@@ -106,6 +116,9 @@ pub fn parse_frontmatter(raw: &str) -> Frontmatter {
     // Anything deeper is a nested mapping. Read from the file rather than assumed
     // to be zero so a frontmatter block someone indented wholesale still parses.
     let mut base_indent: Option<usize> = None;
+    // The most recent key at the base indent — the parent any deeper key
+    // hangs under.
+    let mut last_base_key: Option<String> = None;
     for line in header.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -144,18 +157,21 @@ pub fn parse_frontmatter(raw: &str) -> Frontmatter {
             if !nested_keys.iter().any(|seen| seen == key) {
                 nested_keys.push(key.to_string());
             }
+            if let Some(parent) = &last_base_key
+                && !nested_parents.iter().any(|seen| seen == parent)
+            {
+                nested_parents.push(parent.clone());
+            }
             continue;
-        }
-        if data.contains_key(key) && !duplicate_keys.iter().any(|seen| seen == key) {
-            duplicate_keys.push(key.to_string());
         }
         data.insert(key.to_string(), value.to_string());
         pending_list_key = value.is_empty().then(|| key.to_string());
+        last_base_key = Some(key.to_string());
     }
     Frontmatter {
         data,
-        duplicate_keys,
         nested_keys,
+        nested_parents,
         body,
     }
 }
@@ -224,5 +240,37 @@ mod tests {
         let fm = parse_frontmatter("---\ndescription: d\n- stray item\n---\nbody");
         assert_eq!(fm.data.len(), 1);
         assert_eq!(fm.data.get("description").unwrap(), "d");
+    }
+
+    /// A nested mapping records both halves: the child names, and the key the
+    /// nesting hung under. Without the parent, a caller cannot ask whether
+    /// the nested key was one that grants a capability, which is the question
+    /// ADR 0025 turns on.
+    #[test]
+    fn a_nested_mapping_records_the_key_it_sat_under() {
+        let fm = parse_frontmatter(
+            "---\nname: reviewer\ntools:\n  read: true\n  write: false\ndescription: d\n---\nbody",
+        );
+        assert_eq!(fm.nested_keys, vec!["read", "write"]);
+        assert_eq!(fm.nested_parents, vec!["tools"]);
+        assert_eq!(
+            fm.data.get("description").unwrap(),
+            "d",
+            "the key after the nesting parses normally"
+        );
+        assert!(
+            !fm.data.contains_key("read"),
+            "a nested child is still never raised to the top level"
+        );
+    }
+
+    /// Two nested mappings keep their own parents, so a caller asking about
+    /// one key is not answered by the other.
+    #[test]
+    fn each_nested_mapping_names_its_own_parent() {
+        let fm =
+            parse_frontmatter("---\ndescription:\n  short: s\ntools:\n  read: true\n---\nbody");
+        assert_eq!(fm.nested_parents, vec!["description", "tools"]);
+        assert_eq!(fm.nested_keys, vec!["short", "read"]);
     }
 }
