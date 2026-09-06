@@ -237,20 +237,43 @@ fn read_toml(root: &Path) -> LoopDocument {
 /// agent. The name is taken up to the closing bracket rather than off the
 /// end of the line, so a trailing comment does not hide the header.
 ///
-/// A quoted key (`[self_driving."worker"]`) is not recognised. That spelling
-/// fails toward refusing a worker this cannot read rather than toward
-/// running one the operator did not name, which is the direction that is
-/// safe to be wrong in.
+/// A quoted key is TOML-legal too, and it is dropped for the same reason the
+/// whitespace is: `[self_driving."worker"]` opens the table
+/// `[self_driving.worker]` opens. Every miss here fails in one direction, and
+/// it is the unsafe one — `names_a_worker: false` resolves
+/// [`WorkerKind::default`](crate::settings::toml_config::WorkerKind), which is
+/// `Stella`, so a spelling this does not recognise runs the default agent
+/// under a file that named a different one rather than refusing the turn.
+///
+/// Splitting on the dots before unquoting is what keeps the normalization from
+/// widening: `["self_driving.worker"]` is one quoted key holding a dot, a
+/// different table, and it must not match. Nor may `[[self_driving.worker]]`,
+/// an array of tables, which cannot carry a `kind`.
 fn declares_a_worker(raw: &str) -> bool {
     raw.lines().map(str::trim).any(|line| {
         line.strip_prefix('[')
             .and_then(|rest| rest.split_once(']'))
             .is_some_and(|(name, _)| {
-                name.chars()
-                    .filter(|c| !c.is_whitespace())
-                    .eq("self_driving.worker".chars())
+                let mut keys = name.split('.').map(|key| unquote(key.trim()));
+                keys.next() == Some("self_driving")
+                    && keys.next() == Some("worker")
+                    && keys.next().is_none()
             })
     })
+}
+
+/// One table-header key with its TOML quoting removed, if it carried any.
+///
+/// Both quote characters, because TOML spells a key as a basic string
+/// (`"worker"`) or a literal one (`'worker'`).
+fn unquote(key: &str) -> &str {
+    key.strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .or_else(|| {
+            key.strip_prefix('\'')
+                .and_then(|rest| rest.strip_suffix('\''))
+        })
+        .unwrap_or(key)
 }
 
 #[cfg(test)]
@@ -477,6 +500,9 @@ kind = "clade"
             "[ self_driving.worker ]",
             "[self_driving . worker]",
             "[self_driving.worker] # the agent this loop drives",
+            "[self_driving.\"worker\"]",
+            "[\"self_driving\".worker]",
+            "[self_driving.'worker']",
         ] {
             let ws = workspace();
             write(
@@ -491,6 +517,32 @@ kind = "clade"
                 load(ws.path()).worker.kind,
                 crate::settings::toml_config::WorkerKind::Unreadable,
                 "`{header}` names the worker table, so it must refuse like the bare spelling"
+            );
+        }
+    }
+
+    /// The negative control for the test above. Dropping whitespace and quotes
+    /// must not widen the match into a header naming a different table:
+    /// `["self_driving.worker"]` is one quoted key holding a dot, and
+    /// `[[self_driving.worker]]` is an array of tables that cannot carry a
+    /// `kind`. Either one matching would refuse a turn over a document that
+    /// names no worker at all.
+    #[test]
+    fn a_lookalike_header_is_not_read_as_the_worker_table() {
+        for header in ["[\"self_driving.worker\"]", "[[self_driving.worker]]"] {
+            let ws = workspace();
+            write(
+                ws.path(),
+                "stella.toml",
+                &format!(
+                    "[meta]\nschema_version = 1\nscope = \"project\"\n\n{header}\nkind = \"clade\"\n"
+                ),
+            );
+
+            assert_eq!(
+                load(ws.path()).worker.kind,
+                crate::settings::toml_config::WorkerKind::Stella,
+                "`{header}` does not open [self_driving.worker]"
             );
         }
     }
