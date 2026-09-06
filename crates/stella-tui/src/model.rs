@@ -483,7 +483,7 @@ impl SessionModel {
                 // Read before `name` is moved into the transcript row below;
                 // consumed after it, where the rest of the pending-card latches
                 // are retired. See there for why this is the refusal (#4612).
-                let plan_gate_refused = !ok && name == stella_tools::tasks::START;
+                let plan_gate_refused = !ok && name == stella_tool_facts::catalog::TASK_START;
                 // Only a *successful* mutation gets an inline-diff reference —
                 // a failed call produced no `FileChange`, and rendering the
                 // path's previous diff under its ✗ would attribute a change

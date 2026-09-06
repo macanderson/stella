@@ -50,6 +50,41 @@ use crate::catalog;
 /// The wildcard key matching every tool.
 pub const WILDCARD: &str = "*";
 
+/// Why a switch spec could not be read.
+///
+/// A named error rather than a `String`, so a caller can tell a typo in a
+/// value from a missing name without reading the sentence (AGENTS.md #5).
+/// The sentences are the ones this parser prints today.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ToolSpecError {
+    /// An entry with no `:` in it at all.
+    #[error(
+        "`{entry}` is not a tool switch — write it as `name:on` or `name:off` (e.g. \
+         `*:off,task_list:on`)"
+    )]
+    NotASwitch {
+        /// The entry as written.
+        entry: String,
+    },
+    /// An entry whose `:` has nothing before it.
+    #[error("`{entry}` has no tool name before the `:`")]
+    NoName {
+        /// The entry as written.
+        entry: String,
+    },
+    /// A value that is neither `on` nor `off`.
+    #[error("`{key}` must be `on` or `off`, not `{value}`")]
+    NotOnOrOff {
+        /// The key the value was given for.
+        key: String,
+        /// The value as written.
+        value: String,
+    },
+    /// A spec that named no switch at all.
+    #[error("empty tool spec — pass at least one `name:on`/`name:off`")]
+    Empty,
+}
+
 /// An operator's tool switches, resolved by name at query time.
 ///
 /// Empty means "everything on", which is the shipped default — construct that
@@ -190,7 +225,7 @@ impl ToolPolicy {
     ///   as before.
     ///
     /// The result is the exact per-name intersection —
-    /// `narrow_with` now agrees with [`crate::skill_grant::effective_allows`],
+    /// `narrow_with` now agrees with `stella_tools::skill_grant::effective_allows`,
     /// which computes it one concrete name at a time — pinned as a property
     /// by `the_fold_is_exactly_the_per_name_intersection`.
     pub fn narrow_with(&mut self, other: &ToolPolicy) {
@@ -235,7 +270,7 @@ impl ToolPolicy {
     /// settings file exactly rather than inventing a second vocabulary for
     /// the same concept. Whitespace around either side is ignored so a
     /// quoted, spaced-out spec behaves.
-    pub fn parse_spec(spec: &str) -> Result<Self, String> {
+    pub fn parse_spec(spec: &str) -> Result<Self, ToolSpecError> {
         let mut switches = BTreeMap::new();
         for entry in spec.split(',') {
             let entry = entry.trim();
@@ -243,26 +278,30 @@ impl ToolPolicy {
                 continue;
             }
             let Some((key, value)) = entry.rsplit_once(':') else {
-                return Err(format!(
-                    "`{entry}` is not a tool switch — write it as `name:on` or `name:off` \
-                     (e.g. `*:off,task_list:on`)"
-                ));
+                return Err(ToolSpecError::NotASwitch {
+                    entry: entry.to_string(),
+                });
             };
             let key = key.trim();
             if key.is_empty() {
-                return Err(format!("`{entry}` has no tool name before the `:`"));
+                return Err(ToolSpecError::NoName {
+                    entry: entry.to_string(),
+                });
             }
             let enabled = match value.trim() {
                 "on" => true,
                 "off" => false,
                 other => {
-                    return Err(format!("`{key}` must be `on` or `off`, not `{other}`"));
+                    return Err(ToolSpecError::NotOnOrOff {
+                        key: key.to_string(),
+                        value: other.to_string(),
+                    });
                 }
             };
             switches.insert(key.to_string(), enabled);
         }
         if switches.is_empty() {
-            return Err("empty tool spec — pass at least one `name:on`/`name:off`".into());
+            return Err(ToolSpecError::Empty);
         }
         Ok(Self { switches })
     }
@@ -421,7 +460,7 @@ mod narrowing_tests {
     /// The tool-name universe the property quantifies over: every catalog
     /// name (so group resolution is exercised for real) plus an MCP and a
     /// custom name the catalog has never heard of. Mirrors
-    /// [`crate::skill_grant`]'s, which pins the same intersection per name.
+    /// `stella_tools::skill_grant`'s, which pins the same intersection per name.
     fn universe() -> Vec<&'static str> {
         let mut names: Vec<&'static str> = catalog::ALL_NAMES.to_vec();
         names.push("mcp__github__create_issue");
@@ -444,7 +483,7 @@ mod narrowing_tests {
     proptest! {
         /// **The #2800 property.** The fold is the intersection *exactly*,
         /// per concrete tool name — the semantics
-        /// [`crate::skill_grant::effective_allows`] already computed one name
+        /// `stella_tools::skill_grant::effective_allows` already computed one name
         /// at a time, and which the folded form is now safe to stand in for.
         ///
         /// Widening is the failure this catches (a name the scope denies that

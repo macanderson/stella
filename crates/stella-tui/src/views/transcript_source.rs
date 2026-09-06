@@ -469,7 +469,7 @@ fn subject_for(name: &str, path: Option<&str>, input: &str) -> Subject {
             // necessarily this workspace's `read`, so the name survives and
             // only the routing goes — the most a caller can do without
             // asking the server.
-            let label = stella_tools::catalog::label_for(name);
+            let label = stella_tool_facts::catalog::label_for(name);
             let head = first_line(input);
             // A raw input blob is not a path even when it contains one: the
             // subject here opens with the tool's own name, so there is no file

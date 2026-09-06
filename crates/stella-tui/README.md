@@ -15,8 +15,13 @@ It also does not depend on `stella-graph`: the caller queries its own
 ## Where it sits
 
 Depends on `stella-protocol` (the `AgentEvent` / `Attachment` types it folds)
-and `stella-tools` for exactly one thing — `subprocess_env::scrub_sensitive_env`
-when running a `!` command ([`src/deck_shell.rs:208`](src/deck_shell.rs)).
+and [`stella-tool-facts`](../stella-tool-facts) for what it reads about the
+tool surface: the tool table, the operator's switches, the index-readiness
+policy, and the environment scrub a `!` command runs through
+([`src/deck_shell.rs`](src/deck_shell.rs)'s `run_shell`). Taking
+`stella-tools` instead brings the whole executor along with it, so
+[`tests/dependency_boundary.rs`](tests/dependency_boundary.rs) holds that
+edge shut.
 Third-party: `ratatui` + `crossterm`, `sysinfo` (CPU/MEM), `arboard` + `png`
 (clipboard images). `stella-cli` is the only workspace crate that depends on it — it owns
 the driver side (`crates/stella-cli/src/command_deck.rs`, `src/tui.rs`). This crate
@@ -72,8 +77,10 @@ What must never land here is anything the fold cannot derive. Business
 decisions — what to compact, when a budget trips, whether a loop is detected —
 live in [`stella-core`](../stella-core); this crate renders the *events* those
 decisions emit and never re-decides them. Tool logic belongs in
-[`stella-tools`](../stella-tools) (the one existing exception, env scrubbing
-for `!` commands, is noted above). Provider calls go through
+[`stella-tools`](../stella-tools), and this crate must not take that edge —
+[`tests/dependency_boundary.rs`](tests/dependency_boundary.rs) holds it shut.
+What a screen has to know about tools is data, and that lives one crate down
+in [`stella-tool-facts`](../stella-tool-facts). Provider calls go through
 [`stella-model`](../stella-model), persistence through
 [`stella-store`](../stella-store). AGENTS.md invariants #1 and #2 are the
 normative statement of this split; the "Workspace layout" table there routes

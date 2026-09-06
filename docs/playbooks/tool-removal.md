@@ -33,7 +33,7 @@ Work through the steps in this order — each one surfaces the work of the next.
 
 ### 2. Declaration — shrink the catalog
 
-- `crates/stella-tools/src/catalog.rs` is the declaration list that
+- `crates/stella-tool-facts/src/catalog.rs` is the declaration list that
   `crates/stella-cli/src/tool_docs.rs` generates `docs/tools/` from. Remove
   the tool's declaration here or the `tool-docs` gate re-creates its page.
 

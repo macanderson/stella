@@ -16,7 +16,7 @@ Six old tools are gone: `grep`, `glob`, `graph_query`, `read_symbol`,
 `project_overview`, and `gather_context`. One tool does their job now:
 `search(query)`.
 
-Their old names still live in `crates/stella-tools/src/catalog.rs`, marked as
+Their old names still live in `crates/stella-tool-facts/src/catalog.rs`, marked as
 retired. `grep` and `glob` sit in a second list, because both are also plain
 English words. Nothing was deleted. The code each old tool ran — the code
 graph, the embedding index, the file scan — still runs. It just runs inside

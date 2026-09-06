@@ -433,8 +433,13 @@ pub fn scrub_sensitive_std_env_except(
     }
 }
 
-#[cfg(test)]
-pub(crate) mod test_support {
+// The fixtures below are used by this crate's own tests and by
+// `stella-tools`, whose spawn paths this policy governs. A cargo feature
+// rather than `cfg(test)`, because `cfg(test)` does not cross a crate
+// boundary: `stella-tools` takes it as a dev-dependency feature, so a
+// shipped build still compiles none of it.
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support {
     use std::ffi::OsString;
     use std::sync::{Mutex, MutexGuard};
 

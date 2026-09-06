@@ -460,7 +460,7 @@ fn spawn_shell_command(
 }
 
 fn scrub_shell_command(command: &mut tokio::process::Command) {
-    stella_tools::subprocess_env::scrub_sensitive_env(command);
+    stella_tool_facts::subprocess_env::scrub_sensitive_env(command);
 }
 
 /// Streams a piped child stream into `buf`, chunk by chunk, so output is

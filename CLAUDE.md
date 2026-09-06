@@ -191,7 +191,7 @@
   sub-agent delegation, the task board, the scratch state plane, the
   environment probe, and one question back to whoever is driving
   (`ask_question`, #4212). Declared once in
-  `crates/stella-tools/src/catalog.rs` — that table is the count, and the
+  `crates/stella-tool-facts/src/catalog.rs` — that table is the count, and the
   number is deliberately not written here, because the last three times it
   was, it drifted the moment a tool landed.
 

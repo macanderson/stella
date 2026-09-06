@@ -1092,7 +1092,7 @@ empty and is meant to stay empty.
 
 ## Workspace layout — where a change goes
 
-Twenty-eight crates, every one under the `crates/` directory (`crates/stella-core`,
+Twenty-nine crates, every one under the `crates/` directory (`crates/stella-core`,
 `crates/stella-cli`, …; the two bench members stay under `bench/`). The
 one-sentence rule of thumb below routes you to the right one; **each crate's
 own `README.md`** (linked from the table) then covers its boundary, layout,
@@ -1105,7 +1105,8 @@ the files you must plan around (see below).
 |---|---|---|
 | Change the agent loop (plan / retry / compact / budget / loop-detect / hooks) | [`stella-core`](crates/stella-core/README.md) | **No I/O allowed.** Decision logic only. Skills and rules live in `stella-learn`. |
 | Add/fix a model provider (SSE, tool-call dialect, pricing) | [`stella-model`](crates/stella-model/README.md) | One file per adapter (`anthropic.rs`, `openai.rs`, `gemini.rs`, `vertex.rs`, `bedrock.rs`, `zai.rs`). Copy an existing adapter's shape. |
-| Add/fix a built-in tool (`bash`, `read_file`, `edit_file`, `search`, `task_create`, `save_state`, `get_environment`, …) | [`stella-tools`](crates/stella-tools/README.md) | Implement the `Tool` trait, register in `ToolRegistry`, declare one line in `catalog.rs`. |
+| Add/fix a built-in tool (`bash`, `read_file`, `edit_file`, `search`, `task_create`, `save_state`, `get_environment`, …) | [`stella-tools`](crates/stella-tools/README.md) | Implement the `Tool` trait, register in `ToolRegistry`, declare one line in `stella-tool-facts`'s `catalog.rs`. |
+| Change the tool table, an operator's tool switches, the environment a child process must never inherit, or the index-readiness policy | [`stella-tool-facts`](crates/stella-tool-facts/README.md) | **Near-leaf: `stella-protocol` is its only workspace dependency.** Data and pure predicates about the tool surface, with no executor behind them — which is what lets [`stella-tui`](crates/stella-tui/README.md) draw a tool row, an approval card and an index hold without linking the code-graph index. `stella-tools` re-exports every item at its former path. |
 | Change CLI commands, flags, or agent wiring | [`stella-cli`](crates/stella-cli/README.md) | This is the shipping binary. |
 | Change REPL rendering / panels / keybindings | [`stella-tui`](crates/stella-tui/README.md) | Pure-fold ratatui REPL — the Command Deck, the default interactive shell on a TTY. The v2 redesign (`design/tui-v2/SPEC.md`) landed **in place**: its surfaces are `src/views/`, its palette is the `stella-tui-theme` crate, and `src/palette.rs` re-points the v1 names at v2 tokens. There is no `src/v2/` directory — an earlier plan for one was dissolved. |
 | Change a **v2 colour, state glyph, or the wordmark** | [`stella-tui-theme`](crates/stella-tui-theme/README.md) | **A near-leaf: `ratatui` is its only dependency**, so every v2 surface can take it without cost. The v2 palette plus the hue clamp that holds it — gold must clear `g >= 0.78 r` or it is orange, grays must be neutral or blue-tipped or the scheme reads sepia — enforced as unit tests on the shipped table. Deliberately **not** a superset of `stella-tui::palette`: v1 is warm-neutral by design and v2's clamp rejects a warm gray outright, so the two coexist until each surface migrates. |
@@ -1235,7 +1236,7 @@ a plan needs and the part that rarely changes:
 | `stella-store` | `src/tests.rs`, `src/lib.rs`, `src/usage.rs` |
 | `stella-tui` | `src/deck_ui.rs` |
 
-The other twenty-three crates carry no god files — keep it that way. Each crate's
+The other twenty-four crates carry no god files — keep it that way. Each crate's
 README repeats its own list under "God files — do not add lines", so the
 constraint is in view wherever planning starts.
 

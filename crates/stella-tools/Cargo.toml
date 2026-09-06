@@ -10,6 +10,11 @@ publish.workspace = true
 
 [dependencies]
 stella-protocol = { path = "../stella-protocol" }
+# The tool table, the tool switches, the environment scrub and the index
+# readiness policy. Data and pure predicates, split out so a screen can read
+# them without linking this crate — and, through it, the code-graph index.
+# Every item is re-exported here at the path it had before.
+stella-tool-facts = { path = "../stella-tool-facts" }
 stella-core = { path = "../stella-core" }
 # Two ledgers. `foundry_gate` re-exports `stella_store::AdoptedTool` for tool
 # adoption. The registry carries the `mcp_usage` handle.
@@ -75,6 +80,10 @@ windows-sys = { version = "0.61", features = [
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "fs", "io-util"] }
+# `subprocess_env::test_support` — the environment fixtures this crate's
+# spawn-hygiene tests install. A feature rather than `cfg(test)`, which does
+# not cross a crate boundary; off in every shipped build.
+stella-tool-facts = { path = "../stella-tool-facts", features = ["test-support"] }
 # Property tests for foundry authorship and the approval precedence ladder.
 proptest.workspace = true
 

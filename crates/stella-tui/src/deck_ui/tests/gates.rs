@@ -42,7 +42,7 @@ fn without_a_pending_gate_a_submission_is_still_an_ordinary_prompt() {
 /// Readiness as the driver reports it mid-pass: `behind` files still to
 /// embed, nothing settled yet.
 fn indexing(behind: usize) -> crate::envelope::Inbound {
-    crate::envelope::Inbound::IndexReadiness(stella_tools::search::readiness::IndexReadiness {
+    crate::envelope::Inbound::IndexReadiness(stella_tool_facts::readiness::IndexReadiness {
         total_files: 1_000,
         unindexed_files: behind,
         settled: false,
@@ -84,13 +84,11 @@ fn a_settled_index_releases_the_prompt_however_far_behind_it_is() {
     let mut ui = ready_ui();
     ingest_inbound(&indexing(447), &mut model, &mut ui);
     ingest_inbound(
-        &crate::envelope::Inbound::IndexReadiness(
-            stella_tools::search::readiness::IndexReadiness {
-                total_files: 1_000,
-                unindexed_files: 447,
-                settled: true,
-            },
-        ),
+        &crate::envelope::Inbound::IndexReadiness(stella_tool_facts::readiness::IndexReadiness {
+            total_files: 1_000,
+            unindexed_files: 447,
+            settled: true,
+        }),
         &mut model,
         &mut ui,
     );

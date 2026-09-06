@@ -2,7 +2,7 @@
 //!
 //! Adding a tool used to be a ~6-file edit, and several of those edits were
 //! hardcoded counts or duplicated name-lists: registry count pins, the
-//! read-only partition, [`crate::custom::RESERVED_NAMES`], and counts in the
+//! read-only partition, `stella_tools::custom::RESERVED_NAMES`, and counts in the
 //! docs. Parallel PRs each bumped the same integer off the same base, so
 //! squash-merging them back-to-back left the count off by N−1 with **no merge
 //! conflict** — a plausible-but-wrong number that only CI (or nothing at all,
@@ -14,12 +14,12 @@
 //!
 //! - the registry's expected-name set (`registry.rs` tests),
 //! - the read-only partition (same),
-//! - [`crate::custom::RESERVED_NAMES`] (aliased straight to [`ALL_NAMES`]),
+//! - `stella_tools::custom::RESERVED_NAMES` (aliased straight to [`ALL_NAMES`]),
 //! - the per-tool reference pages under `docs/tools/`,
-//! - every built-in's [`stella_protocol::ToolContract`] ([`crate::contracts`]).
+//! - every built-in's [`stella_protocol::ToolContract`] (`stella_tools::contracts`).
 //!
 //! **To add a tool:** register it in
-//! [`ToolRegistry::new`](crate::registry::ToolRegistry), add one line here,
+//! `stella_tools::registry::ToolRegistry::new`, add one line here,
 //! and introduce it in `stella-cli`'s `tool_steering!()` prose. Nothing else
 //! needs a count bumped. Two PRs adding different tools merge to the correct
 //! union instead of a wrong integer, and a tool registered but never declared
@@ -53,7 +53,7 @@ pub enum Availability {
 }
 
 impl Availability {
-    /// Whether the native [`crate::registry::ToolRegistry`] is what registers
+    /// Whether the native `stella_tools::registry::ToolRegistry` is what registers
     /// this tool. True for every current variant; a future CLI-layered
     /// declaration would answer false.
     pub const fn is_native(self) -> bool {
@@ -164,7 +164,7 @@ macro_rules! catalog {
         ];
 
         /// Every name in [`CATALOG`], in the same order. Backs
-        /// [`crate::custom::RESERVED_NAMES`].
+        /// `stella_tools::custom::RESERVED_NAMES`.
         pub const ALL_NAMES: &[&str] = &[$($name),*];
     };
 }
@@ -248,6 +248,15 @@ catalog! {
     "ask_question"        => (true, false, Low, Always, "question", "ask_question"),
 }
 
+/// The tool name that means *this plan starts now*.
+///
+/// Named rather than spelled twice because a host keys behaviour on it: the
+/// deck's plan gate (`stella_cli::command_deck::task_tap::plan_gate`) raises
+/// its scope review on this call and no other, and a rename that reached the
+/// schema but not that host would silently retire the gate. It sits here, in
+/// the table, so the host reads it without linking the tool that answers it.
+pub const TASK_START: &str = "task_start";
+
 /// Names Stella once dispatched, or once told the model it dispatched, and no
 /// longer does.
 ///
@@ -287,7 +296,8 @@ catalog! {
 /// the union of every `"name" =>` row across every revision of it:
 ///
 /// ```text
-/// git log --all -p -- crates/stella-tools/src/catalog.rs stella-tools/src/catalog.rs \
+/// git log --all -p -- crates/stella-tool-facts/src/catalog.rs \
+///   crates/stella-tools/src/catalog.rs stella-tools/src/catalog.rs \
 ///   | rg -o '^[+-] *"[a-z_0-9]+" +=>' | rg -o '"[a-z_0-9]+"' | sort -u
 /// ```
 ///
@@ -455,7 +465,7 @@ pub fn is_retired(name: &str) -> bool {
 ///
 /// - a live [`CATALOG`] row, where shadowing would route the wrong executor
 ///   *and* hand a third party a built-in's reviewed
-///   [`stella_protocol::ToolContract`] (see [`crate::contracts`]);
+///   [`stella_protocol::ToolContract`] (see `stella_tools::contracts`);
 /// - a name Stella dispatched and retired ([`is_retired`]), where nothing is
 ///   shadowed today but the two sharp edges of #3237 remain: a custom `bash`
 ///   that is not a shell is called as one, and an operator's
@@ -607,6 +617,17 @@ pub fn speculation_safe() -> Vec<&'static str> {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    /// [`TASK_START`] names a row, so the plan gate cannot key on a tool the
+    /// table stopped declaring. A rename that reached the table and not the
+    /// constant fails here.
+    #[test]
+    fn the_plan_gate_name_is_a_catalog_row() {
+        assert!(
+            get(TASK_START).is_some(),
+            "`{TASK_START}` is not in the table"
+        );
+    }
 
     /// A duplicated row would make every derived count silently too high and
     /// let two rows disagree on `read_only` for the same dispatch name.

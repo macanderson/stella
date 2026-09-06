@@ -79,7 +79,7 @@ honestly"*:
 
 Several of the tool names in that quotation no longer dispatch: #3244 cut
 the surface back to the working and coordination groups declared in
-`crates/stella-tools/src/catalog.rs`. The quotation is left as it was
+`crates/stella-tool-facts/src/catalog.rs`. The quotation is left as it was
 written, because what it establishes — that `STELLA_BASH_SANDBOX` bounded
 one tool while every other route to a subprocess ran outside it — is
 unchanged by which tools those routes were.
@@ -421,7 +421,7 @@ diff text.
 
 Not every tool is workspace-bound, and getting this table wrong is how
 credentials end up in a vendor's container. The partition below is
-derived from the groups in `crates/stella-tools/src/catalog.rs`, which is
+derived from the groups in `crates/stella-tool-facts/src/catalog.rs`, which is
 the only place a built-in is declared and therefore the only authority on
 what the surface is. Three classes:
 

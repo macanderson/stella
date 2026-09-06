@@ -38,7 +38,7 @@ use crate::envelope::{
 };
 use crate::graph::GraphSnapshot;
 use crate::input::UserInput;
-use stella_tools::search::readiness::IndexReadiness;
+use stella_tool_facts::readiness::IndexReadiness;
 
 use crate::notice::NoticeState;
 use crate::scroll::ScrollState;

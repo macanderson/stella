@@ -1095,8 +1095,8 @@ fn deck_render_snapshots_pin_the_approval_card() {
     let press = |ui: &mut DeckUi, code: KeyCode| {
         ui.approval.key(KeyEvent::new(code, KeyModifiers::NONE));
     };
-    let request = stella_tools::registry::approval::ApprovalRequest {
-        parked: stella_tools::registry::approval::ApprovalSubject::Tool {
+    let request = stella_protocol::approval::ApprovalRequest {
+        parked: stella_protocol::approval::ApprovalSubject::Tool {
             name: "bash".into(),
             read_only: false,
         },
@@ -1139,8 +1139,8 @@ fn deck_render_snapshots_pin_the_approval_card() {
     //    else distinguishes "this reads a file" from "this rewrites one".
     let mut ui = ui_for(DeckTab::Session);
     ui.approval
-        .open(stella_tools::registry::approval::ApprovalRequest {
-            parked: stella_tools::registry::approval::ApprovalSubject::Tool {
+        .open(stella_protocol::approval::ApprovalRequest {
+            parked: stella_protocol::approval::ApprovalSubject::Tool {
                 name: "read_file".into(),
                 read_only: true,
             },

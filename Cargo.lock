@@ -3571,6 +3571,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "stella-tool-facts"
+version = "0.9.369"
+dependencies = [
+ "proptest",
+ "stella-protocol",
+ "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
 name = "stella-tools"
 version = "0.9.369"
 dependencies = [
@@ -3589,6 +3599,7 @@ dependencies = [
  "stella-plugin",
  "stella-protocol",
  "stella-store",
+ "stella-tool-facts",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
@@ -3638,7 +3649,7 @@ dependencies = [
  "stella-plugin",
  "stella-protocol",
  "stella-runtime",
- "stella-tools",
+ "stella-tool-facts",
  "stella-transcript",
  "stella-tui-theme",
  "sysinfo",

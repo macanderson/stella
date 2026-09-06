@@ -64,7 +64,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget};
 use stella_tui_theme::{glyph, token};
 
-use stella_tools::registry::approval::{ApprovalRequest, ApprovalResponse};
+use stella_protocol::approval::{ApprovalRequest, ApprovalResponse};
 
 use crate::render::columns;
 use crate::views::cards::truncate_cols;
@@ -431,7 +431,7 @@ mod tests {
 
     fn request() -> ApprovalRequest {
         ApprovalRequest {
-            parked: stella_tools::registry::approval::ApprovalSubject::Tool {
+            parked: stella_protocol::approval::ApprovalSubject::Tool {
                 name: "bash".into(),
                 read_only: false,
             },

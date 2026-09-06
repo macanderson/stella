@@ -22,13 +22,7 @@ use stella_protocol::{
 
 use crate::registry::Tool;
 
-/// The tool name that means *this plan starts now*.
-///
-/// Named rather than spelled twice because a host keys behaviour on it: the
-/// deck's plan gate (`command_deck::task_tap::plan_gate`) raises its scope
-/// review on this call and no other, and a rename that reached the schema but
-/// not that host would silently retire the gate.
-pub const START: &str = "task_start";
+pub use stella_tool_facts::catalog::TASK_START as START;
 
 /// The six tools that read or move the session board.
 ///

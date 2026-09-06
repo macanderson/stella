@@ -43,7 +43,10 @@ pub mod ask;
 pub mod bash;
 pub mod batch;
 pub mod call_measure;
-pub mod catalog;
+/// The canonical tool table, defined in `stella-tool-facts` so a screen
+/// can read a tool row without linking an executor. This path is the one
+/// every caller already spells.
+pub use stella_tool_facts::catalog;
 pub mod contracts;
 pub mod ctx;
 pub mod custom;
@@ -62,7 +65,9 @@ pub mod input;
 pub mod loop_comparability;
 pub mod netdeny;
 pub mod own_change;
-pub mod policy;
+/// An operator's tool switches, defined in `stella-tool-facts` beside the
+/// table they address. Both sides read one copy.
+pub use stella_tool_facts::policy;
 pub mod read;
 /// The last look a mutating file tool takes before it writes. Crate-internal:
 /// it is a rule the file tools hold themselves to, not a surface anything
@@ -79,8 +84,14 @@ pub mod staleness;
 pub mod subagent;
 /// Shared environment policy for every subprocess that can execute model- or
 /// repository-controlled code. Downstream Stella crates must use this rather
-/// than maintaining a second, drifting credential deny-list.
-pub mod subprocess_env;
+/// than maintaining a second, drifting credential deny-list. Defined in
+/// `stella-tool-facts`, because a surface that spawns a shell needs the same
+/// list and must not link an executor to get it.
+///
+/// `test_support` rides a cargo feature there rather than `cfg(test)`, which
+/// does not cross a crate boundary. This crate turns that feature on as a
+/// dev-dependency, so the fixtures reach its tests and nothing that ships.
+pub use stella_tool_facts::subprocess_env;
 pub mod tasks;
 pub mod temp_roots;
 pub mod validate;

@@ -55,6 +55,7 @@
 // data, and `unwrap` in a test is fine.
 #![cfg_attr(not(test), warn(clippy::unwrap_used, clippy::expect_used))]
 
+pub mod approval;
 pub mod attachment;
 pub mod cache;
 pub mod candidate;

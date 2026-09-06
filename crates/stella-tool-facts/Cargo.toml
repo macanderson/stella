@@ -1,0 +1,29 @@
+[package]
+name = "stella-tool-facts"
+description = "What a surface has to know about the tool surface without linking the executor: the canonical tool table, an operator's tool switches, the environment a child process must never inherit, and how far behind the search index is."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# `RiskLevel`, the grade every catalog row carries. The only workspace edge
+# this crate has, and the reason a screen can take it for nothing:
+# `stella-protocol` is types alone.
+stella-protocol = { path = "../stella-protocol" }
+# `tokio::process::Command` is the type the credential scrub takes. The scrub
+# reaches into a command builder, so it has to name the builder.
+tokio.workspace = true
+# A named error for a malformed tool switch spec (AGENTS.md #5).
+thiserror.workspace = true
+
+[features]
+# The environment fixtures `subprocess_env::test_support` ships. Off by
+# default, so nothing here reaches a shipped build; `stella-tools` turns it on
+# as a dev-dependency because `cfg(test)` does not cross a crate boundary.
+test-support = []
+
+[dev-dependencies]
+proptest.workspace = true

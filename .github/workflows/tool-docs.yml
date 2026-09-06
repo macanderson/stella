@@ -22,6 +22,7 @@ on:
   pull_request:
     paths:
       - "docs/tools/**"
+      - "crates/stella-tool-facts/src/catalog.rs"
       - "crates/stella-tools/src/catalog.rs"
       - "crates/stella-cli/src/tool_docs.rs"
       - "crates/stella-cli/tests/fixtures/tool_doc_examples.json"
@@ -32,6 +33,7 @@ on:
     branches: [main]
     paths:
       - "docs/tools/**"
+      - "crates/stella-tool-facts/src/catalog.rs"
       - "crates/stella-tools/src/catalog.rs"
       - "crates/stella-cli/src/tool_docs.rs"
       - "crates/stella-cli/tests/fixtures/tool_doc_examples.json"
