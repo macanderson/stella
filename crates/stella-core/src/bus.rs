@@ -71,7 +71,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use stella_protocol::{AgentEvent, Denial};
+use stella_protocol::Denial;
 
 // The event-name catalog, split to a sibling file (the `driver/settlement.rs`
 // pattern) so this file stays under its file-size ceiling (#1857).
@@ -1016,6 +1016,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+    use stella_protocol::AgentEvent;
 
     /// Bus + a `Vec` capturing every event a `"*"` observer sees.
     fn observed_bus(session: &str) -> (HookBus, Arc<Mutex<Vec<HookEvent>>>) {
