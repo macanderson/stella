@@ -182,6 +182,44 @@ else
   cat "$TMP/shrink/scripts/core-reachability-baseline.txt"
 fi
 
+# ── W: the two ways a baseline entry dies read differently ───────────────────
+# Both leave the unreached set, and the guard used to state the reachable one
+# as fact in both cases — so every eviction PR read "the engine reaches it now"
+# about a module that no longer existed (#6174).
+src="$(new_core evicted)"
+seed_baseline evicted records
+out="$(python3 "$SCRIPT" --update "$TMP/evicted" 2>&1)"
+case "$out" in
+  *"retired records — evicted, no longer in stella-core"*)
+    pass=$((pass + 1)); echo "ok   --update names an evicted module as evicted" ;;
+  *)
+    fail=$((fail + 1)); echo "FAIL --update mis-named an evicted module:"; echo "$out" ;;
+esac
+
+src="$(new_core nowreached)"
+printf 'pub mod budget;\n' >>"$src/lib.rs"
+printf 'pub fn spend() {}\n' >"$src/budget.rs"
+printf 'pub fn drive() { crate::budget::spend(); }\n' >"$src/driver.rs"
+seed_baseline nowreached budget
+out="$(python3 "$SCRIPT" --update "$TMP/nowreached" 2>&1)"
+case "$out" in
+  *"retired budget — the engine reaches it now"*)
+    pass=$((pass + 1)); echo "ok   --update still names a reached module as reached" ;;
+  *)
+    fail=$((fail + 1)); echo "FAIL --update mis-named a reached module:"; echo "$out" ;;
+esac
+
+# The plain run's STALE block splits the same way, and it is the one an author
+# reads first — the update branch only runs once they believe the diagnosis.
+want "the STALE block names an eviction as one" expect-fail stale "evicted, no longer in stella-core"
+
+src="$(new_core stalereached)"
+printf 'pub mod budget;\n' >>"$src/lib.rs"
+printf 'pub fn spend() {}\n' >"$src/budget.rs"
+printf 'pub fn drive() { crate::budget::spend(); }\n' >"$src/driver.rs"
+seed_baseline stalereached budget
+want "the STALE block names a reached module as reached" expect-fail stalereached "budget — the engine reaches it now"
+
 # ── the real tree ────────────────────────────────────────────────────────────
 # It must pass with its seeded baseline; a guard that cannot run green on the
 # repository it ships in is not adoptable.
