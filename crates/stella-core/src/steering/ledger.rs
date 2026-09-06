@@ -25,19 +25,32 @@
 //! and keeps that answer. A later spend is noted and changes nothing. A
 //! `/reload` that moves the budget settles a new one. That is a cold write an
 //! operator asked for.
+//!
+//! # The spend is one turn's, the answer is the session's
+//!
+//! The two halves have different clocks, and reading one on the other's is
+//! the bug this ledger shipped with. The allowance is what a single
+//! turn's volatile block may take, so the spend resets every turn
+//! ([`SteeringLedger::open_turn`]). The answer is cache prefix, so it is kept
+//! for as long as the budget it was asked for stands. Add every turn's spend
+//! up instead and the operator who raises the allowance is billed for the
+//! whole session: twenty turns of recall against a raised budget left less
+//! room than the old one, and far enough in, none at all.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::tools::ToolBudget;
 
-/// What one session's block has spent, and the tool budget it settled.
+/// What the open turn's block has spent, and the tool budget the session
+/// settled.
 ///
 /// Shared by handle (`Arc`). The recall path holds one end. The tool stack
 /// holds the other. Every method is cheap. None holds a lock across an
 /// await.
 #[derive(Debug, Default)]
 pub struct SteeringLedger {
+    /// What the open turn's block has spent. [`Self::open_turn`] clears it.
     spent: AtomicU64,
     /// The budget this session answered for, and the answer. `None` until
     /// the first [`Self::settle`].
@@ -51,7 +64,23 @@ impl SteeringLedger {
         Self::default()
     }
 
-    /// Note `tokens` of volatile context.
+    /// Start a turn: drop what earlier turns spent, keep what the session
+    /// settled.
+    ///
+    /// The allowance is one turn's, so the figure [`Self::settle`] subtracts
+    /// has to be one turn's too. Only the spend is cleared. The settled
+    /// answer is cache prefix and outlives every turn that follows it, which
+    /// is the byte-stable prompt rule and is what a `/reload` still finds
+    /// waiting.
+    ///
+    /// A reset rather than a store, so that two charges inside one turn add
+    /// up. A store would keep the second and lose the first, and the loss
+    /// would be silent.
+    pub fn open_turn(&self) {
+        self.spent.store(0, Ordering::Relaxed);
+    }
+
+    /// Note `tokens` of volatile context for the open turn.
     ///
     /// The sum saturates. A sum that wrapped would hand the tool layer room
     /// the turn had already used. Past the budget the answer is the same
@@ -67,18 +96,21 @@ impl SteeringLedger {
             });
     }
 
-    /// What this session's block has spent so far.
+    /// What the open turn's block has spent so far. [`Self::open_turn`] puts
+    /// it back to zero, so this is never a session total.
     #[must_use]
     pub fn spent(&self) -> u64 {
         self.spent.load(Ordering::Relaxed)
     }
 
-    /// The tool budget under `declared`: what the block left of it.
+    /// The tool budget under `declared`: what the open turn's block left of
+    /// it.
     ///
     /// Answered once, then kept. Ask again with the same `declared` and the
     /// answer is the same, however much was spent since. The list is cache
     /// prefix. Moving it mid-session bills the whole chat again. Ask with a
-    /// different `declared` and it settles anew.
+    /// different `declared` and it settles anew, against the turn that is
+    /// open then — not against every turn the session has run.
     ///
     /// `mcp_max_tokens` shrinks too. It is a share of the budget. Left at its
     /// full size it would let one server take more than the whole
@@ -171,6 +203,59 @@ mod tests {
         ledger.spend(400);
 
         assert_eq!(ledger.settle(declared(2_000)).max_tokens, 1_600);
+    }
+
+    /// A turn starts with nothing spent. What it settled is still there:
+    /// the list is cache prefix and a new turn is not a reason to move it.
+    #[test]
+    fn a_new_turn_clears_the_spend_and_keeps_the_settled_answer() {
+        let ledger = SteeringLedger::new();
+        ledger.spend(400);
+        let settled = ledger.settle(declared(1_000));
+
+        ledger.open_turn();
+
+        assert_eq!(ledger.spent(), 0, "the new turn has spent nothing");
+        assert_eq!(ledger.settle(declared(1_000)), settled);
+    }
+
+    /// Two charges inside one turn add up. This is why a turn opens with a
+    /// reset and not with a store: a store would keep the last charge and
+    /// lose the rest of the block, and say nothing.
+    #[test]
+    fn two_charges_in_one_turn_add_up() {
+        let ledger = SteeringLedger::new();
+        ledger.open_turn();
+        ledger.spend(300);
+        ledger.spend(200);
+
+        assert_eq!(ledger.settle(declared(1_000)).max_tokens, 500);
+    }
+
+    /// **The witness.** An operator raises the allowance twenty
+    /// turns in and gets more room, not less.
+    ///
+    /// Every turn recalls a distinct block of the same size, so a spend that
+    /// carried across turns would read twenty times one block. Against the
+    /// raised 12_000 that reads 2_000 — under the 8_000 they started with,
+    /// and on a longer session zero, which advertises no tools at all. One
+    /// turn's block is 500, so the answer is 11_500.
+    #[test]
+    fn a_raised_allowance_is_charged_one_turn_not_the_session() {
+        const BLOCK: u64 = 500;
+        let ledger = SteeringLedger::new();
+
+        for _ in 0..20 {
+            ledger.open_turn();
+            ledger.spend(BLOCK);
+        }
+        assert_eq!(ledger.settle(declared(8_000)).max_tokens, 8_000 - BLOCK);
+
+        // The operator edits `context.steering.max_tokens` and reloads.
+        ledger.open_turn();
+        ledger.spend(BLOCK);
+
+        assert_eq!(ledger.settle(declared(12_000)).max_tokens, 12_000 - BLOCK);
     }
 
     /// A block bigger than the budget leaves nothing. It must not wrap to a
