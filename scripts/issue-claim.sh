@@ -180,6 +180,21 @@ fi
 # have caught the collisions this script was filed for: #5246 closed 44 issues
 # in one sweep, and none of them showed a thing on the issue itself.
 
+# Each hit is `<number> <state> <kind>`. `closes` means the body has
+# `Closes #N`. `refs` means it has `Refs #N` but no `Closes #N`. `$issue` is
+# already checked as digits only, so it is safe to put in the jq program
+# below.
+pr_jq='
+  .[]
+  | select(
+      (.body | test("Closes #ISSUE\\b")) or (.body | test("Refs #ISSUE\\b"))
+    )
+  | "\(.number) \(.state) \(
+      if (.body | test("Closes #ISSUE\\b")) then "closes" else "refs" end
+    )"
+'
+pr_jq="${pr_jq//ISSUE/$issue}"
+
 # prs_ok tracks whether this query actually ran, distinct from prs itself
 # being empty. "no PR closes it" is a claim about a list that was read; a
 # query that failed to even ask must never be reported in that shape.
@@ -192,20 +207,53 @@ if [ "$use_fixture" -eq 1 ]; then
     prs="$fixture_prs"
   fi
 elif ! prs="$(gh pr list --state all --limit 100 --json number,state,body \
-  --jq ".[] | select(.body | test(\"Closes #$issue\\\\b\")) | \"\(.number) \(.state)\"" 2>/dev/null)"; then
+  --jq "$pr_jq" 2>/dev/null)"; then
   echo "note: could not list pull requests. Proceeding (fail-open); the claim" >&2
   echo "      check below still runs." >&2
   prs=""
   prs_ok=0
 fi
 
-if [ -n "$prs" ]; then
+# Split the hits by kind. A `refs` hit never blocks: `Refs` is also how an
+# unrelated PR cites this issue. A `closes` hit blocks only when its state
+# is OPEN or MERGED. A CLOSED `closes` hit means a past try died. That is
+# the state where the next session should move, not stop.
+closing_hits=""
+refs_hits=""
+blocking=0
+while IFS=' ' read -r pr_num pr_state pr_kind; do
+  [ -n "$pr_num" ] || continue
+  case "$pr_kind" in
+  refs)
+    refs_hits="$refs_hits$pr_num $pr_state
+"
+    ;;
+  *)
+    # Anything that is not `refs` counts as `closes`, even an unknown third
+    # field. An unknown kind is not proof the hit is safe, so it blocks, the
+    # way every hit did before this split.
+    closing_hits="$closing_hits$pr_num $pr_state
+"
+    case "$pr_state" in
+    CLOSED) : ;;
+    *) blocking=1 ;;
+    esac
+    ;;
+  esac
+done <<EOF
+$prs
+EOF
+
+if [ "$blocking" -eq 1 ]; then
   echo "STAND DOWN  #$issue is already claimed by a pull request." >&2
   echo "" >&2
-  printf '     %s\n' "$prs" >&2
+  printf '     %s\n' "$closing_hits" >&2
   echo "" >&2
   echo "     A MERGED one means the work is done and the issue is stale." >&2
   echo "     An OPEN one means somebody is on it right now." >&2
+  echo "     A CLOSED one only blocks here because an OPEN or MERGED hit is" >&2
+  echo "     listed with it. It may be the first, dead try at the same fix," >&2
+  echo "     so read it too." >&2
   echo "" >&2
   echo "     Read its diff before writing anything. Sometimes yours covers" >&2
   echo "     something theirs missed and belongs on top of \`main\`; more often" >&2
@@ -213,6 +261,20 @@ if [ -n "$prs" ]; then
   echo "     once and show nothing on any of them, which is why this asks the" >&2
   echo "     PRs rather than the issue." >&2
   exit 1
+fi
+
+if [ -n "$closing_hits" ]; then
+  echo "note: the pull request(s) that close #$issue were closed, not merged." >&2
+  echo "      That is a dead try, not a live claim. Read them, then proceed." >&2
+  printf '     %s\n' "$closing_hits" >&2
+fi
+
+if [ -n "$refs_hits" ]; then
+  echo "note: a pull request refs #$issue but does not close it. That is a" >&2
+  echo "      weaker signal, not a claim by itself. Read it before you write:" >&2
+  echo "      the live fix can sit in a Refs-only PR while the one that would" >&2
+  echo "      close the issue is dead." >&2
+  printf '     %s\n' "$refs_hits" >&2
 fi
 
 if [ "$use_fixture" -eq 1 ]; then
@@ -281,7 +343,7 @@ if [ "$mode" = "check" ]; then
   if [ "$prs_ok" -eq 0 ]; then
     proceed "ok  proceed (PR list unreadable)"
   fi
-  proceed "ok  #$issue is unclaimed — no PR closes it and no live claim holds it."
+  proceed "ok  #$issue is unclaimed — nothing open or merged closes it, and no live claim holds it."
 fi
 
 body="$marker $me
