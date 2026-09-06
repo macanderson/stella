@@ -614,6 +614,21 @@ min_steps = 3       # open steps that raise a card
 # takes. Absent means "on"; filing stated follow-up work is the default.
 residue_gate = "on"
 
+# The dedup those checks use is not a setting, and it is what an operator asks
+# about first: why was this finding not filed? The loop keeps every digest it
+# has filed in `seen.txt`, under `~/.stella/self-driving/<repo>/`, and drops a
+# repeat before anything reaches the tracker.
+#
+# A digest stops dropping repeats once every issue it was filed as has closed
+# on a cited change — a pull request or a commit. That closure is the loop
+# saying the defect is fixed, so stating the same finding after it is news,
+# and the finding is filed again. A closure that cited nothing decays nothing:
+# somebody declined that work, or it was a copy of another issue.
+#
+# `filings.jsonl` beside `seen.txt` is what pairs a digest with the issue it
+# became. A line with no such record never decays, which is every `seen.txt`
+# written before this pairing existed, so an upgrade re-files nothing.
+
 # Labels marking a tracking issue — a checklist of other issues, kept open as
 # bookkeeping rather than as work. `drive --backlog` never claims one of
 # these, whatever its `Blocked by:` lines say: an epic reads as ready the
