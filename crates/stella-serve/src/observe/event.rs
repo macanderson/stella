@@ -114,8 +114,8 @@ pub enum Route {
     /// for an in-flight `provider_request`, ahead of its `provider-result`.
     #[serde(rename = "/v1/turns/{id}/provider-delta")]
     TurnProviderDelta,
-    /// The answer to a `requery_request`: the context block the host's
-    /// steering plane chose for a turn whose work has moved, or nothing.
+    /// The answer to a `requery_request`. It carries the context block the
+    /// host picked for a turn whose work has moved. It may carry nothing.
     #[serde(rename = "/v1/turns/{id}/requery-result")]
     TurnRequeryResult,
     #[serde(rename = "/v1/turns/{id}/cancel")]
@@ -468,9 +468,8 @@ impl StreamEndReason {
 pub enum ReverseKind {
     Provider,
     Tool,
-    /// A step-boundary context re-query. Distinct from the other two because
-    /// it is the one reverse request a turn survives unanswered: the step
-    /// proceeds with no extra context rather than failing.
+    /// A step-boundary context re-query. It is the one reverse request a turn
+    /// lives through unanswered. The step runs on with no extra context.
     Requery,
 }
 

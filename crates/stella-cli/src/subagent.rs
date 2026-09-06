@@ -637,10 +637,10 @@ impl SessionSubAgents {
                     crate::agent::tool_stack::policy_stack_with(
                         base,
                         policy,
-                        // The ledger is unread on the `Full` arm, and it is a
-                        // fresh cell rather than the parent's for the same
-                        // reason that arm is `Full`: what a child inherits is
-                        // the open question named above, not one to answer by
+                        // The `Full` arm never reads the ledger. It gets a
+                        // fresh cell, not the parent's, for the reason that
+                        // arm is `Full`. What a child inherits is the open
+                        // question named above. It is not one to answer by
                         // accident here.
                         crate::agent::tool_stack::ToolAllowance::new(
                             stella_core::steering::tools::ToolAdvertisement::Full,

@@ -61,11 +61,11 @@ impl Settings {
     /// With the plane off, no tool may be held back. Else the switch would
     /// take a tool away, not just a hint.
     ///
-    /// The budget it hands back is the one the workspace **declares**: the
-    /// whole volatile allowance (`context.steering.max_tokens`), which the
-    /// turn's recall block spends before the tool stack sees it. What the
-    /// packer receives is `stella_core::steering::ledger`'s answer, not this
-    /// one.
+    /// The budget it hands back is the one the workspace **declares**. That
+    /// is the whole volatile allowance, `context.steering.max_tokens`. The
+    /// turn's recall block spends from it before the tool stack sees it. So
+    /// the packer takes its number from `stella_core::steering::ledger`, not
+    /// from here.
     ///
     /// `STELLA_TOOLS_LEAN` beats the settings chain, as
     /// `STELLA_CONTEXT_STEERING` does. A bench arm is picked by the harness
@@ -125,9 +125,9 @@ mod tests {
         );
     }
 
-    /// **Witness.** Turning the lever on hands back a budget, and the budget
-    /// is the one the settings name — the whole volatile allowance from
-    /// `context.steering`, and the server share from the block under it.
+    /// **Witness.** Turning the lever on hands back a budget. The budget is
+    /// the one the settings name. That is the whole volatile allowance from
+    /// `context.steering`, plus the server share from the block under it.
     #[test]
     fn the_lever_carries_the_budget_the_settings_name() {
         let settings = from_json(
