@@ -578,25 +578,31 @@ mod tests {
         assert!(out.is_empty(), "got {out:?}");
     }
 
-    /// A lens that declares a reading must name a command a shell can run.
-    /// Several `run` strings are prose — "/ultraudit (deep) or /reaudit
-    /// (fast)" — and the driver runs the string as written.
+    /// **The witness.** Every `Command` lens must name a command a shell can
+    /// run, not just the ones that declare a [`Reading`]. Three `run` strings
+    /// used to be prose instead — `rubric`'s "/ultraudit (deep) or /reaudit
+    /// (fast)", `performance`'s "…, plus the prompt-cache golden fixtures
+    /// (cargo test -p stella-model)", and `soak`'s "…(the long task list;
+    /// rehearse with --rig --dry-run first)" — and were safe only because
+    /// none of the three declared a reading, so
+    /// `crates/stella-cli/src/self_driving_cmd/supply.rs`'s `Declared::sweep`
+    /// never reached them. That was a tripwire on the declared half of the
+    /// hazard, not a fix for it: nothing stopped a future reading, or a
+    /// future caller that runs every `Command` lens regardless. This rule
+    /// covers the whole `Tooling::Command` set, so it fails on the old three
+    /// prose strings whether or not they ever gain a reading.
     #[test]
-    fn a_lens_with_a_reading_names_a_runnable_command() {
+    fn every_command_lens_names_a_runnable_command() {
         for lens in crate::LENSES {
-            let crate::Tooling::Command {
-                run,
-                reading: Some(_),
-                ..
-            } = lens.tooling
-            else {
+            let crate::Tooling::Command { run, .. } = lens.tooling else {
                 continue;
             };
             for word in ["(", ")", " or "] {
                 assert!(
                     !run.contains(word),
-                    "the `{}` lens declares a reading, so the driver runs `{run}` as \
-                     written, and `{word}` says that string is prose",
+                    "the `{}` lens's `run` is `{run}`, and the driver runs it as \
+                     written under `bash -lc` — `{word}` says that string is prose, \
+                     not a command",
                     lens.name
                 );
             }

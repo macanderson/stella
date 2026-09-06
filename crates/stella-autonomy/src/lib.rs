@@ -322,12 +322,22 @@ pub struct Lens {
 /// [`WATCH`] rather than ending it: "no more defects" is always a statement
 /// about the lens, never about the code.
 pub const LENSES: &[Lens] = &[
+    // No mechanical backing: `/ultraudit` and `/reaudit` are Claude Code
+    // skills the model invokes directly, not commands the driver can shell
+    // out to (`crates/stella-cli/src/self_driving_cmd/supply.rs`'s `run_lens`
+    // runs a `Tooling::Command`'s `run` under `bash -lc`, and neither slash
+    // command is one). The choice between them is not this table's to make
+    // either: `stella self-driving plan` already decides it, as
+    // `SELF_DRIVING_AUDIT` (deep by default; fast when checking that a dry
+    // cycle stayed dry — `scripts/self-driving/commands/self-driving/audit.md`
+    // names the rule), and the model reads that env var before picking a
+    // skill.
     Lens {
         name: "rubric",
-        tooling: Tooling::Command {
-            run: "/ultraudit (deep) or /reaudit (fast)",
-            interpret: "the report's findings, deduped by digest against seen.txt",
-            reading: None,
+        tooling: Tooling::ModelOnly {
+            note: "the standard engineering audit — the model runs /ultraudit \
+                   (deep) or /reaudit (fast), picked by SELF_DRIVING_AUDIT; \
+                   findings are deduped by digest against seen.txt",
         },
         heavy_only: false,
     },
@@ -365,10 +375,10 @@ pub const LENSES: &[Lens] = &[
     Lens {
         name: "performance",
         tooling: Tooling::Command {
-            run: "scripts/self-driving.sh bench loop, plus the prompt-cache golden \
-                  fixtures (cargo test -p stella-model)",
-            interpret: "a regression against the previous loop-bench run or a \
-                        golden diff is a finding",
+            run: "scripts/self-driving.sh bench loop && cargo test -p stella-model",
+            interpret: "a regression against the previous loop-bench run, or a \
+                        failed prompt-cache golden-fixture diff from the cargo \
+                        test half, is a finding",
             reading: None,
         },
         heavy_only: true,
@@ -404,11 +414,12 @@ pub const LENSES: &[Lens] = &[
         },
         heavy_only: false,
     },
+    // The long task list. Rehearse with `--rig --dry-run` before opening this
+    // rung for real, the same way a person would.
     Lens {
         name: "soak",
         tooling: Tooling::Command {
-            run: "scripts/self-driving.sh bench h2h (the long task list; rehearse \
-                  with --rig --dry-run first)",
+            run: "scripts/self-driving.sh bench h2h",
             interpret: "aborts, stalls, and stuck-loop detections across the \
                         long run are findings",
             reading: None,
