@@ -8,9 +8,12 @@ findings looks exactly like a healthy one.
 
 from __future__ import annotations
 
+import ast
 import json
+import re
 from pathlib import Path
 
+import run_trace
 import triage_bench_traces
 from fixtures import ok, proof, tool_pair, write_run
 from run_trace import READ_FILENAMES, load_run
@@ -189,3 +192,52 @@ def test_missing_includes_actually_catches_a_dropped_pattern():
     dropped = argv.index("*reward.txt")
     truncated = argv[: dropped - 1] + argv[dropped + 1 :]  # drop `--include *reward.txt`
     assert triage_bench_traces.missing_includes(truncated, READ_FILENAMES) == ["reward.txt"]
+
+
+# --------------------------------------------------------------------------
+# `READ_FILENAMES` against what `run_trace.py` actually names in code
+# --------------------------------------------------------------------------
+
+_FILENAME_LITERAL = re.compile(r"^[\w.-]+\.(?:json|jsonl|txt)$")
+
+
+def _filename_literals(source: str, filename: str = "<source>") -> set[str]:
+    """Every string in `source` shaped like a filename, skipping the docstring.
+
+    A module docstring may name a file in prose (`spec.json`) with no code
+    behind it. Its string is one big `ast.Constant`; the tight filename shape
+    below never matches a whole paragraph, so no special case is needed.
+    """
+    tree = ast.parse(source, filename=filename)
+    return {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and _FILENAME_LITERAL.match(node.value)
+    }
+
+
+def test_every_filename_literal_in_run_trace_is_declared():
+    """A raw filename string in `run_trace.py` must be one `load_run` reads.
+
+    `READ_FILENAMES` names each file once (`_RESULTS_JSON`, ...) and every
+    read routes through that name, not a second spelling. This scans the
+    module's own source, so a new read added as a fresh literal — bypassing
+    the shared constants — fails here instead of silently outrunning
+    `--fetch`.
+    """
+    source = Path(run_trace.__file__).read_text(encoding="utf-8")
+    literals = _filename_literals(source, run_trace.__file__)
+    assert literals, "the scan found no filename literal — it stopped reading its subject"
+    stray = literals - set(READ_FILENAMES)
+    assert not stray, (
+        f"run_trace.py spells {sorted(stray)} as a raw string outside "
+        "READ_FILENAMES — route the read through a named constant there"
+    )
+
+
+def test_the_filename_scan_actually_catches_a_stray_literal():
+    """The check above has teeth: a raw literal outside the list is a failure."""
+    source = 'path = task_dir / "stray_file.json"\n'
+    assert _filename_literals(source) == {"stray_file.json"}
