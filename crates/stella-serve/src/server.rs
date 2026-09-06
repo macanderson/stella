@@ -16,6 +16,7 @@
 //! | `POST /v1/turns/{id}/tool-result` | answer a `tool_request` (`ToolResultIn`) |
 //! | `POST /v1/turns/{id}/provider-result` | answer a `provider_request` (`ProviderResultIn`) |
 //! | `POST /v1/turns/{id}/provider-delta` | stream fragments of an in-flight `provider_request`, ahead of its result (#1165) |
+//! | `POST /v1/turns/{id}/requery-result` | answer a `requery_request` |
 //! | `POST /v1/turns/{id}/cancel` | end an in-flight turn → `{ "status": "cancelled" }` |
 //! | `POST /v1/turns/{id}/steer` | inject a mid-turn user message (#932) |
 //! | `POST /v1/turns/{id}/pause` | hold the turn at its next step boundary; optional `{"reason"}` (#932) |
@@ -32,9 +33,9 @@
 //! the turn registry they act on in `src/state.rs`; this module is the
 //! transport — listener, connection fold, auth, route classification.
 //!
-//! The SSE stream is the engine → host direction; the two result POSTs are the
-//! host → engine direction. Together they are the reverse tool-call protocol —
-//! the engine never runs a model or tool call itself.
+//! The SSE stream runs engine → host. The result POSTs run host → engine.
+//! Together they are the reverse tool-call protocol. The engine never runs a
+//! model or a tool call itself.
 //!
 //! # Every connection produces exactly one record
 //!
@@ -763,6 +764,7 @@ async fn route(
             | Route::TurnToolResult
             | Route::TurnProviderResult
             | Route::TurnProviderDelta
+            | Route::TurnRequeryResult
             | Route::TurnSteer
             // Body-bearing but not body-*requiring*: an empty pause is the
             // shape the route shipped with and stays valid (#932).
@@ -799,6 +801,9 @@ async fn route(
             routes::handle_provider_result(res, state, id, &req.body).await
         }
         Route::TurnProviderDelta => routes::handle_provider_delta(res, state, id, &req.body).await,
+        Route::TurnRequeryResult => {
+            routes::requery::handle_requery_result(res, state, id, &req.body).await
+        }
         Route::TurnSteer => routes::handle_steer(res, state, id, &req.body).await,
         Route::TurnPause => routes::handle_pause(res, state, id, &req.body).await,
         Route::SessionsCreate => routes::handle_session_create(res, state, &req.body).await,

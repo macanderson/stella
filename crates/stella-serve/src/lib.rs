@@ -27,6 +27,11 @@
 //!   [`ServerFrame::ToolRequest`] — each carry a `request_id`; the host runs the
 //!   effect and answers with [`Session::resolve_provider`] /
 //!   [`Session::resolve_tool`], unblocking the parked engine step.
+//! - A turn that opted in with [`SessionSpec::steering_requery`] also raises
+//!   [`ServerFrame::RequeryRequest`] at its step boundaries once its work has
+//!   moved on from the prompt it opened with, answered by
+//!   [`Session::resolve_requery`]. That one is advisory: an unanswered
+//!   re-query costs the step nothing it started with.
 //! - The terminal frame is [`ServerFrame::TurnComplete`].
 //!
 //! The HTTP/SSE transport that exposes this over a socket is a thin layer on top
@@ -103,7 +108,7 @@ pub use error::ServeError;
 pub use extensions::{Extensions, ServeExtension};
 pub use frame::{
     ProviderDelta, ProviderDeltaIn, ProviderErrorWire, ProviderOutcomeIn, ProviderResultIn,
-    ServerFrame, ToolResultIn, TurnOutcomeWire,
+    RequeryResultIn, RequerySignal, ServerFrame, ToolResultIn, TurnOutcomeWire,
 };
 pub use goal::GoalRun;
 pub use hostguard::HostMode;

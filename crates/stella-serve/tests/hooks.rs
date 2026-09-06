@@ -77,6 +77,7 @@ fn spec_with(extensions: Vec<Arc<dyn ServeExtension>>) -> SessionSpec {
         checkpoint: None,
         extensions,
         calibration: None,
+        steering_requery: false,
         // Neither is the subject here: these scenarios drive a single turn and
         // assert on what the hook plane saw, so the goal loop and sub-agents
         // stay off — their own acceptance lives in `goal_and_subagents.rs`.
@@ -180,6 +181,9 @@ async fn run_turn(session: &mut Session) -> Vec<(String, serde_json::Value)> {
                     .unwrap();
             }
             ServerFrame::TurnComplete { .. } => break,
+            ServerFrame::RequeryRequest { .. } => {
+                panic!("a turn that did not opt in must not ask for context")
+            }
             // Nothing here pauses, so the control frames are inert; matched
             // rather than wildcarded so a new frame kind lands as a compile
             // error in a test that reads the stream.

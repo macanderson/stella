@@ -64,11 +64,12 @@ not in this table is a 404.
 | `GET` | `/healthz` | Unauthenticated. Liveness — is the process alive. `{"status":"ok"}` |
 | `GET` | `/readyz` | Unauthenticated. Readiness — is it safe to send new work. `200 {"state":"ready"}`, or `503` with `"starting"` / `"draining"` (#1131) |
 | `GET` | `/v1/metrics` | Counters as a flat JSON object of integers. Authenticated like every other route, and **pull-only** — see [serve-observability.md](./serve-observability.md) |
-| `POST` | `/v1/turns` | Body is `TurnRequest`; returns `{"turn_id":"turn-<32 hex>"}`. Optional `goal` and `sub_agents` objects (#1297) — see below. Optional `engine` object (#1167) carries per-turn caller-policy knobs (`max_output_tokens`, `temperature`, `effort`, `reasoning`, `params`, `compaction_budget_tokens`, `summarize_overflow`, `summarize_keep_recent`) lowered onto the defaults — omitted/empty is a no-op; unusable values are 400s naming the knob; values past an operator ceiling are clamped and reported in the response's `clamped` array (`{knob, requested, effective}`, absent when nothing was lowered). `retry_policy`/`loop_detection` are operator policy and not settable |
+| `POST` | `/v1/turns` | Body is `TurnRequest`; returns `{"turn_id":"turn-<32 hex>"}`. Optional `goal` and `sub_agents` objects (#1297) — see below. Optional `engine` object (#1167) carries per-turn caller-policy knobs (`max_output_tokens`, `temperature`, `effort`, `reasoning`, `params`, `compaction_budget_tokens`, `summarize_overflow`, `summarize_keep_recent`) lowered onto the defaults — omitted/empty is a no-op; unusable values are 400s naming the knob; values past an operator ceiling are clamped and reported in the response's `clamped` array (`{knob, requested, effective}`, absent when nothing was lowered). `retry_policy`/`loop_detection` are operator policy and not settable. Optional `steering_requery: true` lets the turn raise `requery_request` frames at its step boundaries; omitted is `false` and raises none |
 | `GET` | `/v1/turns/{id}/events` | SSE `id: <seq>` + `data: <ServerFrame>`. Resumable via `?after=<seq>` or `Last-Event-ID`. One concurrent subscriber; a second gets 409 |
 | `POST` | `/v1/turns/{id}/provider-result` | Answers a `provider_request` |
 | `POST` | `/v1/turns/{id}/provider-delta` | Optional (#1165): a batch of streamed fragments (`{"request_id", "deltas": [{"kind":"text"\|"reasoning","text":"…"}]}`) for an in-flight `provider_request`, ahead of its `provider-result`. Fragments surface on `/events` as `text_delta` / `reasoning` frames and each batch resets the reverse-request deadline. Empty batches are refused (400); fragments after the result get a 409 |
 | `POST` | `/v1/turns/{id}/tool-result` | Answers a `tool_request` |
+| `POST` | `/v1/turns/{id}/requery-result` | Answers a `requery_request`: `{"request_id", "context": "…"\|null}`. The block is appended to the turn's volatile tail as a marked user message and never touches the byte-stable prefix; `null` — the ordinary answer — injects nothing. Only a turn created with `steering_requery: true` ever raises the frame, and leaving one unanswered costs the step nothing it started with |
 | `POST` | `/v1/turns/{id}/cancel` | Step-boundary stop (#1129): the turn unwinds at its next step, keeping completed steps, and still emits `turn_complete`. Deregistered immediately, so a second cancel is a 404. There is no `DELETE` |
 | `POST` | `/v1/turns/{id}/steer` | `{"message": "…"}` — injected at the next step boundary, echoed as a `steered` event (#932) |
 | `POST` | `/v1/turns/{id}/pause` | Hold at the next step boundary. Idempotent; never mid-tool (#932). Body optional: `{"reason": "…"}` rides onto the `turn_held` frame. An empty body holds without a reason; a non-empty body that is not JSON is a 400 |
@@ -76,7 +77,7 @@ not in this table is a 404.
 | `GET` | `/v1/calibration` | Token-drift report (#1298): `{"models":[{provider_id, model, samples, estimated_input_tokens, actual_input_tokens, drift_ratio, applied_factor}], "untracked_turns": 0}` — what the engine estimated against what the provider billed. Read-only and authenticated, same reasoning as `/v1/metrics`. Empty `models` before any turn has committed a step. State is process memory keyed by `(provider_id, model)`; nothing is persisted, so a redeployed sidecar re-converges — which is why every row carries `samples`. `provider_id` is host-supplied, so the registry tracks a bounded number of them (64) with a bounded key length (128); a turn refused a map by either bound runs uncalibrated and is counted in `untracked_turns`, so a non-zero value means the rows are an incomplete picture |
 | `POST` | `/v1/sessions` | `{"system_prompt": "…", "budget": …}` → `{"session_id":"session-<32 hex>"}` (#931) |
 | `GET` | `/v1/sessions/{id}` | History, cost to date, live turn id, and `held` — whether that live turn has been asked to hold (#932). Always answers from the last settled state |
-| `POST` | `/v1/sessions/{id}/turns` | `TurnRequest` minus `messages`/`budget`, plus `input` (this turn's new messages). Accepts the same optional `engine` object as `/v1/turns` (safe for the prompt-cache contract: no engine knob touches the transcript). Returns `{"turn_id", "session_id"}` plus the same `clamped` reporting; the turn is then an ordinary `/v1/turns/{id}` member. One live turn per session (else 409) |
+| `POST` | `/v1/sessions/{id}/turns` | `TurnRequest` minus `messages`/`budget`, plus `input` (this turn's new messages). Accepts `steering_requery` on the same terms as `/v1/turns` — the block rides the volatile tail, so the session's byte-stable prefix is untouched. Accepts the same optional `engine` object as `/v1/turns` (safe for the prompt-cache contract: no engine knob touches the transcript). Returns `{"turn_id", "session_id"}` plus the same `clamped` reporting; the turn is then an ordinary `/v1/turns/{id}` member. One live turn per session (else 409) |
 | `DELETE` | `/v1/sessions/{id}` | Ends the session and cancels its live turn. Also drops its resume point |
 | `GET` | `/v1/sessions/{id}/checkpoint` | The session's resume point, verbatim (a `stella_core::step::Checkpoint`). Read from the **store**, not the session registry — so a session this process never created still answers `200` if its bytes are there. `404` when there is none, when the id is not a legal key, or when no store is configured (#1198) |
 | `DELETE` | `/v1/sessions/{id}/checkpoint` | Reclaim a resume point the host has finished recovering. Idempotent |
@@ -104,7 +105,8 @@ destination, and which a client written from it gets wrong:
   exist and is authenticated.
 - **Reverse RPC is keyed by `request_id` on its own frame types**, not by a
   `call_id` on a `tool_start` / `scope_review` `AgentEvent`. The
-  engine emits dedicated `tool_request` / `provider_request` `ServerFrame`
+  engine emits dedicated `tool_request` / `provider_request` /
+  `requery_request` `ServerFrame`
   variants whose ids are `<port>-<instance>-<counter>` (`prov-1-3`, `tool-0-0`,
   …) and are opaque to the host — echo them back, never parse them. This is the
   single most dangerous drift in this document for anyone mirroring it in
@@ -583,7 +585,8 @@ per-step checkpoint and crash-resume. This is ADR-033 §6 item 1 and §4.3.
   registry. The id is **opaque to the host** — echo it back, never parse it);
   the host runs the
   governed work and POSTs the result back to
-  `/v1/turns/{id}/{tool-result,provider-result}` with that `request_id`. The
+  `/v1/turns/{id}/{tool-result,provider-result,requery-result}` with that
+  `request_id`. The
   engine's `RemoteToolExecutor::execute` awaits a per-`request_id` oneshot.
   **Not the same thing as** the `call_id` on a `tool_start` `AgentEvent`: that
   id is the model's, addresses the tool call inside the transcript, and is not

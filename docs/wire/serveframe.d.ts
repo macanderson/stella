@@ -2241,6 +2241,47 @@ export interface ProviderShare {
 export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
 /**
+ * What the turn has become, as the engine can witness it — the payload of a
+ * [`ServerFrame::RequeryRequest`].
+ *
+ * An owned projection of `stella_core::steering::TurnSignal`, which borrows
+ * the turn's own transcript and so cannot cross a frame boundary.
+ *
+ * One field of that type is missing here. `active_domains` is a workspace
+ * taxonomy the engine never fills — it passes an empty slice — and a wire
+ * field that is always empty reads as a fact. The host merges its own
+ * domains, and its own file ledger, before it asks its steering plane.
+ */
+export interface RequerySignal {
+  /**
+   * Error classes the turn has seen. "We are stuck, and this is how" is the
+   * strongest retrieval cue a turn produces.
+   */
+  errors_seen: string[];
+  /**
+   * The turn's goal, as the operator wrote it. On its own this is what
+   * every selector had, and it is what goes stale by step 40.
+   */
+  prompt: string;
+  /**
+   * Tools the turn has called, most recent last.
+   */
+  recent_tool_calls: string[];
+  /**
+   * Steps since the host last answered with a block.
+   */
+  since_last_query: number;
+  /**
+   * Step index within the turn.
+   */
+  step: number;
+  /**
+   * Workspace paths the turn has touched, read off its tool inputs.
+   */
+  touched_paths: string[];
+}
+
+/**
  * What a `ScopeReview` gate presents for approval before a large plan
  * executes (L-E5).
  *
@@ -2857,6 +2898,10 @@ export type ServerFrame = {
   role: ModelCallRole;
   type: "provider_request";
 } | {
+  request_id: string;
+  signal: RequerySignal;
+  type: "requery_request";
+} | {
   reason?: string | null;
   type: "turn_held";
 } | {
@@ -2874,6 +2919,7 @@ export type KnownTypeTag =
   | "event"
   | "tool_request"
   | "provider_request"
+  | "requery_request"
   | "turn_held"
   | "turn_released"
   | "turn_complete";
@@ -2991,6 +3037,36 @@ export interface ProviderDeltaIn {
    * carries no information and is refused at the route.
    */
   deltas: ProviderDelta[];
+  request_id: string;
+}}
+
+// ── inbound, optional: answering a context re-query ─────────────────────────
+//
+// A turn created with `steering_requery: true` raises a `requery_request`
+// frame at a step boundary once its work has moved on from the prompt it
+// opened with. POST the block your own context plane chose to
+// `POST /v1/turns/{id}/requery-result`, keyed by the frame's request_id, or
+// post `context: null` — the ordinary answer — for nothing worth the tokens.
+// The block is appended to the turn's volatile tail and never touches the
+// byte-stable prefix. Leaving the request unanswered is safe: the step
+// proceeds with the context it already had once the reverse-request deadline
+// expires.
+
+/**
+ * Host → engine: the answer to a [`ServerFrame::RequeryRequest`].
+ *
+ * `context` is the block to put in front of the model, or `null` for "nothing
+ * here is worth the tokens" — the cheap answer, and the expected one for most
+ * boundaries. The engine appends the block to the volatile tail as a user
+ * message and never touches the byte-stable prefix.
+ *
+ * The block is injected as sent, so the server prefixes the recall marker
+ * when the host's text does not already carry one: an injected block the
+ * engine read as a real user turn would move the turn window.
+ */
+export interface RequeryResultIn {
+{
+  context?: string | null;
   request_id: string;
 }}
 

@@ -31,6 +31,8 @@ use crate::frame::{ProviderDelta, ServerFrame};
 use crate::observe::event::{RequestId, ReverseKind, ServeEvent, millis};
 use crate::pending::Pending;
 
+pub(crate) mod requery;
+
 /// Record that a reverse request reached the host, and start its clock.
 ///
 /// Emitted *after* the frame is sent, never before: a request the host never

@@ -85,9 +85,9 @@ impl LevelFilter {
 
 /// Which endpoint a request reached, as a **template**.
 ///
-/// The raw path is never recorded, because for seven of these it contains
-/// the turn id (and two more carry a session id). Serde renames each case to its template so a record reads like
-/// an access log without any rendering step.
+/// The raw path is never recorded, because every `{id}` template above
+/// carries a turn or session id in it. Serde renames each case to its template
+/// so a record reads like an access log without any rendering step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Route {
     #[serde(rename = "/healthz")]
@@ -114,6 +114,10 @@ pub enum Route {
     /// for an in-flight `provider_request`, ahead of its `provider-result`.
     #[serde(rename = "/v1/turns/{id}/provider-delta")]
     TurnProviderDelta,
+    /// The answer to a `requery_request`: the context block the host's
+    /// steering plane chose for a turn whose work has moved, or nothing.
+    #[serde(rename = "/v1/turns/{id}/requery-result")]
+    TurnRequeryResult,
     #[serde(rename = "/v1/turns/{id}/cancel")]
     TurnCancel,
     #[serde(rename = "/v1/turns/{id}/steer")]
@@ -157,6 +161,7 @@ impl Route {
             Self::TurnToolResult => "/v1/turns/{id}/tool-result",
             Self::TurnProviderResult => "/v1/turns/{id}/provider-result",
             Self::TurnProviderDelta => "/v1/turns/{id}/provider-delta",
+            Self::TurnRequeryResult => "/v1/turns/{id}/requery-result",
             Self::TurnCancel => "/v1/turns/{id}/cancel",
             Self::TurnSteer => "/v1/turns/{id}/steer",
             Self::TurnPause => "/v1/turns/{id}/pause",
@@ -181,7 +186,7 @@ impl Route {
     /// method's exhaustive match until the author classifies it, and the
     /// tests assert `ALL` contains exactly the `is_real` cases it names —
     /// so the array cannot silently lag the enum.
-    pub const ALL: [Route; 18] = [
+    pub const ALL: [Route; 19] = [
         Route::Healthz,
         Route::Readyz,
         Route::Metrics,
@@ -191,6 +196,7 @@ impl Route {
         Route::TurnToolResult,
         Route::TurnProviderResult,
         Route::TurnProviderDelta,
+        Route::TurnRequeryResult,
         Route::TurnCancel,
         Route::TurnSteer,
         Route::TurnPause,
@@ -219,6 +225,7 @@ impl Route {
             | Route::TurnToolResult
             | Route::TurnProviderResult
             | Route::TurnProviderDelta
+            | Route::TurnRequeryResult
             | Route::TurnCancel
             | Route::TurnSteer
             | Route::TurnPause
@@ -461,6 +468,10 @@ impl StreamEndReason {
 pub enum ReverseKind {
     Provider,
     Tool,
+    /// A step-boundary context re-query. Distinct from the other two because
+    /// it is the one reverse request a turn survives unanswered: the step
+    /// proceeds with no extra context rather than failing.
+    Requery,
 }
 
 /// Which half of the checkpoint sink failed.

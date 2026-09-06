@@ -3785,6 +3785,57 @@
         }
       ]
     },
+    "RequerySignal": {
+      "description": "What the turn has become, as the engine can witness it — the payload of a\n[`ServerFrame::RequeryRequest`].\n\nAn owned projection of `stella_core::steering::TurnSignal`, which borrows\nthe turn's own transcript and so cannot cross a frame boundary.\n\nOne field of that type is missing here. `active_domains` is a workspace\ntaxonomy the engine never fills — it passes an empty slice — and a wire\nfield that is always empty reads as a fact. The host merges its own\ndomains, and its own file ledger, before it asks its steering plane.",
+      "properties": {
+        "errors_seen": {
+          "description": "Error classes the turn has seen. \"We are stuck, and this is how\" is the\nstrongest retrieval cue a turn produces.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "prompt": {
+          "description": "The turn's goal, as the operator wrote it. On its own this is what\nevery selector had, and it is what goes stale by step 40.",
+          "type": "string"
+        },
+        "recent_tool_calls": {
+          "description": "Tools the turn has called, most recent last.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "since_last_query": {
+          "description": "Steps since the host last answered with a block.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "step": {
+          "description": "Step index within the turn.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "touched_paths": {
+          "description": "Workspace paths the turn has touched, read off its tool inputs.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "prompt",
+        "recent_tool_calls",
+        "touched_paths",
+        "errors_seen",
+        "step",
+        "since_last_query"
+      ],
+      "type": "object"
+    },
     "ScopeProposal": {
       "description": "What a `ScopeReview` gate presents for approval before a large plan\nexecutes (L-E5).\n\nEverything after `estimated_cost_usd` is additive (`serde(default)`), so\nstreams recorded before those fields existed parse with every one absent,\nand a proposal that names none serializes exactly as it always has:\n`repo`/`branch`, the read and write globs and the shell policy are the\nscope-card grid's facts, and `revision` is the plan breadcrumb's.",
       "properties": {
@@ -4662,6 +4713,27 @@
         "provider_id",
         "role",
         "request"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "The engine's work has moved on from the prompt it opened with, and it\nis asking the host for whatever context now fits. The host answers\nwith [`RequeryResultIn`] keyed by `request_id`; the engine step that\nraised it is parked until then.\n\nOnly ever emitted when the turn asked for it\n(`steering_requery` on `POST /v1/turns`). A host that has not built the\nanswering route never sees this frame.",
+      "properties": {
+        "request_id": {
+          "type": "string"
+        },
+        "signal": {
+          "$ref": "#/$defs/RequerySignal"
+        },
+        "type": {
+          "const": "requery_request",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "request_id",
+        "signal"
       ],
       "type": "object"
     },
