@@ -602,6 +602,13 @@ impl ToolExecutor for ClaimTap<'_> {
         self.inner.live_services()
     }
 
+    /// Forwarded: this tap claims files. It mounts no invocation plane of its
+    /// own. The empty default reads as "no skill is running here", which stops
+    /// a live skill's procedure text surviving summarization.
+    fn active_skill_slugs(&self) -> Vec<String> {
+        self.inner.active_skill_slugs()
+    }
+
     /// Forwarded: letting the empty default stand would silently serialize the
     /// inner executor's sibling spawns (see the port's contract). The spawn
     /// tool names no mutating path and no transient lane, so concurrent
@@ -630,6 +637,19 @@ mod tests {
     use stella_fleet::{GitError, GitOutput};
 
     use super::*;
+
+    /// Every method the port tells a decorator to forward, over this tap.
+    ///
+    /// The tap coordinates writes. It changes nothing about what the inner
+    /// executor mounts. `active_skill_slugs` was the one it dropped. The tap
+    /// sits above the invocation mount in the deck's lead turn, so a live
+    /// skill's text stopped surviving summarization there.
+    #[test]
+    fn the_tap_forwards_what_a_decorator_must() {
+        let loaded = stella_tools::forwarding::LoadedExecutor;
+        let tap = ClaimTap::new(&loaded, None, "holder");
+        stella_tools::forwarding::assert_forwards("ClaimTap", &tap);
+    }
 
     /// A recording fake: succeeds every call and remembers what ran.
     struct Passthrough(std::sync::Mutex<Vec<String>>);

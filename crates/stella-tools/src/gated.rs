@@ -723,14 +723,14 @@ mod tests {
     /// grouping, with no compiler complaint.
     #[test]
     fn the_decorator_forwards_what_a_decorator_must() {
+        let loaded = crate::forwarding::LoadedExecutor;
+        let over_loaded = GatedToolSet::new(&loaded, Arc::new(DenyAll), Principal::User);
+        crate::forwarding::assert_forwards("GatedToolSet", &over_loaded);
+
+        // The two this decorator answers for itself, over the leaf that
+        // declares them: a gate narrows execution, never the advertised set.
         let leaf = Leaf::new();
         let gated = GatedToolSet::new(&leaf, Arc::new(DenyAll), Principal::User);
-
-        assert_eq!(
-            gated.drain_sub_agent_spend_usd(),
-            2.5,
-            "sub-agent spend must not vanish through the gate"
-        );
         assert!(
             gated.parallel_safe_names().contains("delegate"),
             "the inner concurrency claim must survive"

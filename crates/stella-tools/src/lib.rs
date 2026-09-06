@@ -55,6 +55,7 @@ pub mod durable_write;
 pub mod edit;
 pub mod environment;
 pub mod exec;
+pub mod forwarding;
 pub mod foundry_gate;
 pub mod foundry_witness;
 pub mod gated;
