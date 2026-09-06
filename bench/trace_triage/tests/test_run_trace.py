@@ -9,9 +9,11 @@ findings looks exactly like a healthy one.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
+import triage_bench_traces
 from fixtures import ok, proof, tool_pair, write_run
-from run_trace import load_run
+from run_trace import READ_FILENAMES, load_run
 
 
 def test_a_half_written_tail_is_counted_not_fatal(tmp_path):
@@ -155,3 +157,35 @@ def test_json_arrays_on_a_line_are_ignored_rather_than_crashing(tmp_path):
     (trial,) = load_run(tmp_path, "r").trials
     assert trial.events == []
     assert trial.malformed_lines == 1
+
+
+# --------------------------------------------------------------------------
+# `--fetch`'s include-list against what `load_run` actually reads
+# --------------------------------------------------------------------------
+
+
+def test_fetch_includes_every_file_load_run_reads():
+    """A dropped pattern here is invisible until a run silently loads wrong.
+
+    If `*reward.txt` ever fell out of `_INCLUDES`, every trial would load with
+    `reward = None` — no crash, no malformed-line count, just every
+    `oracle-flip-ungraded` finding disappearing and the run reading as
+    healthy. This checks the real argv `--fetch` runs against
+    `run_trace.READ_FILENAMES`, the loader's own declaration of what it reads.
+    """
+    argv = triage_bench_traces.fetch_argv("run-id", Path("/tmp/mirror/run-id"))
+    missing = triage_bench_traces.missing_includes(argv, READ_FILENAMES)
+    assert not missing, f"--fetch would not sync: {missing}"
+
+
+def test_missing_includes_actually_catches_a_dropped_pattern():
+    """The check above has teeth: prove it on an argv with a pattern removed.
+
+    Without this, `test_fetch_includes_every_file_load_run_reads` could pass
+    vacuously — every real filename happens to survive today, which proves
+    nothing about whether the check would notice one going missing tomorrow.
+    """
+    argv = triage_bench_traces.fetch_argv("run-id", Path("/tmp/mirror/run-id"))
+    dropped = argv.index("*reward.txt")
+    truncated = argv[: dropped - 1] + argv[dropped + 1 :]  # drop `--include *reward.txt`
+    assert triage_bench_traces.missing_includes(truncated, READ_FILENAMES) == ["reward.txt"]

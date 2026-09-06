@@ -8,12 +8,13 @@ not run — with a fake `gh` so no test reaches the network.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
 import triage_bench_traces
 from detectors import run_all
-from fingerprint import Ledger, fingerprint_of, markers_in, normalize
+from fingerprint import Ledger, LedgerPosture, fingerprint_of, markers_in, normalize
 from fixtures import proof, write_run
 from issues import Decision, apply_actions, plan_actions
 from run_trace import load_run
@@ -274,6 +275,145 @@ def test_a_human_correction_in_the_ledger_is_never_overwritten(tmp_path):
     ledger.bind(fingerprint, 111, "run-one", note="corrected by hand", source="human")
     ledger.bind(fingerprint, 222, "run-two")
     assert ledger.lookup(fingerprint).issue == 111
+
+
+# --------------------------------------------------------------------------
+# Ledger posture
+# --------------------------------------------------------------------------
+
+
+def test_an_accepted_posture_opens_nothing_and_never_even_searches(tmp_path):
+    """A real, understood finding must stop being re-proposed."""
+    client = FakeGitHub()
+    client.search_raises = True  # if this fires, posture did not short-circuit
+    ledger = _ledger(tmp_path)
+    run = _run_with_witness_failure(tmp_path, "r1", ["alpha__AAA"], "run-one")
+    finding = run_all(run)[0]
+    entry = ledger.bind(finding.fingerprint, None, "run-zero", source="human")
+    entry.posture = LedgerPosture.ACCEPTED
+
+    (action,) = plan_actions(run, [finding], ledger, client, max_new_issues=5)
+    assert action.decision is Decision.POSTURE_SUPPRESSED
+    assert "accepted" in action.matched_by
+
+    apply_actions(run, [action], ledger, client)
+    assert client.created == [], "an accepted finding must never become a new ticket"
+    assert client.comments == [], "an accepted finding must never get a comment either"
+
+
+def test_a_wontfix_posture_needs_no_issue_number(tmp_path):
+    """Binding a fake issue number just to silence a finding would be a lie."""
+    ledger = _ledger(tmp_path)
+    run = _run_with_witness_failure(tmp_path, "r1", ["alpha__AAA"], "run-one")
+    finding = run_all(run)[0]
+    entry = ledger.bind(finding.fingerprint, None, "run-zero", source="human", note="by design")
+    entry.posture = LedgerPosture.WONTFIX
+
+    (action,) = plan_actions(run, [finding], ledger, None, max_new_issues=5)
+    assert action.decision is Decision.POSTURE_SUPPRESSED
+    assert action.issue is None
+    assert "wontfix" in action.matched_by
+    assert "by design" in action.matched_by
+
+
+def test_a_tracked_posture_is_the_default_and_changes_nothing(tmp_path):
+    """With no posture set, the decision never changes."""
+    client = FakeGitHub()
+    ledger = _ledger(tmp_path)
+    run = _run_with_witness_failure(tmp_path, "r1", ["alpha__AAA"], "run-one")
+    finding = run_all(run)[0]
+    entry = ledger.bind(finding.fingerprint, 4242, "run-zero")
+    assert entry.posture == LedgerPosture.TRACKED
+
+    (action,) = plan_actions(run, [finding], ledger, client, max_new_issues=5)
+    assert action.decision is Decision.COMMENT
+
+
+def test_posture_round_trips_through_disk(tmp_path):
+    path = tmp_path / "l.json"
+    ledger = Ledger(path)
+    fingerprint = fingerprint_of("d", "s", "v")
+    entry = ledger.bind(fingerprint, None, "run-one", source="human")
+    entry.posture = LedgerPosture.WONTFIX
+    ledger.save()
+
+    reloaded = Ledger(path)
+    assert reloaded.lookup(fingerprint).posture == LedgerPosture.WONTFIX
+
+
+def test_save_never_drops_the_hand_written_comment_block(tmp_path):
+    """`fingerprints.json` carries a `_comment` array `Ledger` never reads.
+
+    A `save()` that names only its three keys drops it. `--apply` would
+    delete it from the real, tracked file.
+    """
+    path = tmp_path / "l.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "updated_at": "2026-01-01T00:00:00Z",
+                "_comment": ["written by hand", "read by nobody but a human"],
+                "fingerprints": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    ledger = Ledger(path)
+    ledger.bind(fingerprint_of("d", "s", "v"), 1, "run-one")
+    ledger.save()
+
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    assert on_disk["_comment"] == ["written by hand", "read by nobody but a human"]
+
+
+def test_a_ledger_entry_written_before_posture_existed_defaults_to_tracked(tmp_path):
+    """An old file has no `posture` key. Loading it must not crash."""
+    fingerprint = fingerprint_of("d", "s", "v")
+    seeded = _ledger(tmp_path).bind(fingerprint, 99, "old-run", source="seed")
+    payload = seeded.to_json()
+    del payload["posture"]  # an old file on disk has no such key
+
+    path = tmp_path / "l.json"
+    path.write_text(
+        json.dumps({"schema": 1, "fingerprints": {fingerprint.digest: payload}}),
+        encoding="utf-8",
+    )
+    entry = Ledger(path).lookup(fingerprint)
+    assert entry.posture == LedgerPosture.TRACKED
+
+
+def test_posture_suppressed_is_counted_in_the_summary_and_never_filed(tmp_path, monkeypatch, capsys):
+    """The plan prints and counts it. `--apply` still opens and comments on nothing."""
+    root = tmp_path / "runx"
+    write_run(root, [{"task": "alpha__AAA", "reward": 0, "events": _witness_failure_events()}])
+    run = load_run(root, "runx")
+    finding = run_all(run)[0]
+
+    ledger_path = tmp_path / "ledger.json"
+    ledger = Ledger(ledger_path)
+    entry = ledger.bind(finding.fingerprint, None, "run-zero", source="human", note="expected shape")
+    entry.posture = LedgerPosture.WONTFIX
+    ledger.save()
+
+    client = FakeGitHub()
+    client.search_raises = True  # proves nothing searched GitHub
+    monkeypatch.setattr(triage_bench_traces, "GhCli", lambda repo: client)
+
+    code = triage_bench_traces.main(
+        ["--run", "runx", "--mirror", str(root), "--ledger", str(ledger_path), "--apply"]
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "SUPPRESSED (ledger posture)" in out
+    assert "wontfix" in out
+    assert "1  SUPPRESSED (ledger posture)" in out, "the summary must count it, not just print it"
+    assert client.created == [] and client.comments == []
+
+    reloaded = Ledger(ledger_path)
+    reloaded_entry = reloaded.lookup(finding.fingerprint)
+    assert reloaded_entry.issue is None, "posture suppression must never mint or bind an issue"
+    assert reloaded_entry.runs == ["runx"], "the occurrence is still recorded"
 
 
 # --------------------------------------------------------------------------

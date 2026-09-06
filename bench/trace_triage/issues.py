@@ -61,6 +61,7 @@ class Decision(StrEnum):
     COMMENT = "COMMENT (open issue)"
     RECURRENCE = "COMMENT (closed issue — recurrence)"
     SUPPRESSED = "SUPPRESSED (new-issue cap reached)"
+    POSTURE_SUPPRESSED = "SUPPRESSED (ledger posture)"
     NO_NEWS = "NOTHING POSTED (occurrence adds nothing to the record)"
 
 
@@ -383,6 +384,26 @@ def plan_actions(
     for finding in sorted(findings, key=lambda f: (f.detector, f.variant_source)):
         fingerprint = finding.fingerprint
         entry = ledger.lookup(fingerprint)
+
+        if entry is not None and entry.silenced:
+            # A human read this shape. Stop proposing it, issue or not.
+            # No search, no comment, no new issue. No client needed.
+            actions.append(
+                Action(
+                    finding=finding,
+                    fingerprint=fingerprint,
+                    decision=Decision.POSTURE_SUPPRESSED,
+                    title=finding.title,
+                    body="",
+                    issue=entry.issue,
+                    matched_by=(
+                        f"ledger posture: {entry.posture.value}"
+                        + (f" — {entry.note}" if entry.note else "")
+                    ),
+                )
+            )
+            continue
+
         issue: int | None = entry.issue if entry else None
         matched_by = "ledger" if issue is not None else ""
         candidates: list[dict[str, Any]] = []
@@ -498,6 +519,16 @@ def apply_actions(
             log.append(
                 f"suppressed (cap): {finding.detector} {action.fingerprint.digest} "
                 f"— {finding.count} occurrence(s), NOT filed"
+            )
+            continue
+        if action.decision is Decision.POSTURE_SUPPRESSED:
+            # Never filed, never even searched. Still observed, so a later
+            # change of heart starts from the truth.
+            entry = ledger.bind(action.fingerprint, action.issue, run.run_id)
+            entry.observe(run.run_id, tasks, finding.count, finding.denominator)
+            log.append(
+                f"posture-suppressed ({action.matched_by}): {finding.detector} "
+                f"{action.fingerprint.digest} — {finding.count} occurrence(s), NOT filed"
             )
             continue
         if action.decision is Decision.NO_NEWS:

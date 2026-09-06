@@ -18,7 +18,7 @@ keyed on them.
     @detector(
         code="my-shape",                       # stable; part of the fingerprint
         title="what a new issue would be called",
-        site="crates/stella-pipeline/src/verify.rs",   # or "" if none implicated
+        site="crates/stella-model/src/provider_parity.rs",   # or "" if none implicated
         search_terms=("phrase a reviewer would search",),
     )
     def _my_shape(run: Run) -> list[Finding]:
@@ -341,7 +341,7 @@ def _agent_timeout(run: Run) -> list[Finding]:
 @detector(
     code="witness-unavailable",
     title="witness authoring failed",
-    site="crates/stella-pipeline/src/verify.rs",
+    site="",
     search_terms=("witness_unavailable", "witness author", "no TEST_COMMAND"),
 )
 def _witness_unavailable(run: Run) -> list[Finding]:
@@ -352,6 +352,11 @@ def _witness_unavailable(run: Run) -> list[Finding]:
     failure, "emitted a test command but created no file" is an authoring
     failure, and "turn aborted: stuck-loop detected" is a loop defect. Filing
     them under one ticket buries two of the three.
+
+    `site` is `""` rather than `crates/stella-pipeline/src/verify.rs`: that
+    crate is deleted, and witness authoring is now a verification plugin's
+    own logic (Vera, private, not shipped here), so no file in this tree is
+    implicated.
     """
     from fingerprint import normalize
 
@@ -389,7 +394,7 @@ def _witness_unavailable(run: Run) -> list[Finding]:
         findings.append(
             Finding(
                 detector="witness-unavailable",
-                site="crates/stella-pipeline/src/verify.rs",
+                site="",
                 variant_source=reason_full,
                 title=f"witness authoring failed: {reason_full[:90]}",
                 summary=(
@@ -414,7 +419,7 @@ def _witness_unavailable(run: Run) -> list[Finding]:
 @detector(
     code="oracle-flip-ungraded",
     title="the oracle recorded a baseline->candidate flip on a trial the grader scored 0",
-    site="crates/stella-pipeline/src/verify.rs",
+    site="",
     search_terms=("oracle flip reward 0", "flip achieved grader rejected"),
 )
 def _oracle_flip_ungraded(run: Run) -> list[Finding]:
@@ -426,6 +431,11 @@ def _oracle_flip_ungraded(run: Run) -> list[Finding]:
     does not accept — either the witness is weaker than the task, or the proven
     work never reached the graded tree. Both are defects, and the trace cannot
     tell them apart on its own, which is stated rather than guessed.
+
+    `site` is `""` rather than `crates/stella-pipeline/src/verify.rs`: that
+    crate is deleted, and the oracle's flip logic is now a verification
+    plugin's own logic (Vera, private, not shipped here), so no file in this
+    tree is implicated.
     """
     if run.bare_loop:
         return []  # no oracle exists on the bare loop; see below.
@@ -457,7 +467,7 @@ def _oracle_flip_ungraded(run: Run) -> list[Finding]:
     return [
         Finding(
             detector="oracle-flip-ungraded",
-            site="crates/stella-pipeline/src/verify.rs",
+            site="",
             variant_source="oracle observed baseline fail and candidate pass on a trial graded 0",
             title="the oracle recorded a baseline->candidate flip on a trial the grader scored 0",
             summary=(
@@ -783,7 +793,7 @@ def _role_model_mismatch(run: Run) -> list[Finding]:
 @detector(
     code="no-post-verdict-file-change",
     title="a trial recorded no file_change after its verdict",
-    site="crates/stella-cli/src/candidate_ws/adopt.rs",
+    site="crates/stella-cli/src/candidate_workspaces.rs",
     search_terms=("candidate adoption post-verdict file_change", "delivery emits no event"),
 )
 def _no_post_verdict_file_change(run: Run) -> list[Finding]:
@@ -861,7 +871,7 @@ def _no_post_verdict_file_change(run: Run) -> list[Finding]:
         findings.append(
             Finding(
                 detector="no-post-verdict-file-change",
-                site="crates/stella-cli/src/candidate_ws/adopt.rs",
+                site="crates/stella-cli/src/candidate_workspaces.rs",
                 variant_source="trial recorded no verdict event at all",
                 title="a trial ended with no verdict event — the delivery point was never reached",
                 summary=(
@@ -879,7 +889,7 @@ def _no_post_verdict_file_change(run: Run) -> list[Finding]:
         findings.append(
             Finding(
                 detector="no-post-verdict-file-change",
-                site="crates/stella-cli/src/candidate_ws/adopt.rs",
+                site="crates/stella-cli/src/candidate_workspaces.rs",
                 variant_source="verdict recorded and no mutating file_change followed it",
                 title="a trial recorded a verdict and no file_change after it",
                 summary=(
@@ -1082,7 +1092,7 @@ _FALLBACK_DISCLOSURE = "searched with POSIX"
 @detector(
     code="grep-ere-false-negative",
     title="grep answered `(no matches)` for a pattern the POSIX fallback could not execute",
-    site="crates/stella-tools/src/grep/fallback.rs",
+    site="",
     search_terms=("grep no matches alternation", "POSIX grep BRE fallback false negative"),
 )
 def _grep_ere_false_negative(run: Run) -> list[Finding]:
@@ -1093,6 +1103,12 @@ def _grep_ere_false_negative(run: Run) -> list[Finding]:
     wrote matched nothing — reported as the fact `(no matches)`. A tool that
     fails is recoverable; a tool that answers "that code does not exist" is not,
     because the agent believes it and re-plans.
+
+    `site` is `""`: the standalone `grep` tool this fired on is gone, folded
+    into the unified `search` tool (AGENTS.md's "one search rather than a
+    grep/glob/graph_query triple"), and no file in the current tree owns a
+    POSIX-fallback shape to implicate. `grep` below is recorded-trace
+    vocabulary, matching what an archived run's stream actually says.
 
     The discriminator is the disclosure #2989 attached to the degraded backend's
     empty answer, not the pattern alone: after the fix, a zero-match *from the
@@ -1141,7 +1157,7 @@ def _grep_ere_false_negative(run: Run) -> list[Finding]:
     return [
         Finding(
             detector="grep-ere-false-negative",
-            site="crates/stella-tools/src/grep/fallback.rs",
+            site="",
             variant_source="grep zero-match on an ERE pattern with no POSIX-fallback disclosure",
             title=(
                 "grep answered `(no matches)` for a pattern the POSIX fallback "

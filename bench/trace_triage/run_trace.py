@@ -49,6 +49,18 @@ from typing import Any
 
 S3_BUCKET = "arenabench-artifacts-578673726240"
 
+# Every filename `load_run` reads. `--fetch`'s include-list is built from
+# this list, not copied by hand, so a new read here cannot outrun a fetch.
+# `result.json` and `results.json` hold different data. See
+# `_exception_types` for why both names stay on the list.
+READ_FILENAMES: tuple[str, ...] = (
+    "results.json",
+    "result.json",
+    "reward.txt",
+    "exception.txt",
+    "stella-events.jsonl",
+)
+
 # Event tags this module indexes eagerly. Everything else stays in `events` and
 # is still reachable — the index is a convenience, never a filter.
 _INDEXED = (
