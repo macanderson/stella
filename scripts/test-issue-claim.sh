@@ -94,17 +94,22 @@ want "a closed-unmerged closing pull request does not stand this session down" \
 # A closed hit next to an OPEN hit still blocks: the OPEN hit is live. Both
 # get named, each with its own state, so the closed one can be read as a
 # past, dead try at the same fix.
+#
+# The report must also say why the closed one is in the list, or a reader
+# takes it for a second live claim. Naming both states is not enough to tell
+# this run from the pre-fix one, which blocked on any hit and printed the
+# same two lines; the explanation is what only this version writes.
 out="$("$SCRIPT" check 5045 \
   --fixture-login ada --fixture-claims "" \
   --fixture-prs "1234 CLOSED closes
 1235 OPEN closes" 2>&1)"
 rc=$?
 case "$rc,$out" in
-1,*"1234 CLOSED"*"1235 OPEN"*)
-  ok "a closed-unmerged hit and an open one both get named, each with its own state"
+1,*"1234 CLOSED"*"1235 OPEN"*"only blocks here because an OPEN or MERGED hit is"*)
+  ok "a closed-unmerged hit and an open one both get named, and the closed one is explained"
   ;;
 *)
-  bad "expected exit 1 naming both '1234 CLOSED' and '1235 OPEN', got exit $rc: $out"
+  bad "expected exit 1 naming both '1234 CLOSED' and '1235 OPEN' and explaining the closed hit, got exit $rc: $out"
   ;;
 esac
 
