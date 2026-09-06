@@ -645,7 +645,11 @@ async fn the_first_requery_leaves_out_what_the_opening_block_rendered() {
 
     let opening = memory.recall_block_reported(lesson, &[]).await;
     let mut messages = Vec::new();
-    let opening = crate::memory::inject_opening_recall(&mut messages, opening);
+    let opening = crate::memory::inject_opening_recall(
+        &mut messages,
+        opening,
+        &stella_core::steering::ledger::SteeringLedger::default(),
+    );
     let opening_text = &messages
         .first()
         .expect("the opening recall injects a block")
@@ -787,7 +791,7 @@ fn every_dropped_source_gets_a_line_with_its_own_remedy() {
     assert!(
         lines[4].contains("bash")
             && lines[4].contains("still runs if it is called")
-            && lines[4].contains("context.steering.tools.max_tokens"),
+            && lines[4].contains("context.steering.max_tokens"),
         "a tool the allowance could not afford names itself, says it is still \
          callable, and names the knob that would have advertised it: {joined}"
     );

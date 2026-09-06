@@ -637,7 +637,15 @@ impl SessionSubAgents {
                     crate::agent::tool_stack::policy_stack_with(
                         base,
                         policy,
-                        stella_core::steering::tools::ToolAdvertisement::Full,
+                        // The ledger is unread on the `Full` arm, and it is a
+                        // fresh cell rather than the parent's for the same
+                        // reason that arm is `Full`: what a child inherits is
+                        // the open question named above, not one to answer by
+                        // accident here.
+                        crate::agent::tool_stack::ToolAllowance::new(
+                            stella_core::steering::tools::ToolAdvertisement::Full,
+                            &stella_core::steering::ledger::SteeringLedger::default(),
+                        ),
                         gate,
                         principal,
                     )
