@@ -180,14 +180,20 @@ async fn drive_index_blocking<F: FnMut(InitLine) + ?Sized>(
 /// needs the same treatment — do it and say what it did — not a
 /// flag that leaves the capability off for everyone who never found it. With
 /// no embedder configured it is a labelled no-op, which is the normal case.
+///
+/// # Where it runs
+///
+/// On a thread of its own (`eager::spawn_on_own_thread`). The two rungs read
+/// files, hash them and write SQLite between the embedder's HTTP awaits, and
+/// as a task here they held this runtime's worker for every one of those
+/// steps. This task reads the pass's events and narrates them; `emit` never
+/// crosses to the thread, which is what lets it stay a plain `&mut dyn FnMut`.
 async fn warm_semantic_index(
     workspace_root: &std::path::Path,
     embed_env: &stella_embed::EmbedderEnv,
     emit: &mut dyn FnMut(InitLine),
 ) {
     use stella_embed::Embedder;
-
-    use crate::search_cmd::semantic::NO_FILE_CEILING;
 
     let embedder = match stella_embed::resolve(embed_env) {
         stella_embed::Resolution::Configured(embedder) => embedder,
@@ -213,54 +219,85 @@ async fn warm_semantic_index(
         }
     };
 
+    // Read before the embedder crosses to its thread: every summary line
+    // names the model.
+    let model = embedder.fingerprint().model_id;
     emit(InitLine::Step(
         "◈ embedding files for semantic search…".to_string(),
     ));
+    let mut pass =
+        match crate::search_cmd::eager::spawn_on_own_thread(workspace_root.to_path_buf(), embedder)
+        {
+            Ok(pass) => pass,
+            Err(error) => {
+                emit(InitLine::Step(format!(
+                    "! semantic index: not built — cannot start the embedding pass's thread: \
+                     {error}"
+                )));
+                return;
+            }
+        };
     let mut ticker = ProgressTicker::new(INDEX_PROGRESS_INTERVAL);
-    let outcome = crate::search_cmd::semantic::warm_file_vectors_with_progress(
-        workspace_root,
-        embedder.as_ref(),
-        NO_FILE_CEILING,
-        &mut |embedded| {
-            if ticker.ready(Instant::now()) {
+    while let Some(event) = pass.progress().await {
+        narrate_eager_event(event, Instant::now(), &mut ticker, &model, emit);
+    }
+    match pass.join().await {
+        Ok(outcome) => emit(InitLine::Step(format_chunk_warm_outcome(
+            &outcome.chunks,
+            &model,
+        ))),
+        // The pass stopped reporting before it reported an outcome. Whatever
+        // it committed before that is in the store, and the background pass
+        // at the next session start finishes the rest.
+        Err(failure) => emit(InitLine::Step(format!(
+            "! semantic index: the embedding pass {failure} (the background pass at the next \
+             session start finishes the rest)"
+        ))),
+    }
+}
+
+/// Narrate one report from the eager pass, in the order the pass sends them:
+/// file progress, then the file summary and the chunk headline, then chunk
+/// progress. The chunk summary comes with the pass's outcome, not as an
+/// event. Pure over `now`, so a test can pin the order of `stella init`'s
+/// lines by feeding events.
+///
+/// The chunk rung is the sharper one the search ranks first (#3098): a
+/// file-level vector exists but a query naming one function in a large
+/// multi-purpose file loses to a file that happens to have complete
+/// per-symbol coverage, regardless of which is the true answer.
+fn narrate_eager_event(
+    event: crate::search_cmd::eager::EagerEvent,
+    now: Instant,
+    ticker: &mut ProgressTicker,
+    model: &str,
+    emit: &mut dyn FnMut(InitLine),
+) {
+    use crate::search_cmd::eager::EagerEvent;
+    match event {
+        EagerEvent::FilesEmbedded(embedded) => {
+            if ticker.ready(now) {
                 emit(InitLine::Progress(format!(
                     "· semantic index: {embedded} files embedded…"
                 )));
             }
-        },
-    )
-    .await;
-    emit(InitLine::Step(format_warm_outcome(
-        &outcome,
-        &embedder.fingerprint().model_id,
-    )));
-
-    // The sharper rung the search ranks first (#3098): a file-level vector
-    // exists but a query naming one function in a large multi-purpose file
-    // loses to a file that happens to have complete per-symbol coverage,
-    // regardless of which is the true answer. Same reasoning as the pass
-    // above, one layer down.
-    emit(InitLine::Step(
-        "◈ embedding code chunks for search…".to_string(),
-    ));
-    let mut ticker = ProgressTicker::new(INDEX_PROGRESS_INTERVAL);
-    let chunk_outcome = crate::search_cmd::engine::warm_chunk_vectors_with_progress(
-        workspace_root,
-        embedder.as_ref(),
-        crate::search_cmd::engine::NO_CHUNK_FILE_CEILING,
-        &mut |embedded| {
-            if ticker.ready(Instant::now()) {
+        }
+        EagerEvent::FilesFinished(outcome) => {
+            emit(InitLine::Step(format_warm_outcome(&outcome, model)));
+            emit(InitLine::Step(
+                "◈ embedding code chunks for search…".to_string(),
+            ));
+            // The chunk rung's clock starts with the chunk rung.
+            *ticker = ProgressTicker::new(INDEX_PROGRESS_INTERVAL);
+        }
+        EagerEvent::ChunkFilesEmbedded(embedded) => {
+            if ticker.ready(now) {
                 emit(InitLine::Progress(format!(
                     "· chunk index: {embedded} files embedded…"
                 )));
             }
-        },
-    )
-    .await;
-    emit(InitLine::Step(format_chunk_warm_outcome(
-        &chunk_outcome,
-        &embedder.fingerprint().model_id,
-    )));
+        }
+    }
 }
 
 /// The one-line report of an eager embedding pass.
@@ -680,10 +717,8 @@ async fn backfill_vectors_quietly(
                     )));
                 }
             }
-            pass.join().await.unwrap_or_else(|| {
-                BackfillOutcome::Unavailable(
-                    "the embedding pass ended without reporting".to_string(),
-                )
+            pass.join().await.unwrap_or_else(|failure| {
+                BackfillOutcome::Unavailable(format!("the embedding pass {failure}"))
             })
         }
         Err(error) => BackfillOutcome::Unavailable(format!(
