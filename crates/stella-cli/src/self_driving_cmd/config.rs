@@ -119,10 +119,19 @@ impl Default for LoopConfig {
 /// apply — the loop should say loudly that it could not read a setting and
 /// then keep working, rather than refuse to run because of a typo in a section
 /// it might not even use.
+///
+/// A workspace with no `stella.toml` still resolves its provider manifest.
+/// `.stella/issues/github.toml` is the file the tracker's words and classes
+/// are edited in, and requiring a second file beside it to make the first one
+/// count would make the manifest unreachable for the workspace that has
+/// configured nothing else — which is the workspace it exists for.
 #[must_use]
 pub(crate) fn load(root: &Path) -> LoopConfig {
     let Some(parsed) = read_toml(root) else {
-        return LoopConfig::default();
+        return LoopConfig {
+            manifest: ProviderManifest::for_workspace(root),
+            ..LoopConfig::default()
+        };
     };
 
     LoopConfig {
@@ -227,6 +236,31 @@ mod tests {
         assert_eq!(
             cfg.manifest.classes.class_of(&["bug"]),
             stella_protocol::issue::IssueClass::Bug
+        );
+    }
+
+    /// A manifest is read on its own. `stella.toml` says which provider is
+    /// active, and github is the default, so a workspace that edited only
+    /// `.stella/issues/github.toml` has already said everything the loop needs
+    /// — the shadow must not wait on a second file.
+    #[test]
+    fn a_manifest_shadows_the_shipped_one_with_no_stella_toml_beside_it() {
+        let ws = workspace();
+        write(
+            ws.path(),
+            ".stella/issues/github.toml",
+            "open = [\"triage\"]\nclosed = [\"shipped\"]\n\n[classes]\nbug = [\"kind/defect\"]\n",
+        );
+
+        let cfg = load(ws.path());
+        assert!(
+            cfg.vocabulary().is_open("triage"),
+            "the manifest's words are read without a stella.toml beside them"
+        );
+        assert_eq!(
+            cfg.manifest.classes.class_of(&["kind/defect"]),
+            stella_protocol::issue::IssueClass::Bug,
+            "the manifest's classes are read too, not just its words"
         );
     }
 
