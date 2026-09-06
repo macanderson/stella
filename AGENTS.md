@@ -1466,6 +1466,18 @@ failure the section opens with — an issue whose work shipped, staying open, wi
 nothing to notice it but an audit — reached by a different wrong guess about
 what the parser reads, and #5210 is where it happened.
 
+**A negation in front of the keyword is invisible to the same parser.**
+`#6180`'s trailer had `Refs #6155`, the right spelling for "this helps but
+does not finish the issue." Its body also said "This does not close
+`#6155`." GitHub still closed `#6155`. The parser reads `close #6155` and
+skips the three words in front of it. A person had to reopen the issue by
+hand. `scripts/check-closing-keywords.py` now checks every pull request. It
+reads the body and every commit message. It fails when a negation word
+(`not`, `never`, `without`, `doesn't`) sits in front of a closing keyword and
+its issue number, in one sentence. Its fix is the safe spelling: put the
+issue number in backticks, or write "advances #N" instead of a closing
+keyword.
+
 ---
 
 ## Testing approach

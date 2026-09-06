@@ -896,6 +896,13 @@ main-canary-test: ## Test the post-merge canary, announcements included (not par
 deleted-tests-test: ## Test the deleted-test guard's live-vs-stale PR body handling (hermetic; not part of `gate`; #4495)
 	./scripts/test-deleted-tests.sh
 
+# Deliberately not a gate step, for the same reason as the one above: it
+# reads a PR's description and commit messages, which a single local tree
+# does not carry (#6190).
+.PHONY: closing-keywords-test
+closing-keywords-test: ## Test the negated-closing-keyword guard (hermetic; not part of `gate`; #6190)
+	python3 ./scripts/test-closing-keywords.py
+
 # The canary's other half: it detects, this is what consumes the detection at
 # the point a merge is still a decision (#3917). Not a gate step for the same
 # reason the canary is not — it asks the issue tracker a question, and `gate`
