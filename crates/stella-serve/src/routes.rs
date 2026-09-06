@@ -33,6 +33,7 @@ use crate::observe::record::{RequestRecord, Responder};
 use crate::session::{Session, SessionSpec};
 use crate::state::ServerState;
 
+pub(crate) mod requery;
 mod sessions;
 
 // Re-exported rather than moved-and-renamed: `server.rs` dispatches every route
@@ -68,6 +69,12 @@ struct TurnRequest {
     /// Omitted — or an empty object — reproduces today's behavior exactly.
     #[serde(default)]
     engine: Option<EngineOverrides>,
+    /// Let this turn re-ask the host for context at its step boundaries.
+    /// Off by default, because a host that has not built
+    /// `POST /v1/turns/{id}/requery-result` cannot answer, and an unanswered
+    /// request parks the step for the whole reverse-request deadline.
+    #[serde(default)]
+    steering_requery: bool,
     /// Run this turn as a judged multi-round goal run (#1297). Omitted is a
     /// single turn, exactly as before.
     #[serde(default)]
@@ -470,6 +477,7 @@ pub(crate) async fn handle_create(
                 turn.budget.session_limit_usd,
             ),
             reverse_request_timeout,
+            steering_requery: turn.steering_requery,
             turn: TurnRef::new(turn_id),
             observer,
             on_settled: None,

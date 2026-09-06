@@ -3,13 +3,14 @@
 //! reverse-RPC requests, exactly as the real host (Oxagen) will over HTTP. If
 //! this holds, wrapping a socket around it is transport plumbing.
 
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::json;
 use stella_core::{BudgetGuard, EngineConfig, TurnOutcome};
 use stella_protocol::{
-    BudgetMode, CompletionMessage, CompletionResult, CompletionUsage, ToolCall, ToolOutput,
-    ToolSchema,
+    BudgetMode, CompletionMessage, CompletionResult, CompletionUsage, MessageRole, ToolCall,
+    ToolOutput, ToolSchema,
 };
 use stella_serve::observe::TurnRef;
 use stella_serve::{ProviderDelta, ServerFrame, Session, SessionSpec, TurnOutcomeWire};
@@ -79,6 +80,7 @@ fn spec_for(prompt: &str) -> SessionSpec {
         sub_agents: None,
         extensions: stella_serve::Extensions::new(),
         calibration: None,
+        steering_requery: false,
     }
 }
 
@@ -157,6 +159,9 @@ async fn tool_round_trip_completes_the_turn() {
                     .unwrap();
             }
             ServerFrame::TurnComplete { outcome: done } => outcome = Some(done),
+            ServerFrame::RequeryRequest { .. } => {
+                panic!("a turn that did not opt in must not ask for context")
+            }
             // An unpaused turn crosses every step boundary freely, so the
             // pause gate must stay silent — a hold nobody asked for would
             // be a frame every host has to learn to ignore.
@@ -199,6 +204,9 @@ async fn immediate_completion_needs_no_tools() {
             }
             ServerFrame::ToolRequest { .. } => tool_calls += 1,
             ServerFrame::TurnComplete { outcome: done } => outcome = Some(done),
+            ServerFrame::RequeryRequest { .. } => {
+                panic!("a turn that did not opt in must not ask for context")
+            }
             // An unpaused turn crosses every step boundary freely, so the
             // pause gate must stay silent — a hold nobody asked for would
             // be a frame every host has to learn to ignore.
@@ -235,6 +243,9 @@ async fn an_unanswered_provider_request_fails_on_the_deadline() {
         match frame {
             ServerFrame::ProviderRequest { .. } => provider_requests += 1,
             ServerFrame::TurnComplete { outcome: done } => outcome = Some(done),
+            ServerFrame::RequeryRequest { .. } => {
+                panic!("a turn that did not opt in must not ask for context")
+            }
             // An unpaused turn crosses every step boundary freely, so the
             // pause gate must stay silent — a hold nobody asked for would
             // be a frame every host has to learn to ignore.
@@ -293,6 +304,9 @@ async fn an_unanswered_tool_request_times_out_into_a_tool_error() {
             // Never answered — the port's deadline must resolve it instead.
             ServerFrame::ToolRequest { .. } => tool_requests += 1,
             ServerFrame::TurnComplete { outcome: done } => outcome = Some(done),
+            ServerFrame::RequeryRequest { .. } => {
+                panic!("a turn that did not opt in must not ask for context")
+            }
             // An unpaused turn crosses every step boundary freely, so the
             // pause gate must stay silent — a hold nobody asked for would
             // be a frame every host has to learn to ignore.
@@ -332,6 +346,9 @@ async fn cancelling_a_parked_turn_unwinds_it_promptly() {
             // Cancel instead of answering, while the step is parked on us.
             ServerFrame::ProviderRequest { .. } => session.cancel(),
             ServerFrame::TurnComplete { outcome: done } => outcome = Some(done),
+            ServerFrame::RequeryRequest { .. } => {
+                panic!("a turn that did not opt in must not ask for context")
+            }
             // An unpaused turn crosses every step boundary freely, so the
             // pause gate must stay silent — a hold nobody asked for would
             // be a frame every host has to learn to ignore.
@@ -439,6 +456,9 @@ async fn streamed_provider_deltas_surface_as_events_before_the_completion() {
                 _ => {}
             },
             ServerFrame::TurnComplete { outcome: done } => outcome = Some(done),
+            ServerFrame::RequeryRequest { .. } => {
+                panic!("a turn that did not opt in must not ask for context")
+            }
             // An unpaused turn crosses every step boundary freely, so the
             // pause gate must stay silent — a hold nobody asked for would
             // be a frame every host has to learn to ignore.
@@ -491,6 +511,9 @@ async fn a_host_that_never_streams_is_unchanged() {
                 event: stella_protocol::AgentEvent::TextDelta { .. },
             } => text_deltas += 1,
             ServerFrame::TurnComplete { outcome: done } => outcome = Some(done),
+            ServerFrame::RequeryRequest { .. } => {
+                panic!("a turn that did not opt in must not ask for context")
+            }
             // An unpaused turn crosses every step boundary freely, so the
             // pause gate must stay silent — a hold nobody asked for would
             // be a frame every host has to learn to ignore.
@@ -557,6 +580,9 @@ async fn a_streaming_host_resets_the_reverse_request_deadline() {
                     .unwrap();
             }
             ServerFrame::TurnComplete { outcome: done } => outcome = Some(done),
+            ServerFrame::RequeryRequest { .. } => {
+                panic!("a turn that did not opt in must not ask for context")
+            }
             // An unpaused turn crosses every step boundary freely, so the
             // pause gate must stay silent — a hold nobody asked for would
             // be a frame every host has to learn to ignore.
@@ -596,6 +622,9 @@ async fn provider_error_aborts_cleanly() {
                     .unwrap();
             }
             ServerFrame::TurnComplete { outcome: done } => outcome = Some(done),
+            ServerFrame::RequeryRequest { .. } => {
+                panic!("a turn that did not opt in must not ask for context")
+            }
             // An unpaused turn crosses every step boundary freely, so the
             // pause gate must stay silent — a hold nobody asked for would
             // be a frame every host has to learn to ignore.
@@ -610,4 +639,208 @@ async fn provider_error_aborts_cleanly() {
         Some(TurnOutcomeWire::Aborted { .. }) => {}
         other => panic!("expected a clean abort, got {other:?}"),
     }
+}
+
+// ── the mid-turn context re-query ───────────────────────────────────────────
+
+/// The system message a re-query must not disturb: the byte-stable prefix a
+/// turn's prompt cache depends on (AGENTS.md rule 7).
+const STABLE_PREFIX: &str = "you are a careful engineer";
+
+/// The block a scripted host returns whenever the server asks for context.
+const CONTEXT_BLOCK: &str = "the provider adapters share one SSE parser";
+
+/// What one scripted re-query turn produced, for the tests that read it.
+struct RequeryRun {
+    outcome: Option<TurnOutcomeWire>,
+    /// The transcript as the engine left it.
+    messages: Vec<CompletionMessage>,
+    /// How many times the server asked the host for context.
+    asks: usize,
+    /// The touched paths carried on the first ask.
+    signal_paths: Vec<String>,
+    /// Whether a model call made after the ask saw the block.
+    block_reached_the_model: bool,
+}
+
+/// Run a three-step turn whose first two steps each touch `src/adapter.rs`, so
+/// the third boundary has both a drifted signal and the spacing the port
+/// requires, and answer whatever it asks for with `context`.
+async fn scripted_requery_turn(context: Option<&str>) -> RequeryRun {
+    let settled: Arc<Mutex<Vec<CompletionMessage>>> = Arc::new(Mutex::new(Vec::new()));
+    let write_back = Arc::clone(&settled);
+    let mut session = Session::start(SessionSpec {
+        messages: vec![
+            CompletionMessage::system(STABLE_PREFIX),
+            CompletionMessage::user("fix the flaky test"),
+        ],
+        steering_requery: true,
+        on_settled: Some(Box::new(move |settlement| {
+            *write_back.lock().expect("settled transcript") = settlement.messages;
+        })),
+        ..spec_for("unused — the messages above are this turn's transcript")
+    });
+
+    let mut run = RequeryRun {
+        outcome: None,
+        messages: Vec::new(),
+        asks: 0,
+        signal_paths: Vec::new(),
+        block_reached_the_model: false,
+    };
+    let mut provider_calls = 0usize;
+
+    while let Some(frame) = session.next_frame().await {
+        match frame {
+            ServerFrame::ProviderRequest {
+                request_id,
+                request,
+                ..
+            } => {
+                provider_calls += 1;
+                if request
+                    .messages
+                    .iter()
+                    .any(|message| message.content.contains(CONTEXT_BLOCK))
+                {
+                    run.block_reached_the_model = true;
+                }
+                let result = if provider_calls <= 2 {
+                    wants_tool(
+                        &format!("call-{provider_calls}"),
+                        "echo",
+                        json!({ "path": "src/adapter.rs" }),
+                    )
+                } else {
+                    final_answer("done")
+                };
+                session.resolve_provider(&request_id, result).unwrap();
+            }
+            ServerFrame::ToolRequest { request_id, .. } => {
+                session
+                    .resolve_tool(
+                        &request_id,
+                        ToolOutput::Ok {
+                            content: "read it".to_string(),
+                            data: None,
+                        },
+                    )
+                    .unwrap();
+            }
+            ServerFrame::RequeryRequest { request_id, signal } => {
+                if run.asks == 0 {
+                    run.signal_paths = signal.touched_paths.clone();
+                }
+                run.asks += 1;
+                session
+                    .resolve_requery(&request_id, context.map(str::to_string))
+                    .unwrap();
+            }
+            ServerFrame::TurnComplete { outcome: done } => run.outcome = Some(done),
+            ServerFrame::Event { .. } => {}
+            ServerFrame::TurnHeld { .. } | ServerFrame::TurnReleased => {
+                panic!("an unpaused turn must not announce a hold")
+            }
+        }
+    }
+    run.messages = settled.lock().expect("settled transcript").clone();
+    run
+}
+
+/// **The witness for `turn.steering_requery` on the API surface.**
+///
+/// A served turn whose work moves onto a path its opening prompt never named
+/// asks the host for context at a step boundary, and what the host answers
+/// reaches the next model call.
+///
+/// It fails on `main` by construction, twice over: `stella-serve` assembles
+/// no re-query source there (`served_capabilities` passes `requery: None`),
+/// and there is no `requery_request` frame for a host to answer even if it
+/// did.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_served_turn_requeries_the_steering_plane_after_its_work_moves_to_a_new_path() {
+    let run = scripted_requery_turn(Some(CONTEXT_BLOCK)).await;
+
+    assert_eq!(run.asks, 1, "the drifted boundary asked exactly once");
+    assert_eq!(
+        run.signal_paths,
+        vec!["src/adapter.rs".to_string()],
+        "the host is told what the turn has touched, not just its prompt"
+    );
+    assert!(
+        run.block_reached_the_model,
+        "the host's block must reach the model call after it, or the re-query bought nothing"
+    );
+    assert_eq!(
+        run.outcome,
+        Some(TurnOutcomeWire::Completed {
+            text: "done".to_string(),
+            cost_usd: 0.0,
+        }),
+    );
+}
+
+/// The re-query appends and nothing else: the system message is byte-identical
+/// after it, and the block rides the volatile tail as a marked user message
+/// (AGENTS.md rule 7).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_served_requery_leaves_the_byte_stable_prefix_untouched() {
+    let run = scripted_requery_turn(Some(CONTEXT_BLOCK)).await;
+
+    let prefix = run.messages.first().expect("the turn settled a transcript");
+    assert_eq!(prefix.role, MessageRole::System);
+    assert_eq!(
+        prefix.content, STABLE_PREFIX,
+        "a re-query must not move one byte of the cached prefix"
+    );
+
+    let injected: Vec<&CompletionMessage> = run
+        .messages
+        .iter()
+        .filter(|message| message.content.contains(CONTEXT_BLOCK))
+        .collect();
+    assert_eq!(
+        injected.len(),
+        1,
+        "the block is injected once, not per step"
+    );
+    let block = injected[0];
+    assert_eq!(block.role, MessageRole::User);
+    assert!(
+        block
+            .content
+            .starts_with(stella_core::receipts::RECALL_MARKER),
+        "an injected block must carry the recall marker or the engine reads it \
+         as a user turn: {:?}",
+        block.content
+    );
+}
+
+/// The cheap answer. A host with nothing worth the tokens answers `null`, and
+/// the turn runs on with the context it already had.
+///
+/// The control for the witness above: both turns ask, and only the answered
+/// one grows a message.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_host_that_declines_a_requery_injects_nothing() {
+    let run = scripted_requery_turn(None).await;
+
+    assert_eq!(run.asks, 1, "the boundary still drifted, so it still asked");
+    assert!(
+        !run.block_reached_the_model,
+        "a declined re-query must put nothing in front of the model"
+    );
+    assert!(
+        run.messages.iter().all(|message| !message
+            .content
+            .starts_with(stella_core::receipts::RECALL_MARKER)),
+        "a declined re-query must leave no injected block behind"
+    );
+    assert_eq!(
+        run.outcome,
+        Some(TurnOutcomeWire::Completed {
+            text: "done".to_string(),
+            cost_usd: 0.0,
+        }),
+    );
 }

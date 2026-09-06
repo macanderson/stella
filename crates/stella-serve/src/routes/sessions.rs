@@ -77,6 +77,11 @@ struct SessionTurnRequest {
     /// the stateless route.
     #[serde(default)]
     sub_agents: Option<SubAgentsSpec>,
+    /// Mid-turn context re-query, same block and same default-off reading as
+    /// the stateless route. It appends to the volatile tail only,
+    /// so the session's byte-stable prefix is untouched.
+    #[serde(default)]
+    steering_requery: bool,
 }
 
 /// Response to `POST /v1/sessions/{id}/turns`. The turn is an ordinary member
@@ -266,6 +271,7 @@ pub(crate) async fn handle_session_turn(
     // `None` when the registry's bounds refuse this id — see
     // `crate::calibration` for why a host-supplied key gets a bounded map.
     let calibration = state.calibration().for_provider(&request.provider_id);
+    let steering_requery = request.steering_requery;
     let registered = state.register_turn(move |turn_id| {
         Session::start(SessionSpec {
             provider_id: request.provider_id,
@@ -276,6 +282,7 @@ pub(crate) async fn handle_session_turn(
             config,
             budget,
             reverse_request_timeout,
+            steering_requery,
             turn: TurnRef::new(turn_id),
             observer,
             on_settled: Some(hook_sess.settle_hook(token)),

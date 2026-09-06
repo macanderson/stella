@@ -83,6 +83,7 @@ fn base_spec(prompt: &str) -> SessionSpec {
         // shipping binary's own posture — see `hooks.rs` for the plane itself.
         extensions: Default::default(),
         calibration: None,
+        steering_requery: false,
     }
 }
 
@@ -169,6 +170,9 @@ async fn a_goal_run_is_requestable_over_the_wire_and_streams_its_rounds() {
                     .unwrap();
             }
             ServerFrame::TurnComplete { outcome: done } => outcome = Some(done),
+            ServerFrame::RequeryRequest { .. } => {
+                panic!("a turn that did not opt in must not ask for context")
+            }
             ServerFrame::TurnHeld { .. } | ServerFrame::TurnReleased => {}
         }
     }

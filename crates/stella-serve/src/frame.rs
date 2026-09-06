@@ -66,6 +66,18 @@ pub enum ServerFrame {
         role: ModelCallRole,
         request: CompletionRequest,
     },
+    /// The engine's work has moved on from the prompt it opened with, and it
+    /// is asking the host for whatever context now fits. The host answers
+    /// with [`RequeryResultIn`] keyed by `request_id`; the engine step that
+    /// raised it is parked until then.
+    ///
+    /// Only ever emitted when the turn asked for it
+    /// (`steering_requery` on `POST /v1/turns`). A host that has not built the
+    /// answering route never sees this frame.
+    RequeryRequest {
+        request_id: String,
+        signal: RequerySignal,
+    },
     /// The turn reached a step boundary and is **holding** there, because
     /// `POST /v1/turns/{id}/pause` asked it to (#932).
     ///
@@ -95,6 +107,54 @@ pub enum ServerFrame {
     TurnReleased,
     /// Terminal frame: the turn ended. No further frames follow for this turn.
     TurnComplete { outcome: TurnOutcomeWire },
+}
+
+/// What the turn has become, as the engine can witness it — the payload of a
+/// [`ServerFrame::RequeryRequest`].
+///
+/// An owned projection of `stella_core::steering::TurnSignal`, which borrows
+/// the turn's own transcript and so cannot cross a frame boundary.
+///
+/// One field of that type is missing here. `active_domains` is a workspace
+/// taxonomy the engine never fills — it passes an empty slice — and a wire
+/// field that is always empty reads as a fact. The host merges its own
+/// domains, and its own file ledger, before it asks its steering plane.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequerySignal {
+    /// The turn's goal, as the operator wrote it. On its own this is what
+    /// every selector had, and it is what goes stale by step 40.
+    pub prompt: String,
+    /// Tools the turn has called, most recent last.
+    pub recent_tool_calls: Vec<String>,
+    /// Workspace paths the turn has touched, read off its tool inputs.
+    pub touched_paths: Vec<String>,
+    /// Error classes the turn has seen. "We are stuck, and this is how" is the
+    /// strongest retrieval cue a turn produces.
+    pub errors_seen: Vec<String>,
+    /// Step index within the turn.
+    pub step: u32,
+    /// Steps since the host last answered with a block.
+    pub since_last_query: u32,
+}
+
+impl RequerySignal {
+    /// Copy out what the engine assembled at the step boundary.
+    #[must_use]
+    pub(crate) fn from_signal(signal: &stella_core::steering::TurnSignal<'_>) -> Self {
+        Self {
+            prompt: signal.prompt.to_string(),
+            recent_tool_calls: signal.recent_tool_calls.to_vec(),
+            touched_paths: signal.touched_paths.to_vec(),
+            errors_seen: signal
+                .errors_seen
+                .iter()
+                .map(|e| (*e).to_string())
+                .collect(),
+            step: signal.step,
+            since_last_query: signal.since_last_query,
+        }
+    }
 }
 
 /// Serializable projection of [`TurnOutcome`] for the wire. `TurnOutcome` lives
@@ -197,6 +257,24 @@ pub enum ProviderDelta {
     Text { text: String },
     /// A fragment of thinking/chain-of-thought content.
     Reasoning { text: String },
+}
+
+/// Host → engine: the answer to a [`ServerFrame::RequeryRequest`].
+///
+/// `context` is the block to put in front of the model, or `null` for "nothing
+/// here is worth the tokens" — the cheap answer, and the expected one for most
+/// boundaries. The engine appends the block to the volatile tail as a user
+/// message and never touches the byte-stable prefix.
+///
+/// The block is injected as sent, so the server prefixes the recall marker
+/// when the host's text does not already carry one: an injected block the
+/// engine read as a real user turn would move the turn window.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequeryResultIn {
+    pub request_id: String,
+    #[serde(default)]
+    pub context: Option<String>,
 }
 
 /// Serializable mirror of [`ProviderError`]'s taxonomy. The host classifies the
@@ -666,6 +744,40 @@ mod tests {
             panic!("wrong variant");
         };
         assert_eq!(retry_after_ms, None);
+    }
+
+    /// The re-query pair is parsed by hand in another language like every
+    /// other frame here, so its tag and its field names are pinned the same
+    /// way.
+    #[test]
+    fn the_requery_frame_and_its_answer_are_the_wire_contract() {
+        let frame = serde_json::to_value(ServerFrame::RequeryRequest {
+            request_id: "requery-0-1".to_string(),
+            signal: RequerySignal {
+                prompt: "fix the flaky test".to_string(),
+                recent_tool_calls: vec!["read_file".to_string()],
+                touched_paths: vec!["src/adapter.rs".to_string()],
+                errors_seen: vec!["timeout".to_string()],
+                step: 3,
+                since_last_query: 2,
+            },
+        })
+        .unwrap();
+        assert_eq!(frame["type"], "requery_request");
+        assert_eq!(frame["request_id"], "requery-0-1");
+        assert_eq!(frame["signal"]["prompt"], "fix the flaky test");
+        assert_eq!(frame["signal"]["touched_paths"][0], "src/adapter.rs");
+        assert_eq!(frame["signal"]["errors_seen"][0], "timeout");
+        assert_eq!(frame["signal"]["step"], 3);
+        assert_eq!(frame["signal"]["since_last_query"], 2);
+
+        // `context` is optional on the way back: a host with nothing to add
+        // may leave it out entirely rather than spelling `null`.
+        let answer: RequeryResultIn =
+            serde_json::from_value(serde_json::json!({ "request_id": "requery-0-1" }))
+                .expect("an answer with no block still parses");
+        assert_eq!(answer.request_id, "requery-0-1");
+        assert_eq!(answer.context, None);
     }
 
     #[test]

@@ -294,11 +294,15 @@ pub static CAPABILITIES: &[Capability] = &[
                         a_fleet_worker_requeries_the_skill_its_opening_prompt_could_not",
             witness: "a_drifted_turn_recalls_the_skill_its_prompt_could_not",
         },
-        api: SurfacePosture::Deferred {
-            waiting_on: "a serve-side SteeringRequery implementor: the engine port exists, but \
-                         the serve stack assembles no requery source, so remote turns still \
-                         select context against the opening prompt alone — #6121 is where \
-                         that is being decided",
+        api: SurfacePosture::Shipped {
+            mechanism: "a turn created with `steering_requery: true` binds stella-serve's \
+                        RemoteRequery, which raises a `requery_request` frame at a drifted \
+                        step boundary and parks on the host's answer to \
+                        POST /v1/turns/{id}/requery-result. Hysteresis and block dedup stay \
+                        server-side, mirroring the CLI's SessionRequery; an unanswered ask \
+                        injects nothing rather than failing the turn. Off by default, because \
+                        a host that has not built the route cannot answer",
+            witness: "a_served_turn_requeries_the_steering_plane_after_its_work_moves_to_a_new_path",
         },
     },
     Capability {

@@ -618,6 +618,7 @@ mod tests {
             checkpoint: None,
             extensions: crate::extensions::Extensions::new(),
             calibration: None,
+            steering_requery: false,
         }
     }
 

@@ -164,6 +164,15 @@ pub struct SessionSpec {
     /// pre-#1298 behavior — the turn estimates uncorrected and contributes no
     /// samples.
     pub calibration: Option<Arc<stella_core::estimator::CalibrationMap>>,
+    /// Let this turn re-ask the host for context at its step boundaries.
+    /// `false` — the default — attaches no re-query source at all: the turn
+    /// picks its context from the opening prompt and never looks again.
+    ///
+    /// Opt-in rather than always-on because only the host can answer. A host
+    /// that has not built `POST /v1/turns/{id}/requery-result` would leave
+    /// every request unanswered, and each one parks the step for the whole
+    /// [`SessionSpec::reverse_request_timeout`].
+    pub steering_requery: bool,
 }
 
 /// The settlement callback a session owner installs on a turn — see
@@ -400,6 +409,21 @@ impl Session {
         deltas: Vec<crate::frame::ProviderDelta>,
     ) -> Result<(), ServeError> {
         self.pending.resolve_provider_delta(request_id, deltas)
+    }
+
+    /// Answer a [`ServerFrame::RequeryRequest`] with the block the host's
+    /// steering plane chose, or `None` when nothing is worth the tokens.
+    ///
+    /// The block is appended to the turn's volatile tail as a user message;
+    /// the byte-stable prefix is never touched. The server prefixes the recall
+    /// marker when the block does not already carry one, so the engine reads
+    /// it as injected context rather than as a user turn.
+    pub fn resolve_requery(
+        &self,
+        request_id: &str,
+        context: Option<String>,
+    ) -> Result<(), ServeError> {
+        self.pending.resolve_requery(request_id, context)
     }
 
     /// Answer a [`ServerFrame::ProviderRequest`] with a classified failure.
@@ -736,7 +760,20 @@ fn run_session(
         // Every attachment below is by reference for the engine's lifetime, so
         // the owners have to outlive it — hence the bindings above rather than
         // temporaries here.
-        //
+
+        // The step-boundary context re-query, when the host asked for it. It
+        // starts from the opening transcript, so a block the turn already
+        // holds cannot go in twice — which is why it is built here, before
+        // `spec.messages` moves into the turn below.
+        let requery = spec.steering_requery.then(|| {
+            crate::remote::requery::RemoteRequery::new(
+                &spec.messages,
+                frame_tx.clone(),
+                pending.clone(),
+                spec.reverse_request_timeout,
+            )
+        });
+
         // Assembled rather than built up by optional builders: this turn is
         // the `ServeSession` lane and says so, and `served_capabilities`
         // answers every seam rather than only the ones a chain attached.
@@ -745,7 +782,15 @@ fn run_session(
             tool_view,
             spec.config.clone(),
             &sleeper,
-            served_capabilities(spec.calibration.as_deref(), &gate, &*steering, bus.as_ref()),
+            served_capabilities(
+                spec.calibration.as_deref(),
+                &gate,
+                &*steering,
+                requery
+                    .as_ref()
+                    .map(|r| r as &dyn stella_core::ports::SteeringRequery),
+                bus.as_ref(),
+            ),
         );
 
         // Two mutually exclusive modes: plain turn, judged goal run (#1297).
@@ -841,13 +886,15 @@ fn run_session(
 /// stops this function compiling until somebody decides what a served turn
 /// does with it — the whole reason that type has no `Default`.
 ///
-/// `calibration` and `bus` are `Option`s because the host supplies them or
-/// does not: a map is only useful across turns, and the bus exists only when
-/// the deployment installed an extension.
+/// `calibration`, `requery` and `bus` are `Option`s because the host supplies
+/// them or does not: a map is only useful across turns, the bus exists only
+/// when the deployment installed an extension, and a re-query source exists
+/// only when the turn asked for one.
 fn served_capabilities<'a>(
     calibration: Option<&'a stella_core::estimator::CalibrationMap>,
     gate: &'a dyn stella_engine::TurnGate,
     steering: &'a dyn stella_engine::TurnSteering,
+    requery: Option<&'a dyn stella_core::ports::SteeringRequery>,
     bus: Option<&'a stella_core::bus::HookBus>,
 ) -> TurnCapabilities<'a> {
     TurnCapabilities {
@@ -858,7 +905,7 @@ fn served_capabilities<'a>(
         calibration,
         gate: Some(gate),
         steering: Some(steering),
-        requery: None,
+        requery,
         bus,
         outcomes: None,
         // The host owns the model calls, so re-resolving a provider mid-turn
@@ -1039,6 +1086,18 @@ mod tests {
         }
     }
 
+    /// Stands in for a host that built the re-query route. What it answers
+    /// does not matter here — these tests ask which seams a served turn
+    /// binds, not what a bound seam returns.
+    struct SilentRequery;
+
+    #[async_trait]
+    impl stella_core::ports::SteeringRequery for SilentRequery {
+        async fn requery(&self, _signal: &stella_core::steering::TurnSignal<'_>) -> Option<String> {
+            None
+        }
+    }
+
     /// **The lane witness.** A served turn declares the `ServeSession` lane,
     /// so a host grouping turns by lane sees this one as its own bucket
     /// rather than as an unattributed `null`.
@@ -1053,7 +1112,7 @@ mod tests {
         let gate = OpenGate;
         let steering = QuietSteering;
 
-        let seams = served_capabilities(None, &gate, &steering, None);
+        let seams = served_capabilities(None, &gate, &steering, None, None);
 
         assert_eq!(
             seams.lane,
@@ -1072,11 +1131,13 @@ mod tests {
         let gate = OpenGate;
         let steering = QuietSteering;
 
-        let host_supplied_nothing = served_capabilities(None, &gate, &steering, None);
+        let host_supplied_nothing = served_capabilities(None, &gate, &steering, None, None);
         assert!(host_supplied_nothing.gate.is_some() && host_supplied_nothing.steering.is_some());
         assert!(
-            host_supplied_nothing.calibration.is_none() && host_supplied_nothing.bus.is_none(),
-            "a host that supplied neither must not be given one",
+            host_supplied_nothing.calibration.is_none()
+                && host_supplied_nothing.bus.is_none()
+                && host_supplied_nothing.requery.is_none(),
+            "a host that supplied none of them must not be given one",
         );
         assert!(
             host_supplied_nothing.hooks.is_none(),
@@ -1085,8 +1146,19 @@ mod tests {
 
         let calibration = stella_core::estimator::CalibrationMap::default();
         let bus = stella_core::bus::HookBus::new("serve-lane-test");
-        let host_supplied_both =
-            served_capabilities(Some(&calibration), &gate, &steering, Some(&bus));
-        assert!(host_supplied_both.calibration.is_some() && host_supplied_both.bus.is_some());
+        let requery = SilentRequery;
+        let host_supplied_all = served_capabilities(
+            Some(&calibration),
+            &gate,
+            &steering,
+            Some(&requery),
+            Some(&bus),
+        );
+        assert!(
+            host_supplied_all.calibration.is_some()
+                && host_supplied_all.bus.is_some()
+                && host_supplied_all.requery.is_some(),
+            "every seam the host supplied must reach the turn",
+        );
     }
 }

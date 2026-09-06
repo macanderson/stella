@@ -62,7 +62,7 @@ use stella_protocol::schema_export::{
 };
 
 use crate::engine_overrides::EngineOverrides;
-use crate::frame::{ProviderDeltaIn, ProviderResultIn, ServerFrame, ToolResultIn};
+use crate::frame::{ProviderDeltaIn, ProviderResultIn, RequeryResultIn, ServerFrame, ToolResultIn};
 
 /// Why the transport's wire contract could not be published.
 ///
@@ -111,6 +111,12 @@ pub fn provider_delta_schema() -> Value {
     schemars::schema_for!(ProviderDeltaIn).to_value()
 }
 
+/// The JSON Schema for the requery-result body a host POSTs back.
+#[must_use]
+pub fn requery_result_schema() -> Value {
+    schemars::schema_for!(RequeryResultIn).to_value()
+}
+
 /// The JSON Schema for the optional `engine` object on `POST /v1/turns` and
 /// `POST /v1/sessions/{id}/turns` (#1167).
 #[must_use]
@@ -151,6 +157,11 @@ static INBOUND_BODIES: &[InboundBody] = &[
         name: "ProviderDeltaIn",
         schema: provider_delta_schema,
         banner: DELTA_HEADER,
+    },
+    InboundBody {
+        name: "RequeryResultIn",
+        schema: requery_result_schema,
+        banner: REQUERY_HEADER,
     },
     InboundBody {
         name: "EngineOverrides",
@@ -203,7 +214,9 @@ pub fn inbound_schema() -> Result<Value, ServeSchemaError> {
              answers POST /v1/turns/{id}/tool-result; ProviderResultIn answers \
              POST /v1/turns/{id}/provider-result; ProviderDeltaIn optionally \
              streams fragments of an in-flight provider answer to \
-             POST /v1/turns/{id}/provider-delta ahead of its ProviderResultIn. \
+             POST /v1/turns/{id}/provider-delta ahead of its ProviderResultIn; \
+             RequeryResultIn answers POST /v1/turns/{id}/requery-result with \
+             the context block a drifted turn should also see, or with null. \
              Each is keyed by the request_id carried on the frame it answers. \
              EngineOverrides is not a reverse-request answer at all: it is the \
              optional `engine` object on POST /v1/turns and \
@@ -265,8 +278,8 @@ pub fn artifacts() -> Result<Vec<(&'static str, String)>, ServeSchemaError> {
     let outbound = server_frame_schema();
 
     // One definition set across every root the `.d.ts` prints. Each root
-    // carries its own copy of every payload type it reaches, so printing five
-    // of them back to back declared ten identifiers twice — `TS2300` (#4583).
+    // carries its own copy of every payload type it reaches, so printing them
+    // back to back declared ten identifiers twice — `TS2300` (#4583).
     let mut defs = Map::new();
     let mut frame = hoist("ServerFrame", outbound.clone(), &mut defs)?;
     let mut sections = Vec::with_capacity(INBOUND_BODIES.len());
@@ -275,7 +288,7 @@ pub fn artifacts() -> Result<Vec<(&'static str, String)>, ServeSchemaError> {
     }
 
     // The whole definition set rides with the first document printed, and the
-    // four that follow declare only their own root. Nothing is lost by that:
+    // inbound roots that follow declare only their own. Nothing is lost by that:
     // TypeScript declarations are order-independent within a file, so an
     // interface referring to one printed above it resolves exactly as it did
     // when every root carried its own copy.
@@ -389,6 +402,22 @@ const DELTA_HEADER: &str = "
 // simply never uses this route.
 ";
 
+/// Rides above `RequeryResultIn`: the answer is optional in a way the schema
+/// cannot say — `null` is the ordinary reply, and no answer at all is safe.
+const REQUERY_HEADER: &str = "
+// ── inbound, optional: answering a context re-query ─────────────────────────
+//
+// A turn created with `steering_requery: true` raises a `requery_request`
+// frame at a step boundary once its work has moved on from the prompt it
+// opened with. POST the block your own context plane chose to
+// `POST /v1/turns/{id}/requery-result`, keyed by the frame's request_id, or
+// post `context: null` — the ordinary answer — for nothing worth the tokens.
+// The block is appended to the turn's volatile tail and never touches the
+// byte-stable prefix. Leaving the request unanswered is safe: the step
+// proceeds with the context it already had once the reverse-request deadline
+// expires.
+";
+
 const ENGINE_HEADER: &str = "
 // ── request-side: the optional `engine` object on POST /v1/turns ────────────
 //
@@ -435,9 +464,9 @@ mod tests {
     /// The exact half is asserted on [`INBOUND_BODIES`] and the reaches-the-
     /// document half on the generated `$defs`, because since #4583 that map
     /// also carries every payload type the bodies reference. Asserting the
-    /// whole map exactly would pin the payload graph of four Rust types, which
-    /// changes for reasons that have nothing to do with an endpoint gaining a
-    /// body.
+    /// whole map exactly would pin the payload graph of every body's Rust
+    /// type, which changes for reasons that have nothing to do with an
+    /// endpoint gaining a body.
     #[test]
     fn every_inbound_body_is_published_in_the_contract() {
         let published: Vec<&str> = INBOUND_BODIES.iter().map(|body| body.name).collect();
@@ -447,6 +476,7 @@ mod tests {
                 "ToolResultIn",
                 "ProviderResultIn",
                 "ProviderDeltaIn",
+                "RequeryResultIn",
                 "EngineOverrides"
             ],
             "the published inbound bodies drifted from the ones a host can POST"

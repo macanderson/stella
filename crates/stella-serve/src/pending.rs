@@ -38,6 +38,9 @@ type ProviderDeltaFeed = mpsc::UnboundedSender<ProviderDelta>;
 /// A registered reply channel, discriminated by the kind of request it answers.
 enum PendingReply {
     Tool(oneshot::Sender<ToolOutput>),
+    /// The host's answer to a step-boundary context re-query: a block to put
+    /// in front of the model, or `None` for "nothing worth the tokens".
+    Requery(oneshot::Sender<Option<String>>),
     Provider {
         reply: ProviderReply,
         /// Stays in the map (looked up, never taken) so any number of delta
@@ -106,6 +109,22 @@ impl Pending {
         true
     }
 
+    /// Register a re-query reply channel under `id`. Same contract — and the
+    /// same locked cancellation check — as [`Pending::register_tool`].
+    #[must_use]
+    pub(crate) fn register_requery(
+        &self,
+        id: String,
+        reply: oneshot::Sender<Option<String>>,
+    ) -> bool {
+        let mut map = self.lock();
+        if self.is_cancelled() {
+            return false;
+        }
+        map.insert(id, PendingReply::Requery(reply));
+        true
+    }
+
     /// Register a provider reply channel under `id`, together with the feed
     /// any streamed fragments for that request are delivered on. Same
     /// contract — and the same locked cancellation check — as
@@ -131,6 +150,15 @@ impl Pending {
         // A receive-side drop (the engine step was cancelled) is not an error to
         // the host: the request is simply gone.
         let _ = self.report_misroute(id, self.take_tool(id))?.send(output);
+        Ok(())
+    }
+
+    /// Resolve a re-query request with the host-supplied block. Errors if `id`
+    /// is unknown or names another kind of request.
+    pub fn resolve_requery(&self, id: &str, context: Option<String>) -> Result<(), ServeError> {
+        let _ = self
+            .report_misroute(id, self.take_requery(id))?
+            .send(context);
         Ok(())
     }
 
@@ -171,7 +199,7 @@ impl Pending {
                     }
                     Ok(())
                 }
-                Some(PendingReply::Tool(_)) => {
+                Some(PendingReply::Tool(_) | PendingReply::Requery(_)) => {
                     Err(ServeError::RequestKindMismatch(id.to_string(), "provider"))
                 }
                 None => Err(ServeError::UnknownRequest(id.to_string())),
@@ -289,6 +317,21 @@ impl Pending {
             Some(other) => {
                 map.insert(id.to_string(), other);
                 Err(ServeError::RequestKindMismatch(id.to_string(), "tool"))
+            }
+            None => Err(ServeError::UnknownRequest(id.to_string())),
+        }
+    }
+
+    /// Take the re-query reply channel registered under `id`, leaving a
+    /// wrong-kinded entry untouched. Same single-lock discipline as
+    /// [`Pending::take_tool`], for the same reason.
+    fn take_requery(&self, id: &str) -> Result<oneshot::Sender<Option<String>>, ServeError> {
+        let mut map = self.lock();
+        match map.remove(id) {
+            Some(PendingReply::Requery(tx)) => Ok(tx),
+            Some(other) => {
+                map.insert(id.to_string(), other);
+                Err(ServeError::RequestKindMismatch(id.to_string(), "requery"))
             }
             None => Err(ServeError::UnknownRequest(id.to_string())),
         }

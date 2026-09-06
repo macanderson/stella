@@ -20,6 +20,7 @@ pub(crate) fn route_addresses_a_turn(route: Route) -> bool {
             | Route::TurnToolResult
             | Route::TurnProviderResult
             | Route::TurnProviderDelta
+            | Route::TurnRequeryResult
             | Route::TurnCancel
             | Route::TurnSteer
             | Route::TurnPause
@@ -45,6 +46,7 @@ pub(crate) fn classify<'a>(segs: &[&'a str]) -> (Route, Option<&'a str>) {
         ["v1", "turns", id, "tool-result"] => (Route::TurnToolResult, Some(id)),
         ["v1", "turns", id, "provider-result"] => (Route::TurnProviderResult, Some(id)),
         ["v1", "turns", id, "provider-delta"] => (Route::TurnProviderDelta, Some(id)),
+        ["v1", "turns", id, "requery-result"] => (Route::TurnRequeryResult, Some(id)),
         ["v1", "turns", id, "cancel"] => (Route::TurnCancel, Some(id)),
         ["v1", "turns", id, "steer"] => (Route::TurnSteer, Some(id)),
         ["v1", "turns", id, "pause"] => (Route::TurnPause, Some(id)),
@@ -103,6 +105,7 @@ pub(crate) fn allowed(route: Route) -> &'static str {
         | Route::TurnToolResult
         | Route::TurnProviderResult
         | Route::TurnProviderDelta
+        | Route::TurnRequeryResult
         | Route::TurnCancel
         | Route::TurnSteer
         | Route::TurnPause

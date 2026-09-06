@@ -143,6 +143,8 @@ fn droppable(frame: &ServerFrame) -> bool {
         ServerFrame::Event { .. } => true,
         ServerFrame::ToolRequest { .. }
         | ServerFrame::ProviderRequest { .. }
+        // A dropped re-query parks the step until its deadline.
+        | ServerFrame::RequeryRequest { .. }
         | ServerFrame::TurnHeld { .. }
         | ServerFrame::TurnReleased
         | ServerFrame::TurnComplete { .. } => false,
