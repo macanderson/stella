@@ -217,7 +217,7 @@ pub(crate) async fn handle_session_turn(
                 )
                 .await;
         };
-        config.max_steps = effective;
+        config.max_steps = Some(effective);
     }
     // Share the session's learned output ceilings with this turn (#3568).
     // Filled in here, and not left to the host, for the same reason

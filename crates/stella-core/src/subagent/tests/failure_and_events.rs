@@ -33,7 +33,7 @@ async fn an_aborted_child_salvages_the_last_answer_it_paid_for() {
     let (tx, _rx) = mpsc::unbounded_channel();
 
     let spec = SubAgentSpec {
-        max_steps: 2,
+        max_steps: Some(2),
         ..SubAgentSpec::read_only("capped", "look")
     };
     let outcome = parent

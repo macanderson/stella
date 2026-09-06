@@ -292,11 +292,10 @@ pub fn call_duration(call_id: &str, following: &[TranscriptEntry]) -> Option<u64
 ///
 /// SPEC 6.3's second clause — `n of m budgeted model calls this turn` — is
 /// **elided**, because nothing in this workspace budgets model calls per turn.
-/// `EngineConfig::max_steps` is the nearest number and its own doc calls it a
-/// "hard backstop on step count … never the *primary* stuck-loop defense", so
-/// `3 of 200 budgeted` would report a backstop as a plan. `n` alone cannot
-/// stand in either: `n of m` is one reading, and half of it says something
-/// else. #5234 is where a real per-turn model-call budget is tracked; when one
+/// `EngineConfig::max_steps` is the nearest number, and it is `None` unless a
+/// host sets a ceiling, so there is no `m` to report. `n` alone cannot stand
+/// in either: `n of m` is one reading, and half of it says something else.
+/// #5234 is where a real per-turn model-call budget is tracked; when one
 /// exists, the clause comes back here.
 const MODEL_FOOTER: &str = "   irreducible generation";
 

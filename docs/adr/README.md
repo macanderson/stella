@@ -96,6 +96,7 @@ open; nothing before Phase 3 forces it.
 | [0027](0027-a-fleet-worker-gets-its-own-worktree.md) | A Fleet Worker Gets Its Own Worktree | Accepted |
 | [0028](0028-panel-cells-are-glyphs-in-the-contract.md) | A Panel Cell Is a Glyph in the Contract and a Column in the Host | Accepted |
 | [0029](0029-branch-protection-stays-non-strict.md) | Branch Protection Stays Non-Strict | Accepted |
+| [0030](0030-a-turn-has-no-step-cap-by-default.md) | A Turn Has No Step Cap by Default | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible
@@ -155,3 +156,10 @@ up-to-date requirement serialize merges to a handful an hour; the composition
 risk it would have caught is left to `main-canary.yml` and
 `main-red-hold.yml` as an after-the-fact backstop, with the durable close
 tracked at `#4998` rather than a merge queue enabled here.
+
+ADR 0030 removes the 200-step default from every turn. A count cannot tell a
+long productive run from a wandering one, so it ended both; what ends a
+wandering turn is loop detection, the stall rung, the budget, the deadline and
+the goal predicate, each of which reads evidence. `max_steps` is now
+`Option<usize>`, `None` by default, and a host that means a count still sets
+one.

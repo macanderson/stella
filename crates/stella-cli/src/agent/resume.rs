@@ -363,6 +363,11 @@ mod tests {
         CompletionRequestRef, CompletionResult, CompletionUsage, ProviderError, ToolSchema,
     };
 
+    /// The step cap the resume-at-the-cap tests set. The default config
+    /// carries none (ADR 0030), so a test about resuming at a cap has to
+    /// name one.
+    const HOST_CAP: usize = 40;
+
     /// A provider that answers "resumed answer" and records every request's
     /// transcript, so the witness below can look at what a resumed turn
     /// actually sent.
@@ -554,17 +559,21 @@ mod tests {
         ));
     }
 
-    /// The step cap survives the crash: a turn checkpointed AT the cap gets
-    /// no further model calls — the allowance does not reset to zero.
+    /// The step cap a host set survives the crash: a turn checkpointed AT
+    /// the cap gets no further model calls — the allowance does not reset to
+    /// zero.
     #[tokio::test]
     async fn a_resumed_turn_keeps_its_spent_step_allowance() {
         let provider = ScriptedProvider {
             requests: Mutex::new(Vec::new()),
         };
         let tools = NoTools;
-        let config = EngineConfig::default();
+        let config = EngineConfig {
+            max_steps: Some(HOST_CAP),
+            ..EngineConfig::default()
+        };
         let mut at_cap = killed_mid_turn();
-        at_cap.step = config.max_steps;
+        at_cap.step = HOST_CAP;
         let state = TurnState::from_checkpoint(at_cap, &config);
         let engine = Engine::with_sleeper(&provider, &tools, config, &crate::runtime::TokioSleeper);
         let (tx, _rx) = mpsc::unbounded_channel::<AgentEvent>();
@@ -607,9 +616,12 @@ mod tests {
             requests: Mutex::new(Vec::new()),
         };
         let tools = NoTools;
-        let config = EngineConfig::default();
+        let config = EngineConfig {
+            max_steps: Some(HOST_CAP),
+            ..EngineConfig::default()
+        };
         let mut at_cap = killed_mid_turn();
-        at_cap.step = config.max_steps;
+        at_cap.step = HOST_CAP;
         let state = TurnState::from_checkpoint(at_cap, &config);
         let engine = Engine::with_sleeper(&provider, &tools, config, &crate::runtime::TokioSleeper);
         let (tx, _rx) = mpsc::unbounded_channel::<AgentEvent>();

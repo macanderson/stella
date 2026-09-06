@@ -1683,8 +1683,8 @@ async fn malformed_tool_call_input_is_repaired_not_executed_blindly() {
 async fn stuck_loop_aborts_the_turn_cleanly_before_the_step_cap() {
     // Every call returns the identical tool call and the tool answers with
     // identical output — well past the default exact-repeat threshold (3)
-    // — so loop detection must end the turn long before
-    // EngineConfig::default()'s 200-step cap.
+    // — so loop detection must end the turn within a handful of calls.
+    // Nothing else would: EngineConfig::default() carries no step cap.
     let repeated = tool_call_result("call_1", "bash");
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -1709,7 +1709,7 @@ async fn stuck_loop_aborts_the_turn_cleanly_before_the_step_cap() {
         TurnOutcome::Aborted { reason, .. } => assert!(reason.contains("stuck-loop")),
         other => panic!("expected a stuck-loop abort, got {other:?}"),
     }
-    // Well under the 200-step cap — loop detection caught it early.
+    // Loop detection caught it early.
     assert!(tool_calls.load(Ordering::SeqCst) < 10);
 
     let events = drain_events(&mut rx);
@@ -2101,11 +2101,6 @@ async fn run_synthetic_survival_turn(dialect: &str, id_style: fn(u32) -> String)
         // A tight-ish compaction budget so the growing tool output
         // actually forces multiple compaction passes over 200 steps.
         compaction_budget_tokens: 4_000,
-        // 200 tool-call steps plus the final text response is 201 model
-        // calls — one more than EngineConfig::default()'s own step cap
-        // (200), which exists as an *independent* backstop above loop
-        // detection, not a ceiling this test should be fighting.
-        max_steps: STEPS as usize + 1,
         ..EngineConfig::default()
     };
     let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
@@ -2603,6 +2598,7 @@ mod parked_wait;
 mod provider_outcomes;
 mod requery;
 mod steer_midturn;
+mod unbounded_by_default;
 mod usage_anchor;
 mod usage_completeness;
 mod user_hooks;

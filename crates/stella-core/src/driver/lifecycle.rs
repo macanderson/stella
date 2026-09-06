@@ -46,6 +46,9 @@ use super::{StepOutcome, TurnOutcome};
 /// with, the loop bound it runs under, which role is driving it, and which
 /// lane assembled it. No message *content* — see the module docs.
 ///
+/// `max_steps` is `null` for a turn with no step cap, which is the default:
+/// the turn ends on evidence rather than on a count (`EngineConfig::max_steps`).
+///
 /// `lane` is `null` for an engine built through the legacy
 /// [`Engine::with_sleeper`](super::Engine::with_sleeper) path, which names no
 /// lane. That null is a positive statement — "this engine was not assembled
@@ -53,7 +56,7 @@ use super::{StepOutcome, TurnOutcome};
 /// own bucket rather than dropping the turn (#3410).
 pub fn turn_started_payload(
     message_count: usize,
-    max_steps: usize,
+    max_steps: Option<usize>,
     role: stella_protocol::ModelCallRole,
     lane: Option<&stella_protocol::TurnLane>,
 ) -> serde_json::Value {

@@ -125,10 +125,10 @@ async fn a_loop_that_resumes_after_a_successful_course_correction_still_aborts()
         calls: tool_calls.clone(),
     };
     let sleeper = NoopSleeper;
-    // A low cap so a broken ladder shows up as "ground to the cap" in a
-    // second rather than 200 steps of grinding.
+    // A low cap, so a broken ladder shows up as "ground to the cap" in a
+    // second.
     let config = EngineConfig {
-        max_steps: 30,
+        max_steps: Some(30),
         ..EngineConfig::default()
     };
     let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
@@ -175,7 +175,7 @@ async fn a_loop_that_resumes_after_a_successful_course_correction_still_aborts()
 /// uses for the cycle rung.
 fn exact_repeat_only(max_steps: usize) -> EngineConfig {
     EngineConfig {
-        max_steps,
+        max_steps: Some(max_steps),
         loop_detection: LoopDetectionConfig {
             exact_repeat_threshold: 3,
             short_cycle_repeats: 0,
@@ -440,7 +440,7 @@ async fn a_tool_answering_identically_to_every_new_argument_is_steered_then_kill
     };
     let sleeper = NoopSleeper;
     let config = EngineConfig {
-        max_steps: 60,
+        max_steps: Some(60),
         ..EngineConfig::default()
     };
     let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);

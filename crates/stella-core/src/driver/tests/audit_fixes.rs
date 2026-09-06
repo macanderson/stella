@@ -1369,7 +1369,7 @@ async fn the_system_prefix_stays_byte_stable_across_a_compacting_turn() {
         // overflow summarizer fires too.
         compaction_budget_tokens: 300,
         summarize_keep_recent: 2,
-        max_steps: 8,
+        max_steps: Some(8),
         ..EngineConfig::default()
     };
     let engine = Engine::with_sleeper(&provider, &BulkyTools, config, &sleeper);

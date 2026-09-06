@@ -150,6 +150,11 @@
       "status": "implemented",
       "title": "ADR 0029: Branch protection stays non-strict"
     },
+    "adr/0030-a-turn-has-no-step-cap-by-default": {
+      "path": "docs/adr/0030-a-turn-has-no-step-cap-by-default.md",
+      "status": "implemented",
+      "title": "ADR 0030: A turn has no step cap by default"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",
