@@ -343,20 +343,16 @@ slug the gateway serves works exactly as written, and a typo fails with OpenRout
 
 #### The default posture
 
-One key reaches every vendor, so on OpenRouter the interesting question isn't which
-model, but which model for which role, since each role wants genuinely different things.
-With no configuration at all, an OpenRouter instance runs:
+One key reaches every vendor, so an OpenRouter instance can afford a stronger
+posture than a single-vendor one costs nothing extra to configure. With no
+configuration at all, `provider_engine_baseline` sets one thing: the `default`
+agent runs at `xhigh` effort with reasoning on, driving `moonshotai/kimi-k3`,
+a long-context agentic model. Core has one role today, so that is the whole
+posture — no model is picked for a verifier or a triage role on your behalf.
 
-| Role | Model | Why |
-| --- | --- | --- |
-| default | `moonshotai/kimi-k3` | long-context agentic driver, at `xhigh` effort with thinking on |
-| verifier | `anthropic/claude-opus-5` | a different vendor's strongest reasoner — not the worker grading itself |
-| triage | `z-ai/glm-5.2` | fast and cheap, and it runs on every turn |
-
-Note the verifier is a different family from the driver. stella already treats
-cross-family judging as the goal (see `stella goal`'s
-`resolve_cross_family_verifier`) — this default just does that without asking
-you to configure anything.
+A second model still runs in one place: `stella goal`'s
+`resolve_cross_family_verifier`, which groups by family at the point of use
+and has never read this baseline.
 
 This is a starting point, not a lock. It sits underneath the whole
 [`agent_engine_config`](/docs/configuration/agent-engine-config) scope chain, so any

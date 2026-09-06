@@ -237,6 +237,47 @@ EOF
 want "D6d an emptied table is a failure, not a skip" \
   expect-fail "$t" "emptied or restructured"
 
+# ── 7. A partly-opaque emit expression is hedged, not silently short ────────
+#
+# The generator's `field_names` set its "fields built at runtime" flag only
+# when NO name was found at all. A call that mixes a helper this scanner
+# cannot see inside with visible `.with(...)`s -- `helper(dx.at_seq(), class,
+# confidence).with("decays", decays)` -- found `decays` (and `seq`, from the
+# `at_seq()` substring check) and stopped there: `class` and `confidence`
+# vanished from the generated reference with no hedge warning a reader that
+# the list is short. This exercises `write` mode directly rather than
+# `check-diagnostic-codes.sh`, because the defect is in what gets generated,
+# not in whether a committed file matches it.
+mixed_tree() {
+  local dir="$TMP/mixed"
+  mkdir -p "$dir/crates/fixture-one/src"
+  cat >"$dir/crates/fixture-one/src/lib.rs" <<'EOF'
+pub fn logged(dx: &Dx, class: &str, confidence: u32, decays: bool) {
+    dx.emit(
+        Level::Debug,
+        "fixture.thing.mixed",
+        helper(dx.at_seq(), class, confidence).with("decays", decays),
+    );
+}
+EOF
+  echo "$dir"
+}
+
+t="$(mixed_tree)"
+python3 "$GENERATOR" write "$t" >/dev/null
+fields_line="$(grep '\*\*Fields:\*\*' "$t/docs/reference/diagnostics.md")"
+case "$fields_line" in
+*"seq"*"decays"*"plus fields built at runtime"*)
+  pass=$((pass + 1))
+  echo "ok   D9 a partly-opaque emit expression is hedged, not silently short"
+  ;;
+*)
+  fail=$((fail + 1))
+  echo "FAIL D9 a partly-opaque emit expression is hedged, not silently short — got:"
+  echo "$fields_line"
+  ;;
+esac
+
 # ── The two files themselves ─────────────────────────────────────────────────
 #
 # Both fail closed. A registry whose reference has been deleted has documented

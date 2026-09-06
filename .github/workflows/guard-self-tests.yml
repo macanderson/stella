@@ -6,13 +6,14 @@ name: guard-self-tests
 # Two questions, one workflow, because both are answered by the same
 # toolchain-free runner in seconds.
 #
-# **`gate-steps`** — `prose`, `hue-separation` and `transcript-surfaces` are
-# `GATE_STEPS` members, and `rg 'check-prose|check-hue-separation|check-transcript-surfaces'
+# **`gate-steps`** — `prose`, `line-citations`, `hue-separation` and
+# `transcript-surfaces` are `GATE_STEPS` members, and
+# `rg 'check-prose|check-line-citations|check-hue-separation|check-transcript-surfaces'
 # .github/workflows/` was empty: ci.yml runs the guards individually rather
-# than `make gate`, so those three ran only on a contributor's machine. The
+# than `make gate`, so those four ran only on a contributor's machine. The
 # pre-push hook is advisory, per-clone and bypassable, and on the maintainer's
 # laptop the gate is not run at all (CLAUDE.md, "CI builds and tests; this
-# laptop does not") — so for these three there was no check to complement.
+# laptop does not") — so for these four there was no check to complement.
 # `tokens` sat in the same hole from #4066 until #4086, red on `main` for
 # twenty PRs that were all otherwise green. They live here rather than in
 # ci.yml's guards job because that job is skipped for a prose-only diff, which
@@ -84,7 +85,7 @@ jobs:
 
       # Each step carries `!cancelled()` so a red one reports independently
       # instead of masking the next — ci.yml's guards job explains the trade at
-      # length, and the three below are verdicts about disjoint subjects.
+      # length, and the four below are verdicts about disjoint subjects.
       - name: no content-free prose was added
         if: ${{ !cancelled() }}
         run: python3 ./scripts/check-prose.py

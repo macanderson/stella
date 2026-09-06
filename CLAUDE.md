@@ -47,7 +47,8 @@
     built-in staged pipeline that once ran the check itself is deleted from
     this workspace (#3865), so host-run verification no longer exists here
     at all. The only path left is an installed verification plugin's
-    self-reported evidence (Oxagen's Vera is the private reference one),
+    self-reported evidence (`plugins/stella-witness` is the open reference
+    one shipped here; Oxagen's Vera is the paid superset built on it),
     which Stella evaluates against the plugin's declared rule and never
     re-runs or re-checks. Neither relaxes this rule: it is about how *this
     repository* reviews *its own* changes.)

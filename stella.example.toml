@@ -634,6 +634,11 @@ min_steps = 3       # open steps that raise a card
 # takes. Absent means "on"; filing stated follow-up work is the default.
 residue_gate = "on"
 
+# Whether the drive loop also watches the release workflow's latest run and
+# files on red. Absent means "on"; a red release stays missed only if an
+# operator turns this off on purpose.
+deploy_watch = "on"
+
 # The dedup those checks use is not a setting, and it is what an operator asks
 # about first: why was this finding not filed? The loop keeps every digest it
 # has filed in `seen.txt`, under `~/.stella/self-driving/<repo>/`, and drops a

@@ -52,6 +52,13 @@ same grounds as check-invariants.sh's greps: the reviewable convention is that
 codes reach a record through these three doors, and a PR inventing a fourth
 has to touch this script or ship an undocumented code past review.
 
+**Keep every `.with(name, value)` chained straight onto the `emit` call.**
+`field_names` (below) reads field names off that chain, and it hedges when a
+helper hides some of them — but a hedge is a worse reference than an exact
+one. Pulling two `.with` calls into a shared function, the way
+`crates/stella-cli/src/diag_bridge/memory.rs` once did, is the shape that
+loses names silently; inlining them back is what fixed it.
+
 ## The website's table, and what is checked about it (#3045)
 
 `website/content/docs/diagnostics.mdx` carries a second table: a dozen codes
@@ -336,20 +343,91 @@ def split_args(argtext: str) -> list[str]:
 
 # ── Extraction ───────────────────────────────────────────────────────────────
 
+# Every `.with(` in a fields-building expression, so each one's RECEIVER —
+# whatever call sits immediately to its left — can be checked.
+_WITH_CALL = re.compile(r"\.with\(")
+
+
+def _has_opaque_call(joined: str) -> bool:
+    """Whether some `.with(...)` in `joined` is chained directly onto a call
+    this scanner does not recognize, which may be contributing field names of
+    its own that never reach [`WITH_FIELD`].
+
+    Narrow on purpose: only the call IMMEDIATELY before a `.with(` counts.
+    A field-building chain reads `<receiver>.with(a, x).with(b, y)…`, so that
+    receiver — `Fields::new()`, `self.at_seq()`, or a prior `.with(...)` link
+    in the same chain — is the only place another field source could hide.
+    Anything else in the expression (a `match` scrutinee choosing which arm's
+    chain to build, an argument's own helper call) is not in that position,
+    so it is not asked whether it looks like a call, only whether it sits
+    right there. `fields(bridge.at_seq(), class, confidence).with("decays",
+    decays)` fails this test on `fields(...)`; `match x.kind() { … =>
+    self.at_seq().with("stage", …), … }` never asks about `x.kind()` at all,
+    because nothing chains a `.with(` onto it.
+    """
+    for m in _WITH_CALL.finditer(joined):
+        dot = m.start()  # the '.' in this '.with('
+        k = dot
+        while k > 0 and joined[k - 1] in " \t\n":
+            k -= 1
+        if k == 0 or joined[k - 1] != ")":
+            continue  # nothing callable immediately precedes this `.with(`
+        # Find the '(' that opens this ')'. That way a receiver with its
+        # own nested parens, like `fields(bridge.at_seq(), …)`, is read as
+        # one call, not cut short at its first ')'.
+        depth = 0
+        p = k - 1
+        while p >= 0:
+            if joined[p] == ")":
+                depth += 1
+            elif joined[p] == "(":
+                depth -= 1
+                if depth == 0:
+                    break
+            p -= 1
+        if p < 0:
+            continue  # unbalanced text; nothing safe to conclude here
+        # The call's name: the word or path right before that '(', plus
+        # whether a '.' comes right before it (a method call, like `.with`
+        # or `.at_seq`).
+        h = p
+        while h > 0 and (joined[h - 1].isalnum() or joined[h - 1] in "_:"):
+            h -= 1
+        head = joined[h:p]
+        dotted = h > 0 and joined[h - 1] == "."
+        segments = head.split("::")
+        if segments[-1] == "with" and dotted:
+            continue  # a link in the same chain — already covered
+        if segments[-1] == "at_seq":
+            continue  # zero-arg, whether called bare or through a path
+        if segments[-2:] == ["Fields", "new"]:
+            continue  # `Fields::new()`, however qualified (`crate::Fields::new()`)
+        return True
+    return False
+
 
 def field_names(exprs: list[str]) -> tuple[dict[str, None], bool]:
     """Statically visible field names in a fields-building expression, plus
-    whether anything opaque contributes fields this scanner cannot name."""
+    whether anything opaque contributes fields this scanner cannot name.
+
+    The two are independent. A call this scanner cannot see inside may sit
+    beside `.with(...)` calls that DID resolve to names — `names` is
+    non-empty and `dynamic` is still true — and that is the case a reader
+    most needs the hedge for, because a partial list is the one that looks
+    complete.
+    """
     names: dict[str, None] = {}
-    dynamic = False
     joined = " ".join(exprs)
     if "at_seq()" in joined:
         names["seq"] = None  # the bridge's Fields::new().with("seq", …) helper
     for name in WITH_FIELD.findall(joined):
         names[name] = None
-    if not names and joined and "Fields::new()" not in joined:
-        # Something like `Parsed::report(clause)`: fields exist, names do not.
-        dynamic = True
+    # A `Fields` value can arrive by name, with no `.with` in sight — the
+    # old check's own case. Or a helper this scanner cannot read sits right
+    # before a `.with` that DID find some names. Either way, hedge: a
+    # partial list looks whole and is not.
+    no_names_and_opaque_source = not names and bool(joined) and "Fields::new()" not in joined
+    dynamic = no_names_and_opaque_source or _has_opaque_call(joined)
     return names, dynamic
 
 

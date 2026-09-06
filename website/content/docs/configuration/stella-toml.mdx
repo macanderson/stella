@@ -760,6 +760,16 @@ different ladders.
     `Blocked by:` lines say. Sits under `[self_driving]`, not `[self_driving.triage]`:
     the backlog reader is a different queue and needs its own copy of this rule.
   </OptionCard>
+  <OptionCard name="self_driving.residue_gate" defaultValue="on">
+    Whether the end-of-turn residue gate files a turn's stated leftover work as
+    issues. Sits under `[self_driving]`. Off skips the scan and the filing;
+    on is the default, so filing stated follow-up work needs no setting at all.
+  </OptionCard>
+  <OptionCard name="self_driving.deploy_watch" defaultValue="on">
+    Whether the drive loop also watches the release workflow's latest run and
+    files on red. Sits under `[self_driving]`. On unless an operator turns it
+    off, so a red release is never missed just because nobody thought to ask.
+  </OptionCard>
 </CardGrid>
 
 Each list defaults on its own, and declaring one **replaces** it wholesale rather than

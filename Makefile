@@ -538,6 +538,10 @@ prose-test: ## Test the prose ratchet's direction (hermetic; not part of `gate`)
 deck-fit-all-test: ## Test the deck enumeration and its skip/fail accounting (#3404)
 	@./scripts/test-deck-fit-all.sh
 
+.PHONY: deck-fit-math-test
+deck-fit-math-test: ## Test the overflow-unit fix so a slide's overflow reads the same at every viewport (hermetic; not part of `gate`)
+	node ./scripts/test-deck-fit-math.mjs
+
 .PHONY: deck-fit-all
 deck-fit-all: ## Measure every deck under website/public/presentations/ (needs node + a browser)
 	./scripts/deck-fit-all.sh

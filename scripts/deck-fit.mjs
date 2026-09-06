@@ -44,6 +44,8 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { OVERFLOW_MATH_SRC } from "./deck-fit-math.mjs";
+
 const DECK = resolve(process.argv[2] ?? "website/public/presentations/investor-deck.html");
 
 // The canvas the deck is authored against, and the viewports it is shown on.
@@ -132,7 +134,9 @@ for (const vp of VIEWPORTS) {
   await page.goto(pathToFileURL(DECK).href);
   await page.waitForLoadState("networkidle");
 
-  const rows = await page.evaluate(() => {
+  const rows = await page.evaluate((mathSrc) => {
+    // eslint-disable-next-line no-new-func -- see OVERFLOW_MATH_SRC's comment
+    const computeOverflow = new Function(`return (${mathSrc});`)();
     const out = [];
     const slides = [...document.querySelectorAll(".slide")];
     slides.forEach((slide, i) => {
@@ -153,8 +157,8 @@ for (const vp of VIEWPORTS) {
         lowest = Math.max(lowest, r.bottom - box.top);
         widest = Math.max(widest, r.right - box.left);
       }
-      const overH = Math.max(frame.scrollHeight - frame.clientHeight, Math.round(lowest - box.height));
-      const overW = Math.max(frame.scrollWidth - frame.clientWidth, Math.round(widest - box.width));
+      const overH = computeOverflow(frame.scrollHeight - frame.clientHeight, box.height, frame.clientHeight, lowest);
+      const overW = computeOverflow(frame.scrollWidth - frame.clientWidth, box.width, frame.clientWidth, widest);
       out.push({
         n: i + 1,
         label: (slide.getAttribute("aria-label") || "").slice(0, 44),
@@ -169,7 +173,7 @@ for (const vp of VIEWPORTS) {
       y: document.documentElement.scrollHeight - document.documentElement.clientHeight,
     };
     return { out, docOverflow };
-  });
+  }, OVERFLOW_MATH_SRC);
 
   const bad = rows.out.filter((r) => r.overH > 0 || r.overW > 0);
   const docBad = rows.docOverflow.x > 0 || rows.docOverflow.y > 0;

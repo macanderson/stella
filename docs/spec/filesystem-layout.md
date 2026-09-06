@@ -60,7 +60,11 @@ it, and `.stella/.gitignore` enforces the line.
     │
     │   ── Content the agent reads. All markdown-with-frontmatter. Commit these. ──
     ├── rules/
-    │   └── <name>.md ........... enforceable guardrails
+    │   ├── <name>.md ........... enforceable guardrails
+    │   ├── <name>.toml ......... a published context record (ADR 0011/0012)
+    │   ├── governance.toml ..... which governance mode this repo runs under
+    │   └── promotions.jsonl .... hash-chained ledger of enforcement grants
+    │                             and record lifecycle events
     ├── skills/
     │   └── <slug>/SKILL.md ..... know-how selected into context automatically
     ├── commands/
@@ -81,7 +85,8 @@ it, and `.stella/.gitignore` enforces the line.
     ├── attachments/ ............ files pasted into the TUI
     ├── screenshots/ ............ page/CI captures
     ├── explorations/ ........... exploration map bundles (rendered by `stella observe`'s filesystem view)
-    ├── proposals/ .............. pending context-record proposals awaiting review
+    ├── proposals/
+    │   └── <name>.toml ......... an ingest proposal awaiting `stella context keep`
     ├── exports/ ................ `stella export` output
     ├── context/packs/ .......... assembled context packs
     ├── worktrees/ .............. git worktrees for isolated fleet tasks
@@ -94,6 +99,9 @@ it, and `.stella/.gitignore` enforces the line.
     │   ├── codegraph.db ........ the code graph built by `stella init`
     │   ├── context.db .......... embeddings + recall index for adaptive context
     │   ├── fleet.db ............ fleet attempts, commits, and dollars
+    │   ├── context-sweep.json .. cached verdicts for due context-record probes
+    │   ├── context-decisions.jsonl  the fail-closed record of human approvals
+    │   │                         that let a TOML context record block a tool call
     │   ├── reflections.jsonl ... per-execution reflections (mined into skills)
     │   ├── mcp_oauth.json ...... OAuth tokens for MCP servers — SECRET
     │   └── mcp_auth_probes.json  connect-time 401 cache (auth-probe

@@ -40,8 +40,8 @@ exist in no default install. Written in Rust as a workspace of focused crates.
   to an installed verification plugin whose oracle authors a test that fails on
   the old code and passes on the new, and tracks that flip. A green suite alone
   is not accepted. The evidence is self-reported: Stella judges it against the
-  plugin's declared rule and never re-runs it. Oxagen's Vera is the reference
-  plugin, private and not shipped here.
+  plugin's declared rule and never re-runs it. `plugins/stella-witness` is the open
+  reference plugin, shipped here; Vera is the paid superset.
 - **Embeddable** — link `stella-core` and supply the `Provider` and
   `ToolExecutor` ports in process. Or drive
   [`stella-serve`](crates/stella-serve/README.md) over HTTP/SSE. Every model
