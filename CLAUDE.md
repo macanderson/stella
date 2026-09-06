@@ -169,6 +169,16 @@
     and carries each one to the new path before applying the same `min`, so a
     move can still only lower a count. Stage the move (`git mv`) or git
     reports a delete beside an untracked file and there is nothing to follow.
+
+    **`make prose-update` carries; `make prose-retighten` reclaims.** All
+    three ratchets take that split. `--update` writes only the entries a move
+    re-based and leaves every other number where it stands, so a branch
+    cannot lower the ceiling of a file it never opened. Reclaiming the slack
+    a rewrite earns is a pass of its own, and a PR of its own — safe exactly
+    when nothing is blocked on it. An unconditional reclaim wrote `AGENTS.md`
+    a lower grade ceiling from a branch whose diff did not contain that file,
+    and the merge commit then failed on three sentences its author never
+    opened (`#6274`).
   - **The same command holds density**, over
     `scripts/prose-density-baseline.txt`: the mean length of every crate's
     leading `//!` blocks, ratcheted down only. A count of banned phrases
@@ -179,7 +189,9 @@
     mean lines, so a new one cannot arrive carrying essays. A move is the
     one exception. When a file changes crates, `--update` re-bases both
     units on the old lengths of the files they hold now, and writes those
-    entries. Both means shift, and no one wrote a word.
+    entries. Both means shift, and no one wrote a word. The plain check reads
+    the same way, over the files a crate holds now, so a move out of a crate
+    sitting at its ceiling costs the next author nothing.
 - **AGENTS.md is the orientation document.** Commands, architectural
   invariants, workspace routing, testing approach, and gotchas all live there
   (imported above). When this file and AGENTS.md disagree, AGENTS.md wins —

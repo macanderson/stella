@@ -496,14 +496,15 @@ prose-report: ## Name every remaining content-free construction, with its remedy
 	@python3 ./scripts/check-prose.py --report
 
 .PHONY: prose-update
-prose-update: ## Lower the count ratchet; leave every unit's header-length ceiling where it stands
+prose-update: ## Carry the entries a file move re-based; leave every other ceiling where it stands
 	@python3 ./scripts/check-prose.py --update
 
 # The other direction, and a PR of its own: reclaiming the slack a shortened
-# header earns is safe exactly when nothing is blocked on it, the same
-# reasoning file-size-retighten is built on.
+# header or a rewritten sentence earns is safe exactly when nothing is blocked
+# on it, the same reasoning file-size-retighten is built on. All three ratchets
+# move together here, so a branch that reclaims does it on purpose and says so.
 .PHONY: prose-retighten
-prose-retighten: ## Lower every unit's header-length ceiling to its current mean (a deliberate, separate pass)
+prose-retighten: ## Lower every count, grade and header-length ceiling to its current value (a deliberate, separate pass)
 	@python3 ./scripts/check-prose.py --update --retighten
 
 .PHONY: line-citations
@@ -657,19 +658,28 @@ SCHEMA_FEATURES := stella-protocol/schema,stella-plugin/schema,stella-serve/sche
 # rustdoc for real.
 #
 # It takes no package filter: cargo refuses the pair outright — `--doc cannot
-# be used with -p` — so the whole `target/doc` tree goes and there is no scoped
-# spelling to reach for. #5947 shipped `cargo clean --doc $(SCHEMA_CRATES)`,
+# be used with -p` — so a clean over the shared `target` takes the whole
+# `target/doc` tree with it. #5947 shipped `cargo clean --doc $(SCHEMA_CRATES)`,
 # which made this recipe exit 2 on its first line every time it ran, and the
-# `wire-schema` job red on every PR reaching it. What the unscoped clean costs
-# is a later `doc-warnings` rebuilding rustdoc it could have cached; inside one
-# `make gate` that step has already run by the time this one cleans, and
-# `wire-schema.yml` runs this step without `doc-warnings` at all.
+# `wire-schema` job red on every PR reaching it.
+#
+# So the scope comes back in the one dimension cargo does offer: this step
+# builds under its own `CARGO_TARGET_DIR`, and the clean it needs empties that
+# directory rather than the one `doc-warnings` caches its workspace rustdoc in
+# (#5991). It costs one dependency build for that directory the first time and
+# nothing after, against a full-workspace rustdoc rebuild on every `make gate`
+# run — and `wire-schema.yml` runs this step with no `doc-warnings` beside it,
+# so there it is a separate cache either way.
+#
+# `check-schema-tier-parity.sh` holds the rule, so a later edit cannot drop the
+# scope and go back to wiping a cache this step does not own.
+SCHEMA_TARGET_DIR := target/doc-schema
 .PHONY: doc-warnings-schema
 doc-warnings-schema: ## Assert rustdoc is clean for the `schema`-gated wire-contract modules (#4584)
-	cargo clean --doc
-	RUSTDOCFLAGS="-D warnings" cargo doc $(SCHEMA_CRATES) \
+	CARGO_TARGET_DIR=$(SCHEMA_TARGET_DIR) cargo clean --doc
+	RUSTDOCFLAGS="-D warnings" CARGO_TARGET_DIR=$(SCHEMA_TARGET_DIR) cargo doc $(SCHEMA_CRATES) \
 	  --features $(SCHEMA_FEATURES) --no-deps --keep-going
-	RUSTDOCFLAGS="-D warnings" cargo doc $(SCHEMA_CRATES) \
+	RUSTDOCFLAGS="-D warnings" CARGO_TARGET_DIR=$(SCHEMA_TARGET_DIR) cargo doc $(SCHEMA_CRATES) \
 	  --features $(SCHEMA_FEATURES) --no-deps --document-private-items --keep-going
 
 # The same hole, one instrument over. `lint` runs `cargo clippy --workspace`

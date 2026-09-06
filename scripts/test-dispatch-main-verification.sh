@@ -64,12 +64,23 @@ api)
   case "${2:-}" in
   *runs\?head_sha=*)
     [ -f "$dir/api-fails" ] && exit 1
+    # A `counts-<workflow>` file answers for that workflow alone, with its own
+    # cursor; without one every workflow reads the shared `counts` list, which
+    # is what the cases that do not care about the split want.
+    wf="${2#*/actions/workflows/}"
+    wf="${wf%%/runs*}"
+    counts="$dir/counts-$wf"
+    cursor="$dir/cursor-$wf"
+    if [ ! -f "$counts" ]; then
+      counts="$dir/counts"
+      cursor="$dir/cursor"
+    fi
     n=0
-    [ -f "$dir/cursor" ] && n="$(cat "$dir/cursor")"
+    [ -f "$cursor" ] && n="$(cat "$cursor")"
     n=$((n + 1))
-    printf '%s' "$n" >"$dir/cursor"
-    line="$(sed -n "${n}p" "$dir/counts")"
-    [ -z "$line" ] && line="$(tail -n 1 "$dir/counts")"
+    printf '%s' "$n" >"$cursor"
+    line="$(sed -n "${n}p" "$counts")"
+    [ -z "$line" ] && line="$(tail -n 1 "$counts")"
     printf '%s\n' "$line"
     exit 0
     ;;
@@ -175,13 +186,42 @@ if [ "$rc" -eq 0 ]; then
 else
   bad "a missing run exited $rc: $out"
 fi
-said "and says the commit may have kept no run" "none has appeared" "$out"
+said "and says the commit may have kept no run" "no ci.yml run has landed" "$out"
 if [ "$(started_count "$dir" main-canary.yml)" -eq 1 ]; then
   ok "and the canary is started anyway, so something asks the question"
 else
   bad "the canary was not started:
 $(cat "$dir/calls.log")"
 fi
+
+# ── The canary run that went to a later commit. ──────────────────────────────
+# The observed shape on 2026-09-05: the `ci` run landed on the commit, `main`
+# moved, and the canary run carried the newer `head_sha`. The closing line
+# claimed the commit was being checked and named neither half.
+dir="$(new_case canary_missed '0 -')"
+printf '0 -\n1 https://example.test/runs/7\n' >"$dir/counts-ci.yml"
+printf '0 -\n' >"$dir/counts-main-canary.yml"
+out="$(run_case "$dir")"
+rc=$?
+if [ "$rc" -eq 0 ]; then
+  ok "a canary run that never lands still exits 0"
+else
+  bad "a missing canary run exited $rc: $out"
+fi
+said "and the ci run is still named" "https://example.test/runs/7" "$out"
+said "and the canary is named as missing" "no main-canary.yml run has landed" "$out"
+case "$out" in
+*"is being checked"*) bad "it still claims the commit is checked: $out" ;;
+*) ok "and it does not claim the commit is checked outright" ;;
+esac
+
+# ── Both runs land, and both are named. ──────────────────────────────────────
+dir="$(new_case both_landed '0 -')"
+printf '0 -\n1 https://example.test/runs/7\n' >"$dir/counts-ci.yml"
+printf '1 https://example.test/runs/8\n' >"$dir/counts-main-canary.yml"
+out="$(run_case "$dir")"
+said "both runs landed: the ci run is named" "https://example.test/runs/7" "$out"
+said "and so is the canary run" "main-canary: https://example.test/runs/8" "$out"
 
 # ── Every unknown exits 0. ───────────────────────────────────────────────────
 # This step runs at the end of a release. A step that can red the release is

@@ -406,6 +406,14 @@ lapses so a crashed session cannot hold an issue shut, and every unknown
 proceeds loudly. `make issue-claim N=5045` asks by hand; `make
 issue-claim-test` covers it, both blocking branches included.
 
+It carries the same session word, and for the same reason: one login is one
+account, and the thing that has to be identified is the session. Comparing
+the login alone read a peer session's claim as this session's own and cleared
+both to work one issue (`#5875`). `scripts/lib/claim-session.sh` resolves the
+word for both scripts, so a fleet sets `STELLA_CLAIM_SESSION` once rather
+than twice, and both fail open the same way: a run with no word of its own,
+and a claim comment carrying none, fall back to the author-only rule.
+
 Run it **before writing code and again before opening the PR**. The gap
 between those two is enough: a peer's PR can merge inside one issue's worth of
 work, and then the check that was clean at the start is stale at the end.
@@ -579,12 +587,21 @@ stays `gate`-only on purpose, paired with `doc-warnings`: at `check`, rustdoc
 never runs, for either feature set.
 
 `doc-warnings-schema` also wipes the doc output before each run
-(`cargo clean --doc`, which takes no package filter — cargo refuses `--doc`
-alongside `-p`, so the whole `target/doc` tree goes). `cargo doc`'s own
-freshness check can call a stale prior run "up to date" — and print nothing
-— even after the source changed. That let a broken doc link in
-`stella-plugin` pass a local `make doc-warnings-schema`, and show up only
-after a hand-run `rm -rf target/doc`.
+(`cargo clean --doc`). `cargo doc`'s own freshness check can call a stale
+prior run "up to date" — and print nothing — even after the source changed.
+That let a broken doc link in `stella-plugin` pass a local
+`make doc-warnings-schema`, and show up only after a hand-run
+`rm -rf target/doc`.
+
+That clean takes no package filter — cargo refuses `--doc` alongside `-p` —
+so an unscoped one empties the whole `target/doc` tree, `doc-warnings`'
+workspace rustdoc included, and every later gate run rebuilds it. The scope
+cargo does offer is the target directory, so this step builds and cleans
+under its own `CARGO_TARGET_DIR` (`target/doc-schema`) and touches nobody
+else's cache. `schema-tier-parity` holds that rule beside the rung one:
+a recipe line running `cargo clean --doc` without `CARGO_TARGET_DIR` on it
+fails the gate, because dropping the variable leaves a command that still
+works and quietly costs everyone the cache.
 
 **Every rung needs `shellcheck` on `PATH`, and it is not vendored.** It is the
 gate's one external binary, so a machine or container image without it stops at
@@ -1215,7 +1232,14 @@ above for every other (#2397). So a violation that was already there before
 your branch existed is reported as drift and does not fail you, while anything
 your change grows past what it inherited fails exactly as it always did.
 Inherited drift is survived, never absorbed: a first-time crossing you walked
-past still wants splitting, and still gets no baseline entry. The base is the
+past still wants splitting, and still gets no baseline entry.
+
+The baseline's own bookkeeping is judged the same way (`#2311`). An entry whose
+file is already under the limit at the base, or already gone there, is
+somebody else's split or rename that left the entry standing: it is reported
+as drift and does not fail you. An entry your change makes obsolete or stale
+does fail, and `make file-size-update` is its remedy, because retiring it is
+part of the work that made it obsolete. The base is the
 merge commit's first parent on a pull request, the merge base locally, and
 nothing at all in a shallow clone or a fresh repository — where the guard falls
 back to the strict whole-tree check, because an unresolvable base must make it

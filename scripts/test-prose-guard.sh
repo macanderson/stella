@@ -242,7 +242,12 @@ baseline "$r"
 expect_update_refused "P5 --update refuses to raise" "$r"
 expect_absent "P5 --update wrote no entry" "$r" "docs/a.md"
 
-# ── P6: --update retightens when prose is deleted ────────────────────────────
+# ── P6: reclaiming a count is `--retighten`'s job, not `--update`'s ──────────
+#
+# A global reclaim on every `--update` run lowers the ceiling of files the
+# branch never opened, measured on whatever that checkout holds. The next merge
+# with `main` then fails the branch on a number the branch itself wrote
+# (`#6274`), naming sentences its author never read.
 r="$(new_root p6)"
 doc "$r" docs/a.md <<'EOF'
 The order is required, not stylistic.
@@ -253,7 +258,13 @@ if python3 "$SCRIPT" --update "$r" >/dev/null 2>&1; then
 else
   no "P6 --update accepts a shrink" "--update exited non-zero"
 fi
-expect_absent "P6 --update drops a file that reached zero" "$r" "docs/a.md"
+expect_line "P6 --update leaves the entry where it stands" "$r" "docs/a.md empty-epigram 3"
+if python3 "$SCRIPT" --update --retighten "$r" >/dev/null 2>&1; then
+  ok "P6 --retighten accepts the same tree"
+else
+  no "P6 --retighten accepts the same tree" "--retighten exited non-zero"
+fi
+expect_absent "P6 --retighten drops a file that reached zero" "$r" "docs/a.md"
 
 # ── P7: a backticked citation is not a use ───────────────────────────────────
 r="$(new_root p7)"
@@ -845,19 +856,34 @@ else
   ok "G6 --bootstrap-grade refuses to overwrite"
 fi
 
-# ── G7: --update lowers a grade entry that improved ──────────────────────────
+# ── G7: a grade entry is reclaimed by --retighten, not by --update ───────────
+#
+# The witness for `#6274`. #6266's branch did not contain AGENTS.md in its diff
+# and still wrote that file a lower grade ceiling, off a checkout cut before two
+# AGENTS.md edits landed. CI built the merge commit, the file graded above the
+# number the branch had written for it, and the run failed naming three
+# sentences its author never opened.
 r="$(new_root g7)"
 easy_doc "$r" docs/a.md 12
 baseline "$r"
 grade_baseline "$r" docs/a.md 30.00
 if python3 "$SCRIPT" --update "$r" >/dev/null 2>&1; then
   if grep -q "^docs/a.md 30.00$" "$r/scripts/prose-grade-baseline.txt"; then
-    no "G7 --update lowers an improved grade" "the 30.00 entry survived"
+    ok "G7 --update leaves an untouched file's grade ceiling alone"
   else
-    ok "G7 --update lowers an improved grade"
+    no "G7 --update leaves an untouched file's grade ceiling alone" "the entry moved"
   fi
 else
-  no "G7 --update lowers an improved grade" "--update exited non-zero"
+  no "G7 --update leaves an untouched file's grade ceiling alone" "--update exited non-zero"
+fi
+if python3 "$SCRIPT" --update --retighten "$r" >/dev/null 2>&1; then
+  if grep -q "^docs/a.md 30.00$" "$r/scripts/prose-grade-baseline.txt"; then
+    no "G7b --retighten lowers an improved grade" "the 30.00 entry survived"
+  else
+    ok "G7b --retighten lowers an improved grade"
+  fi
+else
+  no "G7b --retighten lowers an improved grade" "--retighten exited non-zero"
 fi
 
 # ── S: splitting a crate is a move, not new prose ───────────────────────────
@@ -930,6 +956,63 @@ commit_all "$r"
 move_rs "$r" alpha lib beta
 rs_with_header "$r" gamma 30 lib
 expect_update_refused "S4 an unrelated new crate is still held to the ceiling" "$r"
+
+# ── S5/S6: the plain check must not charge a move either ─────────────────────
+#
+# S1-S4 all drive `--update`. The plain check is a different question, and the
+# one a contributor meets first: a crate sitting at its ceiling loses a
+# below-mean header to another crate, so its mean rises with nobody having
+# written a word. Charging that to the next author is `#5914`.
+#
+# The base measurement is taken over the files the unit holds NOW, mapped back
+# to where they lived at the base commit, so a pure move cancels. S6 is what
+# keeps that from being an amnesty.
+
+r="$(new_root s5)"
+baseline "$r"
+density_baseline "$r" crates/alpha 20.00
+rs_with_header "$r" alpha 30 long
+rs_with_header "$r" alpha 10 short
+commit_all "$r"
+move_rs "$r" alpha short beta
+commit_all "$r"
+PROSE_BASE_REF=HEAD^1 expect_pass "S5 a move out of a crate at its ceiling is not new prose" "$r"
+
+# S6: a header GROWN in the source crate while another file moved out is still
+# new prose. Without this, one move would forgive every header beside it.
+r="$(new_root s6)"
+baseline "$r"
+density_baseline "$r" crates/alpha 20.00
+rs_with_header "$r" alpha 30 long
+rs_with_header "$r" alpha 10 short
+commit_all "$r"
+move_rs "$r" alpha short beta
+rs_with_header "$r" alpha 60 long
+commit_all "$r"
+PROSE_BASE_REF=HEAD^1 expect_fail "S6 a header grown beside the move still fails" "$r"
+
+# ── S7: one file's move must not re-measure the rest of the tree ─────────────
+#
+# The shape #6266 hit, with both halves in one run: a move that has to be
+# carried, beside a file the branch never opened whose count happens to be
+# lowerable on this checkout. `--update` owes the first and must not touch the
+# second (`#6274`).
+r="$(new_root s7)"
+doc "$r" docs/old.md <<'EOF'
+The cost is deliberate: the retention it buys is not worth the residue.
+EOF
+doc "$r" docs/untouched.md <<'EOF'
+The cost is deliberate: the retention it buys is not worth the residue.
+EOF
+baseline "$r" docs/old.md filler-adverb 2 docs/untouched.md filler-adverb 3
+commit_all "$r"
+move "$r" docs/old.md docs/new.md
+expect_update_ok "S7 --update accepts the move" "$r"
+expect_line "S7 the moved entry is carried, and capped at its own count" \
+  "$r" "docs/new.md filler-adverb 1"
+expect_line "S7 the untouched file keeps the ceiling it had" \
+  "$r" "docs/untouched.md filler-adverb 3"
+expect_absent "S7 the old path is gone" "$r" "docs/old.md"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
