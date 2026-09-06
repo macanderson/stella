@@ -120,23 +120,27 @@ fn resolve_one(
 
 /// Whether `provider` has every auxiliary value it cannot construct without.
 ///
-/// Only Bedrock has such a value today: SigV4 cannot sign without
-/// `AWS_SECRET_ACCESS_KEY`, so an access key id on its own is a provider that
-/// resolves and then fails to build. That distinction matters for
-/// auto-detection specifically — `AWS_ACCESS_KEY_ID` is exported in plenty of
-/// shells for reasons that have nothing to do with Bedrock, which is why the
-/// provider table already sorts Bedrock last. Sorting it last stops it
-/// out-ranking a real choice; this stops it being selected when it is the
-/// *only* candidate and cannot work, so the user gets the "no API key found"
-/// first-run message naming providers they can actually use instead of a SigV4
-/// error from a provider they never asked for.
+/// Bedrock and Vertex both have such a value: SigV4 cannot sign without
+/// `AWS_SECRET_ACCESS_KEY`, and `VertexProvider::new` cannot scope a request
+/// without a GCP project id — so an access key id, or a bearer token, on its
+/// own is a provider that resolves and then fails to build. That distinction
+/// matters for auto-detection specifically — `VERTEX_ACCESS_TOKEN` (like
+/// `AWS_ACCESS_KEY_ID`) can be exported for reasons that have nothing to do
+/// with picking that provider as the default. Without this, such a shell
+/// auto-selects a provider that then dies with "Vertex AI needs a project id"
+/// (or Bedrock's SigV4 error) instead of getting the first-run message naming
+/// providers it can actually use.
 ///
-/// An explicit `--model bedrock/…` does not come through here: pinning a
-/// provider is unambiguous, and it must fail with the adapter's named
-/// "needs AWS_SECRET_ACCESS_KEY" error rather than silently resolve elsewhere.
+/// An explicit `--model vertex/…` or `--model bedrock/…` does not come
+/// through here: pinning a provider is unambiguous, and it must fail with the
+/// adapter's own named error (`VERTEX_PROJECT_ID`, `AWS_SECRET_ACCESS_KEY`)
+/// rather than silently resolve elsewhere.
 pub(crate) fn has_required_aux(provider: &ProviderConfig, aux: &AuxCredentials) -> bool {
     match provider.dialect {
         Dialect::Bedrock => aux.get("AWS_SECRET_ACCESS_KEY").is_some(),
+        Dialect::Vertex => VertexAddressing::PROJECT_ENV_NAMES
+            .iter()
+            .any(|name| aux.get(name).is_some()),
         _ => true,
     }
 }
@@ -349,6 +353,54 @@ mod tests {
         assert!(
             !has_required_aux(&bedrock(), &aux),
             "an access key id alone must not make Bedrock the auto-detected provider"
+        );
+    }
+
+    #[test]
+    fn vertex_without_a_project_id_anywhere_is_not_auto_detectable() {
+        let _env = crate::test_env::lock();
+        let _restore = crate::test_env::EnvRestore::capture(&[
+            "VERTEX_ACCESS_TOKEN",
+            "VERTEX_PROJECT_ID",
+            "GOOGLE_CLOUD_PROJECT",
+        ]);
+        // The gap this closes: a shell exporting only `VERTEX_ACCESS_TOKEN`
+        // auto-selected Vertex, which then died at construction with "Vertex
+        // AI needs a project id" — an error from a provider the user never
+        // asked for, instead of the first-run message naming the providers
+        // they could actually use.
+        //
+        // SAFETY: guarded by test_env's process-wide lock.
+        unsafe {
+            std::env::set_var("VERTEX_ACCESS_TOKEN", "a-bearer-token");
+            std::env::remove_var("VERTEX_PROJECT_ID");
+            std::env::remove_var("GOOGLE_CLOUD_PROJECT");
+        }
+        let aux = provider_aux(&vertex(), &CredentialsFile::empty());
+        assert!(
+            !has_required_aux(&vertex(), &aux),
+            "a bearer token alone must not make Vertex the auto-detected provider"
+        );
+    }
+
+    #[test]
+    fn vertex_with_a_project_id_is_auto_detectable() {
+        let _env = crate::test_env::lock();
+        let _restore = crate::test_env::EnvRestore::capture(&[
+            "VERTEX_ACCESS_TOKEN",
+            "VERTEX_PROJECT_ID",
+            "GOOGLE_CLOUD_PROJECT",
+        ]);
+        // SAFETY: guarded by test_env's process-wide lock.
+        unsafe {
+            std::env::set_var("VERTEX_ACCESS_TOKEN", "a-bearer-token");
+            std::env::set_var("VERTEX_PROJECT_ID", "my-gcp-project");
+            std::env::remove_var("GOOGLE_CLOUD_PROJECT");
+        }
+        let aux = provider_aux(&vertex(), &CredentialsFile::empty());
+        assert!(
+            has_required_aux(&vertex(), &aux),
+            "a token plus a project id must still make Vertex auto-detectable"
         );
     }
 }
