@@ -1100,7 +1100,7 @@ mod tests {
         let gate = OpenGate;
         let steering = QuietSteering;
 
-        let seams = served_capabilities(None, &gate, &steering, None);
+        let seams = served_capabilities(None, &gate, &steering, None, None);
 
         assert_eq!(
             seams.lane,
@@ -1119,7 +1119,7 @@ mod tests {
         let gate = OpenGate;
         let steering = QuietSteering;
 
-        let host_supplied_nothing = served_capabilities(None, &gate, &steering, None);
+        let host_supplied_nothing = served_capabilities(None, &gate, &steering, None, None);
         assert!(host_supplied_nothing.gate.is_some() && host_supplied_nothing.steering.is_some());
         assert!(
             host_supplied_nothing.calibration.is_none() && host_supplied_nothing.bus.is_none(),
@@ -1133,7 +1133,7 @@ mod tests {
         let calibration = stella_core::estimator::CalibrationMap::default();
         let bus = stella_core::bus::HookBus::new("serve-lane-test");
         let host_supplied_both =
-            served_capabilities(Some(&calibration), &gate, &steering, Some(&bus));
+            served_capabilities(Some(&calibration), &gate, &steering, None, Some(&bus));
         assert!(host_supplied_both.calibration.is_some() && host_supplied_both.bus.is_some());
     }
 }
