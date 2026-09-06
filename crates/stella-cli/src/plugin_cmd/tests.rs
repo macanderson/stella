@@ -797,6 +797,49 @@ fn remove_uninstalls_every_tier_that_holds_the_name() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Checks whether a directory at `mode` really blocks a delete inside it,
+/// in this process, instead of guessing from the uid.
+///
+/// Root can unlink through a read-only parent no matter the mode bit. A
+/// bare `uid == 0` check would guess wrong here, and wrong the other way on
+/// a container or a platform where a non-root uid can also override the
+/// bit. This tries the real delete on a throwaway directory instead, so it
+/// agrees with what the caller below is about to see. `mode` is a
+/// parameter, not a fixed `0o555`, so the test below can call this same
+/// function with a mode it can pass without root.
+#[cfg(unix)]
+fn write_protection_is_enforced_at(root: &Path, mode: u32) -> bool {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let probe_dir = root.join("write-protection-probe");
+    std::fs::create_dir_all(&probe_dir).expect("probe directory");
+    let probe_file = probe_dir.join("victim");
+    std::fs::write(&probe_file, b"probe").expect("probe file");
+    std::fs::set_permissions(&probe_dir, std::fs::Permissions::from_mode(mode))
+        .expect("set the probe directory's mode");
+
+    let blocked = std::fs::remove_file(&probe_file).is_err();
+
+    // Restore before the caller's own cleanup runs, so a locked-down probe
+    // directory never strands the harness.
+    std::fs::set_permissions(&probe_dir, std::fs::Permissions::from_mode(0o755))
+        .expect("restore the probe directory");
+    let _ = std::fs::remove_dir_all(&probe_dir);
+
+    blocked
+}
+
+/// The mode the test below uses for its read-only tier — one constant so
+/// the probe and the tier always mean the same thing by "read-only".
+#[cfg(unix)]
+const READ_ONLY_TIER_MODE: u32 = 0o555;
+
+/// Checks with [`READ_ONLY_TIER_MODE`], the mode the test below uses.
+#[cfg(unix)]
+fn write_protection_is_enforced(root: &Path) -> bool {
+    write_protection_is_enforced_at(root, READ_ONLY_TIER_MODE)
+}
+
 /// **Witness (#4302).** A project tier that will not delete must not stop the
 /// user tier from being read.
 ///
@@ -812,6 +855,10 @@ fn remove_uninstalls_every_tier_that_holds_the_name() {
 /// read-only tier is what actually makes `remove_dir_all` fail on the child.
 /// Unix only: `chmod` is the portable way to arrange this, and Windows
 /// permissions do not reproduce it.
+///
+/// **Skips when the check above finds the mode bit does not hold**, such as
+/// under root: the setup below cannot work in that process, and running it
+/// anyway would report a false failure in `remove`.
 #[cfg(unix)]
 #[test]
 fn a_project_tier_that_will_not_delete_does_not_strand_the_user_copy() {
@@ -821,6 +868,17 @@ fn a_project_tier_that_will_not_delete_does_not_strand_the_user_copy() {
     let _restore =
         crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
     let root = temp_root("undeletable-project-tier");
+
+    if !write_protection_is_enforced(&root) {
+        eprintln!(
+            "skipping a_project_tier_that_will_not_delete_does_not_strand_the_user_copy: \
+             this process can delete through a read-only directory, so a 0o555 tier cannot \
+             be made undeletable here"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+
     let home = root.join("home");
     let _paths = crate::paths::test_user_home(home.clone());
     let source = package(&root, "vera");
@@ -870,6 +928,26 @@ fn a_project_tier_that_will_not_delete_does_not_strand_the_user_copy() {
             .all(|route| route.plugin != "vera"),
         "and it must stop dispatching from the user tier: {:?}",
         after.hook_routes()
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The check the sibling test gates on must test the delete, not guess an
+/// answer from the mode bit.
+///
+/// A directory that does not restrict writes must never come back
+/// "blocked". This runs on every uid and needs no root, since it never
+/// claims a mode bit is enforced — it only claims one is not.
+#[cfg(unix)]
+#[test]
+fn write_protection_probe_does_not_report_blocked_when_the_delete_would_succeed() {
+    let root = temp_root("write-protection-probe-negative");
+
+    assert!(
+        !write_protection_is_enforced_at(&root, 0o755),
+        "a 0o755 directory does not stop the delete the probe attempts, so the probe must \
+         say so rather than trusting the mode bit it never actually tested"
     );
 
     let _ = std::fs::remove_dir_all(&root);
