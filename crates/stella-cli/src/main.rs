@@ -74,6 +74,7 @@ mod inspect;
 mod interactive;
 mod issue_provider;
 mod lane_capabilities;
+mod lane_frame;
 mod mcp_cmd;
 mod memory;
 mod memory_cmd;

@@ -209,11 +209,11 @@ fn ledger(before: &Config, after: &Config) -> Vec<Field> {
         Field {
             name: "steering_ledger",
             posture: Posture::StartupOnly(
-                "a shared cell holding what this session's volatile block already spent and the \
-                 tool array that spend settled; a fresh one would re-rank the advertised tools \
+                "a shared cell holding what the open turn's volatile block spent and the tool \
+                 array that spend settled; a fresh one would re-rank the advertised tools \
                  mid-session, and that array is cache prefix. An operator who edits the \
                  allowance is served by `tool_advertisement` above: the ledger settles again \
-                 whenever the declared allowance changes",
+                 whenever the declared allowance changes, against the open turn's spend alone",
             ),
             // A handle, not a value. `SteeringLedger` has no equality, and
             // what it holds is spend rather than settings.

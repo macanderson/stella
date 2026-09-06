@@ -8,11 +8,21 @@ status: proposed
 
 **Status:** proposed, written 2026-08-19, against `main` at `f9789df17`.
 
-`doc:pipeline-as-plugins` §3 names **nine plugins** that replace one staged
+**Update.** §4.1's recommendation is the maintainer's decision now: verification
+ships open as `plugins/stella-witness`, and `vera` is the paid superset rather
+than a deliverable of this plan. §1's audit stands as what the tree looked like
+on the day it was read; §5 and §7 below are written to the decision. Every
+plugin `doc:pipeline-as-plugins` §3 lists is in the tree today and is graded by
+a check that runs on a pull request — the six first-party ones by a harness in
+`crates/stella-runtime/tests/` or `crates/stella-cli/src/driver_plugin/tests.rs`,
+the three `verify-*` examples by `example_plugins_smoke.rs` against the commit
+`scripts/stella-examples-pin.txt` pins.
+
+`doc:pipeline-as-plugins` §3 lists the plugins that replace one staged
 pipeline and one built-in autonomous loop. §7 states the bar plainly: *"a
 side-by-side benchmark holds before the built-in path is deleted."* The
 built-in path was deleted on 2026-08-19 (#3865). This document answers the
-question that deletion makes urgent — **which of the nine actually exist** —
+question that deletion makes urgent — **which of them actually exist** —
 and specifies the work for the ones that do not.
 
 Everything asserted about today's tree was read out of it and is cited so it
@@ -21,18 +31,22 @@ says so.
 
 ---
 
-## 0. The one-sentence answer
+## 0. The one-sentence answer, on the day this was written
 
-**Four of the nine are built and graded, one of those four cannot do its job on
-any host running today, three more exist but are ungated from this repository,
-and the single most important plugin in the plan — the one carrying the
-project's headline claim — is an empty repository with a README in it.**
+**`stella-plan` and `stella-research` are built and graded, `stella-goal` is
+built and cannot do its job on any host running today, the three `verify-*`
+examples exist but are ungated from this repository, `stella-candidates` and
+`stella-selfdriving` are missing, and the plugin carrying the project's
+headline claim is an empty repository with a README in it.**
+
+Every one of those is closed now, and the last one closed by moving: §4.1 gave
+the headline claim to `plugins/stella-witness`, which ships in this repository.
 
 ---
 
 ## 1. The audit
 
-| # | Plugin (§3) | Where it should be | State | Evidence |
+| # | Plugin (§3, as it read then) | Where it should be | State | Evidence |
 |---|---|---|---|---|
 | 1 | **vera** | `oxageninc/vera`, private | **NOT BUILT** | `gh api repos/oxageninc/vera/contents` returns exactly one entry, `README.md`; repo size 3 KB; last push 2026-08-17 |
 | 2 | **stella-plan** | this repo, `plugins/` | **BUILT, graded** | `plugins/stella-plan/{plugin.toml,main.py}`; `crates/stella-runtime/tests/plan_plugin_{conformance,dispatch,hostcall}.rs` |
@@ -170,6 +184,17 @@ precondition on distribution rather than a nice-to-have.
 
 ### 4.1 Verification: split it in two — `stella-witness` (open) and `vera` (commercial)
 
+**Decided, and this is the record of it.** The recommendation below was put to
+the maintainer as a call to make, and the answer was to split. Verification
+ships open: `plugins/stella-witness` is in the tree, its manifest and README
+state the split as the decision, and
+`crates/stella-runtime/tests/witness_plugin_conformance.rs` grades it on every
+pull request. `oxageninc/vera` keeps the commercial superset and stops being a
+deliverable of this plan; what this repository owes it is the published wire
+corpus, and nothing else. `doc:pipeline-as-plugins` §3 and §8 are written to
+that answer. The rest of this section is the argument that produced it, kept
+because a decision without its reasons gets relitigated.
+
 **Recommendation, and it is the one substantive departure from
 `doc:pipeline-as-plugins` §8 in this document.** §8 plans a single private
 plugin. I recommend two:
@@ -215,10 +240,11 @@ defend — *verification is open; verification at organisational scale is paid* 
 which is the same line every successful open-core infrastructure project draws,
 and the only one compatible with §2.1 above.
 
-**This is a maintainer's call, per `CLAUDE.md`'s "now vs. right" rule, and I am
-naming it rather than deciding it.** If the answer is one private plugin, then
-§2.1 needs a corresponding correction in `README.md` and `AGENTS.md`: the open
-product does not verify, and should stop implying it does.
+**This was a maintainer's call, per `CLAUDE.md`'s "now vs. right" rule, and it
+was made: split.** Had the answer been one private plugin, §2.1 would have
+needed a matching correction in `README.md` and `AGENTS.md` — the open product
+does not verify, and should stop implying it does. It went the other way, so
+those two stand as written.
 
 **Manifest sketch for `stella-witness`:**
 
@@ -376,7 +402,7 @@ third-party-usable must **not** live here, or it proves nothing.
 | **`stella-witness`** | **`macanderson/stella` — `plugins/`** | §4.1: the open referent for the project's central claim; also the heaviest consumer of the wire contract, so it must break the PR that breaks it |
 | **`stella-candidates`** | **`macanderson/stella` — `plugins/`** | consumes `candidate_fanout`, a capability that lives here and is still moving |
 | **`stella-selfdriving`** | **`macanderson/stella` — `plugins/`** (unchanged) | consumes `DriverCall`, which is still growing verb by verb through #3599 |
-| **`vera`** | **`oxageninc/vera`, private** | commercial superset; depends on the published wire contract, not on this tree's internals |
+| **`vera`** | **`oxageninc/vera`, private** | commercial superset, and **not a deliverable of this plan** (§4.1); holds a README and nothing else today. It depends on the published wire contract, never on this tree's internals, which is the whole of what this repository owes it |
 | `verify-rs`, `verify-py`, `verify-ts` | **`macanderson/stella-examples` — `plugins/`** (unchanged) | third-party-shaped by design; pinned by SHA from this repo's CI (§4.5b) |
 
 **The one rule that keeps this from rotting:** a plugin in this repository is
@@ -478,9 +504,11 @@ Everything downstream of it is a plugin; it is the last piece of *platform*.
 
 ## 7. Definition of done for this document
 
-- All nine of §3's plugins exist, and each is graded by something that runs on
-  a PR — in-tree harness for the six that ship here, pinned-SHA smoke check for
-  the three that ship in `stella-examples`, published wire corpus for Vera.
+- Every plugin `doc:pipeline-as-plugins` §3 lists exists, and each is graded by
+  something that runs on a PR — an in-tree harness for the six that ship here,
+  a pinned-SHA smoke check for the three that ship in `stella-examples`. Vera
+  is not on that list and is graded by nothing here; the published wire corpus
+  is what it is owed and what it is held to.
 - One `--pipeline` selection can bind grounding, planning and verification
   together, so the plugin path is not strictly less capable than the path it
   replaced.

@@ -387,12 +387,12 @@ impl SessionDurability {
     }
 
     /// Write this record's terminal frame: what a lane that died mid-turn
-    /// hands its parent to report (`stella_store::lane_frame`).
+    /// leaves for its reader (`stella_store::lane_frame`).
     ///
-    /// Only a lane whose handle is its own may call this — the lead's record
-    /// is a resume point, and a frame there would claim a session died that
-    /// is still running. `crate::subsession::terminal_frame` is the one
-    /// caller, and it holds the lane's own handle.
+    /// Only a lane whose handle is its own may call this. A lead session's
+    /// record is a resume point, and a frame there would claim a session died
+    /// that is still running. The one caller is `LaneRecorder`, in
+    /// `crate::lane_frame`, built from the lane's own handle.
     ///
     /// Best-effort and silent, like the sink: a lane that ended is not made
     /// less ended by an unwritable report.
@@ -410,7 +410,7 @@ impl SessionDurability {
     }
 
     /// Retract the terminal frame: this lane finished, so it has no
-    /// unfinished attempt for its parent to report.
+    /// unfinished attempt for a reader.
     pub fn clear_terminal_frame(&self) {
         if let Some(journal) = self.journal() {
             let _ = stella_store::lane_frame::clear(&journal);

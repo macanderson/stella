@@ -1,12 +1,13 @@
 //! What a worker lane leaves when it dies mid-turn.
 //!
-//! A lane runs beside a lead chat. It does not resume itself.
-//! `doc:turn-lane-assembly` §6 calls that `ResumeAuthority::Parent`. The parent
-//! reads the lane's history to report it. Nothing re-enters it.
+//! Some lanes do not resume themselves. `stella_protocol::ResumeAuthority`
+//! names the two: under `Parent` the lead reads the lane's history to report
+//! it, and under `Redispatch` a supervisor reads it to decide the re-run.
+//! Nothing re-enters either turn.
 //!
-//! So a lane owes one record, not one per step. That record is the **terminal
-//! frame**. It holds the steps the lane got through and the messages that got
-//! it there. It is written once, when the lane dies.
+//! So such a lane owes one record, not one per step. That record is the
+//! **terminal frame**. It holds the steps the lane got through and the
+//! messages that got it there. It is written once, when the lane dies.
 //!
 //! # Why its own blob
 //!
