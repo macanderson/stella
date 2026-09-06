@@ -1086,6 +1086,18 @@ mod tests {
         }
     }
 
+    /// Stands in for a host that built the re-query route. What it answers
+    /// does not matter here — these tests ask which seams a served turn
+    /// binds, not what a bound seam returns.
+    struct SilentRequery;
+
+    #[async_trait]
+    impl stella_core::ports::SteeringRequery for SilentRequery {
+        async fn requery(&self, _signal: &stella_core::steering::TurnSignal<'_>) -> Option<String> {
+            None
+        }
+    }
+
     /// **The lane witness.** A served turn declares the `ServeSession` lane,
     /// so a host grouping turns by lane sees this one as its own bucket
     /// rather than as an unattributed `null`.
@@ -1122,8 +1134,10 @@ mod tests {
         let host_supplied_nothing = served_capabilities(None, &gate, &steering, None, None);
         assert!(host_supplied_nothing.gate.is_some() && host_supplied_nothing.steering.is_some());
         assert!(
-            host_supplied_nothing.calibration.is_none() && host_supplied_nothing.bus.is_none(),
-            "a host that supplied neither must not be given one",
+            host_supplied_nothing.calibration.is_none()
+                && host_supplied_nothing.bus.is_none()
+                && host_supplied_nothing.requery.is_none(),
+            "a host that supplied none of them must not be given one",
         );
         assert!(
             host_supplied_nothing.hooks.is_none(),
@@ -1132,8 +1146,19 @@ mod tests {
 
         let calibration = stella_core::estimator::CalibrationMap::default();
         let bus = stella_core::bus::HookBus::new("serve-lane-test");
-        let host_supplied_both =
-            served_capabilities(Some(&calibration), &gate, &steering, None, Some(&bus));
-        assert!(host_supplied_both.calibration.is_some() && host_supplied_both.bus.is_some());
+        let requery = SilentRequery;
+        let host_supplied_all = served_capabilities(
+            Some(&calibration),
+            &gate,
+            &steering,
+            Some(&requery),
+            Some(&bus),
+        );
+        assert!(
+            host_supplied_all.calibration.is_some()
+                && host_supplied_all.bus.is_some()
+                && host_supplied_all.requery.is_some(),
+            "every seam the host supplied must reach the turn",
+        );
     }
 }
