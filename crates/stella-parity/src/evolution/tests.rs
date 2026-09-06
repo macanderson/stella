@@ -184,6 +184,33 @@ fn every_row_explains_its_mechanism_and_its_rollback() {
     }
 }
 
+/// **The reachable-rollback witness.** No row offers an undo an operator
+/// cannot perform.
+///
+/// A rollback column is read by a person deciding whether to let a surface
+/// change itself, so a library call listed beside three real flags reads as a
+/// fourth flag. The Tool row named `forget_foundry_tool`, which
+/// `crates/stella-store/src/foundry.rs` exposes and no `stella` verb reaches:
+/// a search of the workspace for it finds the definition, its own tests, and
+/// this ledger. Wiring the verb is the other answer, and it needs the same
+/// consent posture `--enable` has.
+///
+/// The list is what a search of the workspace turned up, so a second name
+/// joins it the same way. It fails by construction on the string it names.
+#[test]
+fn no_rollback_offers_a_call_with_no_verb_behind_it() {
+    const UNREACHABLE: &[&str] = &["forget_foundry_tool"];
+    for row in EVOLUTION_SURFACES {
+        for name in UNREACHABLE {
+            assert!(
+                !row.rollback.contains(name),
+                "the {} row offers `{name}` as a rollback, and no `stella` verb calls it",
+                row.surface.as_str()
+            );
+        }
+    }
+}
+
 /// **The two ledgers cannot drift**, because this one does not restate the
 /// other. A row declares its impact and reads the grade out of #2782's policy,
 /// so there is no second copy of the requirement to disagree with the first.
