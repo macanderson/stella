@@ -136,11 +136,19 @@
 //! one. A facade closed over mere reachability would be `stella-protocol`
 //! with extra steps.
 //!
-//! This is a coherence property of what is *already* exported, not a widening
-//! for an imagined caller — the distinction that separates it from #2481,
-//! which asked for turn-boundary payload shapers no exported signature names
-//! and was closed as speculative. Nothing below adds a capability; each entry
-//! makes an already-reachable one writable.
+//! Most of the block below is a coherence property of what is *already*
+//! exported: each entry makes an already-reachable capability writable rather
+//! than adding one.
+//!
+//! [`turn_started_payload`] and [`turn_outcome_payload`] are the exception,
+//! and they earn their place under obligation 3 read at the bus rather than
+//! at a return value. A host that drives [`Engine::run_step`] owns the turn
+//! framing its loop does not carry, and must emit `agent.turn.started` and
+//! `agent.turn.completed` in the engine's own shape — otherwise an extension
+//! watching the bus can tell a host-driven turn from a local one, which is
+//! the drift the shared `run_step` exists to prevent. That is a contract this
+//! facade owes, so the two shapers are here instead of costing such a host a
+//! direct `stella-core` dependency (#2481).
 //!
 //! ## The hook plane is the wrong layer, by design
 //!
@@ -221,6 +229,14 @@ pub use stella_core::driver::{
 // its seams with no frame above holding them is the case that struct exists
 // for, which is exactly an out-of-process host.
 pub use stella_core::driver::capabilities::{OwnedTurnCapabilities, TurnCapabilities};
+// ── framing a turn the host drives itself ─────────────────────────────────
+//
+// The two shapers a `run_step`-driving host needs to emit `agent.turn.started`
+// and `agent.turn.completed` in the shape `Engine::drive` emits them (#2481).
+// `TurnLane` rides with them because `turn_started_payload` takes one — and
+// obligation 2 already owed it, since `OwnedTurnCapabilities::lane` is an
+// `Option<TurnLane>` a host fills and could not name.
+pub use stella_core::driver::lifecycle::{turn_outcome_payload, turn_started_payload};
 pub use stella_core::estimator::CalibrationMap;
 pub use stella_core::event_sender::{EventSendError, EventSender};
 pub use stella_core::loop_detect::LoopDetectionConfig;
@@ -291,7 +307,7 @@ pub use stella_protocol::{
     AgentEvent, Attachment, AttachmentKind, AttachmentSource, BudgetMode, CompletionMessage,
     CompletionRequestRef, CompletionResult, CompletionUsage, FinishReason, GenerationParams,
     MessageRole, ModelCallRole, Provider, ProviderError, ReasoningEffort, ServiceTier, ToolCall,
-    ToolCallObserver, ToolContract, ToolOutput, ToolResult, ToolSchema, Verbosity,
+    ToolCallObserver, ToolContract, ToolOutput, ToolResult, ToolSchema, TurnLane, Verbosity,
 };
 
 /// Encode a checkpoint for durable storage.

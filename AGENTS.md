@@ -416,12 +416,18 @@ looks at a `#[cfg(windows)]` arm: `ci.yml` runs on `ubuntu-latest` and
 non-unix body in the tree — `rootfd.rs`'s and `durable_write.rs`'s string
 resolvers, and the Job Object half of `exec::GroupKillGuard` (#3550) — was
 code no toolchain here or in CI ever parsed. It runs
-`cargo clippy -p stella-tools -p stella-runtime` on a Windows runner, on the
-paths that reach those two crates — the shipping code, deliberately not
+`cargo clippy -p stella-tools -p stella-runtime -p stella-core` on a Windows
+runner, on the paths that reach those three crates — the shipping code,
+deliberately not
 `--all-targets`, because several `#[cfg(test)]` bodies import
 `std::os::unix::fs::PermissionsExt` unconditionally and would fail the job on
 a fixture rather than on the platform split. Those fixtures are #3497's
-subject. It then **runs** two of them: `stella-runtime`'s `wrapper_socket` and
+subject. `stella-core` joined the list for #5773: it holds no platform arm,
+but a Windows defect lands there as a `std::path` assumption (#5320 was one),
+and it already compiled here as `stella-runtime`'s dependency, so naming it
+costs a lint pass rather than a build. `stella-cli` stays out, as the crate
+most likely to need real work before it compiles there. It then **runs** two
+of them: `stella-runtime`'s `wrapper_socket` and
 `wrapper_transport_limits`, which stopped being `/bin/sh` scripts when #3497
 gave the crate a portable in-tree plugin binary
 (`crates/stella-runtime/tests/fixtures/wrapper-plugin-fixture.rs`). That is the

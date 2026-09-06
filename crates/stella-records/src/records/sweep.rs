@@ -40,6 +40,7 @@ use super::super::ingest::gate::origin_is_untrusted;
 use super::super::ingest::record::{Probe, Record, TruthBasis, Verdict};
 use super::Trust;
 use super::clock;
+use super::trust::decreed_by_a_named_human_at;
 
 /// What `truth.on_expiry` asks for when a claim stops being believed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,21 +153,25 @@ impl Disposition {
 /// file's authority behind it. So three things must hold, and each one closes a
 /// way to fake the other two:
 ///
-/// - **The loader stamped [`Trust::User`].** Every other field here is written
+/// - **The loader stamped [`Trust::User`], and `truth.basis` is a `decree`
+///   with a non-empty `verified_by`.** Every other field here is written
 ///   inside the file being judged. A checkout can set a clean `origin` and a
 ///   named `verified_by` as easily as it sets anything else. That would let
 ///   anyone who can open a pull request arm a command. Where the file was read
 ///   from is the one fact it cannot write, and [`super::registry::load`] stamps
-///   that from the directory. [`super::bridge`] asks the same question before
-///   it lets a record approve its own blocking guard.
+///   that from the directory. What is then being relied on is a person whose
+///   name is on the claim, and a name nobody wrote is not one. Both halves are
+///   [`decreed_by_a_named_human_at`], which [`super::bridge`]'s `self_attested`
+///   asks before it lets a record approve its own blocking guard — one rule,
+///   called twice, so tightening it cannot move one gate and leave the other.
 /// - **The origin is stamped, and is not `imported` or `inferred`.** A record
 ///   with no origin is refused too. It has said nothing about where it came
 ///   from, and saying nothing must not be the permissive answer.
 ///   `origin_is_untrusted` belongs to `super::super::ingest::gate`, so
-///   extraction and the sweep read one rule rather than two copies.
-/// - **`truth.basis` is a `decree` with a non-empty `verified_by`.** What is
-///   being relied on is a person whose name is on the claim. A name nobody
-///   wrote is not one.
+///   extraction and the sweep read one rule rather than two copies. This is
+///   the condition the guard gate does not share: a blocking guard runs
+///   nothing, so an `observed` origin there is only a question of who wrote
+///   the policy.
 ///
 /// The gate runs here as well as at extraction because a record can be edited
 /// by hand afterwards. The file is all the loader sees.
@@ -176,18 +181,13 @@ pub fn honored_probe(record: &Record, trust: Trust) -> Option<&Probe> {
     if !probe.kind.is_gated() {
         return Some(probe);
     }
-    if trust != Trust::User {
+    if !decreed_by_a_named_human_at(record, trust) {
         return None;
     }
     let trusted_origin = record
         .origin
         .is_some_and(|origin| !origin_is_untrusted(origin));
-    let decreed_by_a_human = truth.basis == TruthBasis::Decree
-        && truth
-            .verified_by
-            .as_deref()
-            .is_some_and(|by| !by.is_empty());
-    (trusted_origin && decreed_by_a_human).then_some(probe)
+    trusted_origin.then_some(probe)
 }
 
 /// Whether this record's probe should run now.

@@ -24,6 +24,43 @@
 //! allowed to load: may this record *remove* enforcement another record
 //! established, and may it approve itself for the tool boundary.
 
+use super::super::ingest::record::{Record, TruthBasis};
+
+/// The base rule both self-attestation gates share: the loader stamped
+/// [`Trust::User`], and the record's own claim is a decree with a person's
+/// name on it.
+///
+/// A record's fields cannot establish the authority they claim. `origin`,
+/// `truth.basis` and `verified_by` are all written inside the file being
+/// judged, so a checkout can set them as easily as it sets anything else. The
+/// tier the loader stamps is the one fact the file cannot write, and a decree
+/// only counts when somebody signed it.
+///
+/// Two gates ask this, and each adds one condition of its own:
+///
+/// - `super::bridge`'s `self_attested` adds `origin = "user"`, because a
+///   record approving its own blocking guard must be the user's own record
+///   and not a `system` one.
+/// - `super::sweep`'s `honored_probe` adds a stamped origin that is neither
+///   `imported` nor `inferred`, because a probe runs a command or reaches a
+///   host and mined content must never arm one.
+///
+/// The extra conditions stay with their callers. Moving either one here would
+/// tighten the other gate silently, which is the drift naming the shared half
+/// exists to prevent (#5799).
+pub(crate) fn decreed_by_a_named_human_at(record: &Record, trust: Trust) -> bool {
+    if trust != Trust::User {
+        return false;
+    }
+    record.truth.as_ref().is_some_and(|truth| {
+        truth.basis == TruthBasis::Decree
+            && truth
+                .verified_by
+                .as_deref()
+                .is_some_and(|by| !by.trim().is_empty())
+    })
+}
+
 /// The authority a record was published under.
 ///
 /// Ordered: `Project < User`, so `>=` reads as "at least as trusted as".
