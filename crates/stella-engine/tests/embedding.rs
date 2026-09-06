@@ -556,9 +556,9 @@ mod the_exclusion_is_enforced {
 /// turn, and the facade must let it do that without naming `stella_core::`.
 ///
 /// Every path below is a `stella_engine::` one, so on a tree that does not
-/// re-export the two shapers this file does not compile. That is the witness
-/// (#2481). The assertions pin the shape a locally-driven turn puts on the
-/// bus, so a host copying these payloads cannot drift from it.
+/// re-export the two shapers this file does not compile. That is the witness.
+/// The assertions pin the shape a locally-driven turn puts on the bus, so a
+/// host copying these payloads cannot drift from it.
 #[test]
 fn a_host_can_frame_its_own_turn_through_the_facade_alone() {
     let lane: Option<&stella_engine::TurnLane> = None;

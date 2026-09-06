@@ -47,7 +47,7 @@ use super::super::ingest::record::{Record, TruthBasis};
 ///
 /// The extra conditions stay with their callers. Moving either one here would
 /// tighten the other gate silently, which is the drift naming the shared half
-/// exists to prevent (#5799).
+/// exists to prevent.
 pub(crate) fn decreed_by_a_named_human_at(record: &Record, trust: Trust) -> bool {
     if trust != Trust::User {
         return false;

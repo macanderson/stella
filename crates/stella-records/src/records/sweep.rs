@@ -159,19 +159,19 @@ impl Disposition {
 ///   named `verified_by` as easily as it sets anything else. That would let
 ///   anyone who can open a pull request arm a command. Where the file was read
 ///   from is the one fact it cannot write, and [`super::registry::load`] stamps
-///   that from the directory. What is then being relied on is a person whose
-///   name is on the claim, and a name nobody wrote is not one. Both halves are
-///   [`decreed_by_a_named_human_at`], which [`super::bridge`]'s `self_attested`
-///   asks before it lets a record approve its own blocking guard — one rule,
-///   called twice, so tightening it cannot move one gate and leave the other.
+///   that from the directory. What is relied on then is a person whose name is
+///   on the claim. A name nobody wrote is not one.
+///   [`decreed_by_a_named_human_at`] holds both conditions.
+///   [`super::bridge`]'s `self_attested` asks it too, before it lets a record
+///   approve its own blocking guard. One rule, called twice, so tightening it
+///   moves both gates.
 /// - **The origin is stamped, and is not `imported` or `inferred`.** A record
 ///   with no origin is refused too. It has said nothing about where it came
 ///   from, and saying nothing must not be the permissive answer.
 ///   `origin_is_untrusted` belongs to `super::super::ingest::gate`, so
-///   extraction and the sweep read one rule rather than two copies. This is
-///   the condition the guard gate does not share: a blocking guard runs
-///   nothing, so an `observed` origin there is only a question of who wrote
-///   the policy.
+///   extraction and the sweep read one rule rather than two copies. The guard
+///   gate does not share this one. A blocking guard runs nothing, so an
+///   `observed` origin there is only a question of who wrote the policy.
 ///
 /// The gate runs here as well as at extraction because a record can be edited
 /// by hand afterwards. The file is all the loader sees.

@@ -14,12 +14,12 @@ name: windows-check
 # owns `rootfd`, `durable_write` and `exec`; `stella-runtime`'s two wrapper
 # transports arm that guard — on a real MSVC runner.
 #
-# `stella-core` joins them (#5773). It carries no `#[cfg(windows)]` arm, and by
-# invariant 2 it never will carry one that does I/O — but a Windows defect can
-# still land there as a `std::path` assumption, which is what #5320 was, and it
-# is cheap to keep green because it has no I/O to port. It already compiled
-# here as `stella-runtime`'s dependency; naming it is what puts it under
-# `-D warnings` instead of plain rustc warnings.
+# `stella-core` is here for a different reason. It carries no
+# `#[cfg(windows)]` arm, and by invariant 2 it never will carry one that does
+# I/O — but a Windows defect still lands there as a `std::path` assumption, and
+# a skill path separator was one. It has no I/O to port, so it is cheap to keep
+# green. It already compiled here as `stella-runtime`'s dependency; naming it
+# is what puts it under `-D warnings` instead of plain rustc warnings.
 #
 # `stella-cli` stays out. It is the crate most likely to hold a real platform
 # assumption, so widening to it is work with its own PR rather than a name

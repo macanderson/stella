@@ -43,16 +43,15 @@ pub struct Frontmatter {
     /// The top-level keys those nested children sat under, first parent
     /// first.
     ///
-    /// A caller that must decide per field needs the parent, not the child:
-    /// ADR 0025 refuses a nested value only where reading it wrong would
-    /// widen what the file may do, and `tools:` is such a key while
-    /// `description:` is not. `nested_keys` alone cannot tell those apart, so
-    /// `stella-cli`'s `agent_from_file` used to refuse an agent for nesting
-    /// under any key at all.
+    /// A caller that decides per field needs the parent, not the child. ADR
+    /// 0025 refuses a nested value where reading it wrong would widen what the
+    /// file may do. `tools:` is such a key. `description:` is not.
+    /// `nested_keys` cannot tell them apart, so a caller reading it alone
+    /// refuses an agent for nesting under any key at all.
     ///
-    /// A set of parents, not pairs. Every caller so far asks whether one
-    /// named key was nested, and a pair list would answer that no better
-    /// while making the common `is_empty` read longer.
+    /// A set of parents, not pairs. Every caller so far asks whether one named
+    /// key was nested. Pairs answer that no better, and they make the common
+    /// `is_empty` read longer.
     pub nested_parents: Vec<String>,
     pub body: String,
 }

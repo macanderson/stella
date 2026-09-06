@@ -1068,10 +1068,10 @@ mod tests {
     /// A bad `description:` costs a label, since the first line of the body
     /// stands in. A bad `tools:` costs the whole registry. Refusing the file
     /// for the first would take an agent away over a key nobody reads.
-    /// The false stop the parent-key record removes. A bare `tools:` means
-    /// every tool, and nesting under `description:` widens nothing — but the
-    /// refusal used to read "the toolbelt is empty AND something is nested"
-    /// and take the agent away.
+    /// The false stop the parent key removes. A bare `tools:` means every
+    /// tool, and nesting under `description:` widens nothing, so the file
+    /// loads. Refusing on "the toolbelt is empty and something is nested"
+    /// took the agent away over a key nobody reads.
     #[test]
     fn a_bare_toolbelt_beside_an_unrelated_nesting_still_loads() {
         let raw = "---\nname: reviewer\ntools:\ndescription:\n  short: s\n  long: l\n---\nReview.";

@@ -116,9 +116,9 @@
 //!
 //! # What earns a re-export: the closure rule
 //!
-//! This is the crate's whole editorial policy, and `README.md` states it in
-//! the same words. A narrower rule in one of the two places is what leaves a
-//! builder reachable through the facade and uncallable through it.
+//! The crate's editorial policy, stated in `README.md` in the same words. A
+//! narrower rule in one place leaves a builder reachable through the facade
+//! and uncallable through it.
 //!
 //! **The rule.** A host must be able to write, naming nothing but
 //! `stella_engine::` paths:
@@ -130,25 +130,17 @@
 //!
 //! Closure is transitive through those three obligations and stops where they
 //! stop. [`GenerationParams`] is re-exported because a host fills that config
-//! field, so [`Verbosity`] and [`ServiceTier`] come with it; [`AgentEvent`] is
-//! re-exported because a host receives one, and its payload types are not,
-//! because a host forwards or serializes an event rather than constructing
-//! one. A facade closed over mere reachability would be `stella-protocol`
-//! with extra steps.
+//! field, so [`Verbosity`] and [`ServiceTier`] come with it. [`AgentEvent`] is
+//! re-exported because a host receives one; its payload types are not, because
+//! a host forwards an event rather than building one. Closing over mere
+//! reachability would make this `stella-protocol` with extra steps.
 //!
-//! Most of the block below is a coherence property of what is *already*
-//! exported: each entry makes an already-reachable capability writable rather
-//! than adding one.
-//!
-//! [`turn_started_payload`] and [`turn_outcome_payload`] are the exception,
-//! and they earn their place under obligation 3 read at the bus rather than
-//! at a return value. A host that drives [`Engine::run_step`] owns the turn
-//! framing its loop does not carry, and must emit `agent.turn.started` and
-//! `agent.turn.completed` in the engine's own shape — otherwise an extension
-//! watching the bus can tell a host-driven turn from a local one, which is
-//! the drift the shared `run_step` exists to prevent. That is a contract this
-//! facade owes, so the two shapers are here instead of costing such a host a
-//! direct `stella-core` dependency (#2481).
+//! Most of the block below makes an already-reachable capability writable
+//! rather than adding one. [`turn_started_payload`] and
+//! [`turn_outcome_payload`] are the exception: obligation 3, read at the bus.
+//! A host driving [`Engine::run_step`] frames its own turn, and must emit
+//! both boundaries in the engine's shape or an extension can tell its turn
+//! from a local one.
 //!
 //! ## The hook plane is the wrong layer, by design
 //!
@@ -232,10 +224,10 @@ pub use stella_core::driver::capabilities::{OwnedTurnCapabilities, TurnCapabilit
 // ── framing a turn the host drives itself ─────────────────────────────────
 //
 // The two shapers a `run_step`-driving host needs to emit `agent.turn.started`
-// and `agent.turn.completed` in the shape `Engine::drive` emits them (#2481).
+// and `agent.turn.completed` in the shape `Engine::drive` emits them.
 // `TurnLane` rides with them because `turn_started_payload` takes one — and
 // obligation 2 already owed it, since `OwnedTurnCapabilities::lane` is an
-// `Option<TurnLane>` a host fills and could not name.
+// `Option<TurnLane>` a host fills and cannot otherwise name.
 pub use stella_core::driver::lifecycle::{turn_outcome_payload, turn_started_payload};
 pub use stella_core::estimator::CalibrationMap;
 pub use stella_core::event_sender::{EventSendError, EventSender};

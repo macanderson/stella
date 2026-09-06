@@ -1,11 +1,10 @@
-//! Whether this workspace has steering the loop would lose by running
-//! untrusted.
+//! What steering this workspace would lose by running untrusted.
 //!
-//! Split out of `work.rs` so the counting rule has room to be precise. The
-//! question is narrow: does `<root>/.stella/rules` hold a record that would
-//! reach a turn if the project were trusted? A `.toml` file sitting there is
-//! not the answer, because two kinds of file live beside the records and
-//! neither ever steers anything.
+//! One question: does `<root>/.stella/rules` hold a record that would reach a
+//! turn if the project were trusted? A `.toml` file there is not the answer.
+//! Two kinds of file sit beside the records. Neither one ever steers.
+//!
+//! Split out of `work.rs`, which is close to the file-size ceiling.
 
 use std::path::Path;
 
@@ -13,30 +12,27 @@ use crate::rules::RESERVED_RULE_FILENAMES;
 
 /// Refuse to work an issue with the workspace's steering switched off.
 ///
-/// **A loop-driven turn must get exactly the steering a person-driven turn
-/// gets.** The whole design says the loop's behaviour comes from context
-/// records — how this repository wants code written, what to prefer, what to
-/// harden — and none of that reaches a turn when project steering is untrusted.
+/// **A loop turn gets the steering a person's turn gets.** The loop takes its
+/// behaviour from context records. They say how this repository wants code
+/// written. None of them reach a turn while project steering is untrusted.
 ///
-/// The trap is that it fails *silently and successfully*: the turn runs, writes
-/// plausible code, commits, and the pull request looks like every other one. A
-/// loop working unsteered is not a degraded loop, it is a loop doing work under
-/// nobody's standards, and it is worse than one that did not run — so this
-/// refuses rather than warns.
+/// The trap is that it fails quietly, and looks like success. The turn runs.
+/// It writes plausible code. It commits. The pull request reads like every
+/// other one. Work under nobody's standards is worse than no work at all, so
+/// this refuses instead of warning.
 ///
-/// It refuses only when there is something to lose: a workspace with nothing
-/// that would steer has no steering to miss, and demanding a trust flag from it
-/// would be ceremony.
+/// It refuses only when there is something to lose. A workspace with nothing
+/// that would steer has no steering to miss. Asking that one for a trust flag
+/// is ceremony.
 pub(in crate::self_driving_cmd) fn refuse_if_unsteered(root: &Path) -> Result<(), String> {
     refuse_unless_trusted(root, crate::settings::project_code_execution_trusted())
 }
 
 /// The rule of [`refuse_if_unsteered`], with the process it reads taken out.
 ///
-/// Separated because `project_code_execution_trusted` answers from the process
-/// environment, which this test suite shares with every other test running
-/// beside it. A pure function takes the answer as an argument, so both
-/// directions of the rule can be pinned without a race.
+/// `project_code_execution_trusted` answers from the process environment. This
+/// test suite shares that with every test beside it. A pure function takes the
+/// answer as an argument, so both directions pin without a race.
 fn refuse_unless_trusted(root: &Path, trusted: bool) -> Result<(), String> {
     let records = root.join(".stella").join("rules");
     if trusted || !holds_a_steering_record(&records) {
@@ -56,21 +52,20 @@ fn refuse_unless_trusted(root: &Path, trusted: bool) -> Result<(), String> {
     ))
 }
 
-/// Whether `dir` holds at least one record that trust would let steer a turn.
+/// Whether `dir` holds a record that trust would let steer a turn.
 ///
-/// Counting `*.toml` files answered a different question, and stopped the loop
-/// over two kinds of file that steer nothing either way (#5712):
+/// Counting `*.toml` files asks a different question. Two kinds of file there
+/// steer nothing:
 ///
-/// - `governance.toml` and anything else in [`RESERVED_RULE_FILENAMES`], which
-///   the record loader never parses as a record at all.
+/// - `governance.toml`, and every other name in [`RESERVED_RULE_FILENAMES`].
+///   The record loader never reads one as a record.
 /// - A record whose `status` is `archived` or `retracted`. The registry's
-///   `blocking_reason` refuses to let those steer, so a workspace that has
-///   retired its records has nothing left to lose.
+///   `blocking_reason` refuses to let those steer. A workspace that has retired
+///   its records has nothing left to lose.
 ///
-/// Reads and parses the files rather than taking the session's registry:
+/// This reads and parses the files. It does not take the session's registry:
 /// `load_registry` runs truth probes and writes a sweep cache, which would put
-/// filesystem probes in front of every work unit. Nothing here creates a
-/// directory.
+/// file probes in front of every work unit. Nothing here creates a directory.
 fn holds_a_steering_record(dir: &Path) -> bool {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return false;
@@ -96,9 +91,9 @@ fn holds_a_steering_record(dir: &Path) -> bool {
     })
 }
 
-/// The `status` of each `[[record]]` in one file, and nothing else. Reading the
-/// full record type here would make a cheap pre-flight check a second parser to
-/// keep in step with `stella_records`.
+/// The `status` of each `[[record]]` in one file, and nothing else. Reading
+/// the whole record type here would make this cheap check a second parser, to
+/// be kept in step with `stella_records`.
 #[derive(serde::Deserialize)]
 struct RecordFileStatuses {
     #[serde(default)]
@@ -110,10 +105,10 @@ struct RecordStatusOnly {
     status: Option<String>,
 }
 
-/// Whether one record file's contents hold a record that could steer.
+/// Whether one record file holds a record that could steer.
 ///
-/// A file that will not parse counts as steering. It is a record the loader
-/// will report on, and refusing is the safe direction for an unknown.
+/// A file that will not parse counts as steering. The loader will report on
+/// it, and refusing is the safe answer for an unknown.
 fn file_holds_a_steering_record(text: &str) -> bool {
     let Ok(parsed) = toml::from_str::<RecordFileStatuses>(text) else {
         return true;
@@ -130,8 +125,7 @@ fn file_holds_a_steering_record(text: &str) -> bool {
 mod tests {
     use super::*;
 
-    /// One record file holding one record, the shape `.stella/rules/*.toml`
-    /// actually carries.
+    /// One record file holding one record, the shape a real one carries.
     fn record_with_status(status: &str) -> String {
         format!(
             "schema = \"context-record/v0.1\"\n\
@@ -154,17 +148,16 @@ mod tests {
         rules
     }
 
-    /// **Witness.** The loop refuses to work an issue when the workspace's
-    /// records would not reach the turn, and runs when they would.
+    /// **Witness.** The loop refuses when the records would not reach the
+    /// turn, and runs when they would.
     ///
-    /// The failure this guards is silent. An untrusted checkout loads none of
-    /// its records, so the turn writes plausible code under nobody's standards
-    /// and the pull request looks like every other one. Both directions are
-    /// asserted, because a check that only ever refused would be satisfied by
-    /// a function that always refuses.
+    /// The failure it guards is silent. An untrusted checkout loads none of
+    /// its records. The turn then writes plausible code under nobody's
+    /// standards. Both directions are asserted. A check that only ever refused
+    /// would pass on a function that always refuses.
     ///
-    /// A workspace with no records is the third cell: there is no steering to
-    /// miss, so asking it for a trust flag would be ceremony.
+    /// A workspace with no records is the third cell. It has no steering to
+    /// miss, so a trust flag would be ceremony.
     #[test]
     fn the_loop_will_not_work_an_issue_that_its_records_cannot_steer() {
         let bare = tempfile::tempdir().expect("workspace");
@@ -189,14 +182,14 @@ mod tests {
         );
     }
 
-    /// **Witness.** Two kinds of `.toml` in the rules directory steer nothing,
-    /// and neither may stop the loop (#5712).
+    /// **Witness.** Two kinds of `.toml` steer nothing, and neither may stop
+    /// the loop.
     ///
-    /// Both stopped it before the count read the files. `governance.toml` is a
-    /// reserved name the record loader never parses, and an archived or
-    /// retracted record is one the registry already refuses to let steer. The
-    /// operator was told to set a trust flag so records could steer the loop,
-    /// in a workspace where no record would steer it either way.
+    /// `governance.toml` is a reserved name. The loader never parses it. An
+    /// archived or retracted record is one the registry refuses to let steer.
+    /// A count that reads only file extensions stops on both. It then tells
+    /// the operator to set a trust flag, so that records can steer a loop no
+    /// record would steer either way.
     #[test]
     fn a_file_that_would_never_steer_does_not_stop_the_loop() {
         let governance_only = tempfile::tempdir().expect("workspace");
@@ -243,8 +236,8 @@ mod tests {
     }
 
     /// A record with no `status` key is active. A file the parser cannot read
-    /// takes the refusing answer, and a file declaring no record at all
-    /// declares no steering.
+    /// takes the refusing answer. A file with no record in it declares no
+    /// steering.
     #[test]
     fn an_unset_status_steers_and_an_unparseable_file_refuses() {
         let unset = tempfile::tempdir().expect("workspace");

@@ -318,11 +318,10 @@ mod tests {
 
     /// The shared base case both gates read, asked of both of them at once.
     ///
-    /// `verified_by = "   "` is a name nobody wrote. Before the rule was named
-    /// once, the guard gate trimmed and the probe gate did not, so this exact
-    /// record could not approve its own blocking guard and could still arm a
-    /// command. Whichever way that pair is later tightened, both gates move —
-    /// which is what stops the two copies drifting again (#5799).
+    /// `verified_by = "   "` is a name nobody wrote. Two copies of one rule
+    /// drift: one trimmed the name and one did not, so this exact record
+    /// could not approve its own blocking guard and could still arm a
+    /// command. Whichever way the pair is tightened, both gates move.
     #[test]
     fn a_blank_verifier_refuses_at_both_self_attestation_gates() {
         let mut record = user_decree_with_guard();

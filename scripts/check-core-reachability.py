@@ -184,10 +184,10 @@ def retired_because(src: Path, name: str) -> str:
     A name drops out of the unreached set for two reasons, and they are
     opposites: the engine started naming the module, or the module is gone.
     `module_file` answers which, so a run reports the one that happened
-    instead of asserting the first in both cases (#6174).
+    instead of asserting the first in both cases.
     """
     if module_file(src, name) is None:
-        return "evicted, no longer in stella-core"
+        return "evicted, gone from stella-core"
     return "the engine reaches it now"
 
 

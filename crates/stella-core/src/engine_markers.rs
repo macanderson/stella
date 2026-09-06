@@ -23,7 +23,7 @@
 //! absent entirely, and the recall marker was described but never spelled. A
 //! prose list has no failure mode; a table does.
 //!
-//! # The tie, in both directions
+//! # The tie, in every direction
 //!
 //! The entries are the marker constants themselves, by path — not copies — so
 //! the table cannot drift from what the engine actually writes: editing a
@@ -34,6 +34,12 @@
 //! the same change that introduces it** — that is what makes the prompt fail
 //! by name until it teaches the new marker, instead of silently narrowing the
 //! model's injection test.
+//!
+//! That sentence is a check rather than an instruction:
+//! `the_table_holds_every_marker_shaped_constant` scans the sources that own
+//! an entry for marker-shaped constants and fails, by name, on one that opens
+//! a bracketed tag and is not in the table. An instruction in a doc comment is
+//! the convention-only coupling this repository removed for prompt contracts.
 //!
 //! This module is a leaf: two `pub` tables and one predicate over them,
 //! declared outside `driver.rs` because that file is closed to growth
@@ -204,6 +210,178 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Every source file that owns an [`ENGINE_MARKERS`] entry today.
+    ///
+    /// A file that stops owning one fails the scan below by name rather than
+    /// dropping out of it silently, which is what makes this list safe to keep
+    /// by hand.
+    const MARKER_SOURCES: &[(&str, &str)] = &[
+        ("driver.rs", include_str!("driver.rs")),
+        ("driver/truncation.rs", include_str!("driver/truncation.rs")),
+        ("driver/user_hooks.rs", include_str!("driver/user_hooks.rs")),
+        (
+            "driver/deadline_notice.rs",
+            include_str!("driver/deadline_notice.rs"),
+        ),
+        ("receipts.rs", include_str!("receipts.rs")),
+        ("restore.rs", include_str!("restore.rs")),
+        ("waiting.rs", include_str!("waiting.rs")),
+        ("skill_invocation.rs", include_str!("skill_invocation.rs")),
+        (
+            "compaction/read_digest.rs",
+            include_str!("compaction/read_digest.rs"),
+        ),
+    ];
+
+    /// Marker-shaped constants that are not [`ENGINE_MARKERS`] entries, with
+    /// the reason each one is out.
+    ///
+    /// The table is for `User`-role message *openings*. A constant that marks
+    /// something else is not a candidate, and saying so here is what stops the
+    /// scan's rule accreting one.
+    const NOT_A_USER_ROLE_OPENING: &[(&str, &str)] = &[(
+        "FILE_CAP_MARKER",
+        "marks a truncation point inside restored file content, not the \
+         opening of a message",
+    )];
+
+    /// Whether a constant's name is marker-shaped.
+    ///
+    /// `REASONING_ONLY_PARTIAL` is the shape this rule must not admit: it is a
+    /// bracketed assistant-role stand-in, and its name carries neither token.
+    fn marker_shaped(name: &str) -> bool {
+        name.contains("MARKER") || name.ends_with("_PREFIX")
+    }
+
+    /// The string literal a `const NAME: &str = "…"` declaration opens with,
+    /// or `None` when the declaration has no literal to read.
+    ///
+    /// Reads past the end of the line, because a long literal is written on
+    /// the next one.
+    fn first_literal(after_equals: &str) -> Option<String> {
+        let open = after_equals.find('"')?;
+        let rest = &after_equals[open + 1..];
+        let mut literal = String::new();
+        let mut chars = rest.chars();
+        while let Some(c) = chars.next() {
+            match c {
+                '\\' => {
+                    literal.push(c);
+                    literal.push(chars.next()?);
+                }
+                '"' => return Some(literal),
+                _ => literal.push(c),
+            }
+        }
+        None
+    }
+
+    /// Every marker-shaped constant one source file declares, as
+    /// `(name, literal)`.
+    fn marker_constants(source: &str) -> Vec<(String, String)> {
+        let mut found = Vec::new();
+        for (offset, _) in source.match_indices("const ") {
+            let rest = &source[offset + "const ".len()..];
+            let Some(colon) = rest.find(':') else {
+                continue;
+            };
+            let name = rest[..colon].trim();
+            if name.is_empty() || !marker_shaped(name) {
+                continue;
+            }
+            let after_colon = &rest[colon + 1..];
+            // Only `&str` constants; a `&[&str]` table is not a marker.
+            if !after_colon.trim_start().starts_with("&str") {
+                continue;
+            }
+            let Some(equals) = after_colon.find('=') else {
+                continue;
+            };
+            if let Some(literal) = first_literal(&after_colon[equals + 1..]) {
+                found.push((name.to_string(), literal));
+            }
+        }
+        found
+    }
+
+    /// **Witness.** A marker-shaped constant that opens a bracketed tag and
+    /// never joins [`ENGINE_MARKERS`] fails here, by name.
+    ///
+    /// This is the third coupling direction. Table→prompt is enforced by
+    /// `stella-cli`'s prompt parity suite and table→classifier by
+    /// `receipts::tests`; nothing else asks whether the *constants* are all in
+    /// the table, and a doc comment saying to add one is not a check.
+    ///
+    /// Add `pub(crate) const FAKE_STEER_PREFIX: &str = "[fake steer";` to
+    /// `driver/truncation.rs` and this fails naming it, until it joins the
+    /// table — whereupon the receipts and prompt couplings fail in turn, which
+    /// is the designed cascade.
+    #[test]
+    fn the_table_holds_every_marker_shaped_constant() {
+        let mut scanned: Vec<(&str, String, String)> = Vec::new();
+        for (path, source) in MARKER_SOURCES {
+            let found = marker_constants(source);
+            assert!(
+                !found.is_empty(),
+                "{path} declares no marker-shaped constant, so the scan reads \
+                 it for nothing — the marker moved and this list is stale"
+            );
+            for (name, literal) in found {
+                scanned.push((path, name, literal));
+            }
+        }
+
+        for (path, name, literal) in &scanned {
+            if NOT_A_USER_ROLE_OPENING
+                .iter()
+                .any(|(excluded, _)| excluded == name)
+            {
+                continue;
+            }
+            if !literal.starts_with('[') {
+                continue;
+            }
+            assert!(
+                ENGINE_MARKERS.contains(&literal.as_str()),
+                "{path}'s {name} opens a bracketed User-role marker that \
+                 ENGINE_MARKERS does not list. Add it to the table in this \
+                 change, or record it in NOT_A_USER_ROLE_OPENING with the \
+                 reason it is not one."
+            );
+        }
+
+        for marker in ENGINE_MARKERS {
+            assert!(
+                scanned.iter().any(|(_, _, literal)| literal == marker),
+                "no scanned source declares {marker:?}, so MARKER_SOURCES no \
+                 longer covers every file that owns a table entry"
+            );
+        }
+    }
+
+    /// Anti-vacuity for the scan itself: a parser that recognised nothing
+    /// would pass every assertion above.
+    #[test]
+    fn the_marker_scan_reads_the_shapes_it_claims_to() {
+        let sample = "pub(crate) const A_MARKER_PREFIX: &str = \"[a marker\";\n\
+                      const PLAIN: &str = \"[not marker shaped\";\n\
+                      const B_MARKER: &str =\n    \"[wrapped onto the next line\";\n\
+                      const A_TABLE: &[&str] = &[\"[not a single marker\"];\n";
+        let found = marker_constants(sample);
+        assert_eq!(
+            found,
+            vec![
+                ("A_MARKER_PREFIX".to_string(), "[a marker".to_string()),
+                (
+                    "B_MARKER".to_string(),
+                    "[wrapped onto the next line".to_string()
+                ),
+            ],
+            "the scan must read a wrapped literal, skip a name that is not \
+             marker-shaped, and skip a table of them"
+        );
     }
 
     /// A marked message is never also a nudge, in either direction: the two

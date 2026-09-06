@@ -38,7 +38,7 @@
 //! (#2452). Nothing in this workspace calls these from outside `driver` today.
 //! They stay public for the host that frames its own turn, which is a supported
 //! shape rather than a hypothetical one, and `stella-engine` re-exports both
-//! so such a host reaches them through the facade (#2481).
+//! so such a host reaches them through the facade.
 
 use super::{StepOutcome, TurnOutcome};
 
