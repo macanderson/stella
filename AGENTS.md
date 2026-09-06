@@ -19,9 +19,8 @@ workspace at all: the only verification path left is an **installed
 verification plugin** — `stella run --pipeline <plugin-id>` hands the turn to
 that plugin, whose evidence is self-reported. Stella evaluates that evidence
 against the plugin's declared rule and never re-runs or re-checks it itself
-(#3511; `doc:pipeline-as-plugins` is the extraction plan, and Oxagen's Vera is
-the reference verification plugin, private and not shipped in this
-repository).
+(#3511; `doc:pipeline-as-plugins` is the extraction plan; `plugins/stella-witness`
+ships here as the open reference plugin, and Vera is the paid superset).
 Neither path runs by default — a plain `stella run` is the raw step-loop
 with no verification stage over it. It is the open-source reference
 implementation of
@@ -183,7 +182,8 @@ leaving `main` red for everyone (#1883).
 
 CI enforces the same steps split across four workflows:
 `/.github/workflows/ci.yml`'s required job runs everything except `invariants`,
-`doc-links`, `prose`, `hue-separation` and `transcript-surfaces`, and adds a
+`doc-links`, `prose`, `line-citations`, `hue-separation` and
+`transcript-surfaces`, and adds a
 `Cargo.lock` sync check, `stella context
 validate`, a release smoke build (thin LTO), and the deleted-test guard
 (`scripts/check-deleted-tests.sh`);
@@ -201,15 +201,16 @@ of the other two (#1439) — and `doc-warnings-schema` beside it, because
 `ci.yml`'s `cargo doc --workspace` runs with default features and every module
 that describes the wire format sits behind an off-by-default `schema` one, so
 rustdoc compiled none of them anywhere (#4584); this workflow already builds
-those three crates with the feature on; and `guard-self-tests.yml` runs the three steps
-ci.yml's job cannot — it is skipped for a prose-only diff, which is the diff
-`prose` exists to judge — alongside the hermetic suites that prove a guard can
-still fail (#3820, #4427). Which workflow runs a step is a judgement; *that*
-one does is checked, by `gate-parity` against every `run:` in
-`.github/workflows/`. That check stops at "does some workflow run it" — it
+those three crates with the feature on; and `guard-self-tests.yml` runs the
+gate steps ci.yml's job cannot — `prose`, `line-citations`, `hue-separation`
+and `transcript-surfaces`; it is skipped for a prose-only diff, which is the
+diff `prose` exists to judge — alongside the hermetic suites that prove a
+guard can still fail (#3820, #4427). Which workflow runs a step is a
+judgement; *that* one does is checked, by `gate-parity` against every `run:`
+in `.github/workflows/`. That check stops at "does some workflow run it" — it
 says nothing about which files reach it, so a `paths:` filter narrowing
 `guard-self-tests.yml`'s `pull_request:` trigger to `docs/**` would still read
-as green, and the three steps would run nowhere for a scripts-only pull
+as green, and those gate steps would run nowhere for a scripts-only pull
 request. Nothing held that absence in place except a comment.
 `guard-trigger-coverage` reads the trigger back: each watched guard must run,
 in some workflow, from a job with no `paths:`/`paths-ignore:` filter above it
@@ -976,9 +977,10 @@ described has been deleted from this workspace (#3865, the last slice of
 `docs/spec/pipeline-as-plugins.md` §7's extraction plan; see this branch's
 history for the deletion itself). It is kept here, rewritten to the
 post-removal state, because the *shape* it names — a demand-driven witness
-stage, a flip oracle, a terminal verify ladder — is exactly what
-`doc:pipeline-as-plugins` §8 ports into Vera, Oxagen's private reference
-verification plugin, rather than reinventing.** Host-run verification is no
+stage, a flip oracle, a terminal verify ladder — is what
+`doc:pipeline-as-plugins` §8 ports into `plugins/stella-witness`, the open
+plugin shipped here, rather than reinventing. Vera is the paid superset
+built on it.** Host-run verification is no
 longer something Stella ships in-tree: `stella run --pipeline classic` is
 refused outright (`crates/stella-cli/src/wrapper_plugin.rs`'s
 `PipelineChoice::resolve`), and the three verification flags split two ways
@@ -1013,9 +1015,10 @@ does not, and that is decided by running it. Everything downstream of a
 plugin's evidence is meant to stay deterministic on the plugin's own side:
 `ladder_decision`'s terminality — no arm escalates to a model — was the
 built-in pipeline's own invariant (`LadderDecision`'s doc comment, historical
-now that the enum shipped in the deleted crate) and is exactly what
-`doc:pipeline-as-plugins` §8 asks Vera to preserve as it ports the logic
-rather than copies it. This file deliberately does not restate a variant
+now that the enum shipped in the deleted crate) and is what
+`doc:pipeline-as-plugins` §8 asks `plugins/stella-witness`, and Vera's paid
+superset, to preserve as it ports the logic rather than copies it. This file
+deliberately does not restate a variant
 count for a type it no longer hosts, because a number copied into a second
 file drifts — that happened once already while `LadderDecision` still lived
 here (#3473) and is the reason to name the risk rather than repeat the
@@ -1113,7 +1116,7 @@ the files you must plan around (see below).
 | Touch shared types crossing a crate boundary | [`stella-protocol`](crates/stella-protocol/README.md) | **Zero logic, zero I/O — types only.** |
 | Resolve where `~/.stella` is — home dir, stella home, the user-tier data dir | [`stella-home`](crates/stella-home/README.md) | **A leaf with NO dependencies at all**, which is what lets `stella-store`, `stella-observatory`, `stella-cli`, `stella-model` and `stella-tools` all share it (the observatory must not link the store). Every resolver has a pure `resolve_*` half that reads no environment. |
 | Parse/validate a plugin's manifest, or change the wrapper socket's **wire contract** — the request/response types a non-Rust plugin speaks (`before_turn`/`after_turn`, `EvidenceSet`, `VerdictRule`) | [`stella-plugin`](crates/stella-plugin/README.md) | **Near-leaf: `stella-protocol` is its only workspace dependency** (#3245 slice A; #3310) — pure parsing/validation over borrowed text, plus `src/wire.rs`'s serialized shapes (#3380, `doc:wrapper-socket` §2). The engine never learns plugins exist: the host binds these grants to the engine's gates, and `stella-core` must never depend on it. The one edge it does take is what lets it share `HookEvent` with the engine instead of mirroring it by hand. |
-| Change the wrapper socket's **trait** — `TurnWrapper`, `admissible`, `judge`/`again`, the in-process/subprocess transports | [`stella-runtime`](crates/stella-runtime/README.md) | `src/wrapper/` (#3380, landed #3479, `doc:wrapper-socket`). Lives one layer above `stella-core` because `before_turn`/`after_turn` do I/O, which invariant 2 bans in the engine; consumes `stella-plugin`'s wire types rather than redefining them. No live turn dispatches through it yet — see the crate's own README. |
+| Change the wrapper socket's **trait** — `TurnWrapper`, `admissible`, `judge`/`again`, the in-process/subprocess transports | [`stella-runtime`](crates/stella-runtime/README.md) | `src/wrapper/` (#3380, landed #3479, `doc:wrapper-socket`). Lives one layer above `stella-core` because `before_turn`/`after_turn` do I/O, which invariant 2 bans in the engine; consumes `stella-plugin`'s wire types rather than redefining them. It is reached four ways now: a `--pipeline` run, a goal round, a fleet attempt, and an auto-resolved plugin — see the crate's own README. |
 | Change how a plugin is **installed, listed, removed, or trusted** — `.stella/plugins/` and `~/.stella/plugins/` resolution, install consent, the project-tier trust gate | [`stella-cli`](crates/stella-cli/README.md) | `src/plugin_cmd.rs` + `src/plugin_cmd/{roster,process}.rs` — renders `stella_plugin::consent_text` before anything executes, gates a cloned repository's plugins on `project_code_execution_trusted()` (#3509), and is the one place `LoopGrant::permits_hook`/`permits_point` get consulted against an installed manifest. |
 | Decide whether a human is present to see/answer a mid-run prompt | [`stella-tty`](crates/stella-tty/README.md) | **A leaf with NO dependencies at all** (#3036) — one pure `human_can_answer(interactive_output, stdin_is_terminal, prompt_is_visible)`, which is what lets `stella-cli`'s approval prompts and `stella-model`'s credential prompt share one derivation without `stella-model` depending on `stella-cli` (invariant 1). |
 | Emit a diagnostic — a record explaining *why* the program did something | [`stella-diag`](crates/stella-diag/README.md) | **A leaf: `serde` only, so anything may depend on it.** Field values cannot hold a `String`, a `Path`, or model output — that is a compile error, not a review question. Design: [`docs/spec/diagnostics.md`](docs/spec/diagnostics.md). |

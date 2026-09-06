@@ -6,8 +6,9 @@ is the only door this workspace ships today, and verification is opt-in only
 through an installed wrapper plugin (`stella run --pipeline <plugin-id>`).
 No proposal below executes against this workspace. The design shape — flip
 oracle, evidence ladder, witness authoring, revise/evidence-demand — is what
-a verification plugin ports rather than reinvents (Oxagen's Vera is the
-private reference one, `doc:pipeline-as-plugins` §8), and this roadmap stays
+a verification plugin ports rather than reinvents (`plugins/stella-witness`
+is the open reference one, `doc:pipeline-as-plugins` §8; Vera is the paid
+superset), and this roadmap stays
 as the record of that design and which parts of it were built before the
 extraction.
 

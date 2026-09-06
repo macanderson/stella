@@ -145,8 +145,9 @@ CI enforces the same steps, split across `ci.yml` (plus a release smoke build);
 and `*.md` paths that `ci.yml` deliberately skips; `wire-schema.yml`, for the
 same reason in the other direction — a PR that only hand-edits a generated
 schema under `docs/wire/` starts neither of the others (#1439); and
-`guard-self-tests.yml`, which runs `prose`, `hue-separation` and
-`transcript-surfaces` — `ci.yml`'s job skips itself for a prose-only diff,
+`guard-self-tests.yml`, which runs `prose`, `line-citations`,
+`hue-separation` and `transcript-surfaces` — `ci.yml`'s job skips itself for
+a prose-only diff,
 which is the diff `prose` is about — beside the hermetic suites that prove a
 guard can still fail (#3820, #4427). `gate-parity` now also fails when a gate
 step is named in the `Makefile` and run by no workflow at all.
