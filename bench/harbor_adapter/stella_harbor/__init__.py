@@ -106,7 +106,7 @@ from .lineage import (
     seed_lineage,
 )
 from .locate import locate_binary as _locate_binary
-from .loop_mode import NO_PIPELINE_ENV, loop_argv, loop_mode_name
+from .loop_mode import NO_PIPELINE_ENV, PIPELINE_ENV, loop_argv, loop_mode_name
 from .loop_mode import is_truthy as _is_truthy
 from .portability import raise_for_loader_failure
 from .posture import (
@@ -280,8 +280,8 @@ _HOST_ONLY_STELLA_ENV = frozenset(
         # hand-kept second copy of this list is how a new selector (#1211 §6.2,
         # §6.7, §6.8; the read-only roles of #2549) arrives unregistered.
         *POSTURE_SELECTOR_ENV,
-        # The bare-loop selector; :mod:`loop_mode` says why it is host-only.
-        NO_PIPELINE_ENV,
+        # The bare-loop and pipeline-id selectors; :mod:`loop_mode` explains why.
+        NO_PIPELINE_ENV, PIPELINE_ENV,
         # The portability target triple and glibc floor (#1018). `env.sh` exports
         # both so `build_sut.sh` builds to the same floor `preflight` asserts
         # against — keeping them apart is what let a glibc-2.35 binary reach five
