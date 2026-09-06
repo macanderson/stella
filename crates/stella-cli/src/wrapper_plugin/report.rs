@@ -14,8 +14,9 @@
 
 use std::sync::Arc;
 
+use stella_protocol::StampAssessment;
 use stella_runtime::wrapper::{
-    CandidateFanoutSpend, ChildTurnSpend, DispatchReport, HostCallGate, TestRunRecord,
+    CandidateFanoutSpend, ChildTurnSpend, DispatchReport, HostCallGate, TestRunRecord, seat_token,
 };
 
 use crate::OutputFormat;
@@ -83,6 +84,25 @@ pub(super) fn report_lines(
                 "arbiter {} did not answer — recorded as inconclusive, and nothing was held open",
                 row.author
             ),
+        ));
+    }
+    // Rule 1 of `wrapper::arbitration`: a red test is never talked round. A
+    // claim of `done` can sit beside a rung that says the evidence still
+    // fails, and `report.met()` alone reads that as an ordinary pass — it
+    // answers from the verdict, not from whether anything here disagreed
+    // with it. Printed only when both halves are true, so an abstention or a
+    // rule with nothing declared never trips this line.
+    if report.arbitration.refutes_done()
+        && report
+            .arbitration
+            .rows
+            .iter()
+            .any(|row| row.assessment == StampAssessment::Done)
+    {
+        lines.push(wrapper_line(
+            scope,
+            &"a claim says the work is done, and the rung says otherwise — the rung's evidence \
+              wins",
         ));
     }
     // Every member's refusals, in selection order: a composition has one gate
@@ -218,8 +238,14 @@ pub(super) fn fanout_spend_lines(spends: &[CandidateFanoutSpend]) -> Vec<String>
                 format!(" — it asked for {}", spend.requested_width)
             };
             format!(
-                "fanned out {} candidate turn(s) at \"{}\" (seat {:?}, {} finished, ${:.4}){clamped}",
-                spend.width, spend.role, spend.seat, spend.completed, spend.cost_usd,
+                "{} fanned out {} candidate turn(s) at \"{}\" (seat {}, {} finished, \
+                 ${:.4}){clamped}",
+                spend.plugin,
+                spend.width,
+                spend.role,
+                seat_token(spend.seat),
+                spend.completed,
+                spend.cost_usd,
             )
         })
         .collect()

@@ -24,7 +24,7 @@ use stella_protocol::hash::record_hash;
 use stella_protocol::{CandidateHandle, StampAssessment};
 use stella_runtime::wrapper::{
     DEFAULT_WRAPPER_TIMEOUT, DispatchReport, DrivenTurn, RoundInput, SubprocessWrapper, TurnDriver,
-    TurnPrelude, WrapperDispatch,
+    TurnPrelude, TurnWrapper, WrapperDispatch,
 };
 
 /// A plugin that holds the turn open until the test flips red to green.
@@ -57,6 +57,22 @@ id = "witness-v1"
 name = "verify"
 "#;
 
+/// A second, steering member. It has no oracle and no say over the round.
+/// It is here only to make the composed id longer than the arbiter's own id.
+const STEERING_MANIFEST: &str = r#"
+name = "witness-reader"
+description = "reads the round and claims nothing"
+
+[loop]
+participation = "steering"
+points = ["before_turn"]
+
+[wrapper]
+id = "reader-v1"
+[[wrapper.stages]]
+name = "recall"
+"#;
+
 const FIXTURE: &str = env!("CARGO_BIN_EXE_wrapper-plugin-fixture");
 
 /// A clock this file owns. Both times on the claim are then values it names.
@@ -80,6 +96,39 @@ fn dispatch(mode: &str) -> WrapperDispatch {
         Arc::new(admitted.wrapper),
     )
     .expect("it declares a [wrapper]")
+    .with_clock(Arc::new(PinnedClock))
+}
+
+/// The same arbiter, now composed beside the steering member above. It
+/// never answers `after_turn`, so the arbiter's rule still decides alone.
+fn composed_dispatch(mode: &str) -> WrapperDispatch {
+    let reader = SubprocessWrapper::declare(
+        vec![
+            FIXTURE.to_string(),
+            "echo-stage".to_string(),
+            "reader".to_string(),
+        ],
+        Vec::new(),
+        DEFAULT_WRAPPER_TIMEOUT,
+    )
+    .expect("the transport is declared with a program and a budget");
+    let arbiter = SubprocessWrapper::declare(
+        vec![FIXTURE.to_string(), mode.to_string()],
+        Vec::new(),
+        DEFAULT_WRAPPER_TIMEOUT,
+    )
+    .expect("the transport is declared with a program and a budget");
+    WrapperDispatch::bind_composed(vec![
+        (
+            PluginManifest::from_toml_str(STEERING_MANIFEST).expect("the manifest loads"),
+            Arc::new(reader.wrapper) as Arc<dyn TurnWrapper>,
+        ),
+        (
+            PluginManifest::from_toml_str(MANIFEST).expect("the manifest loads"),
+            Arc::new(arbiter.wrapper) as Arc<dyn TurnWrapper>,
+        ),
+    ])
+    .expect("a steering member and an arbiter member compose")
     .with_clock(Arc::new(PinnedClock))
 }
 
@@ -201,5 +250,41 @@ async fn the_stamp_points_at_the_workspace_it_judged() {
     assert_eq!(
         report.snapshot.stamps[0].evidence_refs,
         vec!["candidate:host-tree".to_string()]
+    );
+}
+
+/// **The witness.** A composed run's stamp names the arbiter. It does not
+/// name the whole composition.
+///
+/// Naming the whole composition would read `"reader-v1,witness-v1"`. That
+/// name would not match the `ArbiterClaim` next to it on the same report.
+/// The stamp below reads `"witness-v1"` instead.
+#[tokio::test]
+async fn a_composed_stamp_names_the_arbiter_not_the_whole_composition() {
+    let input = RoundInput {
+        goal: "make the flaky test deterministic".into(),
+        signals: signals(),
+        candidate: Some(granted("/tmp/workspace")),
+    };
+    let report = composed_dispatch("flip-if-granted")
+        .run(input, &mut Host)
+        .await
+        .expect("a validated composition resolves");
+
+    let stamp = &report.snapshot.stamps[0];
+    assert_eq!(
+        stamp.author, "witness-v1",
+        "the stamp names the arbiter whose rule decided the round, not the whole composition"
+    );
+
+    let arbiter_claim = report
+        .arbitration
+        .rows
+        .iter()
+        .find(|row| row.assessment == StampAssessment::Done)
+        .expect("the arbiter's own claim is in the fold");
+    assert_eq!(
+        stamp.author, arbiter_claim.author,
+        "the stamp and the claim beside it on one report must name the same decider"
     );
 }

@@ -111,7 +111,7 @@ pub use arbitration::{
 pub use candidate_fanout::{
     CandidateFanoutError, CandidateFanoutPlane, CandidateFanoutSpend, CandidateFanouts,
     CandidateReport, CandidateWork, CandidateWorkspace, CandidateWorkspaces,
-    DEFAULT_HOST_MAX_FANOUT_WIDTH, DEFAULT_HOST_MAX_FANOUTS,
+    DEFAULT_HOST_MAX_FANOUT_WIDTH, DEFAULT_HOST_MAX_FANOUTS, seat_token,
 };
 pub use child_turn::{ChildTurnPlane, ChildTurnSpend, ChildTurns, DEFAULT_HOST_MAX_CHILD_TURNS};
 pub use dispatch::{

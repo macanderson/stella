@@ -105,6 +105,9 @@ struct Substrate {
     /// When true, `adopt` refuses. The user's tree stays untouched, and the
     /// losing candidates must survive.
     adoption_fails: bool,
+    /// When true, `remove` refuses for every workspace, so a test can drive
+    /// the disk-left-behind case: a workspace that could not be removed.
+    removal_fails: bool,
 }
 
 impl Substrate {
@@ -185,6 +188,12 @@ impl CandidateWorkspaces for Substrate {
     }
 
     async fn remove(&self, workspace: &CandidateWorkspace) -> Result<(), CandidateFanoutError> {
+        if self.removal_fails {
+            return Err(CandidateFanoutError::NotRemoved {
+                handle: workspace.handle.clone(),
+                reason: "disk is full".to_string(),
+            });
+        }
         self.record(Op::Removed(workspace.handle.to_string()));
         Ok(())
     }
@@ -336,6 +345,7 @@ async fn a_plugin_asks_for_three_attempts_scores_them_and_the_host_lands_the_win
         1,
         "the fan-out's spend is visible, not hidden"
     );
+    assert_eq!(spends[0].plugin, "candidates-wrapper");
     assert_eq!(spends[0].role, "attempt");
     assert_eq!(spends[0].seat, ModelCallRole::Worker);
     assert_eq!(spends[0].requested_width, 3);
@@ -354,19 +364,25 @@ async fn a_plugin_asks_for_three_attempts_scores_them_and_the_host_lands_the_win
     );
 }
 
-/// The three refusals, each a different question and each reaching the plugin
-/// as a value it can branch on — `child_turn.rs`'s shape, at the capability
-/// whose seat rule is inverted.
+/// The two remaining refusals, each a different question. Each reaches the
+/// plugin as a value it can act on — `child_turn.rs`'s shape, for the
+/// capability whose seat rule runs the other way.
 ///
-/// `nowhere` is the interesting one: its tier is declared, so the manifest
-/// check passes, and it still resolves to no seat this host serves. Telling a
-/// plugin author "undeclared" there would send them to edit a manifest that is
-/// already correct.
+/// **The witness.** `nowhere` names a tier core has no fixed word for:
+/// `"archivist"`. It still resolves, at the worker's seat. `HostCallGate`
+/// checks `[loop] calls` for `candidate_fanout` first, before this plane
+/// resolves any tier at all. So no tier word list decides it here. A build
+/// with a core-owned tier table would refuse `"archivist"` instead.
+///
+/// `scout`'s tier (`"research"`) is refused only once a host binds it away
+/// from the worker with `with_seat`. The check reads the *bound* seat, not
+/// the spelling. The assertion below is what exercises that.
 #[tokio::test]
-async fn the_three_refusals_are_distinguishable_and_none_of_them_creates_a_workspace() {
+async fn an_unbound_tier_resolves_to_the_worker_and_a_bound_one_is_still_forbidden() {
     let manifest = manifest();
     let substrate = Substrate::default();
-    let plane = CandidateFanouts::declare(&manifest, substrate.clone());
+    let plane = CandidateFanouts::declare(&manifest, substrate.clone())
+        .with_seat("research", ModelCallRole::Plugin);
 
     let undeclared = plane
         .resolve("auditor")
@@ -377,18 +393,17 @@ async fn the_three_refusals_are_distinguishable_and_none_of_them_creates_a_works
         "the refusal names what the manifest did declare: {undeclared}"
     );
 
-    let unavailable = plane
-        .resolve("nowhere")
-        .expect_err("a tier this host binds to no responsibility");
-    assert_eq!(unavailable.refusal, HostCallRefusal::Unavailable);
-    assert!(
-        unavailable.detail.contains("archivist"),
-        "the refusal names the tier that resolved nowhere: {unavailable}"
+    assert_eq!(
+        plane
+            .resolve("nowhere")
+            .expect("a tier core has never heard of still resolves to the worker"),
+        ModelCallRole::Worker,
+        "the fanout grant, not a core-owned word list, decides whether this plugin may fan out"
     );
 
     let forbidden = plane
         .resolve("scout")
-        .expect_err("a writing turn booked anywhere but the worker's seat");
+        .expect_err("a writing turn this host bound anywhere but the worker's seat");
     assert_eq!(forbidden.refusal, HostCallRefusal::Forbidden);
     assert!(
         forbidden.detail.contains("plugin"),
@@ -403,6 +418,63 @@ async fn the_three_refusals_are_distinguishable_and_none_of_them_creates_a_works
         substrate.ops().is_empty(),
         "a refusal the plugin could never have bought creates nothing: {:?}",
         substrate.ops()
+    );
+}
+
+/// **The witness.** A workspace whose removal fails during adoption is not
+/// reported as discarded. It is not lost either: it stays in `live()`, so
+/// the end-of-run sweep can still retry it.
+///
+/// A build that ignores the removal error would report the workspace as
+/// discarded anyway, and never put it back in `live()`. The first assertion
+/// below catches that: `discard_all` would find nothing left to retry, and
+/// the directory would stay on disk with nothing telling the operator.
+#[tokio::test]
+async fn a_removal_that_fails_during_adoption_stays_live_for_the_sweep_to_retry() {
+    use stella_runtime::wrapper::CandidateFanoutPlane;
+
+    let manifest = manifest();
+    let substrate = Substrate {
+        removal_fails: true,
+        ..Substrate::default()
+    };
+    let plane = CandidateFanouts::declare(&manifest, substrate.clone());
+    plane
+        .fanout(stella_plugin::CandidateFanoutArgs {
+            role: "attempt".to_string(),
+            instruction: "try it".to_string(),
+            width: 2,
+        })
+        .await
+        .expect("the fan-out runs");
+
+    let result = plane
+        .adopt(stella_plugin::AdoptCandidateArgs {
+            candidate: CandidateHandle::new("candidate-1"),
+        })
+        .await
+        .expect("the winner still lands even though nothing could be removed");
+    assert!(
+        result.discarded.is_empty(),
+        "a workspace that could not be removed must not be reported as discarded: {:?}",
+        result.discarded
+    );
+    assert_eq!(
+        plane.live().len(),
+        2,
+        "both workspaces stay live so the end-of-run sweep can retry them: {:?}",
+        plane.live()
+    );
+
+    let failures = plane.discard_all().await;
+    assert_eq!(
+        failures.len(),
+        2,
+        "the sweep reaches both workspaces the adoption could not clear: {failures:?}"
+    );
+    assert!(
+        plane.live().is_empty(),
+        "the sweep takes the table either way"
     );
 }
 

@@ -303,6 +303,13 @@ pub trait CandidateWorkspaces: Send + Sync {
 /// can account for.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CandidateFanoutSpend {
+    /// Which plugin caused the fan-out.
+    ///
+    /// [`ChildTurnSpend::plugin`](super::ChildTurnSpend::plugin)'s sibling, for
+    /// the same reason: two lines in one report naming a spend must both say
+    /// whose it was, or a reader can price the child-turn line and not this
+    /// one.
+    pub plugin: String,
     /// The role intent the plugin named.
     pub role: String,
     /// The responsibility the host resolved it to — always
@@ -379,41 +386,6 @@ impl<W> std::fmt::Debug for CandidateFanouts<W> {
     }
 }
 
-/// The tiers this host resolves a fan-out's role intent from, before a caller
-/// binds any of its own.
-///
-/// The same four [`ChildTurns`](super::ChildTurns) serves, and shipping the
-/// three a fan-out may **not** use is the point — it is that module's own
-/// argument for keeping `worker` in *its* table, read from the other end. A
-/// tier that resolves to nothing answers [`HostCallRefusal::Unavailable`]
-/// ("this host binds it to no responsibility"), which sends a plugin author to
-/// ask their host operator for a binding; a tier that resolves to a non-worker
-/// seat answers [`HostCallRefusal::Forbidden`] ("a candidate is the work, and
-/// this seat did not do it"), which sends them to change one line of their own
-/// manifest. Collapsing the second into the first would hide a rule behind the
-/// weaker of the two answers, and a rule discovered that way comes to be read
-/// as an accident of configuration.
-///
-/// A host that serves some other tier says so with
-/// [`CandidateFanouts::with_seat`]; binding one to anything but
-/// [`ModelCallRole::Worker`] only changes which word gets refused, because the
-/// check below compares the resolved seat and never the spelling.
-fn default_seats() -> BTreeMap<String, ModelCallRole> {
-    [
-        ("worker", ModelCallRole::Worker),
-        // Three tiers a manifest still names. Each is bound to a plugin's
-        // own seat, so naming one is answered `Forbidden` — "a candidate is
-        // the work" — and not `Unavailable`, which sends a plugin author to
-        // their host operator over a rule no operator can lift.
-        ("triage", ModelCallRole::Plugin),
-        ("research", ModelCallRole::Plugin),
-        ("plan", ModelCallRole::Plugin),
-    ]
-    .into_iter()
-    .map(|(tier, seat)| (tier.to_string(), seat))
-    .collect()
-}
-
 // Unbounded on `W`: every method here decides, clamps or reports, and not one
 // of them touches the substrate — the `Debug` impl above included, which is
 // what a host prints when it cannot work out why a plugin was refused.
@@ -442,7 +414,16 @@ impl<W> CandidateFanouts<W> {
             plugin: manifest.name.clone(),
             workspaces,
             roles,
-            seats: default_seats(),
+            // Empty, not a table of words core happens to know: whether this
+            // plugin may fan out at all is decided upstream, by
+            // `LoopGrant::permits_call(HostCall::CandidateFanout)` before this
+            // plane is ever asked to resolve anything. Once that grant is
+            // read, a candidate is the work, so every declared tier resolves
+            // to the worker's seat by default (below) — a plugin naming a
+            // tier core has never heard of is served exactly as one naming
+            // `worker` is. A host that wants a tier refused anyway still
+            // binds it here with `with_seat`.
+            seats: BTreeMap::new(),
             declared_width: manifest.loop_grant.max_fanout_width,
             width_ceiling: DEFAULT_HOST_MAX_FANOUT_WIDTH,
             fanout_ceiling: DEFAULT_HOST_MAX_FANOUTS,
@@ -565,10 +546,13 @@ impl<W> CandidateFanouts<W> {
     ///
     /// # Errors
     ///
-    /// [`HostCallRefusal::Undeclared`] when the manifest declares no such role,
-    /// [`HostCallRefusal::Unavailable`] when its tier names no seat this host
-    /// serves, and [`HostCallRefusal::Forbidden`] when it resolves anywhere but
-    /// the worker's seat.
+    /// [`HostCallRefusal::Undeclared`] when the manifest declares no such
+    /// role, and [`HostCallRefusal::Forbidden`] when a host has explicitly
+    /// bound its tier somewhere other than the worker's seat with
+    /// [`Self::with_seat`]. There is no `Unavailable` case here: whether this
+    /// plugin may fan out at all is `LoopGrant::permits_call`'s question,
+    /// asked upstream before this plane is asked to resolve anything, so a
+    /// declared role always resolves to a seat.
     pub fn resolve(&self, role: &str) -> Result<ModelCallRole, HostCallFailure> {
         let Some(tier) = self.roles.get(role) else {
             let declared = if self.roles.is_empty() {
@@ -585,24 +569,26 @@ impl<W> CandidateFanouts<W> {
                 ),
             ));
         };
-        let Some(&seat) = self.seats.get(tier) else {
-            return Err(HostCallFailure::new(
-                HostCallRefusal::Unavailable,
-                format!(
-                    "role intent \"{role}\" asks for the \"{tier}\" tier, which this host binds \
-                     to no responsibility; served tiers: {}",
-                    self.seats.keys().cloned().collect::<Vec<_>>().join(", ")
-                ),
-            ));
-        };
+        // A candidate is the work, so an unbound tier defaults to the
+        // worker's own seat rather than to nothing — the tier word itself is
+        // never core's to know or refuse. `with_seat` is the one way a host
+        // can still bind a tier elsewhere, and doing so is answered exactly
+        // as it always was: `Forbidden`, on the resolved seat rather than the
+        // spelling.
+        let seat = self
+            .seats
+            .get(tier)
+            .copied()
+            .unwrap_or(ModelCallRole::Worker);
         if seat != ModelCallRole::Worker {
             return Err(HostCallFailure::new(
                 HostCallRefusal::Forbidden,
                 format!(
-                    "role intent \"{role}\" resolves to the \"{}\" seat, and a candidate is the \
-                     work rather than evidence about it — booking a writing turn anywhere but \
-                     the worker's seat would attribute it to a responsibility that wrote \
-                     nothing; name a tier that resolves to the worker",
+                    "role intent \"{role}\" is bound by this host to the \"{}\" seat, and a \
+                     candidate is the work rather than evidence about it — booking a writing \
+                     turn anywhere but the worker's seat would attribute it to a responsibility \
+                     that wrote nothing; ask your host operator to bind the \"{tier}\" tier to \
+                     the worker instead",
                     seat_token(seat)
                 ),
             ));
@@ -781,6 +767,7 @@ impl<W: CandidateWorkspaces> CandidateFanoutPlane for CandidateFanouts<W> {
         }
 
         self.record(CandidateFanoutSpend {
+            plugin: self.plugin.clone(),
             role: args.role.clone(),
             seat,
             requested_width: args.width,
@@ -849,15 +836,25 @@ impl<W: CandidateWorkspaces> CandidateFanoutPlane for CandidateFanouts<W> {
         // landing" is a different fact from "landed, and its scratch copy
         // cleaned up".
         //
-        // A removal that fails is left to `discard_all`'s contract rather than
-        // raised here: the adoption succeeded, and failing the call now would
-        // tell the plugin its winner did not land when it did.
+        // A removal that fails is not raised here — the adoption already
+        // succeeded, and failing the call now would tell the plugin its
+        // winner did not land when it did — and it is not dropped either: the
+        // workspace goes back into `live()`, unreported as discarded, so the
+        // end-of-run sweep (`discard_all`) still holds a handle it can retry.
         let mut discarded = Vec::with_capacity(held.len().saturating_sub(1));
-        for (at, workspace) in held.iter().enumerate() {
-            let _ = self.workspaces.remove(workspace).await;
-            if at != index {
-                discarded.push(workspace.handle.clone());
+        let mut not_removed = Vec::new();
+        for (at, workspace) in held.into_iter().enumerate() {
+            match self.workspaces.remove(&workspace).await {
+                Ok(()) => {
+                    if at != index {
+                        discarded.push(workspace.handle.clone());
+                    }
+                }
+                Err(_) => not_removed.push(workspace),
             }
+        }
+        if !not_removed.is_empty() {
+            self.register(not_removed);
         }
 
         Ok(AdoptCandidateResult {
@@ -892,9 +889,18 @@ impl<P: CandidateFanoutPlane + ?Sized> CandidateFanoutPlane for std::sync::Arc<P
 }
 
 /// A seat's wire token, as `step_usage` records it — through `serde_json`
-/// rather than a second hand-written table, for [`super::child_turn`]'s reason:
+/// rather than a second hand-written table, for `super::child_turn`'s reason:
 /// a second copy of a closed enum's spellings is a rule in two places.
-fn seat_token(seat: ModelCallRole) -> String {
+/// That module name is a code span, not a link: this item is public and the
+/// module is not, so a link here is a `rustdoc::private_intra_doc_links`
+/// error under `-D warnings`.
+///
+/// Public so a report renderer outside this crate — `stella-cli`'s
+/// `wrapper_plugin::report` — can print [`CandidateFanoutSpend::seat`] in the
+/// same vocabulary the child-turn line beside it already uses, rather than
+/// `{:?}`'s Rust identifier.
+#[must_use]
+pub fn seat_token(seat: ModelCallRole) -> String {
     serde_json::to_value(seat)
         .ok()
         .and_then(|value| value.as_str().map(ToString::to_string))
