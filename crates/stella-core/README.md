@@ -177,7 +177,7 @@ lib.rs), never as a planning assumption.
 
 **The step loop is a fixed phase sequence.** `run_turn`
 ([`src/driver.rs`](src/driver.rs)) loops until the model answers or a bound
-fires. A step cap is one such bound, and the default sets none (ADR 0030).
+fires. A step cap is one such bound, and the default sets none (ADR 0031).
 Each step runs the same phases in the same order: pause gate → drain
 steering / check soft stop → budget check → snapshot tool-result identities →
 compaction pass → loop detection → model call (wrapped in retry+backoff) →

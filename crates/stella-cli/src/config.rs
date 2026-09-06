@@ -396,9 +396,12 @@ pub struct Config {
     ///
     /// A shared cell, not a resolved value. Its two users meet at different
     /// times. The recall block is written first, and
-    /// `memory::inject_opening_recall` spends here. The tool list is built
-    /// after, and `agent::tool_stack` reads here. One number, so a rule and a
-    /// tool schema can be weighed against each other.
+    /// `memory::inject_opening_recall` opens the turn and spends here. The
+    /// tool list is built after, and `agent::tool_stack` reads here. One
+    /// number, so a rule and a tool schema can be weighed against each other.
+    ///
+    /// The spend is one turn's and the settled array is the session's, which
+    /// is why the cell holds both rather than being rebuilt per turn.
     ///
     /// It rides `Config` for the reason [`Self::output_ceilings`] does: every
     /// driver already hands a `&Config` to both call sites, so no one has to

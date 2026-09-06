@@ -120,7 +120,7 @@ pause, steer — never mid-tool), compaction and prompt-cache discipline,
 loop detection, budget enforcement, drift calibration, the goal loop and
 sub-agents, and a serde `Checkpoint` that resumes in another process.
 What you owe: event handling, persistence, and a loop bound when your config
-sets one. `engine.max_steps()` is that bound, `None` by default (ADR 0030);
+sets one. `engine.max_steps()` is that bound, `None` by default (ADR 0031);
 the crate docs' canonical example shows the gate.
 
 Licensing note for this mode: linking the AGPL-3.0-only crates in-process

@@ -147,6 +147,9 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + reserved-paths (no Windows device name in a path)
                          #   + rendering-facts (no v2 rendering draws a
                          #     fact SPEC.md retired)
+                         #   + plugin-graded (every plugins/ directory is
+                         #     spawned by an in-tree test, so a wire change
+                         #     reddens this repo rather than an install)
                          #   + wire-schema
                          #   + lockfile-sync (cargo metadata --locked)
                          #   + format-check (fmt --check)

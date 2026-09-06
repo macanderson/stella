@@ -38,6 +38,9 @@ mod skill_creation;
 // #5031: whether a turn says which skills it injected. `golden_block` pins
 // what the block contains; this asks what the stream reports about it.
 mod skill_event;
+// The injection is where a turn opens on the steering ledger, so the
+// allowance a re-settle reads is one turn's block and not the session's sum.
+mod steering_ledger_turn;
 // #3243 D1/D2: what selection is allowed to call "relevant to this turn" —
 // per-turn domain scope, and a lexical score that can fire on a real prompt.
 mod steering_selection;

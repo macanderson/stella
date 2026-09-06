@@ -1,4 +1,4 @@
-//! A turn carries no step cap unless the host sets one (ADR 0030).
+//! A turn carries no step cap unless the host sets one (ADR 0031).
 //!
 //! Before this, every turn stopped at 200 steps. A count cannot tell real
 //! work from wandering. It ended both. The runs it ended were the long ones

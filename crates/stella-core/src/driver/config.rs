@@ -125,7 +125,7 @@ pub struct EngineConfig {
     pub summarize_keep_recent: usize,
     /// A ceiling on this turn's step count, or `None` for no ceiling.
     ///
-    /// `None` is the default (ADR 0030). A count cannot tell a turn that is
+    /// `None` is the default (ADR 0031). A count cannot tell a turn that is
     /// doing ten thousand steps of real work from one that is wandering, and
     /// a default ceiling ends both. What ends a wandering turn is evidence
     /// the count never carries: `crate::loop_detect` reads what the calls

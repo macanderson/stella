@@ -258,7 +258,7 @@ climbing count means a host is minting per-request provider ids.
 - **`max_steps` from the wire is validated, not clamped.** `0` is a 400 (it would
   produce a zero-iteration turn that aborts with the misleading "reached the step
   cap (0)"); any other value is the cap the turn runs under. A served turn has
-  no step cap unless the caller sets one (ADR 0030), so a ceiling on the value
+  no step cap unless the caller sets one (ADR 0031), so a ceiling on the value
   would bound only the caller who asked for a bound. What bounds a turn holding
   an OS thread is the reverse-request deadline, the caller's budget, and loop
   detection.

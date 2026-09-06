@@ -364,7 +364,7 @@ mod tests {
     };
 
     /// The step cap the resume-at-the-cap tests set. The default config
-    /// carries none (ADR 0030), so a test about resuming at a cap has to
+    /// carries none (ADR 0031), so a test about resuming at a cap has to
     /// name one.
     const HOST_CAP: usize = 40;
 

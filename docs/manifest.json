@@ -150,10 +150,15 @@
       "status": "implemented",
       "title": "ADR 0029: Branch protection stays non-strict"
     },
-    "adr/0030-a-turn-has-no-step-cap-by-default": {
-      "path": "docs/adr/0030-a-turn-has-no-step-cap-by-default.md",
+    "adr/0030-the-wrapper-socket-is-the-plugin-sdk": {
+      "path": "docs/adr/0030-the-wrapper-socket-is-the-plugin-sdk.md",
       "status": "implemented",
-      "title": "ADR 0030: A turn has no step cap by default"
+      "title": "ADR 0030: The wrapper socket is the plugin SDK"
+    },
+    "adr/0031-a-turn-has-no-step-cap-by-default": {
+      "path": "docs/adr/0031-a-turn-has-no-step-cap-by-default.md",
+      "status": "implemented",
+      "title": "ADR 0031: A turn has no step cap by default"
     },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",

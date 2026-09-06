@@ -25,7 +25,7 @@
 //!     // A step cap is the HOST's loop bound when driving steps directly.
 //!     // `run_turn` applies it; `run_step` does not, so the host reads it
 //!     // from [`Engine::max_steps`] rather than keeping its own copy. The
-//!     // default config carries none (ADR 0030): a turn ends on evidence,
+//!     // default config carries none (ADR 0031): a turn ends on evidence,
 //!     // never on a count. A real host also emits the non-retryable `Error`
 //!     // event `run_turn` pairs with this exit (see `stella-serve`'s
 //!     // session loop for the production pattern).

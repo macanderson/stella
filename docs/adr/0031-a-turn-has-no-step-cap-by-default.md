@@ -1,10 +1,10 @@
 ---
-id: adr/0030-a-turn-has-no-step-cap-by-default
-title: "ADR 0030: A turn has no step cap by default"
+id: adr/0031-a-turn-has-no-step-cap-by-default
+title: "ADR 0031: A turn has no step cap by default"
 status: implemented
 ---
 
-# ADR 0030: A turn has no step cap by default
+# ADR 0031: A turn has no step cap by default
 
 - Status: accepted
 - Date: 2026-09-06
