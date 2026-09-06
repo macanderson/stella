@@ -18,7 +18,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use stella_core::tool_foundry::{GapDetectionConfig, ShellInvocation, detect_tool_gaps};
+use crate::tool_foundry::detect::{GapDetectionConfig, ShellInvocation, detect_tool_gaps};
 
 use super::trace::{ScriptedReflection, Trace};
 use crate::memory::ReflectionReport;

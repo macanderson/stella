@@ -10,7 +10,7 @@
 //!    fixed character allowance, adding structure from the code graph:
 //!    symbols, kinds, imports, importers, signatures, docs, callers, callees,
 //!    a body excerpt. Which facets appear is decided by
-//!    [`stella_core::search`] from *what was found and what is affordable* —
+//!    [`crate::search::budget`] from *what was found and what is affordable* —
 //!    never from an inferred intent, because a wrong intent inference is
 //!    unrecoverable in a command with no mode flag to correct it.
 //! 3. **Say what happened.** Which strategies ran, and whether the budget
@@ -28,7 +28,7 @@
 
 use std::path::Path;
 
-use stella_core::search::{Allocation, allocate};
+use crate::search::budget::{Allocation, allocate};
 use stella_embed::{Embedder, Resolution, SimilarityPosture};
 use stella_graph::CodeGraph;
 use stella_protocol::tool::ToolOutput;
@@ -152,7 +152,7 @@ pub struct Answer {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SearchConfig {
     /// How much to say about the top hit; the tail decays from here.
-    pub depth: stella_core::search::Depth,
+    pub depth: crate::search::budget::Depth,
     /// The hard stop, in characters.
     pub budget: usize,
 }
@@ -160,7 +160,7 @@ pub struct SearchConfig {
 impl Default for SearchConfig {
     fn default() -> Self {
         Self {
-            depth: stella_core::search::Depth::DEFAULT,
+            depth: crate::search::budget::Depth::DEFAULT,
             budget: DEFAULT_BUDGET_CHARS,
         }
     }
@@ -175,7 +175,7 @@ impl SearchConfig {
             depth: std::env::var(DEPTH_ENV)
                 .ok()
                 .and_then(|raw| raw.trim().parse::<u8>().ok())
-                .map_or(default.depth, stella_core::search::Depth::new),
+                .map_or(default.depth, crate::search::budget::Depth::new),
             budget: std::env::var(BUDGET_ENV)
                 .ok()
                 .and_then(|raw| raw.trim().parse::<usize>().ok())
@@ -1248,7 +1248,7 @@ pub(super) async fn warm_chunks_opened<P: FnMut(usize) + ?Sized>(
 /// meaning match from a name match, the second because a reader who cannot
 /// tell a complete answer from a truncated one stops looking.
 ///
-/// [`allocate`] spends [`stella_core::search::Facet::estimated_cost`], which
+/// [`allocate`] spends [`crate::search::budget::Facet::estimated_cost`], which
 /// is an estimate on purpose and is uniformly low for a deep hit — a `Body`
 /// facet is priced at 1,600 characters and quotes up to `MAX_BODY_LINES`
 /// (40) source lines of whatever length they happen to be. So the granted

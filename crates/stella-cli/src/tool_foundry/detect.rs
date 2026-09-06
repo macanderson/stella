@@ -11,17 +11,19 @@
 //! rebuilt behind the autonomous foundry's controls (`stella-cli`'s
 //! `tool_foundry::author`).
 //!
-//! It is a sibling of [`crate::loop_detect`] and follows the same discipline:
-//! plain synchronous functions over owned data, no I/O, no provider SDK, no
-//! `regex` — easy to property-test against fakes. The caller hands a window
-//! of recorded shell commands in as [`ShellInvocation`]s and surfaces any
-//! [`ProposedTool`] it detects; this module never reads the store and never
-//! writes a manifest. Two shipped feeders exist (ADR 0023): the live
-//! end-of-turn hook (`stella-cli`'s `tool_foundry::gaps`, over the store's
-//! recent `bash` history) and the offline trace-replay harness
-//! (`stella-cli`'s `memory::replay`).
+//! It is a sibling of [`stella_core::loop_detect`] and follows the same
+//! discipline: plain synchronous functions over owned data, no I/O, no
+//! provider SDK, no `regex` — easy to property-test against fakes. The caller
+//! hands a window of recorded shell commands in as [`ShellInvocation`]s and
+//! surfaces any [`ProposedTool`] it detects; this module never reads the
+//! store and never writes a manifest. Two shipped feeders exist (ADR 0023):
+//! the live end-of-turn hook ([`super::gaps`], over the store's recent `bash`
+//! history) and the offline trace-replay harness (`crate::memory::replay`).
 //!
-//! **How it differs from loop detection.** [`crate::loop_detect`] flags a
+//! It sits beside those feeders because they are its only callers. That is
+//! why it moved down out of `stella-core`: the engine never reached it.
+//!
+//! **How it differs from loop detection.** [`stella_core::loop_detect`] flags a
 //! *stuck* turn — the same call, byte-identical, producing byte-identical
 //! output, over and over — so the driver can abort early. The foundry looks
 //! for the opposite of stuck: a command shape reused *with variation* often
@@ -113,8 +115,11 @@ pub struct ShellInvocation {
 }
 
 impl ShellInvocation {
-    /// Convenience constructor for a successful invocation (the common case in
-    /// tests and callers that only kept the command string).
+    /// Convenience constructor for a successful invocation.
+    ///
+    /// Every shipping feeder builds the struct with both fields, because it
+    /// has the exit status to hand. Only the tests want this shorthand.
+    #[cfg(test)]
     pub fn ok(command: impl Into<String>) -> Self {
         Self {
             command: command.into(),
@@ -179,6 +184,10 @@ impl ProposedTool {
     /// Always finite: a proposal is only ever built from a cluster with at
     /// least one observation, so `distinct_arguments` is at least `1`. The
     /// guard is there so a hand-built [`ProposedTool`] cannot produce a NaN.
+    ///
+    /// The detector applies the floor through `meets_reuse_ratio`, which takes
+    /// the two counts rather than a proposal, so this reads for the tests.
+    #[cfg(test)]
     pub fn reuse_ratio(&self) -> f64 {
         if self.distinct_arguments == 0 {
             return 0.0;
@@ -195,10 +204,9 @@ impl ProposedTool {
 /// in. The trace-replay harness (`stella-cli`'s `memory::replay`) keeps the
 /// defaults, so replay reports stay comparable across workspaces.
 ///
-/// It is a parameter rather than a constant because this crate does no I/O
-/// (AGENTS.md #2): thresholds are data the caller owns, which is what lets the
-/// property tests sweep them across ranges no shipped configuration would
-/// take.
+/// It is a parameter rather than a constant because this module does no I/O:
+/// thresholds are data the caller owns, which is what lets the property tests
+/// sweep them across ranges no shipped configuration would take.
 ///
 /// Not `Eq`: [`GapDetectionConfig::min_reuse_ratio`] is a ratio, and a ratio
 /// whose useful range is 1.0–5.0 has nothing to say in integers.
@@ -246,7 +254,7 @@ impl Default for GapDetectionConfig {
     /// invocation of which succeeded — enough to rule out coincidence and to
     /// prove the shape is genuinely *reused* with variation. `3` mirrors the
     /// "same incantation reconstructed three times" framing of the driving
-    /// issue and [`crate::loop_detect::LoopDetectionConfig`]'s own
+    /// issue and [`stella_core::loop_detect::LoopDetectionConfig`]'s own
     /// rule-of-thumb, and it is the same `3` on both axes for the same reason.
     ///
     /// Taken together the floor is six invocations (three uses each of two

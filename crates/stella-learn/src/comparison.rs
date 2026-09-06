@@ -11,7 +11,7 @@
 //! standards. So the shape, the arithmetic, and the verdict vocabulary live
 //! here, once, and both halves render the same struct.
 //!
-//! Like [`crate::self_tuning`] and `stella_core::scoreboard`, this module does no
+//! Like [`crate::self_tuning`] and [`crate::scoreboard`], this module does no
 //! I/O. The caller runs the trials — a benchmark harness, a shadow execution, a
 //! store query — and hands over owned [`ArmTrials`]. Everything below is a
 //! deterministic function of that input: no clock, no randomness, every

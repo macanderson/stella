@@ -1,39 +1,31 @@
 //! What one unit of delivered work cost — and whether it was any good.
 //!
-//! Correctness eventually bottoms out in model capability, which no amount of
-//! engineering controls. What *is* controllable, and therefore what is worth
-//! measuring, is the shape of the interaction around it:
-//!
-//! 1. how many times intelligence was invoked,
-//! 2. how much information a person had to supply,
-//! 3. how many times a person had to correct the trajectory,
-//! 4. what that person thought of the finished result.
-//!
-//! Those four are the scoreboard. Every other mechanism in the system —
-//! context records, memories, skills, guards — earns its place by moving them,
-//! and is dead weight otherwise.
+//! Correctness bottoms out in model capability, which no engineering
+//! controls. The shape of the interaction around it is controllable, so that
+//! is what this counts: how many times intelligence was invoked, how much a
+//! person had to type, how many times they came back, and what they thought
+//! of the result. Every other mechanism here — records, memories, skills,
+//! guards — earns its place by moving those four.
 //!
 //! # Nothing here is judged by a model
 //!
 //! Three of the four are counted from events that already happen. The fourth
-//! belongs to a person and is one keystroke, or free when the unit of work is a
-//! pull request that either merged or did not.
-//!
-//! This matters because the alternative is already in the tree and does not
-//! work: `execution_reflection.self_rating` is the model grading its own
-//! homework, which measures how plausible the work looked to its author.
+//! is one keystroke from a person, or free when the unit of work is a pull
+//! request that merged or did not. The alternative is already in the tree and
+//! does not work: `execution_reflection.self_rating` is the model grading its
+//! own homework.
 //!
 //! # Unrated is not good
 //!
-//! [`Verdict`] is optional and [`Trend`] reports how many tasks
-//! were never rated. A scoreboard that silently treats unrated work as
-//! successful is a scoreboard that improves fastest when nobody is looking.
+//! [`Verdict`] is optional and [`Trend`] reports how many tasks nobody rated.
+//! A scoreboard that reads unrated work as successful improves fastest when
+//! nobody is looking.
 //!
-//! # Purity
-//!
-//! Like the rest of `stella-core`, this module performs no I/O. Callers fold
-//! their own event stream into [`Event`]s; the arithmetic is a deterministic
-//! function of that sequence and is unit-testable without a store.
+//! No I/O. Callers fold their own events into [`Event`]s and the sums are a
+//! deterministic function of that sequence, testable with no store.
+//! [`crate::comparison`] and [`crate::self_tuning`] ask whether a change
+//! helped; this is what they read, and `stella-cli`'s `scoreboard_cmd`
+//! renders it.
 
 #[cfg(test)]
 mod tests;

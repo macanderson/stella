@@ -13,8 +13,8 @@
 //! different threshold is the settings failure mode the unrecognized-key
 //! walker exists to prevent.
 
+use crate::tool_foundry::detect::GapDetectionConfig;
 use serde::{Deserialize, Serialize};
-use stella_core::tool_foundry::GapDetectionConfig;
 use stella_tools::custom::BreakerPolicy;
 
 /// The `foundry` block as a scope's document carries it. Whole-block

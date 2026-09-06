@@ -310,6 +310,7 @@ crates/stella-cli/src/export/tests.rs 9.71
 crates/stella-cli/src/export/transcript.rs 8.27
 crates/stella-cli/src/export/transcript/tests.rs 8.68
 crates/stella-cli/src/extensions.rs 10.73
+crates/stella-cli/src/extensions/plan.rs 10.46
 crates/stella-cli/src/extensions/tests.rs 10.92
 crates/stella-cli/src/failure.rs 11.93
 crates/stella-cli/src/fleet_claims.rs 8.97
@@ -513,6 +514,7 @@ crates/stella-cli/src/tool_foundry/adopt.rs 10.55
 crates/stella-cli/src/tool_foundry/adopt/tests.rs 9.12
 crates/stella-cli/src/tool_foundry/author.rs 12.28
 crates/stella-cli/src/tool_foundry/autonomy.rs 11.16
+crates/stella-cli/src/tool_foundry/detect.rs 10.44
 crates/stella-cli/src/tool_foundry/gaps.rs 8.72
 crates/stella-cli/src/tool_foundry/ops.rs 10.20
 crates/stella-cli/src/tool_policy.rs 10.99
@@ -667,7 +669,6 @@ crates/stella-core/src/driver/waiting.rs 12.50
 crates/stella-core/src/engine_markers.rs 13.26
 crates/stella-core/src/estimator.rs 11.51
 crates/stella-core/src/event_sender.rs 11.07
-crates/stella-core/src/extensions.rs 10.46
 crates/stella-core/src/goal.rs 10.65
 crates/stella-core/src/hooks.rs 9.46
 crates/stella-core/src/hooks/decision.rs 9.81
@@ -681,12 +682,9 @@ crates/stella-core/src/ports.rs 11.42
 crates/stella-core/src/ports/authz.rs 10.23
 crates/stella-core/src/receipts.rs 11.26
 crates/stella-core/src/receipts/tests.rs 9.97
-crates/stella-core/src/repair.rs 10.46
 crates/stella-core/src/restore.rs 10.53
 crates/stella-core/src/retry.rs 11.79
 crates/stella-core/src/router.rs 11.42
-crates/stella-core/src/scoreboard.rs 8.24
-crates/stella-core/src/search.rs 8.99
 crates/stella-core/src/shell_text.rs 13.33
 crates/stella-core/src/skill_invocation.rs 10.34
 crates/stella-core/src/speculation.rs 11.89
@@ -704,7 +702,6 @@ crates/stella-core/src/subagent/tests/spend_and_cancellation.rs 9.70
 crates/stella-core/src/subagent/tests/witness.rs 11.32
 crates/stella-core/src/summarize.rs 11.36
 crates/stella-core/src/tasks.rs 9.93
-crates/stella-core/src/tool_foundry.rs 10.44
 crates/stella-core/src/waiting.rs 9.64
 crates/stella-core/tests/engine_emits_no_stage.rs 12.23
 crates/stella-core/tests/hard_drop_write_back.rs 10.73
@@ -822,6 +819,7 @@ crates/stella-learn/src/redact.rs 8.90
 crates/stella-learn/src/redact/tests.rs 11.04
 crates/stella-learn/src/rules.rs 9.91
 crates/stella-learn/src/rules/tests.rs 11.39
+crates/stella-learn/src/scoreboard.rs 8.24
 crates/stella-learn/src/self_tuning.rs 8.56
 crates/stella-learn/src/skills.rs 10.31
 crates/stella-learn/src/skills/appraisal.rs 8.27
@@ -992,6 +990,7 @@ crates/stella-plugin/src/package.rs 10.30
 crates/stella-plugin/src/panel.rs 7.20
 crates/stella-plugin/src/program.rs 9.19
 crates/stella-plugin/src/progressive.rs 12.48
+crates/stella-plugin/src/repair.rs 10.46
 crates/stella-plugin/src/runtime.rs 10.64
 crates/stella-plugin/src/wire.rs 8.94
 crates/stella-plugin/src/wire/disclosure.rs 10.42
@@ -1358,6 +1357,7 @@ crates/stella-tools/src/rootfd.rs 9.97
 crates/stella-tools/src/scratch.rs 9.41
 crates/stella-tools/src/search.rs 12.04
 crates/stella-tools/src/search/backfill.rs 10.99
+crates/stella-tools/src/search/budget.rs 8.99
 crates/stella-tools/src/search/cache.rs 12.02
 crates/stella-tools/src/search/codegraph.rs 10.22
 crates/stella-tools/src/search/engine.rs 11.53

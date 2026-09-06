@@ -308,7 +308,7 @@ pub(super) fn assumed_agent(
     // The declared model comes off the pinned content's frontmatter — the
     // same parse the loader runs, so the picker and a `/name task`
     // invocation can never read the key differently.
-    let model = stella_core::extensions::agent_from_file(&entry.source_path, &entry.content)
+    let model = crate::extensions::plan::agent_from_file(&entry.source_path, &entry.content)
         .ok()
         .and_then(|def| def.model);
     Ok(AssumedAgent {

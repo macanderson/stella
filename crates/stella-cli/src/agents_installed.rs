@@ -11,7 +11,7 @@
 //!
 //! A definition is either a flat `<slug>.md` or a nested `<slug>/AGENT.md`
 //! (markdown with `name:`/`description:`/`tools:` frontmatter, parsed by
-//! `stella_core::extensions::agent_from_file`).
+//! `crate::extensions::plan::agent_from_file`).
 //!
 //! ## The versioning + pin scheme (filesystem-first, inspectable)
 //!
@@ -50,7 +50,7 @@
 
 use std::path::{Path, PathBuf};
 
-use stella_core::extensions::agent_from_file;
+use crate::extensions::plan::agent_from_file;
 use stella_protocol::CompletionMessage;
 use stella_tui::{AgentScope, AgentVersionInfo, InstalledAgentEntry};
 
@@ -455,10 +455,10 @@ pub fn parse_generated_agent(text: &str) -> Result<GeneratedAgent, String> {
         format!(
             "the drafted definition is not loadable ({})",
             match diag.problem {
-                stella_core::extensions::ExtensionProblem::MissingName => "no usable name",
-                stella_core::extensions::ExtensionProblem::EmptyBody => "empty body",
-                stella_core::extensions::ExtensionProblem::Malformed => "not valid TOML",
-                stella_core::extensions::ExtensionProblem::NestedToolbelt =>
+                crate::extensions::plan::ExtensionProblem::MissingName => "no usable name",
+                crate::extensions::plan::ExtensionProblem::EmptyBody => "empty body",
+                crate::extensions::plan::ExtensionProblem::Malformed => "not valid TOML",
+                crate::extensions::plan::ExtensionProblem::NestedToolbelt =>
                     "a nested `tools:` mapping, which would have granted every tool",
             }
         )

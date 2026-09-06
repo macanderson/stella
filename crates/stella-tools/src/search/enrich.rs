@@ -3,7 +3,7 @@
 //!
 //! # Why each facet is its own labelled line
 //!
-//! [`stella_core::search`] guarantees the facet *set* at depth `n + 1` is a
+//! [`crate::search::budget`] guarantees the facet *set* at depth `n + 1` is a
 //! superset of the set at depth `n`. This module makes the same true of the
 //! rendered *text*: every facet writes its own `label: …` line and no facet
 //! rewrites another's, so the block at depth `n + 1` contains every line of
@@ -24,7 +24,7 @@
 
 use std::path::Path;
 
-use stella_core::search::{Depth, Facet, facets_at};
+use crate::search::budget::{Depth, Facet, facets_at};
 use stella_graph::{BREADCRUMB_SEPARATOR, CodeGraph, NeighborhoodSymbol};
 
 use super::cache::{self, GatherCache};

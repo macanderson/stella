@@ -18,10 +18,10 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
-use stella_core::tool_foundry::{
+use crate::tool_foundry::detect::{
     GapDetectionConfig, ProposedTool, ShellInvocation, detect_tool_gaps,
 };
+use serde::{Deserialize, Serialize};
 
 /// The ledger's file name under `.stella/private/`.
 pub(crate) const GAP_LEDGER_FILE: &str = "tool_gaps.jsonl";
@@ -93,9 +93,9 @@ fn record_from(proposal: &ProposedTool, detected_at: u64) -> GapRecord {
             .map(|p| GapParameter {
                 name: p.name.clone(),
                 kind: match p.kind {
-                    stella_core::tool_foundry::ParamKind::Str => "str".to_string(),
-                    stella_core::tool_foundry::ParamKind::Path => "path".to_string(),
-                    stella_core::tool_foundry::ParamKind::Number => "num".to_string(),
+                    crate::tool_foundry::detect::ParamKind::Str => "str".to_string(),
+                    crate::tool_foundry::detect::ParamKind::Path => "path".to_string(),
+                    crate::tool_foundry::detect::ParamKind::Number => "num".to_string(),
                 },
                 examples: p.examples.clone(),
             })

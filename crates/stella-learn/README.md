@@ -41,6 +41,11 @@ parts live down there so the engine can read them too: the token estimate
 the skill budget spends, the `---` header parser, and the glob a rule guard
 matches on.
 
+`scoreboard` arrived the same way and for the same reason: the engine never
+read it. It is the yardstick `comparison` and `self_tuning` read — four
+numbers per unit of delivered work, none of them judged by a model.
+`stella-cli`'s `scoreboard_cmd` renders them.
+
 Why a crate and not a module: AGENTS.md § "When a new crate is justified",
 clause (b). `stella-records` needs the rule parser and the redactor, and
 `stella-core` must not be what hands them over.
@@ -62,6 +67,7 @@ clause (b). `stella-records` needs the rule parser and the redactor, and
 | Change the stats test | `src/self_tuning.rs` |
 | Change how often a holdout fires, or which item it picks | `src/holdout.rs` |
 | Add a kind of artifact the trial ledger can hold | `src/ledger.rs` |
+| Change what one unit of delivered work is scored on | `src/scoreboard.rs` |
 
 ## God files — do not add lines
 

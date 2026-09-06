@@ -883,6 +883,9 @@ crates/stella-cli/src/export/transcript/tests.rs issue-reference 1
 crates/stella-cli/src/extensions.rs filler-adverb 1
 crates/stella-cli/src/extensions.rs historical-reference 1
 crates/stella-cli/src/extensions.rs issue-reference 8
+crates/stella-cli/src/extensions/plan.rs filler-adverb 1
+crates/stella-cli/src/extensions/plan.rs historical-reference 1
+crates/stella-cli/src/extensions/plan.rs issue-reference 2
 crates/stella-cli/src/extensions/tests.rs issue-reference 6
 crates/stella-cli/src/failure.rs filler-adverb 6
 crates/stella-cli/src/failure.rs historical-reference 1
@@ -1424,6 +1427,9 @@ crates/stella-cli/src/tool_foundry/adopt.rs historical-reference 1
 crates/stella-cli/src/tool_foundry/adopt.rs issue-reference 4
 crates/stella-cli/src/tool_foundry/adopt.rs meta-writing 1
 crates/stella-cli/src/tool_foundry/adopt/tests.rs issue-reference 4
+crates/stella-cli/src/tool_foundry/detect.rs filler-adverb 2
+crates/stella-cli/src/tool_foundry/detect.rs issue-reference 4
+crates/stella-cli/src/tool_foundry/detect.rs meta-writing 1
 crates/stella-cli/src/tool_policy.rs filler-adverb 2
 crates/stella-cli/src/tool_policy.rs issue-reference 6
 crates/stella-cli/src/tool_switches.rs issue-reference 1
@@ -1778,9 +1784,6 @@ crates/stella-core/src/estimator.rs issue-reference 7
 crates/stella-core/src/event_sender.rs historical-reference 2
 crates/stella-core/src/event_sender.rs honesty-declaration 1
 crates/stella-core/src/event_sender.rs issue-reference 8
-crates/stella-core/src/extensions.rs filler-adverb 1
-crates/stella-core/src/extensions.rs historical-reference 1
-crates/stella-core/src/extensions.rs issue-reference 2
 crates/stella-core/src/goal.rs filler-adverb 2
 crates/stella-core/src/goal.rs historical-reference 6
 crates/stella-core/src/goal.rs issue-reference 13
@@ -1816,8 +1819,6 @@ crates/stella-core/src/receipts.rs honesty-declaration 2
 crates/stella-core/src/receipts.rs issue-reference 19
 crates/stella-core/src/receipts/tests.rs historical-reference 1
 crates/stella-core/src/receipts/tests.rs issue-reference 10
-crates/stella-core/src/repair.rs historical-reference 1
-crates/stella-core/src/repair.rs issue-reference 3
 crates/stella-core/src/restore.rs historical-reference 3
 crates/stella-core/src/restore.rs issue-reference 8
 crates/stella-core/src/retry.rs historical-reference 1
@@ -1826,8 +1827,6 @@ crates/stella-core/src/router.rs empty-epigram 1
 crates/stella-core/src/router.rs filler-adverb 1
 crates/stella-core/src/router.rs issue-reference 5
 crates/stella-core/src/router.rs meta-writing 1
-crates/stella-core/src/search.rs historical-reference 1
-crates/stella-core/src/search.rs honesty-declaration 1
 crates/stella-core/src/shell_text.rs filler-adverb 1
 crates/stella-core/src/shell_text.rs issue-reference 6
 crates/stella-core/src/skill_invocation.rs issue-reference 10
@@ -1863,9 +1862,6 @@ crates/stella-core/src/tasks.rs filler-adverb 3
 crates/stella-core/src/tasks.rs honesty-declaration 4
 crates/stella-core/src/tasks.rs interface-jargon 1
 crates/stella-core/src/tasks.rs issue-reference 5
-crates/stella-core/src/tool_foundry.rs filler-adverb 2
-crates/stella-core/src/tool_foundry.rs issue-reference 4
-crates/stella-core/src/tool_foundry.rs meta-writing 1
 crates/stella-core/src/waiting.rs historical-reference 1
 crates/stella-core/src/waiting.rs issue-reference 3
 crates/stella-core/tests/engine_emits_no_stage.rs historical-reference 1
@@ -2368,6 +2364,8 @@ crates/stella-plugin/src/program.rs rust-jargon 7
 crates/stella-plugin/src/progressive.rs honesty-declaration 1
 crates/stella-plugin/src/progressive.rs issue-reference 3
 crates/stella-plugin/src/progressive.rs rust-jargon 2
+crates/stella-plugin/src/repair.rs historical-reference 1
+crates/stella-plugin/src/repair.rs issue-reference 3
 crates/stella-plugin/src/runtime.rs historical-reference 1
 crates/stella-plugin/src/runtime.rs issue-reference 5
 crates/stella-plugin/src/wire.rs filler-adverb 1
@@ -3146,6 +3144,8 @@ crates/stella-tools/src/search/backfill.rs filler-adverb 2
 crates/stella-tools/src/search/backfill.rs historical-reference 6
 crates/stella-tools/src/search/backfill.rs honesty-declaration 1
 crates/stella-tools/src/search/backfill.rs issue-reference 16
+crates/stella-tools/src/search/budget.rs historical-reference 1
+crates/stella-tools/src/search/budget.rs honesty-declaration 1
 crates/stella-tools/src/search/cache.rs enumerative-announcement 1
 crates/stella-tools/src/search/cache.rs filler-adverb 1
 crates/stella-tools/src/search/cache.rs historical-reference 1

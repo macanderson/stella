@@ -64,7 +64,7 @@ merge its hits in the same way rung 1's hits already get merged.
 
 Ranking picks which files matter. A second question follows: how much to
 say about each one. Just the name? Or the name, the doc comment, who calls
-it, and its full body? `crates/stella-core/src/search.rs` answers this — from
+it, and its full body? `crates/stella-tools/src/search/budget.rs` answers this — from
 what got found and what fits, never from a guess at what the query meant.
 Guessing was ruled out on purpose: `search` has no mode flag, so a wrong
 guess could never be corrected. The model would just go back to the old

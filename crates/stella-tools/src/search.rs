@@ -64,6 +64,7 @@ use stella_protocol::tool::{ToolOutput, ToolSchema};
 use crate::registry::Tool;
 
 pub mod backfill;
+pub mod budget;
 pub mod cache;
 pub mod codegraph;
 pub mod engine;

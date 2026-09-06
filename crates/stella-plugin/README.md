@@ -246,6 +246,13 @@ before it crosses.
 - `src/runtime.rs` — the `[runtime]` block: `Runtime`, its validation rules,
   and `Runtime::child_env`, the pure default-deny selection a host applies
   after clearing the child's environment.
+- `src/repair.rs` — whether a refuted success claim earns another attempt:
+  `plan_repair`, the attempt cap, and the two measured axes (budget headroom
+  and wall clock) that can each refuse alone. Pure sums over measurements the
+  caller supplies. It came down from `stella-core`, which never called it. It
+  sits here because the caller it serves is a verification plugin. Its old
+  caller was the staged pipeline, now deleted. Nothing calls it today.
+  Refs #6264 decides whether a host wires it or it goes.
 - `src/consent.rs` — the install-consent surface: `Capability` (the
   `[[capabilities]]` entry and its validation), `highest_risk`, and
   `consent_text`, the pure renderer of the whole consent document.

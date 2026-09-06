@@ -27,7 +27,7 @@
 
 use std::path::{Path, PathBuf};
 
-use stella_core::extensions::{CommandDef, command_from_file};
+use crate::extensions::plan::{CommandDef, command_from_file};
 
 /// `stella commands <cmd>`.
 #[derive(Debug, clap::Subcommand)]
@@ -303,7 +303,7 @@ fn collect_markdown(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stella_core::extensions::command_from_toml;
+    use crate::extensions::plan::command_from_toml;
 
     fn write(path: &Path, body: &str) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();

@@ -20,18 +20,14 @@ pub mod driver;
 pub mod engine_markers;
 pub mod estimator;
 pub mod event_sender;
-pub mod extensions;
 pub mod goal;
 pub mod hooks;
 pub mod loop_detect;
 pub mod ports;
 pub mod receipts;
-pub mod repair;
 pub mod restore;
 pub mod retry;
 pub mod router;
-pub mod scoreboard;
-pub mod search;
 pub mod shell_text;
 pub mod skill_invocation;
 pub(crate) mod speculation;
@@ -41,7 +37,6 @@ pub mod step;
 pub mod subagent;
 mod summarize;
 pub mod tasks;
-pub mod tool_foundry;
 pub mod waiting;
 
 pub use budget::{BudgetGuard, BudgetOutcome};
@@ -56,18 +51,12 @@ pub use driver::capabilities::{OwnedTurnCapabilities, TurnCapabilities};
 pub use driver::{Engine, EngineConfig, SOFT_STOP_REASON, TurnOutcome};
 pub use estimator::{Calibration, CalibrationMap};
 pub use event_sender::{EventSendError, EventSender};
-pub use extensions::{
-    AgentDef, CommandDef, ExistingTargets, ExtensionDiagnostic, ExtensionKind, ExtensionProblem,
-    PlannedLink, SyncEntry, SyncPlan, SyncSkip, SyncSkipReason, SyncSource, agent_from_file,
-    command_from_file, command_from_toml, expand_command, merge_by_name, plan_extension_sync,
-};
 pub use goal::{GoalAssessError, GoalConfig, GoalOutcome, GoalVerifierVerdict};
 pub use hooks::{HookEvent, HookPayload, HookRunOutcome, HookRunner, Hooks, run_hooks};
 pub use loop_detect::{
     CallRecord, LoopDetectionConfig, LoopIdentity, LoopVerdict, ToolOrigin, detect_loop,
 };
 pub use ports::{Clock, LiveService, ToolExecutor};
-pub use repair::{RepairCost, RepairHeadroom, RepairPlan, RepairRefusal, plan_repair};
 pub use retry::{RetryOutcome, RetryPolicy, retry_with_backoff};
 pub use router::{RoleTable, Router};
 pub use step::{
@@ -80,7 +69,4 @@ pub use subagent::{
     forwards_to_parent, push_sub_agent_spend,
 };
 pub use tasks::{RunningTask, SpawnRequest, TaskBoard, TaskBoardError};
-pub use tool_foundry::{
-    GapDetectionConfig, ParamKind, ProposedTool, ShellInvocation, ToolParameter, detect_tool_gaps,
-};
 pub use waiting::{WaitCall, WaitRequest};

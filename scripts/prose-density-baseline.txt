@@ -45,7 +45,7 @@ crates/stella-records 24.33
 crates/stella-runtime 35.64
 crates/stella-serve 25.96
 crates/stella-store 24.08
-crates/stella-tools 34.99
+crates/stella-tools 35.11
 crates/stella-transcript 24.62
 crates/stella-tty 21.00
 crates/stella-tui 19.87
