@@ -548,10 +548,7 @@ lane_capabilities! {
         calibration: SeamClaim::bound("calibration,", SERVE_SEAMS),
         gate: SeamClaim::bound("gate: Some(gate)", SERVE_SEAMS),
         steering: SeamClaim::bound("steering: Some(steering)", SERVE_SEAMS),
-        requery: SeamClaim::deferred(
-            "Refs #6158",
-            "a decision on whether the host supplies a re-query port over the wire",
-        ),
+        requery: SeamClaim::bound("requery,", SERVE_SEAMS),
         bus: SeamClaim::bound("bus,", SERVE_SEAMS),
         outcomes: SeamClaim::declined(SERVE_HOST_OWNS_CALLS),
         fallback: SeamClaim::declined(SERVE_HOST_OWNS_CALLS),
