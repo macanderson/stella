@@ -3,8 +3,8 @@
 //! A **lane** is one place a turn runs. There is exactly one step loop
 //! (`stella-core`'s `driver::drive`); what differs between an interactive turn, a
 //! fleet worker and a pipeline stage is not the loop but *which of the loop's
-//! optional capabilities that run was assembled with*. Today there are seven
-//! such assembly sites and, before this module, none of them had a name —
+//! optional capabilities that run was assembled with*. [`BuiltinLane`] names
+//! every such site in this tree. Before this module none of them had a name,
 //! which is why no matrix over them could have rows and no surface could
 //! group by lane (`doc:turn-lane-assembly` §2).
 //!
@@ -12,14 +12,14 @@
 //!
 //! Deferring this one is expensive (`doc:turn-lane-assembly` §9.1, §10.3).
 //!
-//! - **[`BuiltinLane`] is closed** over the seven in-tree sites. That is what
+//! - **[`BuiltinLane`] is closed** over this tree's own sites. That is what
 //!   lets a later slice make "adding a capability without deciding it for
 //!   every lane" a compile error: the compiler can see every case, so an
 //!   exhaustive `match` or destructuring covers the whole set.
 //! - **[`TurnLane`] is open** — it carries a [`LaneId`] arm for a lane
 //!   contributed by a plugin manifest, which by construction is not known at
 //!   compile time. Adding that arm today costs one enum case; retrofitting
-//!   it after seven lanes and a parity matrix are written against a closed
+//!   it after the lanes and a parity matrix are written against a closed
 //!   enum is a matrix rewrite.
 //!
 //! The two arms do not have the same guarantee, and the type says so rather
@@ -79,11 +79,26 @@ impl std::fmt::Display for LaneId {
     }
 }
 
-/// The seven in-tree turn-assembly sites, named.
+/// The in-tree turn-assembly sites, named.
 ///
 /// Closed on purpose — see the module doc. The assembly site each case
 /// refers to is named in its own doc comment so the mapping survives a file
 /// move, which a line number would not.
+///
+/// # Why the doors that are not the deck got cases of their own
+///
+/// `stella run` and `stella goal` assemble their own engines, and neither is
+/// the deck's turn. Three answers were open for them: widen [`Self::Lead`] to
+/// cover any top-level turn, give them cases, or leave them with no lane.
+///
+/// Cases won, because a lane is what a turn binds and these two bind
+/// different sets. [`Self::RawTurn`] binds the session router's call outcomes
+/// and its mid-turn fallback; the deck binds neither. [`Self::GoalArc`] binds
+/// steering and calibration and nothing else. Folded into [`Self::Lead`], a
+/// report grouped by lane could not tell a person typing at the deck from a
+/// scripted run, and the row for the merged lane could not say what the lane
+/// binds. Left with no lane, every turn either door drives lands in the
+/// `null` group, which is the gap this type exists to close.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -123,6 +138,14 @@ pub enum BuiltinLane {
     /// A turn driven by a remote host over the wire (`stella-serve`'s
     /// `session`).
     ServeSession,
+    /// The shared raw turn (`stella-cli`'s `agent::turn`) — the entry point
+    /// `stella run`, the interactive door that does not draw the deck
+    /// (`agent::run_interactive`), and `stella run` under a wrapper plugin
+    /// all reach.
+    RawTurn,
+    /// A judged multi-round goal arc — `stella goal` (`stella-cli`'s
+    /// `agent::goal`), with or without a wrapper plugin above it.
+    GoalArc,
 }
 
 impl BuiltinLane {
@@ -131,7 +154,7 @@ impl BuiltinLane {
     /// Written as an exhaustive array so a new case that is not added here
     /// is caught by [`Self::ALL`]'s own test rather than silently narrowing
     /// every caller that enumerates lanes.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 9] = [
         Self::Lead,
         Self::Resume,
         Self::SubSession,
@@ -139,6 +162,8 @@ impl BuiltinLane {
         Self::FleetWorker,
         Self::PipelineStage,
         Self::ServeSession,
+        Self::RawTurn,
+        Self::GoalArc,
     ];
 
     /// The lane's wire spelling.
@@ -156,6 +181,8 @@ impl BuiltinLane {
             Self::FleetWorker => "fleet_worker",
             Self::PipelineStage => "pipeline_stage",
             Self::ServeSession => "serve_session",
+            Self::RawTurn => "raw_turn",
+            Self::GoalArc => "goal_arc",
         }
     }
 }
@@ -174,7 +201,7 @@ impl std::fmt::Display for BuiltinLane {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnLane {
-    /// One of the seven in-tree assembly sites.
+    /// One of this tree's own assembly sites.
     Builtin(BuiltinLane),
     /// A lane contributed by a plugin manifest. Not known at compile time.
     Plugin(LaneId),
@@ -270,7 +297,9 @@ mod tests {
                 | BuiltinLane::SubagentFork
                 | BuiltinLane::FleetWorker
                 | BuiltinLane::PipelineStage
-                | BuiltinLane::ServeSession => {}
+                | BuiltinLane::ServeSession
+                | BuiltinLane::RawTurn
+                | BuiltinLane::GoalArc => {}
             }
         }
         let mut seen = BuiltinLane::ALL.to_vec();
