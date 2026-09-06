@@ -259,6 +259,21 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// Every method the port tells a decorator to forward, over this view.
+    ///
+    /// The narrowing is what this decorator is for, and it applies to the
+    /// advertised surface. The four pass-through methods are not part of it:
+    /// a scoped span must not hide a nested turn's spend, a parked wait, or a
+    /// service that is still up. `active_skill_slugs` is the one this view
+    /// adds to rather than filters, so an empty plane leaves the inner's
+    /// answer alone.
+    #[test]
+    fn the_scoped_view_forwards_what_a_decorator_must() {
+        let loaded = crate::forwarding::LoadedExecutor;
+        let scoped = SkillScopedTools::new(&loaded, SkillInvocationPlane::new());
+        crate::forwarding::assert_forwards("SkillScopedTools", &scoped);
+    }
+
     /// A leaf advertising one read and one write tool, recording what
     /// actually executed — so a denial is proven at the process, not by the
     /// text that came back.

@@ -88,13 +88,18 @@ because a host forwards or serializes an event rather than constructing one. A
 facade closed over mere reachability would be `stella-protocol` with extra
 steps.
 
-The rule is a coherence property of what is *already* exported, not a licence
-to widen the facade for an imagined caller — the distinction that separates it
-from #2481, which asked for turn-boundary payload shapers no exported
-signature names and was closed as speculative. A genuinely new capability is
-still a design question; making an already-reachable one writable is not.
-Every entry arrives with doc prose explaining its place in the host-driving
-story.
+The rule is a coherence property of what is *already* exported. A genuinely
+new capability is still a design question; making an already-reachable one
+writable is not. Every entry arrives with doc prose explaining its place in
+the host-driving story.
+
+**Two ways to run a turn, and only one of them frames it for you.** Hand a
+`TurnState` to `Engine::drive` and the engine emits `agent.turn.started` and
+`agent.turn.completed` itself. Drive `run_step` in your own loop and the
+framing is yours: `turn_started_payload` and `turn_outcome_payload` are
+re-exported so those two events carry the shape a locally-driven turn carries,
+which is what stops an extension watching the bus from telling the two apart
+(#2481).
 
 **The hook plane is the wrong layer, by design.** Two seams are not closed
 over: `hooks` (`Hooks`, `HookRunner`) and `bus` (`HookBus`). Their closure is the shell-command hook plane, an extension surface

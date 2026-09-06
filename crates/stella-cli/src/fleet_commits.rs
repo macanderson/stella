@@ -154,6 +154,14 @@ impl ToolExecutor for CommitObserver<'_> {
         self.inner.live_services()
     }
 
+    /// Forwarded: this observer watches commits, it mounts no invocation
+    /// plane of its own. The empty default would read as "no skill is running
+    /// here", and a live skill's procedure text would stop surviving overflow
+    /// summarization for every fleet worker composed through it.
+    fn active_skill_slugs(&self) -> Vec<String> {
+        self.inner.active_skill_slugs()
+    }
+
     /// Forwarded: letting the empty default stand would silently serialize
     /// the inner executor's sibling spawns (see the port's contract) — the
     /// spawn tool is not commit-lane routed, so nothing is observed for it.
@@ -411,6 +419,21 @@ mod tests {
 
     fn shas(commits: &[CommitRecord]) -> Vec<&str> {
         commits.iter().map(|c| c.sha.as_str()).collect()
+    }
+
+    /// Every method the port tells a decorator to forward, over this
+    /// observer.
+    ///
+    /// It wraps every shared-tree fleet worker's stack and changes nothing
+    /// about what the stack below it mounts. `active_skill_slugs` was the one
+    /// it dropped.
+    #[test]
+    fn the_commit_observer_forwards_what_a_decorator_must() {
+        let loaded = stella_tools::forwarding::LoadedExecutor;
+        let tree = Arc::new(SharedTree::default());
+        let observer =
+            CommitObserver::new(&loaded, ScriptedGit(tree.clone()), Path::new("/repo"), "t1");
+        stella_tools::forwarding::assert_forwards("CommitObserver", &observer);
     }
 
     /// The observer wraps every shared-tree fleet worker's stack, so one that

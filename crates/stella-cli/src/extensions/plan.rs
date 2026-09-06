@@ -301,6 +301,19 @@ fn definition_from_file(
 pub fn command_from_file(path: &str, raw: &str) -> Result<CommandDef, ExtensionDiagnostic> {
     let (fm, name, description, body) = definition_from_file(path, raw, "COMMAND.md")?;
     let get = |key: &str| fm.data.get(key).map(String::as_str);
+    // The same widening `agent_from_file` refuses, one loader over: a nested
+    // `allowed-tools:` leaves the key empty, and an empty one is the spelling
+    // of "no restriction".
+    if get("allowed-tools")
+        .or_else(|| get("allowed_tools"))
+        .is_some_and(str::is_empty)
+        && nests_a_toolbelt_key(&fm)
+    {
+        return Err(ExtensionDiagnostic {
+            path: path.to_string(),
+            problem: ExtensionProblem::NestedToolbelt,
+        });
+    }
     Ok(CommandDef {
         name,
         namespace: None,
@@ -442,14 +455,31 @@ pub fn parse_toolbelt(value: Option<&str>) -> Option<Vec<String>> {
     (!tools.is_empty()).then_some(tools)
 }
 
+/// The frontmatter keys that name a toolbelt, in every spelling a loader
+/// here reads.
+const TOOLBELT_KEYS: [&str; 3] = ["tools", "allowed-tools", "allowed_tools"];
+
+/// Whether a nested mapping sat under a key that grants tools.
+///
+/// ADR 0025's rule: a nested value is refused where reading it wrong would
+/// widen what the file may do, and tolerated everywhere else. A toolbelt key
+/// left empty by nesting reads as "every tool", so it is the widening case.
+fn nests_a_toolbelt_key(fm: &Frontmatter) -> bool {
+    fm.nested_parents
+        .iter()
+        .any(|parent| TOOLBELT_KEYS.contains(&parent.as_str()))
+}
+
 /// Parse one agent file.
 pub fn agent_from_file(path: &str, raw: &str) -> Result<AgentDef, ExtensionDiagnostic> {
     let (fm, name, description, body) = definition_from_file(path, raw, "AGENT.md")?;
     let declared = fm.data.get("tools").map(String::as_str);
-    // A nested mapping leaves its parent key holding an empty value and its
-    // children in `nested_keys`, which is indistinguishable here from a bare
-    // `tools:` — and a bare one means every tool. Refuse rather than widen.
-    if declared.is_some_and(str::is_empty) && !fm.nested_keys.is_empty() {
+    // A nested mapping leaves its parent key holding an empty value, which
+    // reads here exactly like a bare `tools:` — and a bare one means every
+    // tool. Refuse rather than widen, but only when the toolbelt key is the
+    // one that got nested: nesting under `description:` widens nothing, and
+    // refusing for it took an agent away over a key nobody reads (ADR 0025).
+    if declared.is_some_and(str::is_empty) && nests_a_toolbelt_key(&fm) {
         return Err(ExtensionDiagnostic {
             path: path.to_string(),
             problem: ExtensionProblem::NestedToolbelt,
@@ -1006,9 +1036,9 @@ mod tests {
     /// The frontmatter parser is tolerant on purpose, and for `description:`
     /// or `model:` an unreadable value costs a fallback. For `tools:` it costs
     /// the whole registry, because the parser leaves the key holding an empty
-    /// value, the children go to `nested_keys`, and an empty `tools:` is the
-    /// documented spelling of "all tools". The author asked for two tools and
-    /// was handed every one, silently.
+    /// value, the children go to `nested_keys` under a `tools` parent, and an
+    /// empty `tools:` is the documented spelling of "all tools". The author
+    /// asked for two tools and was handed every one, silently.
     #[test]
     fn a_tools_mapping_is_refused_rather_than_read_as_every_tool() {
         let raw =
@@ -1038,6 +1068,34 @@ mod tests {
     /// A bad `description:` costs a label, since the first line of the body
     /// stands in. A bad `tools:` costs the whole registry. Refusing the file
     /// for the first would take an agent away over a key nobody reads.
+    /// The false stop the parent key removes. A bare `tools:` means every
+    /// tool, and nesting under `description:` widens nothing, so the file
+    /// loads. Refusing on "the toolbelt is empty and something is nested"
+    /// took the agent away over a key nobody reads.
+    #[test]
+    fn a_bare_toolbelt_beside_an_unrelated_nesting_still_loads() {
+        let raw = "---\nname: reviewer\ntools:\ndescription:\n  short: s\n  long: l\n---\nReview.";
+        let agent = agent_from_file("/x/reviewer.md", raw).expect("nothing widened, so it loads");
+        assert_eq!(agent.tools, None, "a bare `tools:` is still every tool");
+    }
+
+    /// A nested `allowed-tools:` in a command file is the same widening
+    /// `agent_from_file` refuses: the key is left empty, and empty means no
+    /// restriction.
+    #[test]
+    fn a_command_with_a_nested_toolbelt_is_refused() {
+        let raw = "---\nname: ship\nallowed-tools:\n  bash: true\n---\nShip it.";
+        let err = command_from_file("/x/ship.md", raw).unwrap_err();
+        assert_eq!(err.problem, ExtensionProblem::NestedToolbelt);
+
+        let ok = command_from_file(
+            "/x/ok.md",
+            "---\nname: ok\nallowed-tools:\ndescription:\n  short: s\n---\nGo.",
+        )
+        .expect("nesting under a key that grants nothing still loads");
+        assert_eq!(ok.allowed_tools, None);
+    }
+
     #[test]
     fn nesting_under_a_key_that_grants_nothing_still_loads() {
         let raw = "---\nname: reviewer\ndescription:\n  short: s\n  long: l\n---\nReview the diff.";

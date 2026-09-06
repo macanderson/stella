@@ -39,7 +39,7 @@ use crate::step::CancelUsageGuard;
 /// this, a deadline-less interactive session against a hard-down provider
 /// would park forever; with it, the session narrates its waits for six hours
 /// and then surfaces the provider's own error.
-pub(super) const MAX_PARKED_WAIT_MS: u64 = 6 * 60 * 60 * 1000;
+pub const MAX_PARKED_WAIT_MS: u64 = 6 * 60 * 60 * 1000;
 
 /// Wall clock a park must leave unspent under a task deadline: waking with
 /// less than this left means the retried call itself would be aborted at the

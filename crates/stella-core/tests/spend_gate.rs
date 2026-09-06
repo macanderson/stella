@@ -28,11 +28,12 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use async_trait::async_trait;
 use serde_json::Value;
 use stella_core::budget::BudgetGuard;
+use stella_core::driver::rate_limit::MAX_PARKED_WAIT_MS;
 use stella_core::hooks::{
     HookAction, HookExecError, HookExecResult, HookMatcher, HookRunner, Hooks,
 };
 use stella_core::ports::{FallbackResolver, ResolvedFallback, ToolExecutor};
-use stella_core::retry::Sleeper;
+use stella_core::retry::{ParkPlan, Sleeper, plan_park};
 use stella_core::{Engine, EngineConfig, TurnCapabilities, TurnOutcome};
 use stella_protocol::{
     BudgetMode, CompletionMessage, CompletionRequestRef, CompletionResult, CompletionUsage,
@@ -748,6 +749,209 @@ async fn a_denying_stop_hook_buys_one_call_per_held_round() {
             model_calls: 4,
             tool_calls: 0,
             cost_usd: 4.0 * CALL_COST_USD,
+        },
+    );
+}
+
+/// How many parks a deadline-less turn can take before its wait allowance is
+/// spent.
+///
+/// Derived from the two things that decide it: `plan_park` and
+/// `MAX_PARKED_WAIT_MS`. The loop mirrors the park accounting in
+/// `retry::retry_with_backoff_observed`. The allowance is what the ceiling has
+/// left. The streak is how many parks came before.
+fn parks_a_deadline_less_turn_can_take() -> u32 {
+    let mut waited_ms = 0u64;
+    let mut parks = 0u32;
+    loop {
+        let allowance_ms = MAX_PARKED_WAIT_MS.saturating_sub(waited_ms);
+        match plan_park(None, parks, allowance_ms) {
+            ParkPlan::Wait { total_ms } => {
+                waited_ms = waited_ms.saturating_add(total_ms);
+                parks = parks.saturating_add(1);
+            }
+            ParkPlan::GiveUp => return parks,
+        }
+    }
+}
+
+/// The worst case of a parked wait: every paid attempt a deadline-less turn
+/// can buy before the allowance runs out.
+///
+/// `a_parked_rate_limit_buys_one_attempt_per_park` prices one park.
+/// `a_stated_backoff_no_park_can_afford_buys_one_attempt` prices the fail-fast
+/// direction. Neither pins the total, and the total is what bounds the spend.
+/// A provider that refuses every call parks dozens of times, and each park
+/// buys one more paid attempt.
+///
+/// The pin is derived, not a literal. Change the ceiling or the backoff and
+/// the expected number moves with it. A literal here would be a magic number
+/// nobody can check.
+#[tokio::test]
+async fn a_deadline_less_parked_wait_buys_a_bounded_number_of_attempts() {
+    let refused = Err(ProviderError::RateLimited {
+        message: "429, never clearing".into(),
+        retry_after_ms: None,
+    });
+    // One entry, and the scripted provider repeats its last: every call is
+    // refused, so the turn ends when the allowance is spent rather than when
+    // the script runs out.
+    let (outcome, spend) = run_turn(vec![refused]).await;
+
+    let inline_attempts = EngineConfig::default().retry_policy.max_retries + 1;
+    let parks = parks_a_deadline_less_turn_can_take();
+    assert!(
+        parks > 1,
+        "the fixture must actually park more than once, or this prices the \
+         same thing the one-park scenario does: {parks}"
+    );
+
+    match &outcome {
+        TurnOutcome::Aborted { reason, .. } => {
+            assert!(reason.contains("429"), "unexpected reason: {reason}");
+        }
+        other => panic!("a provider that never clears cannot complete: {other:?}"),
+    }
+    assert_spend(
+        "every park a deadline-less wait can take (driver::rate_limit)",
+        &spend,
+        &Spend {
+            // The inline ladder's attempts, then one more per park.
+            model_calls: inline_attempts + parks,
+            tool_calls: 0,
+            cost_usd: 0.0,
+        },
+    );
+}
+
+/// A step the provider cut off at the output-token limit, with text to keep.
+fn truncated(text: &str) -> CompletionResult {
+    CompletionResult {
+        finish_reason: Some(stella_protocol::FinishReason::Length),
+        ..answer(text)
+    }
+}
+
+/// A call that hit the output limit before producing a single answer token —
+/// the shape `starvation::starved_of_output` recognises.
+fn starved() -> CompletionResult {
+    CompletionResult {
+        finish_reason: Some(stella_protocol::FinishReason::Length),
+        ..answer("")
+    }
+}
+
+/// The summarizer's own request rejected for its size, over and over.
+///
+/// The call that shrinks the transcript is refused for being too big. So the
+/// older head of the render is dropped and the summarizer is asked again.
+/// Every rejected attempt reached the provider and is a paid call.
+/// `SUMMARIZER_OVERFLOW_ATTEMPTS` is what stops it buying more.
+///
+/// Pinned from both sides: what the ladder buys, and the bound. The script
+/// holds the ladder's worth of rejections and then an answer, and the provider
+/// repeats its last entry. Raise the bound and the summarizer eats the answer,
+/// so the count moves. Lower it and the worker call meets a rejection. Either
+/// way this fails.
+#[tokio::test]
+async fn the_summarizers_head_dropping_ladder_buys_one_call_per_attempt() {
+    let rejected = || -> Result<CompletionResult, ProviderError> {
+        Err(ProviderError::ContextOverflow {
+            message: "summarizer request is too long".into(),
+        })
+    };
+    let mut script: Vec<Result<CompletionResult, ProviderError>> =
+        (0..3).map(|_| rejected()).collect();
+    script.push(Ok(answer("done")));
+
+    let (outcome, spend) = Turn::new(script)
+        .messages(long_transcript())
+        .config(|config| config.compaction_budget_tokens = 1)
+        .run()
+        .await;
+
+    assert_eq!(
+        outcome,
+        TurnOutcome::Completed {
+            text: "done".into(),
+            cost_usd: CALL_COST_USD,
+        },
+        "the summarizer gives up, the context is left intact, and the worker \
+         step still answers"
+    );
+    assert_spend(
+        "summarizer head-dropping ladder (driver::restore's \
+         summarize_overflow_span)",
+        &spend,
+        &Spend {
+            // Three rejected summarizer dispatches, then the worker's call.
+            // A rejection bills nothing, so only the answer is in the cost.
+            model_calls: 4,
+            tool_calls: 0,
+            cost_usd: CALL_COST_USD,
+        },
+    );
+}
+
+/// The summarizer answered empty at its token limit, so it is asked once more
+/// with real room.
+///
+/// Both attempts bill. Reporting only the surviving one would understate the
+/// turn by what the starvation cost.
+#[tokio::test]
+async fn the_summarizers_starved_retry_buys_one_more_call() {
+    let (outcome, spend) = Turn::new(vec![
+        Ok(starved()),
+        Ok(answer("SUMMARY")),
+        Ok(answer("done")),
+    ])
+    .messages(long_transcript())
+    .config(|config| config.compaction_budget_tokens = 1)
+    .run()
+    .await;
+
+    assert_eq!(
+        outcome,
+        TurnOutcome::Completed {
+            text: "done".into(),
+            cost_usd: 3.0 * CALL_COST_USD,
+        },
+        "the starved attempt's cost folds into the turn total beside the \
+         retry's"
+    );
+    assert_spend(
+        "summarizer starved retry (crate::starvation through driver::restore)",
+        &spend,
+        &Spend {
+            model_calls: 3,
+            tool_calls: 0,
+            cost_usd: 3.0 * CALL_COST_USD,
+        },
+    );
+}
+
+/// A tool-less step cut off at the output limit is continued. One paid call
+/// per continuation, up to the turn's allowance.
+///
+/// The script truncates more times than the allowance can absorb, so the bound
+/// is what ends the turn. That is the second half of the pin.
+#[tokio::test]
+async fn the_length_continuation_ladder_buys_one_call_per_continuation() {
+    let script: Vec<Result<CompletionResult, ProviderError>> = (0..8)
+        .map(|i| Ok(truncated(&format!("part {i} "))))
+        .collect();
+
+    let (_outcome, spend) = run_turn(script).await;
+
+    assert_spend(
+        "length-continuation ladder (driver::truncation)",
+        &spend,
+        &Spend {
+            // The first cut-off step, then one call per continuation until
+            // the allowance is spent.
+            model_calls: 5,
+            tool_calls: 0,
+            cost_usd: 5.0 * CALL_COST_USD,
         },
     );
 }

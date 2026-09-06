@@ -146,7 +146,7 @@ mod drive;
 mod model_fallback;
 pub mod output_budget_recovery;
 pub(crate) mod overflow_recovery;
-mod rate_limit;
+pub mod rate_limit;
 mod restore;
 // The step boundary's host consults (steering, soft stop, #3243 re-query).
 mod settlement;

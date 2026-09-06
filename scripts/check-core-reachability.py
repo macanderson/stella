@@ -178,6 +178,19 @@ def module_file(src: Path, name: str) -> Path | None:
     return None
 
 
+def retired_because(src: Path, name: str) -> str:
+    """Why a baseline entry stopped being unreached.
+
+    A name drops out of the unreached set for two reasons, and they are
+    opposites: the engine started naming the module, or the module is gone.
+    `module_file` answers which, so a run reports the one that happened
+    instead of asserting the first in both cases.
+    """
+    if module_file(src, name) is None:
+        return "evicted, gone from stella-core"
+    return "the engine reaches it now"
+
+
 def referenced_modules(text: str) -> set[str]:
     """Every top-level crate module this text names."""
     names = set(CRATE_PATH.findall(text))
@@ -302,17 +315,16 @@ def main() -> int:
         baseline_path.write_text(
             BASELINE_HEADER + "\n".join(kept) + ("\n" if kept else ""), encoding="utf-8"
         )
-        retired = sorted(baseline - set(unreached))
-        for name in retired:
+        for name in sorted(baseline - set(unreached)):
             print(
                 f"check-core-reachability: retired {name} — "
-                "it left the crate, or the engine reaches it now"
+                f"{retired_because(src, name)}"
             )
         print(f"check-core-reachability: baseline holds {len(kept)} module(s)")
         return 0
 
     new_debt = sorted(set(unreached) - baseline)
-    reachable_now = sorted(baseline - set(unreached))
+    dead_entries = sorted(baseline - set(unreached))
 
     if new_debt:
         print("check-core-reachability: FAILED\n")
@@ -330,12 +342,11 @@ def main() -> int:
         )
         return 1
 
-    if reachable_now:
+    if dead_entries:
         print("check-core-reachability: baseline is STALE\n")
-        print("These left the crate or the engine reaches them, so their")
-        print("baseline entries are dead:\n")
-        for name in reachable_now:
-            print(f"  {name}")
+        print("These baseline entries are dead:\n")
+        for name in dead_entries:
+            print(f"  {name} — {retired_because(src, name)}")
         print("\nRun ./scripts/check-core-reachability.py --update and commit the diff.")
         return 1
 

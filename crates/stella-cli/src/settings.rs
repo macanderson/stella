@@ -1289,7 +1289,7 @@ fn project_trust() -> ProjectTrust {
 /// | Project-scope `active_plugins` — a name here makes the host spawn that plugin's program on every turn, so an untrusted scope keeps the user/managed list and adds nothing | the same function, immediately below `context_providers` |
 /// | The MCP servers declared in `.stella/mcp.toml` — an arbitrary stdio `command` run at session start, or an attacker-chosen http endpoint | `agent::load_mcp_plan` |
 /// | `<workspace>/.stella/plugins/` — a plugin declares a program the host spawns and can arbitrate the agent loop | `plugin_cmd::roster::read_project_tier` |
-/// | `stella self-driving`'s issue work — refused outright when the workspace declares context records that would not reach the turn, because unsteered work is indistinguishable from steered work in the pull request it produces | `self_driving_cmd::work::refuse_if_unsteered` |
+/// | `stella self-driving`'s issue work — refused outright when the workspace declares context records that would not reach the turn, because unsteered work is indistinguishable from steered work in the pull request it produces | `self_driving_cmd::work::steering::refuse_if_unsteered` |
 ///
 /// `stella plugin install --scope project` consults it once more, to *warn*
 /// rather than gate: the copy onto disk is the operator's own act, but the

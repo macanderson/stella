@@ -183,14 +183,20 @@ const CALIBRATION_MAX_FACTOR: f64 = 2.0;
 const CALIBRATION_SAMPLE_MIN_RATIO: f64 = CALIBRATION_MIN_FACTOR / 2.0;
 const CALIBRATION_SAMPLE_MAX_RATIO: f64 = CALIBRATION_MAX_FACTOR * 2.0;
 
-/// Drift correction for one provider/model: an EWMA of the observed
-/// actual/estimated input-token ratio, fed by `(estimated, actual)` pairs
-/// from committed steps (`AgentEvent::StepUsage`) and applied as a bounded
-/// multiplicative factor on the byte-heuristic estimate.
+/// Drift correction for one provider/model, fed by `(estimated, actual)`
+/// input-token pairs from committed steps (`AgentEvent::StepUsage`) and
+/// applied as a bounded factor on the byte-heuristic estimate.
 ///
-/// The ratio also absorbs systematic per-request overhead the heuristic
-/// cannot see (tool schemas, provider framing): those inflate `actual`
-/// uniformly, so they surface as a stable ratio rather than noise.
+/// Two models sit behind that factor. The fallback is an EWMA of the
+/// actual/estimated ratio. The one that sizes a budget is a fitted line,
+/// `actual ≈ slope · estimated + intercept`. The intercept holds the
+/// per-request overhead the heuristic cannot see, such as tool schemas and
+/// provider framing. That overhead is a fixed block of tokens, not a share
+/// of the conversation, so it never settles into a stable ratio: an 8k block
+/// reads 2.6 against a 5k conversation and 1.08 against a 100k one.
+/// [`Calibration::effective_budget`] solves that line for the size a budget
+/// affords instead of dividing by a ratio, and
+/// `a_constant_overhead_does_not_halve_the_compaction_budget` is the witness.
 ///
 /// Pure state — no I/O, no clock. Persistence of samples across sessions is
 /// `stella-store`'s job; replay them through [`Calibration::record`] (oldest

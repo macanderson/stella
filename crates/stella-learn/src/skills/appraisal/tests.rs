@@ -188,8 +188,12 @@ fn a_regressing_skill_is_demoted_with_its_evidence() {
 }
 
 /// #1068's scope guard: a hand-authored skill with an identically regressing
-/// window is not demoted. Checked for every origin that is not `AutoCreated`,
-/// so a new origin is protected by default rather than by remembering.
+/// window is not demoted. Checked for every origin that is not `AutoCreated`.
+///
+/// Read off `SkillOrigin::ALL` rather than spelled. A spelled list named
+/// three origins while the enum held five. So `Contributed` — a plugin's
+/// skill — was safe in the code and pinned by nothing. That is the accident
+/// the line above promises will not happen.
 #[test]
 fn a_hand_authored_skill_is_never_auto_demoted() {
     let trials = window(8, 0, 8);
@@ -199,11 +203,16 @@ fn a_hand_authored_skill_is_never_auto_demoted() {
         "the fixture's window really does regress"
     );
 
-    for origin in [
-        SkillOrigin::Workspace,
-        SkillOrigin::User,
-        SkillOrigin::Installed,
-    ] {
+    let protected: Vec<SkillOrigin> = SkillOrigin::ALL
+        .iter()
+        .copied()
+        .filter(|origin| origin.is_hand_authored())
+        .collect();
+    assert!(
+        protected.contains(&SkillOrigin::Contributed),
+        "a plugin's skill is hand-authored by somebody, and the enumeration          must reach it: {protected:?}"
+    );
+    for origin in protected {
         assert_eq!(
             decide_demotion(origin, &appraisal),
             DemotionDecision::Keep {
@@ -214,6 +223,40 @@ fn a_hand_authored_skill_is_never_auto_demoted() {
     }
     // Only the auto-created one moves.
     assert!(decide_demotion(SkillOrigin::AutoCreated, &appraisal).is_demotion());
+}
+
+/// `SkillOrigin::ALL` really is every origin.
+///
+/// The `match` is exhaustive. A new origin stops this file compiling until
+/// somebody adds an arm. The arm sits beside the check that the same origin is
+/// in `ALL`, which is the list every caller reads.
+#[test]
+fn every_origin_is_listed() {
+    let each = [
+        SkillOrigin::Workspace,
+        SkillOrigin::User,
+        SkillOrigin::AutoCreated,
+        SkillOrigin::Installed,
+        SkillOrigin::Contributed,
+    ];
+    for origin in each {
+        match origin {
+            SkillOrigin::Workspace
+            | SkillOrigin::User
+            | SkillOrigin::AutoCreated
+            | SkillOrigin::Installed
+            | SkillOrigin::Contributed => {}
+        }
+        assert!(
+            SkillOrigin::ALL.contains(&origin),
+            "{origin:?} is an origin the ALL table does not list"
+        );
+    }
+    assert_eq!(
+        SkillOrigin::ALL.len(),
+        each.len(),
+        "ALL holds an entry this test does not know about"
+    );
 }
 
 /// A short window never demotes: "we have not measured anything" must not be
@@ -410,7 +453,7 @@ proptest! {
         trials in proptest::collection::vec(arb_trial(), 0..60),
     ) {
         let appraisal = appraise("s", &trials, &AppraisalConfig::default());
-        for origin in [SkillOrigin::Workspace, SkillOrigin::User, SkillOrigin::Installed] {
+        for origin in SkillOrigin::ALL.iter().copied().filter(|o| o.is_hand_authored()) {
             prop_assert_eq!(
                 decide_demotion(origin, &appraisal),
                 DemotionDecision::Keep { reason: KeepSkillReason::HandAuthored }

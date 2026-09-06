@@ -551,3 +551,41 @@ mod the_exclusion_is_enforced {
         let _draft: HookEventDraft = HookEventDraft;
     }
 }
+
+/// A host that drives `run_step` rather than `Engine::drive` frames its own
+/// turn, and the facade must let it do that without naming `stella_core::`.
+///
+/// Every path below is a `stella_engine::` one, so on a tree that does not
+/// re-export the two shapers this file does not compile. That is the witness.
+/// The assertions pin the shape a locally-driven turn puts on the bus, so a
+/// host copying these payloads cannot drift from it.
+#[test]
+fn a_host_can_frame_its_own_turn_through_the_facade_alone() {
+    let lane: Option<&stella_engine::TurnLane> = None;
+    let started = stella_engine::turn_started_payload(
+        3,
+        Some(12),
+        stella_engine::ModelCallRole::Worker,
+        lane,
+    );
+    assert_eq!(started["message_count"], 3);
+    assert_eq!(started["max_steps"], 12);
+    assert!(
+        started["lane"].is_null(),
+        "an unnamed lane is its own bucket, not a missing key: {started}"
+    );
+
+    let completed = stella_engine::turn_outcome_payload(
+        &stella_engine::TurnOutcome::Completed {
+            text: "done".to_string(),
+            cost_usd: 0.25,
+        },
+        4,
+    );
+    assert_eq!(completed["outcome"], "completed");
+    assert_eq!(completed["steps"], 4);
+    assert!(
+        completed.get("text").is_none(),
+        "answer text is transcript content and never rides the boundary: {completed}"
+    );
+}
