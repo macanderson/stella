@@ -249,3 +249,32 @@ fn liveness_and_witnesses_agree() {
         }
     }
 }
+
+/// **The self-driving loop proposes at the impact its row declares.**
+///
+/// `stella-cli`'s `self_driving_cmd::curate` writes a proposal for one of
+/// three surfaces and reads what that surface costs out of the provenance
+/// policy. Which impact class each of its targets carries is a second reading
+/// of this matrix, and nothing in `stella-cli` can see the matrix — that crate
+/// does not link this one, because this one links `stella-serve`, which the
+/// shipping binary must not. So the pin runs from this side, over the source
+/// text, the way every witness above is checked.
+#[test]
+fn the_loop_proposes_at_the_impact_its_evolution_row_declares() {
+    let curate = include_str!("../../../stella-cli/src/self_driving_cmd/curate.rs");
+
+    for (target, surface) in [
+        ("Target::Skill", EvolutionSurface::Skill),
+        ("Target::Rule", EvolutionSurface::Framework),
+        ("Target::Tool", EvolutionSurface::Tool),
+    ] {
+        let arm = format!("{target} => ImpactClass::{:?},", surface.row().impact);
+        assert!(
+            curate.contains(&arm),
+            "the {} row declares {:?}, so curate.rs's `impact_of` should read \
+             `{arm}` — the two have drifted",
+            surface.as_str(),
+            surface.row().impact,
+        );
+    }
+}
