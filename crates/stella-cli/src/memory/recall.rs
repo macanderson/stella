@@ -199,12 +199,25 @@ impl OpeningRecall {
 /// Inject `recalled`'s block ([`inject_recall_block`]) and keep what the turn
 /// runner still needs of it — the one seam through which an opening recall
 /// reaches a turn, so no call site can inject the block and drop the seed.
+///
+/// It is also where the block's cost reaches `ledger`, the allowance it
+/// shares with the tool array. The cost is measured over the injected bytes,
+/// so what the plane records and what the provider is sent are one number. It
+/// is charged only when the block is really appended. A block the dedup
+/// refuses is one an earlier turn paid for, and spent here.
 pub(crate) fn inject_opening_recall(
     messages: &mut Vec<CompletionMessage>,
     recalled: RecalledBlock,
+    ledger: &stella_core::steering::ledger::SteeringLedger,
 ) -> OpeningRecall {
     let events = recalled.telemetry_events();
-    inject_recall_block(messages, recalled.text);
+    let cost = recalled
+        .text
+        .as_deref()
+        .map_or(0, stella_protocol::estimate_tokens);
+    if inject_recall_block(messages, recalled.text) {
+        ledger.spend(cost);
+    }
     OpeningRecall {
         events,
         produced: recalled.produced,
@@ -1297,10 +1310,10 @@ fn drop_message(
              `skills.max_skills`"
         )),
         SteeringSource::Tool => Some(format!(
-            "a tool did not fit this session's tool allowance and was not advertised: \
-             {handle} — it still runs if it is called; raise \
-             `context.steering.tools.max_tokens`, or set `context.steering.tools.lean` \
-             false to advertise every tool"
+            "a tool did not fit what this turn's records, skills and frames left of the \
+             steering allowance, and was not advertised: {handle} — it still runs if it \
+             is called; raise `context.steering.max_tokens`, or set \
+             `context.steering.tools.lean` false to advertise every tool"
         )),
         SteeringSource::Plugin => None,
     }
@@ -1409,10 +1422,15 @@ pub(super) fn render_today_section(unix_secs: i64) -> String {
 /// content adds tokens, and it rides the cached prefix from the next turn
 /// on. `None` (nothing relevant, or an A/B-suppressed turn) adds nothing
 /// and touches nothing.
-pub fn inject_recall_block(messages: &mut Vec<CompletionMessage>, block: Option<String>) {
+///
+/// Answers whether the block was appended. That is what
+/// [`inject_opening_recall`] charges the steering ledger on. A block the dedup
+/// below refuses costs this turn nothing, since the model already carries it.
+#[must_use]
+pub fn inject_recall_block(messages: &mut Vec<CompletionMessage>, block: Option<String>) -> bool {
     let is_marker =
         |m: &CompletionMessage| m.role == MessageRole::User && m.content.starts_with(RECALL_MARKER);
-    let Some(content) = block else { return };
+    let Some(content) = block else { return false };
     // Against EVERY prior marker, not just the most recent one.
     //
     // Comparing only the latest made the dedup order-sensitive: an A → B → A
@@ -1435,7 +1453,7 @@ pub fn inject_recall_block(messages: &mut Vec<CompletionMessage>, block: Option<
         .iter()
         .any(|m| is_marker(m) && m.content == content)
     {
-        return;
+        return false;
     }
     let message = CompletionMessage {
         role: MessageRole::User,
@@ -1457,4 +1475,5 @@ pub fn inject_recall_block(messages: &mut Vec<CompletionMessage>, block: Option<
         _ => messages.len(),
     };
     messages.insert(at, message);
+    true
 }

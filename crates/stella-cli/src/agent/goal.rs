@@ -286,7 +286,8 @@ pub(crate) async fn run_raw_one_shot(
     if let Some(m) = &memory {
         let touched = stella_core::driver::loop_evidence::turn_evidence(&messages).touched_paths;
         let recalled = m.recall_block_reported(prompt, &touched).await;
-        recall = crate::memory::inject_opening_recall(&mut messages, recalled);
+        recall =
+            crate::memory::inject_opening_recall(&mut messages, recalled, &cfg.steering_ledger);
     }
     // After recall, exactly where the interactive loop notes its `/slug`
     // expansions: the skill's injection event and its turn scope ride the
@@ -682,7 +683,8 @@ pub async fn run_goal_cmd(
         m.arm_recall_control();
         let touched = stella_core::driver::loop_evidence::turn_evidence(&messages).touched_paths;
         let recalled = m.recall_block_reported(goal, &touched).await;
-        recall = crate::memory::inject_opening_recall(&mut messages, recalled);
+        recall =
+            crate::memory::inject_opening_recall(&mut messages, recalled, &cfg.steering_ledger);
     }
 
     let started_unix = crate::memory::unix_now_secs();

@@ -47,6 +47,7 @@ use std::sync::Arc;
 
 use stella_core::bus::HookBus;
 use stella_core::ports::{AuthzGate, NoAuthz, Principal, ToolExecutor};
+use stella_core::steering::ledger::SteeringLedger;
 use stella_core::steering::tools::ToolAdvertisement;
 use stella_tools::custom::{CustomTool, CustomToolSet};
 use stella_tools::gated::GatedToolSet;
@@ -79,6 +80,33 @@ pub(crate) fn session_gate(workspace_root: &std::path::Path) -> Arc<dyn AuthzGat
     }
 }
 
+/// A session's tool allowance, both halves of it: the budget the workspace
+/// declared, and the cell holding what this turn's volatile block already
+/// took of it.
+///
+/// One argument rather than two, because neither half answers the question on
+/// its own. [`budgeted`] needs the pair to hand the packer a number, and a
+/// call site that carried only the first would settle an array against a
+/// spend it never saw.
+#[derive(Clone, Copy)]
+pub(crate) struct ToolAllowance<'l> {
+    declared: ToolAdvertisement,
+    ledger: &'l SteeringLedger,
+}
+
+impl<'l> ToolAllowance<'l> {
+    /// The budget and the cell, named — the seam a witness test builds one
+    /// through.
+    pub(crate) fn new(declared: ToolAdvertisement, ledger: &'l SteeringLedger) -> Self {
+        Self { declared, ledger }
+    }
+
+    /// This session's own, off its resolved config.
+    fn of(cfg: &'l Config) -> Self {
+        Self::new(cfg.tool_advertisement, &cfg.steering_ledger)
+    }
+}
+
 /// The full session chain over `base`: custom `.stella/tools/*.toml` tools,
 /// the operator's switches, and the authorization gate, outermost-last.
 pub(crate) fn session_stack<'a>(
@@ -94,7 +122,7 @@ pub(crate) fn session_stack<'a>(
             custom_tools,
             cfg.workspace_root.clone(),
             session_tool_policy(cfg),
-            cfg.tool_advertisement,
+            ToolAllowance::of(cfg),
             session_gate(&cfg.workspace_root),
             principal,
         ),
@@ -121,7 +149,7 @@ pub(crate) fn session_stack_with_gate<'a>(
     custom_tools: Vec<CustomTool>,
     workspace_root: PathBuf,
     policy: ToolPolicy,
-    advertisement: ToolAdvertisement,
+    allowance: ToolAllowance<'_>,
     gate: Arc<dyn AuthzGate>,
     principal: Principal,
 ) -> GatedToolSet<'a> {
@@ -136,13 +164,9 @@ pub(crate) fn session_stack_with_gate<'a>(
     let namespaces = contributed_server_principals(&workspace_root);
     let customs = CustomToolSet::new(base, custom_tools, workspace_root);
     let permitted = PolicyToolSet::new_boxed(Box::new(customs), policy);
-    GatedToolSet::new_boxed(
-        budgeted(Box::new(permitted), advertisement),
-        gate,
-        principal,
-    )
-    .with_tool_principals(contributed)
-    .with_prefix_principals(namespaces)
+    GatedToolSet::new_boxed(budgeted(Box::new(permitted), allowance), gate, principal)
+        .with_tool_principals(contributed)
+        .with_prefix_principals(namespaces)
 }
 
 /// The principal each plugin-contributed **MCP server's** tools authorize as,
@@ -230,7 +254,7 @@ pub(crate) fn policy_stack<'a>(
         policy_stack_with(
             base,
             session_tool_policy(cfg),
-            cfg.tool_advertisement,
+            ToolAllowance::of(cfg),
             session_gate(&cfg.workspace_root),
             principal,
         ),
@@ -258,16 +282,12 @@ pub(crate) fn policy_stack<'a>(
 pub(crate) fn policy_stack_with<'a>(
     base: &'a dyn ToolExecutor,
     policy: ToolPolicy,
-    advertisement: ToolAdvertisement,
+    allowance: ToolAllowance<'_>,
     gate: Arc<dyn AuthzGate>,
     principal: Principal,
 ) -> GatedToolSet<'a> {
     let permitted = PolicyToolSet::new(base, policy);
-    GatedToolSet::new_boxed(
-        budgeted(Box::new(permitted), advertisement),
-        gate,
-        principal,
-    )
+    GatedToolSet::new_boxed(budgeted(Box::new(permitted), allowance), gate, principal)
 }
 
 /// Compose the tool allowance over `permitted`, or hand it back untouched.
@@ -276,15 +296,21 @@ pub(crate) fn policy_stack_with<'a>(
 /// filters nothing, so the lever's off state is the absence of a layer. "Off
 /// advertises the whole surface" is then a fact about the composition rather
 /// than a claim about a filter, which is what a bench arm measuring the lever
-/// needs on its control side.
+/// needs on its control side. The ledger is untouched on that arm too: with
+/// no tool withheld there is nothing for a shared total to decide.
+///
+/// On the `Lean` arm the budget the packer receives is not the one the
+/// workspace declared — it is what this turn's volatile block left of it.
+/// `ledger` answers once per declared allowance and holds that answer, so a
+/// later spend cannot re-rank an array the provider is already caching.
 fn budgeted<'a>(
     permitted: Box<dyn ToolExecutor + 'a>,
-    advertisement: ToolAdvertisement,
+    allowance: ToolAllowance<'_>,
 ) -> Box<dyn ToolExecutor + 'a> {
-    match advertisement {
+    match allowance.declared {
         ToolAdvertisement::Full => permitted,
-        ToolAdvertisement::Lean(budget) => {
-            let lean = LeanToolSet::new(permitted, budget);
+        ToolAdvertisement::Lean(declared) => {
+            let lean = LeanToolSet::new(permitted, allowance.ledger.settle(declared));
             lean.report_drops();
             Box::new(lean)
         }
@@ -361,7 +387,7 @@ mod tests {
             Vec::new(),
             PathBuf::from("."),
             ToolPolicy::allow_all(),
-            ToolAdvertisement::Full,
+            ToolAllowance::new(ToolAdvertisement::Full, &SteeringLedger::default()),
             gate,
             Principal::User,
         )
@@ -516,7 +542,7 @@ mod tests {
             vec![script_tool(dir.path())],
             dir.path().to_path_buf(),
             ToolPolicy::allow_all(),
-            ToolAdvertisement::Full,
+            ToolAllowance::new(ToolAdvertisement::Full, &SteeringLedger::default()),
             session_gate(dir.path()),
             Principal::User,
         );
@@ -591,7 +617,7 @@ mod tests {
             vec![script_tool(dir.path())],
             dir.path().to_path_buf(),
             ToolPolicy::allow_all(),
-            ToolAdvertisement::Full,
+            ToolAllowance::new(ToolAdvertisement::Full, &SteeringLedger::default()),
             session_gate(dir.path()),
             Principal::User,
         );
@@ -642,7 +668,7 @@ mod tests {
             Vec::new(),
             dir.path().to_path_buf(),
             policy,
-            ToolAdvertisement::Full,
+            ToolAllowance::new(ToolAdvertisement::Full, &SteeringLedger::default()),
             session_gate(dir.path()),
             Principal::User,
         );
@@ -684,5 +710,143 @@ mod tests {
             ),
             "a grant must never re-enable an operator-denied tool"
         );
+    }
+
+    /// A base with `count` fat schemas, so an allowance can actually bind.
+    struct WideLeaf {
+        count: usize,
+    }
+
+    #[async_trait]
+    impl ToolExecutor for WideLeaf {
+        fn schemas(&self) -> Vec<ToolSchema> {
+            (0..self.count)
+                .map(|i| ToolSchema {
+                    name: format!("builtin_{i:02}"),
+                    description: "x".repeat(400),
+                    input_schema: json!({"type": "object"}),
+                    read_only: true,
+                    speculation_safe: false,
+                })
+                .collect()
+        }
+        async fn execute(&self, name: &str, _input: &Value) -> ToolOutput {
+            ToolOutput::Ok {
+                content: format!("ran {name}"),
+                data: None,
+            }
+        }
+    }
+
+    /// The whole tool surface, costed the way the packer costs it.
+    fn full_cost(leaf: &WideLeaf) -> u64 {
+        leaf.schemas()
+            .iter()
+            .map(stella_core::steering::tools::schema_tokens)
+            .sum()
+    }
+
+    /// How many schemas the assembled session chain advertises under
+    /// `declared`, given a `ledger` the turn's block has already spent from.
+    fn advertised(
+        leaf: &WideLeaf,
+        declared: stella_core::steering::tools::ToolBudget,
+        ledger: &SteeringLedger,
+    ) -> usize {
+        session_stack_with_gate(
+            leaf,
+            Vec::new(),
+            PathBuf::from("."),
+            ToolPolicy::allow_all(),
+            ToolAllowance::new(ToolAdvertisement::Lean(declared), ledger),
+            Arc::new(NoAuthz),
+            Principal::User,
+        )
+        .schemas()
+        .len()
+    }
+
+    /// A declared allowance wide enough to hold `leaf`'s whole surface.
+    fn wide_enough(leaf: &WideLeaf) -> stella_core::steering::tools::ToolBudget {
+        stella_core::steering::tools::ToolBudget {
+            max_tokens: full_cost(leaf),
+            mcp_max_tokens: full_cost(leaf),
+        }
+    }
+
+    /// **The witness.** Two turns over one tool set and one declared
+    /// allowance. The turn whose records filled most of the allowance
+    /// advertises strictly fewer tools than the turn that recalled nothing.
+    ///
+    /// Before the ledger, [`budgeted`] read the declared allowance and
+    /// nothing else, so both turns advertised the same array: a rule and a
+    /// tool schema each spent a budget the other could not see.
+    #[test]
+    fn a_turn_whose_records_fill_the_allowance_advertises_fewer_tools() {
+        let leaf = WideLeaf { count: 40 };
+        let declared = wide_enough(&leaf);
+
+        let quiet = SteeringLedger::default();
+        let recalled = SteeringLedger::default();
+        recalled.spend(declared.max_tokens * 3 / 4);
+
+        let with_no_records = advertised(&leaf, declared, &quiet);
+        let with_records = advertised(&leaf, declared, &recalled);
+
+        assert_eq!(
+            with_no_records, leaf.count,
+            "the control: an unspent allowance holds the whole surface"
+        );
+        assert!(
+            with_records < with_no_records,
+            "a records-heavy turn must advertise fewer tools: {with_records} against \
+             {with_no_records}"
+        );
+        assert!(
+            with_records > 0,
+            "and the allowance was not so tight that the arms differ trivially"
+        );
+    }
+
+    /// The array a session settles is settled once. A block rendered after it
+    /// — a mid-turn re-query, or the next turn's own recall — is recorded and
+    /// changes nothing, because the tools array is prompt-cache prefix and
+    /// re-ranking it re-bills the conversation.
+    #[test]
+    fn a_later_block_does_not_move_an_array_the_session_already_settled() {
+        let leaf = WideLeaf { count: 40 };
+        let declared = wide_enough(&leaf);
+        let ledger = SteeringLedger::default();
+
+        let first = advertised(&leaf, declared, &ledger);
+        ledger.spend(declared.max_tokens);
+
+        assert_eq!(
+            advertised(&leaf, declared, &ledger),
+            first,
+            "a spend after the array settled must not re-rank it"
+        );
+    }
+
+    /// With the lever off nothing is withheld, however much the block spent —
+    /// the control arm a bench comparison needs, and the promise that turning
+    /// steering off never takes a tool away.
+    #[test]
+    fn the_lever_off_advertises_every_tool_whatever_the_block_spent() {
+        let leaf = WideLeaf { count: 40 };
+        let ledger = SteeringLedger::default();
+        ledger.spend(u64::MAX);
+
+        let stack = session_stack_with_gate(
+            &leaf,
+            Vec::new(),
+            PathBuf::from("."),
+            ToolPolicy::allow_all(),
+            ToolAllowance::new(ToolAdvertisement::Full, &ledger),
+            Arc::new(NoAuthz),
+            Principal::User,
+        );
+
+        assert_eq!(stack.schemas().len(), leaf.count);
     }
 }

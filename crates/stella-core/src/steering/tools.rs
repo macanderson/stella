@@ -43,6 +43,13 @@ use super::{SteeringCandidate, SteeringSet, SteeringSource, pack_to_budget};
 const MCP_NAMESPACE: &str = "mcp__";
 
 /// What one session may spend on tool schemas.
+///
+/// Two readings, one type. As a session **declares** it, `max_tokens` is the
+/// allowance the whole volatile block shares — records, skills and recalled
+/// frames spend it first (`context.steering.max_tokens`). As [`advertise`]
+/// **receives** it, `max_tokens` is what those left behind:
+/// [`super::ledger::SteeringLedger::settle`] is the one function that turns
+/// the first into the second, and a session settles it once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ToolBudget {
     /// The whole budget, over every schema sent.
@@ -66,7 +73,9 @@ pub enum ToolAdvertisement {
     /// Every schema the stack has, in the order it had them.
     #[default]
     Full,
-    /// As many as the budget holds, ranked by this module.
+    /// As many as the budget holds, ranked by this module. The budget is the
+    /// one a session **declares**; what reaches [`advertise`] is what the
+    /// turn's volatile block left of it.
     Lean(ToolBudget),
 }
 
