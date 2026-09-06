@@ -167,7 +167,33 @@ pub struct SkillFile {
 /// [`skill_search_dirs`], where the workspace directory comes last so it wins
 /// over a user-global skill of the same name.
 pub trait SkillSource: Send + Sync {
-    fn read_skill_files(&self, roots: &[String]) -> Vec<SkillFile>;
+    fn read_skill_files(&self, roots: &[String]) -> SkillFiles;
+}
+
+/// What one walk of the skill directories found.
+///
+/// Two lists, because a file that will not read is not a skill file with
+/// empty contents. Drop it inside the source and a `SKILL.md` holding bad
+/// bytes stops being offered with nothing anywhere to say so — the reader
+/// sees a short skill list and reads it as complete.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SkillFiles {
+    /// Every file that was read, in discovery order.
+    pub files: Vec<SkillFile>,
+    /// Every file the source found and could not read, by path, with the
+    /// reason as the source spells it. The loader turns each one into a
+    /// [`SkillProblem::Unreadable`] diagnostic.
+    pub unreadable: Vec<UnreadableSkillFile>,
+}
+
+/// A skill file that is on disk and cannot be read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnreadableSkillFile {
+    /// The file's path, spelled the way [`SkillFile::path`] is.
+    pub path: String,
+    /// Why, as the source's own error reads — bad bytes, no permission, or a
+    /// directory where a file belongs.
+    pub reason: String,
 }
 
 /// Why one skill file could not be loaded — a skill needs a name, a
@@ -181,6 +207,10 @@ pub enum SkillProblem {
     MissingDescription,
     /// The markdown body is empty — a skill with no procedure is useless.
     EmptyBody,
+    /// The file is on disk and the source could not read it — bad bytes, no
+    /// permission, or a directory where a file belongs. The reason rides in
+    /// [`SkillDiagnostic::detail`].
+    Unreadable,
 }
 
 /// A malformed skill file, skipped during loading (never fatal).
@@ -188,6 +218,12 @@ pub enum SkillProblem {
 pub struct SkillDiagnostic {
     pub path: String,
     pub problem: SkillProblem,
+    /// What the source said, when the problem alone does not say enough.
+    ///
+    /// A field rather than a payload on [`SkillProblem`], which stays `Copy`
+    /// so the callers that match on it keep doing arithmetic with a value
+    /// instead of a borrow.
+    pub detail: Option<String>,
 }
 
 /// The result of a load: the merged skills plus every file that was skipped
@@ -288,6 +324,7 @@ pub fn skill_from_file_with_origin(
     let diag = |problem| SkillDiagnostic {
         path: path.to_string(),
         problem,
+        detail: None,
     };
 
     let name = fm
@@ -372,8 +409,8 @@ pub fn load_skills_with_diagnostics(
     opts: &LoadSkillsOptions,
 ) -> LoadedSkills {
     let dirs = skill_search_dirs(opts);
-    let files = source.read_skill_files(&dirs);
-    merge_by_name(files, |path| default_origin_for(path, opts))
+    let found = source.read_skill_files(&dirs);
+    merge_by_name(found, |path| default_origin_for(path, opts))
 }
 
 /// Load every skill in one directory, tagged with the `origin` the caller
@@ -390,20 +427,28 @@ pub fn load_skills_from_dir(
     dir: &str,
     origin: SkillOrigin,
 ) -> LoadedSkills {
-    let files = source.read_skill_files(&[dir.to_string()]);
-    merge_by_name(files, |_| origin)
+    let found = source.read_skill_files(&[dir.to_string()]);
+    merge_by_name(found, |_| origin)
 }
 
 /// Parse each file with the origin `origin_of` gives it and merge by skill
 /// name: a later file overrides an earlier one of the same name but keeps the
 /// first-seen ordering position (JS `Map.set` semantics), and a file that does
 /// not parse becomes a diagnostic instead of a skill.
-fn merge_by_name(files: Vec<SkillFile>, origin_of: impl Fn(&str) -> SkillOrigin) -> LoadedSkills {
+fn merge_by_name(found: SkillFiles, origin_of: impl Fn(&str) -> SkillOrigin) -> LoadedSkills {
     let mut order: Vec<String> = Vec::new();
     let mut by_name: HashMap<String, Skill> = HashMap::new();
-    let mut diagnostics: Vec<SkillDiagnostic> = Vec::new();
+    let mut diagnostics: Vec<SkillDiagnostic> = found
+        .unreadable
+        .into_iter()
+        .map(|file| SkillDiagnostic {
+            path: file.path,
+            problem: SkillProblem::Unreadable,
+            detail: Some(file.reason),
+        })
+        .collect();
 
-    for file in files {
+    for file in found.files {
         match skill_from_file_with_origin(&file.path, &file.content, origin_of(&file.path)) {
             Ok(skill) => {
                 if !by_name.contains_key(&skill.name) {

@@ -48,10 +48,15 @@ team_key    = "ENG"
 # class, which is precisely why it cannot apply a per-class delivery policy
 # (§6) to a Linear workspace. The manifest is what makes that possible.
 [classes]
+# The keys are the kernel's own class names, lowercased — `bug`, `feature`,
+# `task`. A key the loader does not read is skipped, so a misspelled one costs
+# the whole mapping.
 source  = "label"                      # label | issue_type | none
-defect  = ["Bug", "bug", "defect"]
-feature = ["Feature", "feature", "Improvement", "Chore"]
-epic    = ["Epic", "epic"]
+bug     = ["Bug", "bug", "defect"]
+feature = ["Feature", "feature", "Improvement"]
+task    = ["Chore", "chore", "Migration"]
+# A container issue is not a class. An `Epic` label is a container label (§5),
+# read through `stella_autonomy::ready::DEFAULT_CONTAINER_LABELS`.
 
 
 # ── STATES ───────────────────────────────────────────────────────────────────

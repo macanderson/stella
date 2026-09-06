@@ -615,6 +615,19 @@ pub enum WorkerKind {
     Stella,
     /// Claude Code, run non-interactively in the same isolated worktree.
     Claude,
+    /// The file asked for a worker and this build could not read which one.
+    ///
+    /// No spelling produces it — `#[serde(skip)]`, so it is not a value an
+    /// operator can write — and the loop's config reader is the only thing
+    /// that sets it. Every `match` on this enum has to answer for it, which
+    /// is the point: the loop refuses the turn instead of running the
+    /// default agent under a file that named a different one.
+    ///
+    /// It exists because a `stella.toml` is parsed whole. One typo anywhere
+    /// in the document failed the parse, the loop fell back to its defaults,
+    /// and `kind = "clade"` quietly ran stella.
+    #[serde(skip)]
+    Unreadable,
 }
 
 /// `[self_driving.merge]` — which checks may block a merge.

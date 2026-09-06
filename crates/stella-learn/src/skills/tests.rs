@@ -108,14 +108,28 @@ fn origin_marker_auto_and_installed_are_read_back() {
 
 struct FakeSkillSource {
     by_dir: HashMap<String, Vec<SkillFile>>,
+    /// Files this source finds and refuses to read, by directory.
+    unreadable: HashMap<String, Vec<UnreadableSkillFile>>,
+}
+
+impl FakeSkillSource {
+    fn new(by_dir: HashMap<String, Vec<SkillFile>>) -> Self {
+        Self {
+            by_dir,
+            unreadable: HashMap::new(),
+        }
+    }
 }
 
 impl SkillSource for FakeSkillSource {
-    fn read_skill_files(&self, roots: &[String]) -> Vec<SkillFile> {
-        let mut out = Vec::new();
+    fn read_skill_files(&self, roots: &[String]) -> SkillFiles {
+        let mut out = SkillFiles::default();
         for root in roots {
             if let Some(files) = self.by_dir.get(root) {
-                out.extend(files.iter().cloned());
+                out.files.extend(files.iter().cloned());
+            }
+            if let Some(broken) = self.unreadable.get(root) {
+                out.unreadable.extend(broken.iter().cloned());
             }
         }
         out
@@ -149,7 +163,7 @@ fn loads_a_skill_end_to_end_with_workspace_origin() {
             "---\nname: prefer-tables\ndescription: Prefer tables over prose for comparisons\n---\nWhen comparing options, render a table.",
         )],
     );
-    let source = FakeSkillSource { by_dir };
+    let source = FakeSkillSource::new(by_dir);
     let skills = load_skills(&source, &o);
     assert_eq!(skills.len(), 1);
     assert_eq!(skills[0].name, "prefer-tables");
@@ -177,7 +191,7 @@ fn workspace_beats_user_global_on_a_name_collision() {
             "---\nname: s\ndescription: workspace version\n---\nworkspace body",
         )],
     );
-    let source = FakeSkillSource { by_dir };
+    let source = FakeSkillSource::new(by_dir);
     let skills = load_skills(&source, &o);
     let s = skills.iter().find(|s| s.name == "s").unwrap();
     assert_eq!(s.description, "workspace version");
@@ -200,13 +214,55 @@ fn load_with_diagnostics_surfaces_skipped_files() {
             skill_file(&dirs[1], "bad.md", "---\nname: bad\n---\nbody"), // no description
         ],
     );
-    let source = FakeSkillSource { by_dir };
+    let source = FakeSkillSource::new(by_dir);
     let loaded = load_skills_with_diagnostics(&source, &o);
     assert_eq!(loaded.skills.len(), 1);
     assert_eq!(loaded.diagnostics.len(), 1);
     assert_eq!(
         loaded.diagnostics[0].problem,
         SkillProblem::MissingDescription
+    );
+}
+
+/// **The unreadable-file witness.** A file the source could not read becomes
+/// a diagnostic, and the readable skills beside it still load.
+///
+/// Have `read_skill_files` return only the files it managed to read and this
+/// fails by construction: there is then nothing here for a lost file to be
+/// reported through.
+#[test]
+fn a_file_the_source_could_not_read_becomes_a_diagnostic() {
+    let o = opts();
+    let dirs = skill_search_dirs(&o);
+    let mut by_dir = HashMap::new();
+    by_dir.insert(
+        dirs[1].clone(),
+        vec![skill_file(
+            &dirs[1],
+            "ok.md",
+            "---\nname: ok\ndescription: d\n---\nbody",
+        )],
+    );
+    let mut source = FakeSkillSource::new(by_dir);
+    source.unreadable.insert(
+        dirs[1].clone(),
+        vec![UnreadableSkillFile {
+            path: format!("{}/bad.md", dirs[1]),
+            reason: "stream did not contain valid UTF-8".to_owned(),
+        }],
+    );
+
+    let loaded = load_skills_with_diagnostics(&source, &o);
+    assert_eq!(loaded.skills.len(), 1, "the readable skill still loads");
+    let named = loaded
+        .diagnostics
+        .iter()
+        .find(|diag| diag.problem == SkillProblem::Unreadable)
+        .expect("the unreadable file is reported");
+    assert!(named.path.ends_with("bad.md"), "{named:?}");
+    assert_eq!(
+        named.detail.as_deref(),
+        Some("stream did not contain valid UTF-8")
     );
 }
 

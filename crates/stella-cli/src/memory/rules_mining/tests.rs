@@ -344,6 +344,45 @@ fn mined_rules_land_where_the_loader_reads() {
     );
 }
 
+/// **The re-mining witness.** A published TOML record is recognised as
+/// already captured, so the same lesson is not mined a second time.
+///
+/// Hand the loader every file as markdown and this fails by construction. A
+/// record's `Rule::text` is then the whole TOML file. The dedup check
+/// compares shared words. A one-line claim shares few words with the file
+/// that holds it. So the rule on disk is proposed again on every pass.
+#[test]
+fn a_published_record_is_not_mined_again() {
+    let (_ctx, store) = store();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let candidate = RuleCandidate {
+        id: "already-abcd1234".into(),
+        text: LESSON.into(),
+        description: "d".into(),
+        occurrences: 3,
+        salient: false,
+        evidence: Vec::new(),
+        guard: None,
+        score: 30,
+    };
+    published_path(dir.path(), &candidate);
+
+    let existing = crate::rules::load_workspace_rules_unfiltered(dir.path());
+    assert!(!existing.is_empty(), "the published record must load");
+
+    let observations = across_turns(LESSON, &[1, 2, 3]);
+    let induced = induce_rule_proposals(&store, &observations, &existing, &MineConfig::default());
+
+    assert!(
+        induced.is_empty(),
+        "the lesson is already published and was mined again: {:?}",
+        induced
+            .iter()
+            .map(|r| r.candidate.text.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
 /// **The hop out of the ledger** (#2782): a rule published from a proposal
 /// carries that proposal's evidence grade onto the record on disk.
 ///

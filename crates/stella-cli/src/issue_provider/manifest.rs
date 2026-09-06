@@ -190,10 +190,19 @@ impl ProviderManifest {
     /// The path is what `[issues] manifest` names, or
     /// `.stella/issues/<provider>.toml`. A file that is missing or unreadable
     /// gives the shipped manifest, not an error.
+    ///
+    /// `provider = ""` means the same as saying nothing, so it resolves
+    /// `github`. Without that rule the empty name reaches the path template
+    /// and asks for `.stella/issues/.toml` — a name a workspace cannot write,
+    /// because the shell and most editors read a leading dot as the whole
+    /// stem — and the workspace's own `github.toml` is ignored with no word.
     pub(crate) fn resolve(root: &Path, issues: &IssuesSection) -> Self {
         let embedded = Self::embedded();
-        let provider = issues.provider.trim().to_ascii_lowercase();
-        if !provider.is_empty() && provider != super::GITHUB {
+        let mut provider = issues.provider.trim().to_ascii_lowercase();
+        if provider.is_empty() {
+            provider = super::GITHUB.to_owned();
+        }
+        if provider != super::GITHUB {
             eprintln!(
                 "warning: no built-in manifest for issue provider `{provider}`; using GitHub's. \
                  Declare it in `.stella/issues/{provider}.toml` to say how that tracker spells \
@@ -215,8 +224,7 @@ impl ProviderManifest {
             Err(error) => {
                 eprintln!(
                     "warning: {path} could not be read ({error}); using the built-in manifest \
-                     for `{}`",
-                    issues.provider
+                     for `{provider}`"
                 );
                 embedded
             }
@@ -377,6 +385,99 @@ feature = ["kind/enhancement"]
         let manifest = ProviderManifest::for_workspace(ws.path());
         assert!(manifest.vocabulary.is_open("triage"));
         assert_eq!(manifest.classes.class_of(&["bug"]), IssueClass::Bug);
+    }
+
+    /// The `[classes]` block of a rendered manifest, as text.
+    ///
+    /// From the `[classes]` header to the next table header, so the caller
+    /// gets exactly what a reader would copy.
+    fn classes_block(document: &str) -> String {
+        let start = document
+            .find("\n[classes]\n")
+            .expect("the document renders a [classes] block");
+        let body = &document[start + 1..];
+        let mut out = String::new();
+        for (index, line) in body.lines().enumerate() {
+            if index > 0 && line.starts_with('[') {
+                break;
+            }
+            out.push_str(line);
+            out.push('\n');
+        }
+        out
+    }
+
+    /// Every rendered `[classes]` block a reader can copy, by path.
+    fn rendered_class_blocks() -> Vec<(&'static str, String)> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("the crate sits two levels under the workspace root")
+            .to_path_buf();
+        [
+            "docs/spec/agent-native-delivery.md",
+            "docs/spec/agent-native-delivery/provider.jira.toml",
+            "docs/spec/agent-native-delivery/provider.linear.toml",
+        ]
+        .into_iter()
+        .map(|rel| {
+            let raw = std::fs::read_to_string(root.join(rel))
+                .unwrap_or_else(|error| panic!("{rel} is readable ({error})"));
+            (rel, classes_block(&raw))
+        })
+        .collect()
+    }
+
+    /// **The doc-agreement witness.** Every `[classes]` block the spec renders
+    /// parses into a map this loader reads.
+    ///
+    /// Key a rendered block `defect` / `feature` / `epic` and this fails by
+    /// construction: `ClassMap` reads `bug` / `feature` / `task`, and
+    /// `#[serde(default)]` drops a key it does not know, so the map comes
+    /// back empty and every issue classes as `Other`. A reader who copies
+    /// such a block gets a mapping that does nothing and no word about it.
+    #[test]
+    fn every_rendered_classes_block_maps_a_bug() {
+        for (path, block) in rendered_class_blocks() {
+            let classes: ClassMap = toml::from_str(&block)
+                .unwrap_or_else(|error| panic!("{path}'s [classes] block parses ({error})"));
+            assert!(
+                !classes.is_empty(),
+                "{path} renders a [classes] block this loader reads as empty:\n{block}"
+            );
+            assert_eq!(
+                classes.class_of(&["Bug"]),
+                IssueClass::Bug,
+                "{path} must class the tracker's own bug type as a bug"
+            );
+        }
+    }
+
+    /// **The empty-name witness.** `provider = ""` reads the workspace's
+    /// `github.toml`.
+    ///
+    /// Let the empty name reach the path template and this fails by
+    /// construction: `resolve` opens `.stella/issues/.toml`, finds nothing,
+    /// and returns the shipped manifest — whose `open` word is `open`, not
+    /// `triage`.
+    #[test]
+    fn an_empty_provider_name_reads_the_github_manifest() {
+        let ws = workspace();
+        write(
+            ws.path(),
+            ".stella/issues/github.toml",
+            "open = [\"triage\"]\nclosed = [\"shipped\"]\n",
+        );
+
+        let manifest = ProviderManifest::resolve(
+            ws.path(),
+            &IssuesSection {
+                provider: String::new(),
+                manifest: None,
+            },
+        );
+        assert!(manifest.vocabulary.is_open("triage"));
+        assert!(!manifest.vocabulary.is_open("open"));
     }
 
     /// A workspace that set nothing gets the shipped manifest.
