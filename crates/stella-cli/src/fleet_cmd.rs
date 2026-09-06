@@ -971,8 +971,7 @@ async fn run_task(
     //
     // Assembled after the recall above, not before it: the tool allowance is
     // what the block left of the shared steering allowance, so a stack built
-    // first would settle its array against a spend that had not happened yet
-    // (#6110).
+    // first would settle its array against a spend that had not happened yet.
     let permitted = agent::tool_stack::policy_stack(
         &claims,
         &cfg,
