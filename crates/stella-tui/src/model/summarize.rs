@@ -259,11 +259,24 @@ pub(super) fn tool_input_path(input: &serde_json::Value) -> Option<String> {
     // the whole batch, which is an accurate description of a stand-in and not
     // of an answer — a multi-file batch rendered one of its files and lost the
     // rest.
-    input
+    if let Some(path) = input
         .get("edits")
         .and_then(serde_json::Value::as_array)
         .and_then(|edits| edits.first())
         .and_then(|e| e.get("path"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+    {
+        return Some(path);
+    }
+    // A batched `read_file` carries its paths in a `files` array the same
+    // way. Same lead-path rule, so its read-size row resolves the same way
+    // a batched write's diff does.
+    input
+        .get("files")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|files| files.first())
+        .and_then(|f| f.get("path"))
         .and_then(serde_json::Value::as_str)
         .map(str::to_string)
 }
@@ -295,4 +308,31 @@ pub(super) fn is_file_mutation(name: &str) -> bool {
 /// the replacement is one char in / one char out, so the two orders agree.
 pub(super) fn summarize(text: &str) -> String {
     cap_middle_with(text, SUMMARY_BUDGET, "...").replace(['\n', '\r'], " ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tool_input_path;
+
+    /// A batched `read_file` call names its lead path through the `files`
+    /// array — the same rule `write_file`'s `edits` array already uses. On
+    /// `main` this function checked only `path` and `edits`. A
+    /// `files`-shaped input resolved to no path at all, so the row that
+    /// renders off it had nothing to key its read-size lookup on.
+    #[test]
+    fn a_batched_reads_lead_path_comes_from_its_files_array() {
+        let input = serde_json::json!({"files": [
+            {"path": "a.rs"},
+            {"path": "b.rs", "offset": 2, "limit": 1}
+        ]});
+        assert_eq!(tool_input_path(&input), Some("a.rs".to_string()));
+    }
+
+    /// A top-level `path` still wins over a `files` array — the single form
+    /// is unaffected by the batch convention landing beside it.
+    #[test]
+    fn a_top_level_path_still_wins_over_a_files_array() {
+        let input = serde_json::json!({"path": "solo.rs", "files": [{"path": "a.rs"}]});
+        assert_eq!(tool_input_path(&input), Some("solo.rs".to_string()));
+    }
 }

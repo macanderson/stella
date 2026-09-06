@@ -103,9 +103,12 @@ pub fn with_index_warning(output: ToolOutput, warning: Option<String>) -> ToolOu
         return output;
     };
     match output {
-        ToolOutput::Ok { content, .. } => ToolOutput::Ok {
+        // The warning goes in front of the text. The `data` field rides
+        // along unchanged, the same way the `Error` arm below keeps
+        // `class`.
+        ToolOutput::Ok { content, data } => ToolOutput::Ok {
             content: format!("({warning})\n{content}"),
-            data: None,
+            data,
         },
         // The warning is appended to the prose; whatever class the failure
         // already carried rides along unchanged (#3167) — this wrapper must
@@ -200,5 +203,39 @@ mod tests {
             None,
         );
         assert!(matches!(clean, ToolOutput::Ok { content , .. } if content == "frames"));
+    }
+
+    /// A success's `data` must survive an index warning, the same way the
+    /// `Error` arm's `class` already does. Before this fix the `Ok` arm
+    /// rebuilt its output with `data: None` and threw away whatever a
+    /// producer had attached. This fails on that code: `from_output` reads
+    /// back an empty list instead of the payload attached below.
+    #[test]
+    fn a_successful_answer_keeps_its_structured_data_beside_the_index_warning() {
+        let change = crate::own_change::own_change("src/lib.rs", None, "fn main() {}\n");
+        let carrying_data = crate::own_change::attach(
+            ToolOutput::Ok {
+                content: "frames".into(),
+                data: None,
+            },
+            std::slice::from_ref(&change),
+        );
+
+        let warned = with_index_warning(
+            carrying_data,
+            Some(format!("{INDEX_PASS_WARNING}: disk on fire")),
+        );
+
+        match &warned {
+            ToolOutput::Ok { content, .. } => {
+                assert!(
+                    content.starts_with(&format!("({INDEX_PASS_WARNING}")),
+                    "{content}"
+                );
+                assert!(content.ends_with("frames"), "{content}");
+            }
+            ToolOutput::Error { message, .. } => panic!("an Ok must stay Ok: {message}"),
+        }
+        assert_eq!(crate::own_change::from_output(&warned), vec![change]);
     }
 }

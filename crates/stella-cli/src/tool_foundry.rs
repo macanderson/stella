@@ -102,6 +102,15 @@ pub(crate) fn fnv1a(s: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use stella_core::ports::ToolExecutor;
+    use stella_protocol::tool::ToolOutput;
+
+    /// How long the bare outbound-reachability probe may wait before the
+    /// runner is treated as one whose reachability cannot be determined. A
+    /// TCP connect to a public resolver either completes or is refused in
+    /// well under a second on a runner with egress; anything past that is a
+    /// dropped SYN, not a slow one.
+    const NET_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
     /// The hash keys durable notification ids (`ingest_cmd::lineage`), so its
     /// output for a given input is a compatibility surface: a changed value
@@ -111,5 +120,191 @@ mod tests {
         assert_eq!(fnv1a(""), 0xcbf2_9ce4_8422_2325);
         assert_eq!(fnv1a("jq {p1} {p2}"), fnv1a("jq {p1} {p2}"));
         assert_ne!(fnv1a("jq {p1} {p2}"), fnv1a("jq {p1}"));
+    }
+
+    /// A staged `[foundry]` manifest naming a network-reachability probe.
+    /// `witness_input` needs at least one value — an empty table is a
+    /// declared-vacuous witness (`VacuousWitness::NoWitnessInput`) — so it
+    /// carries an unused `p1`, ignored by the script, the same shape
+    /// `author_cat` uses in `adopt/tests.rs`. Since
+    /// `adopt::Builtins::execute` always errors, any candidate that runs at
+    /// all proves a capability flip.
+    fn author_netcheck(root: &Path, name: &str, body: &str) {
+        let staged = root.join(stella_tools::foundry_gate::PROPOSED_DIR);
+        std::fs::create_dir_all(&staged).expect("create proposed dir");
+        let script_path = staged.join(format!("{name}.sh"));
+        std::fs::write(&script_path, body).expect("write script");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))
+                .expect("mark executable");
+        }
+        std::fs::write(
+            staged.join(format!("{name}.toml")),
+            format!(
+                "name = \"{name}\"\n\
+                 description = \"Probe outbound network reachability.\"\n\
+                 command = [\"./{dir}/{name}.sh\"]\n\
+                 \n\
+                 [foundry]\n\
+                 authored_by = \"{authored_by}\"\n\
+                 signature = \"netcheck\"\n\
+                 occurrences = 3\n\
+                 witness_input = {{ p1 = \"unused\" }}\n\
+                 \n\
+                 [input_schema]\n\
+                 type = \"object\"\n\
+                 [input_schema.properties.p1]\n\
+                 type = \"string\"\n",
+                dir = stella_tools::foundry_gate::PROPOSED_DIR,
+                authored_by = stella_tools::foundry_gate::AUTHORED_BY,
+            ),
+        )
+        .expect("write manifest");
+    }
+
+    /// `foundry.network_allowlist`'s **allow** direction, driven through
+    /// the real chain a session actually runs — a project
+    /// `.stella/settings.json`, real discovery
+    /// (`stella_tools::custom::discover_in`), the adoption gate,
+    /// [`apply_foundry_runtime`], and the real dispatch seam
+    /// (`CustomToolSet::execute`). The **deny** direction already has this
+    /// witness end to end
+    /// (`a_governed_tool_cannot_reach_the_network_where_the_mechanism_is_live`
+    /// in `stella-tools`'s `custom::tests::execution`, which hand-builds its
+    /// `CustomTool` rather than discovering one) — nothing drove the allow
+    /// side through a real settings file. On `main`, `apply_foundry_runtime`
+    /// is exercised only by `fnv1a_is_stable_for_a_signature` above (which
+    /// never calls it) — no test failed if `network_allowlist` were read
+    /// under the wrong settings key, if the gate silently withheld an
+    /// allowlisted tool, or if the spawn seam stopped reading
+    /// `foundry_runtime` at all.
+    #[tokio::test]
+    async fn the_allowlist_reaches_from_settings_through_discovery_to_the_spawn() {
+        // Skip with reason: nothing to observe without the OS-level
+        // mechanism (the issue's own verify steps ask for exactly this).
+        if !stella_tools::netdeny::available() {
+            return;
+        }
+        // And nothing to conclude without real outbound reach on this
+        // runner: watching for a connect to succeed cannot tell "allowed"
+        // from "denied" if nothing can ever connect. Probed with a bare,
+        // unwrapped process, independent of anything the foundry gate does,
+        // so a network-isolated runner reports nothing rather than a false
+        // reading in either direction.
+        //
+        // Bounded, because bash's `/dev/tcp` connect carries no timeout of
+        // its own: a firewall that drops the SYN rather than refusing it
+        // leaves the probe waiting on the kernel's retry ladder — minutes,
+        // and a hung suite rather than a skipped test. An expiry says the
+        // runner's reachability could not be determined, which is the same
+        // answer as "cannot reach" and takes the same exit. `kill_on_drop`
+        // is what stops the abandoned bash outliving the timeout.
+        let probe = tokio::time::timeout(
+            NET_PROBE_TIMEOUT,
+            tokio::process::Command::new("bash")
+                .args(["-c", "exec 3<>/dev/tcp/1.1.1.1/53 && echo REACHED"])
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await;
+        let Ok(probe) = probe else {
+            eprintln!(
+                "skipped: outbound reachability undetermined — the bare probe did not \
+                 answer within {NET_PROBE_TIMEOUT:?}"
+            );
+            return;
+        };
+        let probe = probe.expect("the bare probe itself must spawn");
+        if !String::from_utf8_lossy(&probe.stdout).contains("REACHED") {
+            return;
+        }
+
+        let ws = tempfile::tempdir().expect("tmp");
+        let root = ws.path();
+        let _home = crate::paths::test_user_home(root.to_path_buf());
+        let store = stella_store::Store::open(root).expect("store");
+
+        let body = "#!/bin/bash\nif exec 3<>/dev/tcp/1.1.1.1/53; then echo REACHED; \
+                     else echo DENIED; fi\n";
+        for name in ["allowed_net", "denied_net"] {
+            author_netcheck(root, name, body);
+            // The async form: this test already runs on a tokio runtime, and
+            // `adopt_in` (the sync form) spins up its own to drive the
+            // witness — nesting runtimes panics. Same steps, same gates.
+            adopt::adopt_in_async(root, &store, name, "test")
+                .await
+                .unwrap_or_else(|e| panic!("adopt {name}: {e}"));
+            adopt::set_enabled_in(
+                root,
+                &store,
+                name,
+                Some(stella_store::EnableAuthority::InteractiveHuman),
+            )
+            .unwrap_or_else(|e| panic!("enable {name}: {e}"));
+        }
+
+        std::fs::create_dir_all(root.join(".stella")).expect("create .stella");
+        std::fs::write(
+            root.join(".stella/settings.json"),
+            r#"{"foundry": {"network_allowlist": ["allowed_net"]}}"#,
+        )
+        .expect("write settings");
+
+        // Discovery, exactly as a real session runs it.
+        let report = adopt::gate_discovery(stella_tools::custom::discover_in(root, None), root);
+        let mut tools = report.tools;
+        apply_foundry_runtime(&mut tools, root);
+
+        let allowed = tools
+            .iter()
+            .find(|t| t.name == "allowed_net")
+            .expect("the allowlisted tool must survive the gate");
+        let denied = tools
+            .iter()
+            .find(|t| t.name == "denied_net")
+            .expect("the unlisted tool must survive the gate too");
+        assert!(
+            allowed.foundry_runtime.network_allowed,
+            "a listed name must be stamped allowed"
+        );
+        assert!(
+            !denied.foundry_runtime.network_allowed,
+            "an unlisted name must stay denied"
+        );
+
+        // The spawn, through the same seam the engine dispatches through.
+        struct Empty;
+        #[async_trait::async_trait]
+        impl stella_core::ports::ToolExecutor for Empty {
+            fn schemas(&self) -> Vec<stella_protocol::tool::ToolSchema> {
+                Vec::new()
+            }
+            async fn execute(&self, name: &str, _input: &serde_json::Value) -> ToolOutput {
+                ToolOutput::error(format!("no tool named `{name}`"))
+            }
+        }
+        let set = stella_tools::custom::CustomToolSet::new_owned(
+            std::sync::Arc::new(Empty),
+            tools,
+            root.to_path_buf(),
+        );
+        let rendered = |out: &ToolOutput| match out {
+            ToolOutput::Ok { content, .. } => content.clone(),
+            ToolOutput::Error { message, .. } => message.clone(),
+        };
+        let allowed_out = set.execute("allowed_net", &serde_json::json!({})).await;
+        let denied_out = set.execute("denied_net", &serde_json::json!({})).await;
+        assert!(
+            rendered(&allowed_out).contains("REACHED"),
+            "the allowlisted tool must spawn unwrapped and reach the network: {}",
+            rendered(&allowed_out)
+        );
+        assert!(
+            !rendered(&denied_out).contains("REACHED"),
+            "the unlisted tool must still spawn under the netdeny wrapper: {}",
+            rendered(&denied_out)
+        );
     }
 }

@@ -879,6 +879,59 @@ async fn one_call_reads_several_files() {
     );
 }
 
+/// A batched read reports each file's own line coverage as structured
+/// `data`, keyed by path. The single form's flat `{lines_shown,
+/// lines_total}` pair cannot do this: it cannot say which file its counts
+/// belong to. On `main` the plural arm always returned
+/// `ToolOutput::ok(rendered)`, so `data` was `None` here.
+#[tokio::test]
+async fn a_batched_read_reports_per_file_line_coverage_as_structured_data() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.rs"), "fn a() {}\n").unwrap();
+    std::fs::write(dir.path().join("b.rs"), "fn b() {}\nfn b2() {}\n").unwrap();
+
+    let out = ReadFile::default()
+        .execute(
+            &serde_json::json!({"files": [
+                {"path": "a.rs"},
+                {"path": "b.rs", "offset": 2, "limit": 1}
+            ]}),
+            &cx(dir.path()),
+        )
+        .await;
+    let ToolOutput::Ok { data, .. } = out else {
+        panic!("expected ok, got: {out:?}");
+    };
+    assert_eq!(
+        data,
+        Some(serde_json::json!({"files": [
+            {"path": "a.rs", "lines_shown": 1, "lines_total": 1},
+            {"path": "b.rs", "lines_shown": 1, "lines_total": 2}
+        ]})),
+        "each file's own coverage must be attributable by path"
+    );
+
+    // The same batch, read twice, must produce byte-identical `data`. Loop
+    // comparison (`comparable_output`) keeps `data` in play, and a shape
+    // that shifts call to call would hide a real stall from it.
+    let repeat = ReadFile::default()
+        .execute(
+            &serde_json::json!({"files": [
+                {"path": "a.rs"},
+                {"path": "b.rs", "offset": 2, "limit": 1}
+            ]}),
+            &cx(dir.path()),
+        )
+        .await;
+    let ToolOutput::Ok {
+        data: repeat_data, ..
+    } = repeat
+    else {
+        panic!("expected ok, got: {repeat:?}");
+    };
+    assert_eq!(data, repeat_data, "same file state and window must repeat");
+}
+
 /// The safety half, and the reason batching could not just be a loop.
 ///
 /// `MAX_RENDER_BYTES` bounds one render. Applied per file, a ten-file batch
