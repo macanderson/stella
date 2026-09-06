@@ -251,6 +251,11 @@ fn pass_with(
     lens: &str,
     audit_lens: &dyn LensAudit,
 ) -> bool {
+    // What the seen set drops depends on which of this loop's issues have
+    // closed, and most of them close with no receipt. Cached on the cycle
+    // counter, so a second pass in one cycle asks the tracker nothing.
+    super::closures::reconcile(durable, provider);
+
     let mut findings: Vec<Finding> = Vec::new();
 
     if cfg.supply.rearm {

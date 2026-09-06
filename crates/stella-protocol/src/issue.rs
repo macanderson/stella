@@ -294,6 +294,33 @@ pub struct IssueDraft {
     pub assignee: Option<String>,
 }
 
+/// One issue the tracker has closed, and what the closure resolved to.
+///
+/// [`IssueState::Closed`] is one bucket and cannot answer the question that
+/// matters to a caller re-checking its own filings: *was this fixed, or did
+/// somebody decline it?* Declining work is not a fix, so the two must be told
+/// apart, and a third state on [`IssueState`] would be modelling a workflow —
+/// the stated non-goal. The answer rides here instead, on the read that asks
+/// for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueClosure {
+    /// The issue the tracker closed.
+    pub key: IssueKey,
+    /// Stella's **canonical** resolution — [`RESOLUTION_COMPLETED`],
+    /// [`RESOLUTION_NOT_PLANNED`] or [`RESOLUTION_DUPLICATE`], the same
+    /// vocabulary [`IssueProvider::close`] takes, read back.
+    ///
+    /// `None` when the tracker closed the issue and would not say why. That
+    /// is an unknown, and a caller reads an unknown as "not a fix": a closure
+    /// nobody can classify must never be counted as one that was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<String>,
+    /// When it closed, RFC3339. Empty when the provider cannot say, on the
+    /// same contract as [`Issue::created_at`].
+    #[serde(default)]
+    pub closed_at: String,
+}
+
 /// How many rows [`IssueProvider::get`]'s default search asks for before it
 /// gives up on finding an exact key.
 ///
@@ -484,6 +511,36 @@ pub trait IssueProvider: Send + Sync {
             .ok_or_else(|| IssueError::NotFound { key: key.clone() })
     }
 
+    /// Every issue this tracker closed at or after `since`, newest first, with
+    /// what each closure resolved to.
+    ///
+    /// A window rather than a per-key read, and that is the whole point: the
+    /// caller holds a ledger of its own filings that grows for the life of a
+    /// loop, and asking about each one would cost a round trip per filing per
+    /// pass. One windowed read answers for all of them at once. `since` is
+    /// RFC3339; empty asks for the newest closures with no lower bound, which
+    /// is what a caller that has never asked before has to send.
+    ///
+    /// `limit` bounds the page exactly as [`IssueProvider::list_open`]'s does,
+    /// and the same warning applies: a caller that fills it has read part of
+    /// the window, not the whole of it.
+    ///
+    /// Default is a typed refusal rather than an empty list, following
+    /// [`IssueProvider::reopen`]. An empty list is a real answer — "nothing
+    /// closed in that window" — so a provider that cannot look must not
+    /// return one. A caller reads the refusal as "unknown", and an unknown
+    /// closure is not a closure.
+    async fn closed_since(
+        &self,
+        _since: &str,
+        _limit: usize,
+    ) -> Result<Vec<IssueClosure>, IssueError> {
+        Err(IssueError::Failed {
+            provider: self.id().to_owned(),
+            reason: "reading closed issues by window is not supported".to_owned(),
+        })
+    }
+
     /// The labels this tracker already knows, for a picker.
     ///
     /// `query` is passed through to the tracker's own label search rather than
@@ -604,6 +661,33 @@ mod tests {
         for (class, wire) in classes {
             assert_eq!(serde_json::to_string(&class).expect("serialize"), wire);
         }
+    }
+
+    /// AGENTS.md #4 for the closure read. An unclassified closure must not
+    /// serialize a null resolution: absent is the shape a provider that
+    /// cannot say writes, and it has to survive a round trip as absent.
+    #[test]
+    fn a_closure_round_trips_and_omits_an_unknown_resolution() {
+        let unknown = IssueClosure {
+            key: IssueKey::from("6188"),
+            resolution: None,
+            closed_at: "2026-09-05T09:00:00Z".into(),
+        };
+        let json = serde_json::to_string(&unknown).expect("serialize");
+        assert!(!json.contains("resolution"), "{json}");
+        assert_eq!(
+            serde_json::from_str::<IssueClosure>(&json).expect("deserialize"),
+            unknown
+        );
+
+        let completed = IssueClosure {
+            resolution: Some(RESOLUTION_COMPLETED.to_owned()),
+            ..unknown
+        };
+        let json = serde_json::to_string(&completed).expect("serialize");
+        let back: IssueClosure = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, completed);
+        assert_eq!(serde_json::to_string(&back).expect("re-serialize"), json);
     }
 
     /// A key is transparent on the wire — a bare string, not `{"0": "..."}`.

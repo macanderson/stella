@@ -628,6 +628,14 @@ residue_gate = "on"
 # `filings.jsonl` beside `seen.txt` is what pairs a digest with the issue it
 # became. A line with no such record never decays, which is every `seen.txt`
 # written before this pairing existed, so an upgrade re-files nothing.
+#
+# Most of those issues are closed by a person, or by a merge that says
+# `Closes #N`, and the loop writes no receipt for a closure it did not make.
+# So it asks the tracker instead: once a cycle, one call for every issue
+# closed since it last asked, kept in `closures.json` beside `seen.txt`. Only
+# a closure the tracker calls completed decays a digest. A tracker that
+# cannot be reached decays nothing, and a cycle in which more issues close
+# than that one call returns leaves the rest for a later cycle to notice.
 
 # Labels marking a tracking issue — a checklist of other issues, kept open as
 # bookkeeping rather than as work. `drive --backlog` never claims one of

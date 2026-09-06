@@ -26,7 +26,8 @@ use std::process::Command;
 
 use async_trait::async_trait;
 use stella_protocol::issue::{
-    Issue, IssueClass, IssueDraft, IssueError, IssueKey, IssueLabel, IssueProvider, IssueState,
+    Issue, IssueClass, IssueClosure, IssueDraft, IssueError, IssueKey, IssueLabel, IssueProvider,
+    IssueState, RESOLUTION_COMPLETED, RESOLUTION_DUPLICATE, RESOLUTION_NOT_PLANNED,
 };
 
 /// The provider id this adapter answers to, and the one an error names.
@@ -69,6 +70,49 @@ struct GhIssue {
 #[derive(serde::Deserialize)]
 struct GhLabel {
     name: String,
+}
+
+/// What `gh issue list --state closed --json number,stateReason,closedAt`
+/// writes. Private to this module, like [`GhIssue`] beside it: `stateReason`
+/// is GitHub's word and it stops here.
+#[derive(serde::Deserialize)]
+struct GhClosure {
+    number: u64,
+    #[serde(rename = "stateReason", default)]
+    state_reason: Option<String>,
+    #[serde(rename = "closedAt", default)]
+    closed_at: String,
+}
+
+impl GhClosure {
+    fn into_closure(self) -> IssueClosure {
+        IssueClosure {
+            key: IssueKey(self.number.to_string()),
+            resolution: canonical_resolution(self.state_reason.as_deref()),
+            closed_at: self.closed_at,
+        }
+    }
+}
+
+/// Map GitHub's `stateReason` back onto stella's canonical resolution.
+///
+/// The inverse of [`gh_close_reason`], and it cannot be its exact inverse:
+/// that function maps both `not_planned` and `duplicate` onto GitHub's one
+/// `not planned`, so reading a closure back can only say the work was not
+/// done, never which of the two reasons it was. Both decay nothing, so the
+/// distinction the read cannot recover is one no caller here branches on.
+///
+/// Anything else — an absent reason, a `reopened`, a word this build has not
+/// seen — is `None`, meaning the tracker would not say. Guessing `completed`
+/// here would report declined work as fixed, which is the failure
+/// [`gh_close_reason`]'s own doc comment records happening once already.
+fn canonical_resolution(state_reason: Option<&str>) -> Option<String> {
+    match state_reason?.trim().to_ascii_lowercase().as_str() {
+        "completed" => Some(RESOLUTION_COMPLETED.to_owned()),
+        "not_planned" | "not planned" => Some(RESOLUTION_NOT_PLANNED.to_owned()),
+        "duplicate" => Some(RESOLUTION_DUPLICATE.to_owned()),
+        _ => None,
+    }
 }
 
 impl GhIssue {
@@ -343,6 +387,44 @@ impl IssueProvider for GhIssueProvider {
             .collect())
     }
 
+    /// `gh issue list --state closed --search "closed:>=<date>"` — one call for
+    /// the whole window.
+    ///
+    /// The search qualifier takes a date, so `since` is truncated to its day.
+    /// That re-reads the closures of one day the caller has already seen,
+    /// which costs nothing: the caller folds the answer into a set. A finer
+    /// window would risk the opposite, and a closure missed by a gap is a
+    /// digest that suppresses a real defect for ever.
+    async fn closed_since(
+        &self,
+        since: &str,
+        limit: usize,
+    ) -> Result<Vec<IssueClosure>, IssueError> {
+        let mut args: Vec<String> = vec![
+            "issue".into(),
+            "list".into(),
+            "--state".into(),
+            "closed".into(),
+            "--limit".into(),
+            limit.max(1).to_string(),
+            "--json".into(),
+            "number,stateReason,closedAt".into(),
+        ];
+        let day: String = since.trim().chars().take(10).collect();
+        if !day.is_empty() {
+            args.push("--search".into());
+            args.push(format!("closed:>={day}"));
+        }
+        let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+        let raw = gh_json(&borrowed)?;
+        let rows: Vec<GhClosure> =
+            serde_json::from_str(&raw).map_err(|error| IssueError::Malformed {
+                provider: GITHUB.into(),
+                reason: error.to_string(),
+            })?;
+        Ok(rows.into_iter().map(GhClosure::into_closure).collect())
+    }
+
     async fn labels(&self, query: &str, limit: usize) -> Result<Vec<IssueLabel>, IssueError> {
         // `gh label list -S` searches names *and* descriptions and sorts by
         // best match, which is what a picker wants; an empty query lists the
@@ -563,6 +645,40 @@ mod tests {
     #[test]
     fn an_unrecognised_resolution_still_closes() {
         assert_eq!(gh_close_reason("cannot_reproduce"), "completed");
+    }
+
+    /// GitHub's own words for a closure decode, and the two the loop must
+    /// tell apart land on different sides.
+    #[test]
+    fn the_closed_payload_maps_onto_the_canonical_resolutions() {
+        let payload = r#"[
+          {"number":4100,"stateReason":"COMPLETED","closedAt":"2026-09-01T10:00:00Z"},
+          {"number":4200,"stateReason":"NOT_PLANNED","closedAt":"2026-09-02T10:00:00Z"},
+          {"number":4300,"stateReason":null,"closedAt":"2026-09-03T10:00:00Z"}
+        ]"#;
+
+        let rows: Vec<GhClosure> = serde_json::from_str(payload).expect("decode");
+        let closures: Vec<IssueClosure> = rows.into_iter().map(GhClosure::into_closure).collect();
+
+        assert_eq!(closures[0].key, IssueKey::from("4100"));
+        assert_eq!(closures[0].resolution.as_deref(), Some("completed"));
+        assert_eq!(closures[0].closed_at, "2026-09-01T10:00:00Z");
+        assert_eq!(closures[1].resolution.as_deref(), Some("not_planned"));
+        assert_eq!(
+            closures[2].resolution, None,
+            "a tracker that would not say must not read as fixed"
+        );
+    }
+
+    /// A reason this build has never seen reads as unknown, never as done.
+    #[test]
+    fn an_unknown_state_reason_is_not_a_fix() {
+        assert_eq!(canonical_resolution(Some("reopened")), None);
+        assert_eq!(canonical_resolution(None), None);
+        assert_eq!(
+            canonical_resolution(Some("Duplicate")).as_deref(),
+            Some("duplicate")
+        );
     }
 
     #[test]

@@ -285,6 +285,9 @@ impl LoopState {
     fn filings_path(&self) -> PathBuf {
         self.dir.join("filings.jsonl")
     }
+    fn closures_path(&self) -> PathBuf {
+        self.dir.join("closures.json")
+    }
     fn proposals_path(&self) -> PathBuf {
         self.dir.join("proposals.jsonl")
     }
@@ -467,12 +470,17 @@ impl LoopState {
     /// [`Self::seen`] stays the durable set, and `seen_count` still reports
     /// it: the file is what a move carries and what an operator counts.
     pub fn live_seen(&self) -> Vec<String> {
-        let fixed: Vec<String> = self
+        let mut fixed: Vec<String> = self
             .receipts()
             .into_iter()
             .filter(|receipt| receipt.by.is_some())
             .map(|receipt| receipt.key)
             .collect();
+        // The loop writes a receipt only for a closure it made itself, and
+        // most of its issues are closed by a person or by a merge. Those
+        // leave no receipt, so the tracker's own answer is the second source
+        // of a fix — [`super::closures`] is what fills it.
+        fixed.extend(self.tracker_closures().completed);
         stella_autonomy::seen::live(&self.seen(), &self.filings(), &fixed)
     }
 
@@ -531,6 +539,33 @@ impl LoopState {
     ) -> Result<(), String> {
         let line = serde_json::to_string(receipt).map_err(|e| e.to_string())?;
         append_line(&self.receipts_path(), &line)
+    }
+
+    // -- closures the loop did not make -------------------------------------
+
+    /// What the tracker has said about the issues this loop filed.
+    ///
+    /// A document rather than a synthesized receipt, because the two answer
+    /// different questions. A receipt names the change a closure cited and is
+    /// what `regress::sweep` re-checks; the tracker's answer names no change,
+    /// and inventing one to fit the receipt shape would hand the sweep a
+    /// phantom to re-check for ever.
+    ///
+    /// Absent or unreadable yields the empty document, which decays nothing.
+    pub fn tracker_closures(&self) -> super::closures::Ledger {
+        read_json(&self.closures_path())
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default()
+    }
+
+    /// Write that document back, atomically.
+    ///
+    /// Rewritten rather than appended: it is a fold of one window of tracker
+    /// answers into a set, and a half-written line in an append-only file
+    /// would cost the watermark that bounds the next read.
+    pub fn write_tracker_closures(&self, ledger: &super::closures::Ledger) -> Result<(), String> {
+        let value = serde_json::to_value(ledger).map_err(|e| e.to_string())?;
+        write_json_atomic(&self.closures_path(), &value)
     }
 
     // -- curation proposals -------------------------------------------------

@@ -19,6 +19,7 @@ mod budget;
 pub(crate) mod claim;
 mod claim_mirror;
 mod claude_worker;
+mod closures;
 // `pub(crate)` rather than private: `plugin_cmd::configure` asserts against
 // this reader directly (#3999). A package that configures attribution has to
 // be shown changing what the loop *reads*, not merely what a file *holds* —
@@ -934,6 +935,11 @@ fn cycle_begin(st: &LoopState) -> Result<(), String> {
         run_info(st).in_cycle(n),
         None,
     );
+
+    // One tracker read a cycle: which issues this loop filed have closed since
+    // it last looked. A closure somebody else made writes no receipt, so
+    // without this the digest it was filed under would suppress for ever.
+    closures::reconcile(st, &crate::issue_provider::GhIssueProvider);
 
     let aperture = st.aperture();
     let streak = stella_autonomy::dry_streak(&st.cycles().rows, &aperture);
