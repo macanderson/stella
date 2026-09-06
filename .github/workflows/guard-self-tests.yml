@@ -183,6 +183,10 @@ jobs:
       - name: The rendering-facts guard can still fail
         run: ./scripts/test-rendering-facts.sh
 
+      - name: plugin-graded guard directions
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-plugin-graded.sh
+
       - name: diagnostic-code registry failure directions
         if: ${{ !cancelled() }}
         run: ./scripts/test-diagnostic-codes.sh

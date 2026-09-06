@@ -96,6 +96,7 @@ open; nothing before Phase 3 forces it.
 | [0027](0027-a-fleet-worker-gets-its-own-worktree.md) | A Fleet Worker Gets Its Own Worktree | Accepted |
 | [0028](0028-panel-cells-are-glyphs-in-the-contract.md) | A Panel Cell Is a Glyph in the Contract and a Column in the Host | Accepted |
 | [0029](0029-branch-protection-stays-non-strict.md) | Branch Protection Stays Non-Strict | Accepted |
+| [0030](0030-the-wrapper-socket-is-the-plugin-sdk.md) | The Wrapper Socket Is the Plugin SDK | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible
@@ -155,3 +156,11 @@ up-to-date requirement serialize merges to a handful an hour; the composition
 risk it would have caught is left to `main-canary.yml` and
 `main-red-hold.yml` as an after-the-fact backstop, with the durable close
 tracked at `#4998` rather than a merge queue enabled here.
+
+ADR 0030 answers the last step of the plugin platform's sequencing plan: this
+repository ships no language SDK. A plugin author writes against the manifest,
+the JSON-over-stdio socket, and the three generated declarations under
+`docs/wire/` — one of which, `wrapper.schema.json`, is language-neutral. The
+decision rests on the plugins under `plugins/` being spawned by tests here, so
+a wire change reddens this repository's CI rather than a stranger's install,
+and `check-plugin-graded.sh` is what holds that in place.

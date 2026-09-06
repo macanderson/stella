@@ -150,6 +150,11 @@
       "status": "implemented",
       "title": "ADR 0029: Branch protection stays non-strict"
     },
+    "adr/0030-the-wrapper-socket-is-the-plugin-sdk": {
+      "path": "docs/adr/0030-the-wrapper-socket-is-the-plugin-sdk.md",
+      "status": "implemented",
+      "title": "ADR 0030: The wrapper socket is the plugin SDK"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",
