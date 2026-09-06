@@ -861,10 +861,10 @@ async fn run_task(
     let attempt_durability = durability::bind(&invocation_root, claim_holder);
     let mut cfg = cfg.clone();
     cfg.workspace_root = root.to_path_buf();
-    // Each attempt is its own session in its own worktree, and it recalls its
-    // own block below, so it spends its own steering allowance. Sharing the
-    // dispatcher's cell would let N parallel workers charge one allowance N
-    // times and advertise almost no tools to whichever one asked last.
+    // Each attempt is its own session in its own worktree. It recalls its own
+    // block below, so it spends its own steering allowance. Share the
+    // dispatcher's cell and N workers charge one allowance N times. The last
+    // one to ask would then be offered almost no tools.
     cfg.steering_ledger = Default::default();
     let provider = agent::build_provider(&cfg)?;
     // `Arc` because the worker's sub-agent dispatcher holds a `Weak` back to
@@ -969,10 +969,9 @@ async fn run_task(
     // purpose (#3339, see `policy_stack`'s docs). The principal names the
     // dispatched task.
     //
-    // Assembled after the recall above, not before it: the tool allowance is
-    // what the block left of the shared steering allowance, so a stack built
-    // first would settle its array against a spend that had not happened yet
-    // (#6110).
+    // Assembled after the recall above, never before it. The tool allowance is
+    // what the block left of the shared steering allowance. A stack built
+    // first would settle its array against a spend that had not happened yet.
     let permitted = agent::tool_stack::policy_stack(
         &claims,
         &cfg,
