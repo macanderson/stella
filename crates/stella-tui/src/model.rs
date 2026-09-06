@@ -422,18 +422,6 @@ impl SessionModel {
                 // else: the fold cache would retain them if the renderer
                 // stripped per frame, and ratatui renders everything after
                 // the ESC byte literally (#934).
-                // The tool's own line-coverage report, off the structured
-                // `data` half of the wire (#4297). Read here, before the
-                // prose is capped: `full` is bounded at OUTPUT_BUDGET, so a
-                // consumer recounting the rendered body would measure the
-                // cap, not the read — the substitution #2290 established as
-                // the defect for mutation counts.
-                let read_size = match output {
-                    ToolOutput::Ok {
-                        data: Some(data), ..
-                    } => entry::ReadSize::from_data(data),
-                    _ => None,
-                };
                 let (ok, summary, full) = match output {
                     ToolOutput::Ok { content , .. } => {
                         let content = strip_ansi(content);
@@ -474,6 +462,18 @@ impl SessionModel {
                         _ => None,
                     })
                     .unwrap_or_else(|| ("tool".to_string(), None, None));
+                // The tool's own line-coverage report, off the structured
+                // `data` half of the wire (#4297). Resolved against `path` —
+                // the lead path a batched `read_file` call resolves reads by,
+                // same convention `write_file`'s `edits` array uses — because
+                // a batch's payload carries one entry per target and the row
+                // shows only its own lead (#5696).
+                let read_size = match output {
+                    ToolOutput::Ok {
+                        data: Some(data), ..
+                    } => entry::ReadSize::from_data(data, path.as_deref()),
+                    _ => None,
+                };
                 let graph = entry::GraphFact::for_result(output, path.as_deref());
                 // The announcement is where the row learns whose call it was
                 // (same precedence as the store's `project_tool_result`,

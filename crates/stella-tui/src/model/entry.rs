@@ -597,14 +597,75 @@ impl GraphFact {
 
 impl ReadSize {
     /// Both counts out of a tool result's structured `data`, or `None` when
-    /// either is absent or does not fit — a coverage the fold cannot state
-    /// exactly is not stated at all, never saturated into a plausible lie.
+    /// this result reported none for `path` — a coverage the fold cannot
+    /// state exactly is not stated at all, never saturated into a plausible
+    /// lie.
+    ///
+    /// The single form's payload is a flat `{lines_shown, lines_total}`
+    /// pair with no path of its own. `path` decides nothing there. A
+    /// batched `read_file` call's payload is a `files` array instead, one
+    /// entry per target, each with its own `path`. `path` picks out the
+    /// row's own lead entry — the same rule [`GraphFact::from_data`]
+    /// already uses for a batch's graph facts.
     #[must_use]
-    pub fn from_data(data: &serde_json::Value) -> Option<Self> {
-        let count = |key: &str| u32::try_from(data.get(key)?.as_u64()?).ok();
-        Some(ReadSize {
-            shown: count("lines_shown")?,
-            total: count("lines_total")?,
+    pub fn from_data(data: &serde_json::Value, path: Option<&str>) -> Option<Self> {
+        fn counts(value: &serde_json::Value) -> Option<ReadSize> {
+            let count = |key: &str| u32::try_from(value.get(key)?.as_u64()?).ok();
+            Some(ReadSize {
+                shown: count("lines_shown")?,
+                total: count("lines_total")?,
+            })
+        }
+        if let Some(size) = counts(data) {
+            return Some(size);
+        }
+        let path = path?;
+        data.get("files")?.as_array()?.iter().find_map(|entry| {
+            (entry.get("path").and_then(serde_json::Value::as_str) == Some(path))
+                .then(|| counts(entry))
+                .flatten()
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ReadSize;
+
+    /// A batched `read_file`'s `files` array is resolved by path, not just
+    /// by whether it exists. On `main` this function took no `path`
+    /// argument. It read only the single form's flat `{lines_shown,
+    /// lines_total}` pair. So a batch's `files` payload produced `None` for
+    /// every row, no matter which file the row named.
+    #[test]
+    fn a_batch_payload_is_resolved_by_its_lead_path() {
+        let data = serde_json::json!({"files": [
+            {"path": "a.rs", "lines_shown": 1, "lines_total": 1},
+            {"path": "b.rs", "lines_shown": 1, "lines_total": 2}
+        ]});
+        assert_eq!(
+            ReadSize::from_data(&data, Some("b.rs")),
+            Some(ReadSize { shown: 1, total: 2 })
+        );
+        assert_eq!(
+            ReadSize::from_data(&data, Some("nope.rs")),
+            None,
+            "a path absent from the batch must not borrow another file's counts"
+        );
+        assert_eq!(
+            ReadSize::from_data(&data, None),
+            None,
+            "a batch payload with no lead path to resolve against states nothing"
+        );
+    }
+
+    /// The single form is unaffected by the new parameter: its flat pair is
+    /// read the same way regardless of what `path` is passed.
+    #[test]
+    fn the_single_forms_flat_pair_ignores_path() {
+        let data = serde_json::json!({"lines_shown": 3, "lines_total": 5});
+        let want = Some(ReadSize { shown: 3, total: 5 });
+        assert_eq!(ReadSize::from_data(&data, Some("whatever.rs")), want);
+        assert_eq!(ReadSize::from_data(&data, None), want);
     }
 }

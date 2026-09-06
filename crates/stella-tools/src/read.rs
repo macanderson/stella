@@ -465,6 +465,11 @@ impl Tool for ReadFile {
         let mut rendered = String::new();
         let mut spent = 0usize;
         let mut unread: Vec<&str> = Vec::new();
+        // One entry per file that was read. A consumer can then match
+        // coverage to a path, instead of losing it in the mixed prose. A
+        // single summed pair for the whole batch would not work: it would
+        // attribute every file's lines to none of them.
+        let mut per_file = Vec::with_capacity(targets.len());
         for target in &targets {
             if spent >= MAX_RENDER_BYTES {
                 unread.push(target.path.as_str());
@@ -481,7 +486,17 @@ impl Tool for ReadFile {
             }
             rendered.push_str(&format!("===== {} =====\n", target.path));
             match out {
-                ToolOutput::Ok { content, .. } => rendered.push_str(&content),
+                ToolOutput::Ok { content, data } => {
+                    rendered.push_str(&content);
+                    // `read_section` always attaches `{lines_shown,
+                    // lines_total}` to a successful result — the `if let`
+                    // is the same defensive shape `own_change::attach` uses
+                    // rather than an assumption this file alone could break.
+                    if let Some(serde_json::Value::Object(mut fields)) = data {
+                        fields.insert("path".to_string(), target.path.clone().into());
+                        per_file.push(serde_json::Value::Object(fields));
+                    }
+                }
                 // A failed target does not end the batch. A read leaves
                 // nothing half-done, so reporting the miss in place is
                 // strictly more useful than discarding the files that did
@@ -501,11 +516,15 @@ impl Tool for ReadFile {
                 unread.join(", ")
             ));
         }
-        // No structured `data` on the plural form: line coverage is a
-        // per-file fact, and one shown/total pair over an interleaved batch
-        // would attribute every file's lines to none of them. The single form
-        // is the producer the deck's read head resolves (#4297).
-        ToolOutput::ok(rendered)
+        // Deterministic for a given file state and window, exactly like the
+        // single form's pair — loop comparison keeps `data` in play
+        // (`comparable_output`), so a nondeterministic shape here would
+        // re-blind the detector the footer strip exists for.
+        if per_file.is_empty() {
+            ToolOutput::ok(rendered)
+        } else {
+            ToolOutput::ok_with_data(rendered, serde_json::json!({ "files": per_file }))
+        }
     }
 }
 
