@@ -1054,9 +1054,10 @@ async fn run_worker(
     // This lane's terminal frame: what it hands the lead if it dies mid-turn.
     // The engine retires the resume point on every terminal path, so without
     // this the transcript of a failed lane is gone before anything can read it
-    // — see [`terminal_frame`], and `doc:turn-lane-assembly` §6 for why a lane
-    // whose parent does the reading owes a frame rather than a resume point.
-    let recorder = terminal_frame::LaneRecorder::new(&lane_durability, &spec.lane);
+    // — see [`crate::lane_frame`], and `stella_protocol::ResumeAuthority` for
+    // why a lane whose parent does the reading owes a frame rather than a
+    // resume point.
+    let recorder = crate::lane_frame::LaneRecorder::new(&lane_durability, &spec.lane);
 
     // A checkpoint on THIS lane's own key means a prior spawn of it was
     // killed mid-turn — re-enter it rather than starting over from
@@ -1251,7 +1252,7 @@ async fn run_worker(
     // its parent a frame, a lane that finished retires any frame an earlier
     // attempt on this lane left. Before `close_worker_execution`, so a lane
     // killed during closeout has already handed its transcript over.
-    recorder.settle(&end);
+    recorder.settle(&crate::lane_frame::LaneEnd::from(&end));
     // Audit record only — deliberately NO task-board mirror. The worker's
     // private board is scaffolding for this one run, and the session's
     // `tasks` rows have exactly one writer: the driver, whose `/clear` seal

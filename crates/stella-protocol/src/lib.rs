@@ -152,7 +152,7 @@ pub use task_id::TaskId;
 // without either depending on the other (#3310).
 pub use hook::HookEvent;
 pub use journal::{StampedEvent, stamped_line};
-pub use lane::{BuiltinLane, LaneId, TurnLane};
+pub use lane::{BuiltinLane, LaneId, ResumeAuthority, TurnLane};
 // The `ask_question` vocabulary (#4212). Re-exported flat because both the
 // tool that raises a question and every surface that renders one name these
 // types constantly, and neither should have to spell the module path.

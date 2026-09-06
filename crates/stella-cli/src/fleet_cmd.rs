@@ -1237,6 +1237,9 @@ async fn run_task(
             budget.session_spent_usd(),
         );
     }
+    // What a re-dispatch reads. The engine has retired the resume point by
+    // now, so the frame is what holds the talk (`AttemptDurability::settle`).
+    attempt_durability.settle(success, force_incomplete, &summary);
     // The re-query adapter holds a clone of this lane's sender, so it comes
     // down before the sender does or the renderer awaited below waits on a
     // channel that never closes. The memory handle goes with it: it is rooted
