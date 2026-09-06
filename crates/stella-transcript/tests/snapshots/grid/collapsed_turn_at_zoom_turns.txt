@@ -1,0 +1,8 @@
+# grid golden · collapsed_turn_at_zoom_turns
+# the first of two turns, neither failing — Zoom::Turns collapses it, unlike failed_step_pinned_open where a failure pins it open
+# width 100 · rendered through grid::to_plain, styling stripped
+# regenerate: BLESS=1 cargo test -p stella-transcript --test grid_snapshots
+
+╭─ run-suite ▸ "run the loop-detect suite" ────────────────────────────────────────────────────── ─╮
+│ …
+╰─ ✓ done ───────────────────────────────────────────────── [1 steps] [0:03] [4.0k→120] [$0.0006] ─╯

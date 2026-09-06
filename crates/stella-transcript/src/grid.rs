@@ -733,9 +733,10 @@ fn push_output_text(line: &mut Vec<Cell>, text: &str, paint: syntax::BodyPaint) 
     // 780 was labelled line 1, because the index is a position in the body and
     // not a position in the file (#4036).
     if paint.numbered {
-        let label = painted
-            .gutter
-            .map_or_else(|| " ".repeat(NUM_COL), |g| format!("{:>4}  ", g.number));
+        let label = painted.gutter.map_or_else(
+            || " ".repeat(NUM_COL),
+            |g| format!("{:>width$}  ", g.number, width = NUM_COL - 2),
+        );
         line.push(Cell::new(label, Color::Faint));
     }
     // Expanded against the running column, before anything measures: a tab is
@@ -756,12 +757,18 @@ fn push_output_text(line: &mut Vec<Cell>, text: &str, paint: syntax::BodyPaint) 
     }
 }
 
-/// Width of the line-number column: four digits and two spaces.
+/// Width of the line-number column: five digits and a two-column gap.
+///
+/// Both arms in [`push_output_text`] build this width from one constant.
+/// The digit field is `NUM_COL - 2`. The empty fallback is `NUM_COL`
+/// spaces. Widening this constant moves both arms together, so one cannot
+/// drift from the other. Five digits fits a file well past 9,999 lines,
+/// and its numbered rows still line up with an unnumbered row beside them.
 ///
 /// A body line without a gutter — the read footer — still pays for it, so the
 /// source above it stays in one straight column instead of stepping left at the
 /// end of every read.
-const NUM_COL: usize = 6;
+const NUM_COL: usize = 7;
 
 /// The grid colour for a token class.
 ///
@@ -1268,5 +1275,33 @@ mod tests {
                 to_plain(std::slice::from_ref(line)),
             );
         }
+    }
+
+    /// A five-digit line number's gutter must match the width of the
+    /// gutter-less footer row beside it. `{:>4}` is a *minimum* width, so a
+    /// fifth digit grows past four columns and the two widths stop
+    /// matching.
+    #[test]
+    fn numbered_gutter_matches_the_footer_width_for_a_five_digit_line_number() {
+        let paint = syntax::BodyPaint {
+            lang: None,
+            numbered: true,
+        };
+        let mut numbered = Vec::new();
+        push_output_text(&mut numbered, "12345\tfn main() {}", paint);
+        let mut footer = Vec::new();
+        push_output_text(&mut footer, "(12345/50000 lines, read 1)", paint);
+
+        let numbered_gutter = numbered[0].width();
+        let footer_gutter = footer[0].width();
+        assert_eq!(
+            numbered_gutter, footer_gutter,
+            "a five-digit numbered gutter ({numbered_gutter} cells) drifted from the \
+             gutter-less footer beside it ({footer_gutter} cells)"
+        );
+        assert_eq!(
+            numbered_gutter, NUM_COL,
+            "the gutter must stay NUM_COL wide"
+        );
     }
 }
