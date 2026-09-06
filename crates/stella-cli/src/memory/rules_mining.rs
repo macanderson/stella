@@ -30,10 +30,11 @@
 //!    A rule is a steering directive, and the policy in
 //!    [`stella_protocol::provenance`] prices that at
 //!    `EnvironmentObservation`. Reflection lessons grade `ModelCritique`, so
-//!    a rule mined from them is refused today and stays a proposal. That is
+//!    a rule mined from them is refused and stays a proposal. That is
 //!    the policy noticing something real, not a bug: the loop was publishing
-//!    instructions on a model's opinion about its own run. A holdout
-//!    comparison over recorded turns is the producer that pays the bar.
+//!    instructions on a model's opinion about its own run. The producer that
+//!    pays the bar is the rule's own recorded turns
+//!    ([`super::rule_efficacy::measured_grade`]).
 //! 3. **Auto-activation needs real confidence.** A skill lands as soon as it is
 //!    eligible. A rule additionally needs `confidence >=
 //!    context.promotion.inferred_directive.auto_activate_at_confidence` (85 by
@@ -248,7 +249,8 @@ pub(crate) enum RulePublication {
 /// [`ProvenanceGrade::EnvironmentObservation`]. Reflection lessons grade
 /// [`ProvenanceGrade::ModelCritique`], so a rule mined from them is refused
 /// here and stays a proposal somebody can read. The grade that pays is the
-/// one a measured holdout produces.
+/// one the rule's own recorded turns produce
+/// ([`super::rule_efficacy::measured_grade`]).
 pub(crate) fn write_rule(
     workspace_root: &Path,
     candidate: &RuleCandidate,

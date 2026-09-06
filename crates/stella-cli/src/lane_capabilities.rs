@@ -3,9 +3,9 @@
 
 //! What each of this crate's turn lanes binds, and which lane it says it is.
 //!
-//! A lane is one place a turn runs. `stella_protocol::BuiltinLane` names
-//! seven. Four of them are built here: the deck's lead turn, a resumed turn,
-//! a deck worker lane, and a fleet attempt.
+//! A lane is one place a turn runs. `stella_protocol::BuiltinLane` names them
+//! all. Built here: the deck's lead turn, a resumed turn, a deck worker lane,
+//! a fleet attempt, the shared raw turn, and a judged goal arc.
 //!
 //! Each one goes to the engine through `Engine::assemble`. Its
 //! `TurnCapabilities` carries the lane name. The other way in,
@@ -17,15 +17,18 @@
 //! full. So a new slot on [`TurnCapabilities`] breaks this file until someone
 //! picks an answer for each lane. That is why the type has no `Default`.
 //!
-//! **One file, not four call sites.** Side by side, the four are easy to
-//! compare. And `subsession.rs` and `fleet_cmd.rs` both sit near the
+//! **One file, not a literal at each call site.** Side by side, the lanes are
+//! easy to compare. And `subsession.rs` and `fleet_cmd.rs` both sit near the
 //! file-size ceiling, with no room for a literal of their own.
 //!
 //! `stella_core`'s `driver::drive` puts the lane on `agent.turn.started`.
 //! `crates/stella-parity/src/lane.rs` holds every lane to having a producer
 //! or a written reason for having none.
 
-use stella_core::ports::{SteeringRequery, TurnGate, TurnSteering};
+use stella_core::hooks::decision::ApprovalRoute;
+use stella_core::ports::{
+    FallbackResolver, ProviderOutcomes, SteeringRequery, TurnControls, TurnGate, TurnSteering,
+};
 use stella_core::{CalibrationMap, HookRunner, Hooks, TurnCapabilities};
 use stella_protocol::{BuiltinLane, ModelCallRole, TurnLane};
 
@@ -134,9 +137,83 @@ pub(crate) fn fleet_attempt<'a>(
     }
 }
 
+/// The shared raw turn — `BuiltinLane::RawTurn`.
+///
+/// The hooks arrive as one triple because this door binds all three together
+/// or none of them: the runner exists only where the config declares hooks,
+/// and the approval route is the broker surface those hooks park a
+/// `PreToolUse` decision on. Under process-free authority the door strips the
+/// hook layer outright and hands `None`.
+///
+/// `controls` is the pause gate and steering tap this turn's caller
+/// published, read here so the lane binds what the caller has rather than
+/// what a chain of optional calls happened to attach.
+pub(crate) fn raw_turn<'a>(
+    hooks: Option<(&'a Hooks, &'a dyn HookRunner, &'a dyn ApprovalRoute)>,
+    calibration: &'a CalibrationMap,
+    outcomes: &'a dyn ProviderOutcomes,
+    fallback: &'a dyn FallbackResolver,
+    requery: Option<&'a dyn SteeringRequery>,
+    controls: &'a TurnControls,
+) -> TurnCapabilities<'a> {
+    TurnCapabilities {
+        hooks: hooks.map(|(hooks, runner, _)| (hooks, runner)),
+        hook_approvals: hooks.map(|(_, _, route)| route),
+        calibration: Some(calibration),
+        gate: controls.gate.as_deref(),
+        steering: controls.steering.as_deref(),
+        requery,
+        // This door's observers ride the event stream, not the bus.
+        bus: None,
+        // The session router picks the worker model and keeps a breaker over
+        // it, so this door feeds outcomes back and re-resolves through the
+        // same router when a retry ladder runs out.
+        outcomes: Some(outcomes),
+        fallback: Some(fallback),
+        call_role: ModelCallRole::Worker,
+        lane: Some(TurnLane::Builtin(BuiltinLane::RawTurn)),
+    }
+}
+
+/// A judged multi-round goal arc — `BuiltinLane::GoalArc`.
+///
+/// Both arms of `stella goal` bind the same set, so both take this one
+/// literal: the raw arm, which drives its rounds inside `Engine::run_goal`,
+/// and the wrapped arm, which drives them itself under a plugin.
+pub(crate) fn goal_arc<'a>(
+    hooks: Option<&'a Hooks>,
+    runner: &'a dyn HookRunner,
+    calibration: &'a CalibrationMap,
+    steering: &'a dyn TurnSteering,
+) -> TurnCapabilities<'a> {
+    TurnCapabilities {
+        hooks: hooks.map(|hooks| (hooks, runner)),
+        // No approval route. A `PreToolUse` hook asking for approval gets the
+        // grant-path refusal instead of a prompt, which is what this door
+        // answers with or without the seam named here.
+        hook_approvals: None,
+        calibration: Some(calibration),
+        // Nobody can pause an arc. The whistle steers it and never stops it
+        // at a step boundary.
+        gate: None,
+        steering: Some(steering),
+        requery: None,
+        bus: None,
+        // An arc resolves its provider once and drives every round through
+        // it. There is no breaker to feed and nothing to re-resolve mid-turn.
+        outcomes: None,
+        fallback: None,
+        call_role: ModelCallRole::Worker,
+        lane: Some(TurnLane::Builtin(BuiltinLane::GoalArc)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
+    use stella_core::ports::ResolvedFallback;
     use stella_tools::hook_runner::HostHookRunner;
 
     struct OpenGate;
@@ -167,11 +244,41 @@ mod tests {
         }
     }
 
-    /// **The lane witnesses.** Each of this crate's four lanes says which
+    struct QuietOutcomes;
+
+    impl ProviderOutcomes for QuietOutcomes {
+        fn record_success(&self, _provider_id: &str) {}
+
+        fn record_failure(&self, _provider_id: &str) {}
+    }
+
+    struct RefusingApprovals;
+
+    #[async_trait::async_trait]
+    impl ApprovalRoute for RefusingApprovals {
+        async fn resolve(
+            &self,
+            _request: &stella_core::hooks::decision::ApprovalRouteRequest,
+        ) -> stella_core::hooks::decision::ApprovalRouteResolution {
+            stella_core::hooks::decision::ApprovalRouteResolution::Denied {
+                reason: "no human is at this test".to_string(),
+            }
+        }
+    }
+
+    struct NoFallback;
+
+    impl FallbackResolver for NoFallback {
+        fn resolve_fallback(&self, _failed_provider_id: &str) -> Option<ResolvedFallback<'_>> {
+            None
+        }
+    }
+
+    /// **The lane witnesses.** Every lane this crate assembles says which
     /// lane it is.
     ///
-    /// This fails on a tree where the four sites use `Engine::with_sleeper`.
-    /// The reason is structural, not behavioural. That call takes no lane and
+    /// This fails on a tree whose sites use `Engine::with_sleeper`. The
+    /// reason is structural, not behavioural. That call takes no lane and
     /// always writes `lane: None`. There is no function to call, and nothing
     /// that could answer.
     ///
@@ -183,6 +290,7 @@ mod tests {
         let calibration = CalibrationMap::default();
         let gate = OpenGate;
         let steering = QuietSteering;
+        let unbound = TurnControls::none();
 
         let rows = [
             (
@@ -204,6 +312,24 @@ mod tests {
                 "fleet_attempt",
                 fleet_attempt(None, &runner, &calibration, &gate).lane,
                 BuiltinLane::FleetWorker,
+            ),
+            (
+                "raw_turn",
+                raw_turn(
+                    None,
+                    &calibration,
+                    &QuietOutcomes,
+                    &NoFallback,
+                    None,
+                    &unbound,
+                )
+                .lane,
+                BuiltinLane::RawTurn,
+            ),
+            (
+                "goal_arc",
+                goal_arc(None, &runner, &calibration, &steering).lane,
+                BuiltinLane::GoalArc,
             ),
         ];
 
@@ -283,6 +409,151 @@ mod tests {
                 .hooks
                 .is_some(),
             "a fleet attempt must run the hooks its caller handed it",
+        );
+
+        let controls = TurnControls::none()
+            .with_gate(Arc::new(OpenGate))
+            .with_steering(Arc::new(QuietSteering));
+        let raw = raw_turn(
+            None,
+            &calibration,
+            &QuietOutcomes,
+            &NoFallback,
+            None,
+            &controls,
+        );
+        assert!(raw.calibration.is_some());
+        assert!(
+            raw.outcomes.is_some() && raw.fallback.is_some(),
+            "the raw turn reports call outcomes to its session router and \
+             re-resolves through it when a retry ladder runs out",
+        );
+        assert!(
+            raw.gate.is_some() && raw.steering.is_some(),
+            "the gate and the tap are whatever the caller published",
+        );
+        assert!(raw.hooks.is_none() && raw.hook_approvals.is_none());
+        assert_eq!(raw.call_role, ModelCallRole::Worker);
+
+        let with_hooks = raw_turn(
+            Some((&hooks, &runner, &RefusingApprovals)),
+            &calibration,
+            &QuietOutcomes,
+            &NoFallback,
+            Some(&plane),
+            &controls,
+        );
+        assert!(
+            with_hooks.hooks.is_some()
+                && with_hooks.hook_approvals.is_some()
+                && with_hooks.requery.is_some(),
+            "the raw turn must pass on the seams its caller handed it",
+        );
+
+        let unbound = TurnControls::none();
+        let bare = raw_turn(
+            None,
+            &calibration,
+            &QuietOutcomes,
+            &NoFallback,
+            None,
+            &unbound,
+        );
+        assert!(
+            bare.gate.is_none() && bare.steering.is_none(),
+            "a caller that published neither must not grow one here",
+        );
+
+        let arc = goal_arc(None, &runner, &calibration, &steering);
+        assert!(arc.calibration.is_some() && arc.steering.is_some());
+        assert!(
+            arc.gate.is_none(),
+            "an arc is steered and never paused, so a gate here would park \
+             where nothing parked before",
+        );
+        assert!(
+            arc.outcomes.is_none() && arc.fallback.is_none(),
+            "an arc resolves its provider once and drives every round on it",
+        );
+        assert_eq!(arc.call_role, ModelCallRole::Worker);
+        assert!(
+            goal_arc(Some(&hooks), &runner, &calibration, &steering)
+                .hooks
+                .is_some(),
+            "an arc must run the hooks its caller handed it",
+        );
+    }
+
+    /// Every call site this crate reads back, as
+    /// `(crate-relative path, source)`.
+    fn door_sources() -> [(&'static str, &'static str); 3] {
+        [
+            ("agent/turn.rs", include_str!("agent/turn.rs")),
+            ("agent/goal.rs", include_str!("agent/goal.rs")),
+            (
+                "agent/goal/goal_wrapped.rs",
+                include_str!("agent/goal/goal_wrapped.rs"),
+            ),
+        ]
+    }
+
+    /// **The call-site witnesses.** Each door that is not the deck reaches
+    /// the engine through `Engine::assemble` and its own seams.
+    ///
+    /// Fails on a tree where the three files build with the sleeper
+    /// constructor: that call takes no lane, so it writes `lane: None` and no
+    /// argument can say otherwise. The needles are built rather than written
+    /// out, so `turn_files`' driver fence reads this file as prose about a
+    /// constructor instead of a door that builds one.
+    #[test]
+    fn each_door_that_is_not_the_deck_assembles_through_its_lane() {
+        let blessed = format!("Engine::{}(", "assemble");
+        let builder = format!("Engine::with_{}(", "sleeper");
+        let seams = [
+            ("agent/turn.rs", "lane_capabilities::raw_turn("),
+            ("agent/goal.rs", "lane_capabilities::goal_arc("),
+            ("agent/goal/goal_wrapped.rs", "lane_capabilities::goal_arc("),
+        ];
+
+        for (path, source) in door_sources() {
+            assert!(
+                source.contains(&blessed),
+                "{path} drives a turn and must assemble it, or its turns \
+                 report no lane at all",
+            );
+            assert!(
+                !source.contains(&builder),
+                "{path} is back on the builder path, which takes no lane and \
+                 lands every turn it drives in the `null` group",
+            );
+            let seam = seams
+                .iter()
+                .find(|(name, _)| *name == path)
+                .map(|(_, seam)| *seam)
+                .expect("every door source names its seams");
+            assert!(
+                source.contains(seam),
+                "{path} must build its seams through `{seam}`, so what it \
+                 binds is one written literal rather than a chain",
+            );
+        }
+    }
+
+    /// `agent/turn.rs` assembles twice — once with the hook layer stripped by
+    /// process-free authority and once with it. Both arms are the same door
+    /// and must name the same lane.
+    #[test]
+    fn both_arms_of_the_raw_door_assemble() {
+        let source = door_sources()
+            .into_iter()
+            .find(|(path, _)| *path == "agent/turn.rs")
+            .map(|(_, source)| source)
+            .expect("the raw door is one of the sources");
+        let arms = source.matches("lane_capabilities::raw_turn(").count();
+        assert_eq!(
+            arms, 2,
+            "the raw door has a process-free arm and an ordinary one; both \
+             assemble, and an arm that stopped would report no lane",
         );
     }
 }

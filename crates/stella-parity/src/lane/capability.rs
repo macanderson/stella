@@ -366,6 +366,11 @@ const REPLAY_IS_DEAF: &str = "a replayed turn has no live operator channel. It r
 const NO_PIPELINE_PRODUCER: &str = "nothing assembles this lane and nothing will. A verification \
                                     plugin's stage turn is a plugin lane, so there is no literal \
                                     here to bind a seam in. Refs #3881";
+/// Why neither of the two non-deck doors takes the bus.
+const DOOR_BUS: &str = "this door's observers ride the event stream, so nothing here reads a bus";
+/// Why a goal arc owns no router seam.
+const ARC_ONE_PROVIDER: &str = "an arc resolves its provider once and drives every round through \
+                                it, so there is no breaker to feed and nothing to re-resolve";
 /// Why a served turn runs no hooks.
 const SERVE_HOOKS: &str = "the host runs its own hooks on its own side of the wire. This engine \
                            holds no authority to run a command with";
@@ -557,6 +562,62 @@ lane_capabilities! {
         lane: SeamClaim::bound(
             "lane: Some(stella_protocol::TurnLane::Builtin(",
             Witness::Test("a_served_turn_declares_the_serve_session_lane"),
+        ),
+    }
+
+    // The shared raw turn. The one lane that binds the session router's
+    // breaker and its mid-turn fallback.
+    RawTurn => LaneOrigin::Builtin,
+        Some(LaneSite {
+            file: "crates/stella-cli/src/lane_capabilities.rs",
+            anchor: "pub(crate) fn raw_turn<'a>(",
+        }),
+    {
+        hooks: SeamClaim::bound("hooks: hooks.map(", CLI_SEAMS),
+        hook_approvals: SeamClaim::bound("hook_approvals: hooks.map(", CLI_SEAMS),
+        calibration: SeamClaim::bound("calibration: Some(calibration)", CLI_SEAMS),
+        gate: SeamClaim::bound("gate: controls.gate.as_deref()", CLI_SEAMS),
+        steering: SeamClaim::bound("steering: controls.steering.as_deref()", CLI_SEAMS),
+        requery: SeamClaim::bound("requery,", CLI_SEAMS),
+        bus: SeamClaim::declined(DOOR_BUS),
+        outcomes: SeamClaim::bound("outcomes: Some(outcomes)", CLI_SEAMS),
+        fallback: SeamClaim::bound("fallback: Some(fallback)", CLI_SEAMS),
+        call_role: SeamClaim::bound("call_role: ModelCallRole::Worker", CLI_SEAMS),
+        lane: SeamClaim::bound(
+            "lane: Some(TurnLane::Builtin(BuiltinLane::RawTurn))",
+            CLI_LANE,
+        ),
+    }
+
+    // A judged goal arc. Steered, and never paused.
+    GoalArc => LaneOrigin::Builtin,
+        Some(LaneSite {
+            file: "crates/stella-cli/src/lane_capabilities.rs",
+            anchor: "pub(crate) fn goal_arc<'a>(",
+        }),
+    {
+        hooks: SeamClaim::bound("hooks: hooks.map(", CLI_SEAMS),
+        hook_approvals: SeamClaim::declined(
+            "a pre-tool hook asking for approval here gets the grant-path refusal rather than a \
+             prompt, whether or not a route is named",
+        ),
+        calibration: SeamClaim::bound("calibration: Some(calibration)", CLI_SEAMS),
+        gate: SeamClaim::declined(
+            "nobody can pause an arc. The whistle steers it and never stops it at a step \
+             boundary",
+        ),
+        steering: SeamClaim::bound("steering: Some(steering)", CLI_SEAMS),
+        requery: SeamClaim::deferred(
+            "Refs #6158",
+            "a decision on whether a goal arc may ask the workspace context plane again",
+        ),
+        bus: SeamClaim::declined(DOOR_BUS),
+        outcomes: SeamClaim::declined(ARC_ONE_PROVIDER),
+        fallback: SeamClaim::declined(ARC_ONE_PROVIDER),
+        call_role: SeamClaim::bound("call_role: ModelCallRole::Worker", CLI_SEAMS),
+        lane: SeamClaim::bound(
+            "lane: Some(TurnLane::Builtin(BuiltinLane::GoalArc))",
+            CLI_LANE,
         ),
     }
 }

@@ -971,23 +971,28 @@ pub(crate) async fn run_goal_turn(
             // The skill's `effort:` override, for this arc.
             config.effort = Some(effort);
         }
-        // TODO(#6109): still the builder path, so this turn reports no lane.
-        // `stella goal` is a door rather than one of the seven lanes
-        // `BuiltinLane` names, and `Lead` is documented as the deck's turn —
-        // see `agent::turn`'s own note for the decision this waits on.
-        let mut engine = Engine::with_sleeper(provider, &tools, config, &TokioSleeper)
-            .with_calibration(calibration)
-            // Every round's worker turn drains this, and only those. The
-            // verifier runs as a sub-agent off `Engine::assess`, which
-            // sees a parent's steering through
-            // `stella_core::subagent::ChildSteering` — soft stop
-            // forwarded, `drain_steering` refused — so a whistle cannot
-            // be eaten by the judge, and the person who sent it does not
-            // have to know a judge exists.
-            .with_steering(whistle.steering());
-        if let Some(hooks) = &cfg.hooks {
-            engine = engine.with_hooks(hooks, &hook_runner);
-        }
+        // Assembled rather than built up by optional builders: this arc is
+        // the `GoalArc` lane and says so, and every seam it leaves alone is a
+        // written `None` in `lane_capabilities::goal_arc`.
+        //
+        // Every round's worker turn drains the steering tap, and only those.
+        // The verifier runs as a sub-agent off `Engine::assess`, which sees a
+        // parent's steering through `stella_core::subagent::ChildSteering` —
+        // soft stop forwarded, `drain_steering` refused — so a whistle cannot
+        // be eaten by the judge, and the person who sent it does not have to
+        // know a judge exists.
+        let engine = Engine::assemble(
+            provider,
+            &tools,
+            config,
+            &TokioSleeper,
+            crate::lane_capabilities::goal_arc(
+                cfg.hooks.as_ref(),
+                &hook_runner,
+                calibration,
+                whistle.steering(),
+            ),
+        );
         engine
             .run_goal(
                 verifier,

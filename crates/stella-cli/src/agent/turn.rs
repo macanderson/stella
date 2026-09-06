@@ -145,25 +145,27 @@ pub(crate) async fn run_turn(
             // The invoked skill's `effort:` override, for this turn.
             config.effort = Some(effort);
         }
-        // TODO(#6109): still the builder path, so this turn reports no lane.
-        // `stella run` is a door, not one of the seven lanes `BuiltinLane`
-        // names, and `Lead` documents itself as the deck's turn. Until it is
-        // settled whether that definition widens, whether an eighth case
-        // arrives, or whether these doors stay unattributed, guessing here
-        // would make the lane say something its own definition denies.
-        let mut engine = Engine::with_sleeper(provider, &permitted, config, &TokioSleeper)
-            .with_calibration(calibration)
-            .with_provider_outcomes(router)
-            .with_fallback_resolver(&fallback);
-        if let Some(requery) = &requery {
-            engine = engine.with_requery(requery);
-        }
-        if let Some(gate) = controls.gate.as_deref() {
-            engine = engine.with_gate(gate);
-        }
-        if let Some(steering) = controls.steering.as_deref() {
-            engine = engine.with_steering(steering);
-        }
+        // Assembled rather than built up by optional builders: this turn is
+        // the `RawTurn` lane and says so, and every seam it leaves alone is a
+        // written `None` in `lane_capabilities::raw_turn` rather than
+        // whatever a chain happened not to attach. This arm binds no hooks,
+        // because process-free authority strips the hook layer above it.
+        let engine = Engine::assemble(
+            provider,
+            &permitted,
+            config,
+            &TokioSleeper,
+            crate::lane_capabilities::raw_turn(
+                None,
+                calibration,
+                router,
+                &fallback,
+                requery
+                    .as_ref()
+                    .map(|requery| requery as &dyn stella_core::ports::SteeringRequery),
+                &controls,
+            ),
+        );
         engine.run_turn_with_sender(messages, budget, &tx).await
     } else {
         // Customs, the operator's switches, and the authorization gate,
@@ -185,26 +187,31 @@ pub(crate) async fn run_turn(
             // The invoked skill's `effort:` override, for this turn.
             config.effort = Some(effort);
         }
-        // Unattributed for the reason the process-free arm above gives: this
-        // is the same door, waiting on the same decision.
-        let mut engine = Engine::with_sleeper(provider, &tools, config, &TokioSleeper)
-            .with_calibration(calibration)
-            .with_provider_outcomes(router)
-            .with_fallback_resolver(&fallback);
-        if let Some(hooks) = &cfg.hooks {
-            engine = engine
-                .with_hooks(hooks, &hook_runner)
-                .with_hook_approval_route(&hook_approvals);
-        }
-        if let Some(requery) = &requery {
-            engine = engine.with_requery(requery);
-        }
-        if let Some(gate) = controls.gate.as_deref() {
-            engine = engine.with_gate(gate);
-        }
-        if let Some(steering) = controls.steering.as_deref() {
-            engine = engine.with_steering(steering);
-        }
+        // The `RawTurn` lane again — the same door as the arm above, with the
+        // hook layer this one keeps. The runner and the broker route ride
+        // together because the chain this replaces bound them together.
+        let engine = Engine::assemble(
+            provider,
+            &tools,
+            config,
+            &TokioSleeper,
+            crate::lane_capabilities::raw_turn(
+                cfg.hooks.as_ref().map(|hooks| {
+                    (
+                        hooks,
+                        &hook_runner as &dyn stella_core::HookRunner,
+                        &hook_approvals as &dyn stella_core::hooks::decision::ApprovalRoute,
+                    )
+                }),
+                calibration,
+                router,
+                &fallback,
+                requery
+                    .as_ref()
+                    .map(|requery| requery as &dyn stella_core::ports::SteeringRequery),
+                &controls,
+            ),
+        );
         engine.run_turn_with_sender(messages, budget, &tx).await
     };
     // This path owns its run — one raw engine turn, no pipeline above it — so
