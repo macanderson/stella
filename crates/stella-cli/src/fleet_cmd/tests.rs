@@ -126,7 +126,7 @@ fn empty_input_and_unknown_extension_are_named_errors() {
 #[test]
 fn summaries_are_single_line_and_capped() {
     let long = "a\nb\n".repeat(200);
-    let out = truncate(&long);
+    let out = super::report::truncate(&long);
     assert!(!out.contains('\n'));
     assert!(out.chars().count() <= SUMMARY_CHARS + 1);
     assert!(out.ends_with('…'));

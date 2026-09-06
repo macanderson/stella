@@ -60,19 +60,18 @@ use std::collections::HashSet;
 use std::io::IsTerminal;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use colored::Colorize;
 use stella_core::{Engine, TurnOutcome};
 use stella_fleet::{
-    CiWatchOutcome, Fleet, FleetConfig, FleetRunReport, FleetWorker, GhCli, Ledger, Monitor,
-    MonitorError, Plan, SystemGhCli, SystemGitCli, Task, TaskId, TimeoutReason, WatchConfig,
-    WorkerControls, WorkerOutcome, WorktreeManager,
+    CiWatchOutcome, Fleet, FleetConfig, GhCli, Ledger, Monitor, MonitorError, Plan, SystemGhCli,
+    SystemGitCli, Task, TaskId, TimeoutReason, WatchConfig, WorkerControls, WorkerOutcome,
+    WorktreeManager,
 };
 use stella_protocol::{AgentEvent, PrStatus};
 use stella_tools::ToolRegistry;
 use stella_tools::hook_runner::HostHookRunner;
-use stella_tui::{FleetDashResult, FleetMsg, FleetStatus};
+use stella_tui::{FleetMsg, FleetStatus};
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::config::Config;
@@ -217,7 +216,7 @@ pub async fn run_fleet(
     // screen; the workers hold them here and the live arm below prints them
     // once the dashboard has restored the terminal (#3883).
     let held_reports = live.then(|| Arc::new(wrapped::HeldReports::default()));
-    let worker = EngineWorker {
+    let worker = engine_worker::EngineWorker {
         cfg: cfg.clone(),
         // Divide the aggregate cap across the concurrency width so one wave's
         // in-flight children can't collectively overshoot `--spend-limit`.
@@ -327,7 +326,7 @@ pub async fn run_fleet(
         );
         let report = run_result.map_err(|e| format!("fleet run failed: {e}"))?;
         if let Ok(res) = dash_result {
-            print_dash_summary(&res);
+            report::print_dash_summary(&res);
         }
         // The wrapper reports the workers held while the grid was up. Each
         // line already names its task, so printing them together after
@@ -345,7 +344,7 @@ pub async fn run_fleet(
             .map_err(|e| format!("fleet run failed: {e}"))?
     };
 
-    render_report(&plan, &report, &ledger_path);
+    report::render_report(&plan, &report, &ledger_path);
     if report.budget_aborted {
         return Err(format!(
             "budget cap reached after ${:.4} — remaining waves were not launched",
@@ -438,152 +437,6 @@ fn load_plan(prompts: &[String], plan_file: Option<&Path>) -> Result<Plan, Strin
             })
             .collect(),
     ))
-}
-
-/// The engine-backed [`FleetWorker`]: one turn per task — the raw
-/// `Engine::run_turn` step-loop — in the task's own workspace, with the
-/// standard (headless) tool registry.
-struct EngineWorker {
-    cfg: Config,
-    /// Per-child spend cap. Derived as `--spend-limit / max_concurrency` (not
-    /// the full `--spend-limit`), so a wave of concurrent children can't each spend the
-    /// whole cap and blow the aggregate — the parent fleet guard then enforces
-    /// the true total, stopping further launches once it is crossed.
-    per_child_budget: Option<f64>,
-    /// The fleet run id — combined with the task id it forms the worker's
-    /// lock-table identity (`<run>/<task>`), the SAME holder string the
-    /// fleet's declared-claim acquisition uses, so a task's tool-level
-    /// claim-on-first-write is re-entrant with its declared claims.
-    run_id: String,
-    /// The live-dashboard channel, present only when `stella fleet` runs on an
-    /// interactive TTY. When set, the worker announces its lifecycle
-    /// (Running → Done/Failed) and its `run_task` tees every `AgentEvent` to
-    /// the grid. `None` keeps the headless path untouched.
-    dash: Option<mpsc::UnboundedSender<FleetMsg>>,
-    /// The installed wrapper plugin every attempt runs under
-    /// (`--pipeline <variant>`, #3695), or `None` for the raw step-loop.
-    ///
-    /// The variant *name* rather than a bound wrapper: binding starts nothing,
-    /// but a [`stella_runtime::wrapper::WrapperDispatch`] is neither `Send` to
-    /// the worker's own OS thread nor shareable across concurrent attempts —
-    /// each holds one plugin conversation at a time. So each attempt binds its
-    /// own from this name, in its own tree, and `run_fleet`'s pre-flight has
-    /// already proven the name resolves.
-    wrapper_variant: Option<String>,
-    /// `--require-verdict` (#4543): each attempt's wrapper verdict gates that
-    /// attempt. Meaningless without `wrapper_variant`, and refused before the
-    /// fan-out in that case.
-    require_verdict: bool,
-    /// Where an attempt's wrapper report goes while the live grid owns the
-    /// terminal: held here and printed by [`run_fleet`] after teardown,
-    /// because an `eprintln!` onto the alternate screen is destroyed by the
-    /// next frame (#3883). `Some` exactly when `dash` is — both exist because
-    /// the run is live — and `None` keeps the headless path printing at
-    /// settle time, as it always has.
-    held_reports: Option<Arc<wrapped::HeldReports>>,
-}
-
-#[async_trait::async_trait]
-impl FleetWorker for EngineWorker {
-    async fn run(
-        &self,
-        task: &Task,
-        workspace_root: &Path,
-        controls: WorkerControls,
-    ) -> WorkerOutcome {
-        // The engine's turn future is deliberately not `Send` (it holds
-        // provider futures and the retry jitter RNG across awaits), but the
-        // fleet's worker port requires a `Send` future. Bridge the two by
-        // giving each task its own OS thread with a current-thread runtime —
-        // fleet workers are genuinely parallel — and awaiting the `Send`
-        // half of a oneshot from the async side.
-        let cfg = self.cfg.clone();
-        let per_child_budget = self.per_child_budget;
-        let wrapper_variant = self.wrapper_variant.clone();
-        let require_verdict = self.require_verdict;
-        let held_reports = self.held_reports.clone();
-        let task = task.clone();
-        let root = workspace_root.to_path_buf();
-        let claim_holder = format!("{}/{}", self.run_id, task.id);
-        let task_id = task.id.clone();
-        // Published by the worker the moment it opens an execution, so this
-        // side can still read the attempt's real spend if the worker never
-        // reports one (#1216).
-        let spend = crate::fleet_spend::SpendRecovery::default();
-
-        // Dispatch → the row flips to Running the instant the wave picks it up.
-        if let Some(d) = &self.dash {
-            let _ = d.send(FleetMsg::Status {
-                id: task_id.clone(),
-                status: FleetStatus::Running,
-            });
-        }
-
-        let worker_dash = self.dash.clone();
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        // The cancellation seam (#803): if this dispatch future is dropped
-        // (Ctrl-C, a `select!` losing the race), stella-fleet's `ClaimGuard`
-        // releases the task's durable file claims on the same unwind — but
-        // the worker below is a detached OS thread that would keep writing
-        // under claims it no longer holds. `abandon_tx` is held across the
-        // await, so that unwind closes this channel first (this future's
-        // state drops before the dispatch frame's earlier-declared guard),
-        // and `stop_or_abandoned` reads the closure as stop.
-        let (abandon_tx, abandon_rx) = tokio::sync::oneshot::channel::<()>();
-        let worker_spend = spend.clone();
-        std::thread::spawn(move || {
-            let result = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|e| format!("worker runtime failed to start: {e}"))
-                .and_then(|rt| {
-                    rt.block_on(run_task(
-                        &cfg,
-                        per_child_budget,
-                        &task,
-                        &root,
-                        &claim_holder,
-                        controls,
-                        abandon_rx,
-                        worker_dash,
-                        worker_spend,
-                        wrapper_variant.as_deref(),
-                        require_verdict,
-                        held_reports.as_deref(),
-                    ))
-                });
-            let _ = tx.send(result);
-        });
-        let outcome = match rx.await {
-            Ok(Ok(outcome)) => outcome,
-            // A worker that can't even start (provider, git) is a failed
-            // attempt with a named reason — never a panic, never a hang.
-            Ok(Err(e)) => {
-                crate::fleet_spend::unreported_outcome(&spend, format!("worker error: {e}"))
-            }
-            Err(_) => crate::fleet_spend::unreported_outcome(
-                &spend,
-                "worker thread died before reporting".into(),
-            ),
-        };
-        // Only now may the abandon line close: the worker has already
-        // reported, so the closure signals nothing.
-        drop(abandon_tx);
-        // The worker's own verdict is the authoritative terminal state — more
-        // reliable than inferring done/failed from the event stream.
-        if let Some(d) = &self.dash {
-            let status = if outcome.success {
-                FleetStatus::Done
-            } else {
-                FleetStatus::Failed
-            };
-            let _ = d.send(FleetMsg::Status {
-                id: task_id.clone(),
-                status,
-            });
-        }
-        outcome
-    }
 }
 
 /// `stella_core::ports::TurnGate` over the task's pause line: the worker's
@@ -1227,15 +1080,15 @@ async fn run_task(
         };
         match raced {
             Raced::Outcome(Ok(TurnOutcome::Completed { text, .. })) => {
-                (truncate(&text), true, "completed", false)
+                (report::truncate(&text), true, "completed", false)
             }
             Raced::Outcome(Ok(TurnOutcome::Aborted { reason, .. })) => {
-                (truncate(&reason), false, "aborted", false)
+                (report::truncate(&reason), false, "aborted", false)
             }
             // A wrapper that could not be driven fails the attempt by name —
             // never a silently successful one, and never a downgrade to the
             // raw loop the operator did not ask for.
-            Raced::Outcome(Err(reason)) => (truncate(&reason), false, "aborted", false),
+            Raced::Outcome(Err(reason)) => (report::truncate(&reason), false, "aborted", false),
             Raced::Stopped => (STOPPED.to_string(), false, "cancelled", true),
         }
     };
@@ -1368,124 +1221,11 @@ async fn git_stdout(root: &Path, args: &[&str]) -> Result<String, String> {
     Ok(output.stdout.trim().to_string())
 }
 
-fn truncate(s: &str) -> String {
-    let one_line = s.replace('\n', " ");
-    let mut out: String = one_line.chars().take(SUMMARY_CHARS).collect();
-    if one_line.chars().count() > SUMMARY_CHARS {
-        out.push('…');
-    }
-    out
-}
-
-/// The live grid's one-screen recap, printed on the normal screen after the
-/// dashboard restores it: each task's final status, wall-clock ELAPSED, and
-/// tool-call count, then the total SESSION time. The `render_report` below
-/// follows with the durable details (spend, commits, worktrees).
-fn print_dash_summary(res: &FleetDashResult) {
-    let fmt_elapsed = |d: Duration| {
-        let s = d.as_secs();
-        format!("{:02}:{:02}", s / 60, s % 60)
-    };
-    let fmt_session = |d: Duration| {
-        let s = d.as_secs();
-        format!("{:02}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60)
-    };
-    println!();
-    for t in &res.tasks {
-        let glyph = match t.status {
-            FleetStatus::Done => t.status.glyph().green(),
-            FleetStatus::Failed | FleetStatus::Killed => t.status.glyph().red(),
-            FleetStatus::Blocked => t.status.glyph().yellow(),
-            _ => t.status.glyph().normal(),
-        };
-        println!(
-            "  {glyph} {} — {} ({}, {} tool call{})",
-            t.id.bold(),
-            t.title,
-            fmt_elapsed(t.elapsed),
-            t.tool_calls,
-            if t.tool_calls == 1 { "" } else { "s" },
-        );
-    }
-    let tail = if res.detached {
-        " (detached — run continued to completion)"
-    } else {
-        ""
-    };
-    println!(
-        "  {} session {}{tail}",
-        "·".dimmed(),
-        fmt_session(res.session_elapsed).bold()
-    );
-}
-
-/// The end-of-run report: per task its outcome, spend, commits, and (when
-/// isolated) the worktree that holds the work, then the totals and where the
-/// receipts live.
-fn render_report(plan: &Plan, report: &FleetRunReport, ledger_path: &Path) {
-    println!();
-    for handle in &report.handles {
-        let ok = handle.outcome.success;
-        let mark = if ok { "✓".green() } else { "✗".red() };
-        let title = plan
-            .task(&handle.task_id)
-            .map(|t| t.title.as_str())
-            .unwrap_or("");
-        println!(
-            "  {mark} {} — {} (${:.4}, {} commit{})",
-            handle.task_id.bold(),
-            title,
-            handle.outcome.cost_usd,
-            handle.outcome.commits.len(),
-            if handle.outcome.commits.len() == 1 {
-                ""
-            } else {
-                "s"
-            },
-        );
-        if let Some(worktree) = &handle.worktree {
-            println!(
-                "      {} {} @ {}",
-                "↳".dimmed(),
-                worktree.branch.bright_magenta(),
-                worktree.path.display().to_string().dimmed()
-            );
-        }
-        if !handle.outcome.summary.is_empty() {
-            println!("      {}", handle.outcome.summary.dimmed());
-        }
-        // Durable-failure notices (a ledger close that failed after the
-        // worker settled, a dispatch lease lost mid-run) are composed in
-        // stella-fleet — this file is at its size ceiling (#1677).
-        for notice in stella_fleet::handle_notices(handle) {
-            println!("      {} {notice}", "!".yellow());
-        }
-    }
-    for (task_id, reason) in &report.dispatch_failures {
-        println!(
-            "  {} {} — dispatch failed: {}",
-            "✗".red(),
-            task_id.bold(),
-            reason.dimmed()
-        );
-    }
-    if !report.skipped.is_empty() {
-        println!(
-            "  {} skipped (dependency failed or budget stop): {}",
-            "○".yellow(),
-            report.skipped.join(", ").dimmed()
-        );
-    }
-    println!(
-        "\n  total ${:.4} · ledger {} · worktrees kept for review (`git worktree list`)\n",
-        report.total_cost_usd(),
-        ledger_path.display(),
-    );
-}
-
 mod branch_watch;
 mod durability;
+mod engine_worker;
 mod isolation_notice;
+mod report;
 mod steering;
 mod wrapped;
 
