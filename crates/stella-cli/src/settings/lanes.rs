@@ -119,6 +119,7 @@ impl LaneSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::settings::{ProjectTrust, Settings};
 
     fn parse(json: &str) -> LaneSettings {
         serde_json::from_str(json).expect("the block parses")
@@ -155,6 +156,46 @@ mod tests {
             .ceiling(&LaneId::new("acme.watch"))
             .expect("a lane only the user scope named survives");
         assert_eq!(watch.known(), BTreeSet::from([LaneCapability::Bus]));
+    }
+
+    /// The same claim through the real three-scope fold, not through
+    /// [`LaneSettings::narrow`] alone.
+    ///
+    /// A field can pass its own tests and still be dropped, because those
+    /// tests read a scope that was deserialized rather than merged. That is
+    /// how `enable_recap` shipped inert. So this one goes through
+    /// [`Settings::merge_captured_scopes`], and an untrusted project scope at
+    /// that — the direction is safe here, since a project may only narrow.
+    #[test]
+    fn a_project_scope_lane_ceiling_survives_the_three_scope_merge() {
+        let user: Settings = serde_json::from_str(
+            r#"{"lanes":{"custom":{"acme.replay":{"capabilities":["bus","steering"]}}}}"#,
+        )
+        .expect("the user scope parses");
+        let project: Settings = serde_json::from_str(
+            r#"{"lanes":{"custom":{"acme.replay":{"capabilities":["bus"]}}}}"#,
+        )
+        .expect("the project scope parses");
+
+        let merged = Settings::merge_captured_scopes(
+            &user,
+            &Settings::default(),
+            &project,
+            ProjectTrust {
+                credentials: false,
+                hooks: false,
+            },
+        );
+
+        let lanes = merged.lanes.expect("the merge keeps a lanes block");
+        assert_eq!(
+            lanes
+                .ceiling(&LaneId::new("acme.replay"))
+                .expect("the lane is held")
+                .known(),
+            BTreeSet::from([LaneCapability::Bus]),
+            "the project's narrowing reached the merged view"
+        );
     }
 
     /// A later scope cannot hand back a seam an earlier one took away. That
