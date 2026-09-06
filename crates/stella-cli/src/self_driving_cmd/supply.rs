@@ -95,6 +95,11 @@ pub(super) fn pass(
     root: &Path,
     lens: &str,
 ) -> bool {
+    // What the seen set drops depends on which of this loop's issues have
+    // closed, and most of them close with no receipt. Cached on the cycle
+    // counter, so a second pass in one cycle asks the tracker nothing.
+    super::closures::reconcile(durable, provider);
+
     let mut findings: Vec<Finding> = Vec::new();
 
     if cfg.supply.regress {
