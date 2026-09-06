@@ -771,6 +771,7 @@ fn run_session(
                 frame_tx.clone(),
                 pending.clone(),
                 spec.reverse_request_timeout,
+                event_tx.clone(),
             )
         });
 
