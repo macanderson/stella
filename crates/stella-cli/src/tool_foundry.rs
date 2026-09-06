@@ -105,6 +105,13 @@ mod tests {
     use stella_core::ports::ToolExecutor;
     use stella_protocol::tool::ToolOutput;
 
+    /// How long the bare outbound-reachability probe may wait before the
+    /// runner is treated as one whose reachability cannot be determined. A
+    /// TCP connect to a public resolver either completes or is refused in
+    /// well under a second on a runner with egress; anything past that is a
+    /// dropped SYN, not a slow one.
+    const NET_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
     /// The hash keys durable notification ids (`ingest_cmd::lineage`), so its
     /// output for a given input is a compatibility surface: a changed value
     /// re-surfaces every already-delivered notification.
@@ -186,11 +193,30 @@ mod tests {
         // unwrapped process, independent of anything the foundry gate does,
         // so a network-isolated runner reports nothing rather than a false
         // reading in either direction.
-        let probe = tokio::process::Command::new("bash")
-            .args(["-c", "exec 3<>/dev/tcp/1.1.1.1/53 && echo REACHED"])
-            .output()
-            .await
-            .expect("the bare probe itself must spawn");
+        //
+        // Bounded, because bash's `/dev/tcp` connect carries no timeout of
+        // its own: a firewall that drops the SYN rather than refusing it
+        // leaves the probe waiting on the kernel's retry ladder — minutes,
+        // and a hung suite rather than a skipped test. An expiry says the
+        // runner's reachability could not be determined, which is the same
+        // answer as "cannot reach" and takes the same exit. `kill_on_drop`
+        // is what stops the abandoned bash outliving the timeout.
+        let probe = tokio::time::timeout(
+            NET_PROBE_TIMEOUT,
+            tokio::process::Command::new("bash")
+                .args(["-c", "exec 3<>/dev/tcp/1.1.1.1/53 && echo REACHED"])
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await;
+        let Ok(probe) = probe else {
+            eprintln!(
+                "skipped: outbound reachability undetermined — the bare probe did not \
+                 answer within {NET_PROBE_TIMEOUT:?}"
+            );
+            return;
+        };
+        let probe = probe.expect("the bare probe itself must spawn");
         if !String::from_utf8_lossy(&probe.stdout).contains("REACHED") {
             return;
         }
