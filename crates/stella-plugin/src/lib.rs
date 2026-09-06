@@ -117,9 +117,11 @@ mod package;
 mod panel;
 mod program;
 mod progressive;
-/// Whether a refuted success claim earns another attempt, and what refuses
-/// it. Pure arithmetic over measurements the caller supplies; the caller is a
-/// verification plugin, which is why it sits in this crate.
+// Whether a refuted success claim earns another attempt, and what refuses it.
+// Pure arithmetic over measurements the caller supplies; the caller is a
+// verification plugin, which is why it sits in this crate. A `///` here would
+// merge into the module's own header and resolve its links in this scope,
+// where none of its items exist.
 pub mod repair;
 mod runtime;
 mod seat;
