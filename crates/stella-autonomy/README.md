@@ -87,6 +87,7 @@ the CLI does — so the dashboard and the terminal cannot disagree.
 | [`src/escalation.rs`](src/escalation.rs) | Escalation as a cooldown: `classify` reads an abort message, `retry_after` says how long to wait, `park_after` says when waiting ends. The record is written into the issue body and read back from it. |
 | [`src/gate.rs`](src/gate.rs) | Which checks are allowed to block a merge, and which have stopped earning that right. |
 | [`src/supply.rs`](src/supply.rs) | Where the loop looks when the ranked queue is empty: `WorkSupply`, `SupplyPolicy` (every switch off), the `rearm` rule that re-opens a dry ladder against a moved base, and `novel`, which drops a finding the seen set already holds. |
+| [`src/seen.rs`](src/seen.rs) | The dedup set, and the one thing that ages a line out of it: `Filing` pairs a digest with the issue it became, and `live` drops a line whose every issue closed on a cited change. A line with no filing record never decays. |
 | [`src/regress.rs`](src/regress.rs) | Re-checking the fixes the loop has claimed: `ClosureReceipt`, `check`, and the `sweep` that turns a change gone from the base branch into a fresh defect. |
 | [`src/meta.rs`](src/meta.rs) | The loop read against its own ledger: a raised signal nobody acted on, and a lens that has looked several times and found nothing. |
 | [`src/closure.rs`](src/closure.rs) | How an issue ends, and what has to be true first. |

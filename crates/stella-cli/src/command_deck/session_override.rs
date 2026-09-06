@@ -410,6 +410,7 @@ mod tests {
             minimal_prompt: false,
             model_pinned_by_flag: false,
             tool_advertisement: Default::default(),
+            steering_ledger: Default::default(),
             durability: Default::default(),
             output_ceilings: Default::default(),
             create_worktrees: Default::default(),

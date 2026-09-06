@@ -240,7 +240,10 @@ fn a_plugins_tool_installs_runs_as_the_plugin_and_retracts_with_it() {
         installed.clone(),
         root.clone(),
         stella_tools::policy::ToolPolicy::allow_all(),
-        stella_core::steering::tools::ToolAdvertisement::Full,
+        crate::agent::tool_stack::ToolAllowance::new(
+            stella_core::steering::tools::ToolAdvertisement::Full,
+            &stella_core::steering::ledger::SteeringLedger::default(),
+        ),
         crate::agent::tool_stack::session_gate(&root),
         stella_core::ports::Principal::User,
     );
@@ -262,7 +265,10 @@ fn a_plugins_tool_installs_runs_as_the_plugin_and_retracts_with_it() {
         contributed_tools(&root),
         root.clone(),
         stella_tools::policy::ToolPolicy::allow_all(),
-        stella_core::steering::tools::ToolAdvertisement::Full,
+        crate::agent::tool_stack::ToolAllowance::new(
+            stella_core::steering::tools::ToolAdvertisement::Full,
+            &stella_core::steering::ledger::SteeringLedger::default(),
+        ),
         crate::agent::tool_stack::session_gate(&root),
         stella_core::ports::Principal::User,
     );
@@ -339,7 +345,10 @@ fn a_packages_own_script_runs_through_the_expanded_plugin_dir() {
         contributed_tools(&root),
         root.clone(),
         stella_tools::policy::ToolPolicy::allow_all(),
-        stella_core::steering::tools::ToolAdvertisement::Full,
+        crate::agent::tool_stack::ToolAllowance::new(
+            stella_core::steering::tools::ToolAdvertisement::Full,
+            &stella_core::steering::ledger::SteeringLedger::default(),
+        ),
         crate::agent::tool_stack::session_gate(&root),
         stella_core::ports::Principal::User,
     );
@@ -569,7 +578,10 @@ fn a_plugins_mcp_server_merges_behind_the_trust_gate_and_runs_as_the_plugin() {
         Vec::new(),
         root.clone(),
         stella_tools::policy::ToolPolicy::allow_all(),
-        stella_core::steering::tools::ToolAdvertisement::Full,
+        crate::agent::tool_stack::ToolAllowance::new(
+            stella_core::steering::tools::ToolAdvertisement::Full,
+            &stella_core::steering::ledger::SteeringLedger::default(),
+        ),
         crate::agent::tool_stack::session_gate(&root),
         stella_core::ports::Principal::User,
     );

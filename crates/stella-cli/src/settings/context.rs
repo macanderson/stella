@@ -50,6 +50,16 @@ pub struct ContextSettings {
 #[serde(default)]
 pub struct SteeringSettings {
     pub enabled: bool,
+    /// What one turn's volatile context may spend, in estimated tokens —
+    /// records, skills, recalled frames and tool schemas together.
+    ///
+    /// One number, so a rule and a tool schema are weighed against each
+    /// other. The recall block spends first and the tool allowance is what it
+    /// leaves; `stella_core::steering::ledger` is where the two meet. It
+    /// binds only while [`SteeringToolSettings::lean`] is on — with the lever
+    /// off no tool is withheld, so there is nothing for a shared total to
+    /// decide.
+    pub max_tokens: u64,
     pub tools: SteeringToolSettings,
 }
 
@@ -57,12 +67,14 @@ impl Default for SteeringSettings {
     fn default() -> Self {
         Self {
             enabled: true,
+            max_tokens: 6_000,
             tools: SteeringToolSettings::default(),
         }
     }
 }
 
-/// What a session may spend advertising tools.
+/// Whether a session budgets its tool schemas at all, and the share one
+/// source may hold when it does.
 ///
 /// Ships **off**, which is the opposite of the switch above and for the
 /// opposite reason: the plane's other three sources were already selecting
@@ -79,10 +91,14 @@ impl Default for SteeringSettings {
 pub struct SteeringToolSettings {
     /// `false` (default) — advertise every tool the session resolves.
     pub lean: bool,
-    /// The whole tool allowance, in estimated tokens.
-    pub max_tokens: u64,
-    /// The share of it every connected MCP server may take between them, so
-    /// one chatty server cannot spend an allowance the built-ins need.
+    /// The share of the allowance every connected MCP server may take between
+    /// them, so one chatty server cannot spend what the built-ins need.
+    ///
+    /// A cap on one source, not a second allowance: the whole number is
+    /// [`SteeringSettings::max_tokens`], and this is the same shape
+    /// `promotion.skill` knobs have beside the budget they sit under. It is
+    /// narrowed with the allowance, so it can never exceed what the volatile
+    /// block left.
     pub mcp_max_tokens: u64,
 }
 
@@ -90,7 +106,6 @@ impl Default for SteeringToolSettings {
     fn default() -> Self {
         Self {
             lean: false,
-            max_tokens: 6_000,
             mcp_max_tokens: 2_000,
         }
     }

@@ -391,6 +391,19 @@ pub struct Config {
     /// byte-identical rather than merely equivalent: no layer is composed at
     /// all (`crate::agent::tool_stack`).
     pub tool_advertisement: stella_core::steering::tools::ToolAdvertisement,
+    /// What this turn's block spent of the budget
+    /// [`Self::tool_advertisement`] names, and the tool budget it settled.
+    ///
+    /// A shared cell, not a resolved value. Its two users meet at different
+    /// times. The recall block is written first, and
+    /// `memory::inject_opening_recall` spends here. The tool list is built
+    /// after, and `agent::tool_stack` reads here. One number, so a rule and a
+    /// tool schema can be weighed against each other.
+    ///
+    /// It rides `Config` for the reason [`Self::output_ceilings`] does: every
+    /// driver already hands a `&Config` to both call sites, so no one has to
+    /// thread a second argument through six of them.
+    pub steering_ledger: std::sync::Arc<stella_core::steering::ledger::SteeringLedger>,
     /// The workspace probe skips gitignored paths (settings
     /// `ignore_gitignore`). Default **on**; inert outside a git repository.
     pub ignore_gitignore: bool,
@@ -777,6 +790,7 @@ impl Config {
                     engine_settings_trusted: false,
                     tool_policy: Default::default(),
                     tool_advertisement: Default::default(),
+                    steering_ledger: Default::default(),
                     ignore_gitignore: true,
                     reward_policy: crate::reward::RewardPolicy::default(),
                     plan_review: crate::settings::PlanReviewPolicy::default(),
@@ -1002,6 +1016,7 @@ impl Config {
             engine_settings_trusted: false,
             tool_policy: Default::default(),
             tool_advertisement: Default::default(),
+            steering_ledger: Default::default(),
             ignore_gitignore: true,
             reward_policy: crate::reward::RewardPolicy::default(),
             plan_review: crate::settings::PlanReviewPolicy::default(),
@@ -1185,6 +1200,7 @@ impl Config {
             engine_settings_trusted: false,
             tool_policy: Default::default(),
             tool_advertisement: Default::default(),
+            steering_ledger: Default::default(),
             ignore_gitignore: true,
             reward_policy: crate::reward::RewardPolicy::default(),
             plan_review: crate::settings::PlanReviewPolicy::default(),

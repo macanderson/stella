@@ -96,7 +96,10 @@ fn inject_slots_the_block_before_an_already_present_prompt() {
         msg(MessageRole::System, "sys"),
         msg(MessageRole::User, "do the thing"),
     ];
-    inject_recall_block(&mut messages, Some(format!("{RECALL_MARKER}\nstuff")));
+    assert!(
+        inject_recall_block(&mut messages, Some(format!("{RECALL_MARKER}\nstuff"))),
+        "a block the history has never held is appended"
+    );
     assert_eq!(messages.len(), 3);
     assert!(messages[1].content.starts_with(RECALL_MARKER));
     assert_eq!(messages[0].content, "sys", "stable prefix untouched (L-E8)");
@@ -113,11 +116,17 @@ fn inject_slots_the_block_before_an_already_present_prompt() {
 #[test]
 fn inject_appends_fresh_blocks_without_touching_history() {
     let mut messages = vec![msg(MessageRole::System, "sys")];
-    inject_recall_block(&mut messages, Some(format!("{RECALL_MARKER}\nfirst")));
+    assert!(inject_recall_block(
+        &mut messages,
+        Some(format!("{RECALL_MARKER}\nfirst"))
+    ));
     messages.push(msg(MessageRole::User, "turn 1"));
     messages.push(msg(MessageRole::Assistant, "did it"));
     let history: Vec<String> = messages.iter().map(|m| m.content.clone()).collect();
-    inject_recall_block(&mut messages, Some(format!("{RECALL_MARKER}\nsecond")));
+    assert!(inject_recall_block(
+        &mut messages,
+        Some(format!("{RECALL_MARKER}\nsecond"))
+    ));
     // Fresh block at the tail; every prior message byte-identical.
     assert_eq!(messages.len(), history.len() + 1);
     assert!(messages.last().unwrap().content.contains("second"));
@@ -130,10 +139,13 @@ fn inject_appends_fresh_blocks_without_touching_history() {
 fn inject_dedupes_an_unchanged_block() {
     let mut messages = vec![msg(MessageRole::System, "sys")];
     let block = format!("{RECALL_MARKER}\nstuff");
-    inject_recall_block(&mut messages, Some(block.clone()));
+    assert!(inject_recall_block(&mut messages, Some(block.clone())));
     messages.push(msg(MessageRole::User, "turn 1"));
     messages.push(msg(MessageRole::Assistant, "did it"));
-    inject_recall_block(&mut messages, Some(block));
+    assert!(
+        !inject_recall_block(&mut messages, Some(block)),
+        "an unchanged block is refused, and so costs the turn nothing"
+    );
     let markers = messages
         .iter()
         .filter(|m| m.content.starts_with(RECALL_MARKER))
@@ -144,9 +156,15 @@ fn inject_dedupes_an_unchanged_block() {
 #[test]
 fn inject_none_adds_nothing_and_touches_nothing() {
     let mut messages = vec![msg(MessageRole::System, "sys")];
-    inject_recall_block(&mut messages, Some(format!("{RECALL_MARKER}\nstuff")));
+    assert!(inject_recall_block(
+        &mut messages,
+        Some(format!("{RECALL_MARKER}\nstuff"))
+    ));
     let before: Vec<String> = messages.iter().map(|m| m.content.clone()).collect();
-    inject_recall_block(&mut messages, None);
+    assert!(
+        !inject_recall_block(&mut messages, None),
+        "a suppressed turn appends nothing"
+    );
     let after: Vec<String> = messages.iter().map(|m| m.content.clone()).collect();
     assert_eq!(before, after, "suppressed recall leaves history untouched");
 }
@@ -830,13 +848,13 @@ fn inject_does_not_re_append_a_block_the_history_already_holds() {
     let b = format!("{RECALL_MARKER}\nsubject B");
     let mut messages = vec![msg(MessageRole::System, "sys")];
 
-    inject_recall_block(&mut messages, Some(a.clone()));
+    assert!(inject_recall_block(&mut messages, Some(a.clone())));
     messages.push(msg(MessageRole::User, "turn 1"));
-    inject_recall_block(&mut messages, Some(b.clone()));
+    assert!(inject_recall_block(&mut messages, Some(b.clone())));
     messages.push(msg(MessageRole::User, "turn 2"));
     let before: Vec<String> = messages.iter().map(|m| m.content.clone()).collect();
 
-    inject_recall_block(&mut messages, Some(a));
+    assert!(!inject_recall_block(&mut messages, Some(a)));
 
     let markers = messages
         .iter()
@@ -864,10 +882,10 @@ fn inject_does_not_re_append_a_block_the_history_already_holds() {
 fn inject_still_appends_content_the_history_has_never_held() {
     let mut messages = vec![msg(MessageRole::System, "sys")];
     for subject in ["A", "B", "C"] {
-        inject_recall_block(
+        assert!(inject_recall_block(
             &mut messages,
             Some(format!("{RECALL_MARKER}\nsubject {subject}")),
-        );
+        ));
         messages.push(msg(MessageRole::User, "a turn"));
     }
     let markers = messages

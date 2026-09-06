@@ -62,6 +62,7 @@ pub mod meta;
 pub mod priority;
 pub mod ready;
 pub mod regress;
+pub mod seen;
 mod stats;
 mod step;
 pub mod supply;

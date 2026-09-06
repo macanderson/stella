@@ -213,7 +213,11 @@ async fn an_auto_selected_directive_skill_narrows_the_turn_and_denies_a_disallow
     );
 
     let mut messages = Vec::new();
-    let recall = inject_opening_recall(&mut messages, block);
+    let recall = inject_opening_recall(
+        &mut messages,
+        block,
+        &stella_core::steering::ledger::SteeringLedger::default(),
+    );
     let [scope] = recall.skill_scopes.as_slice() else {
         panic!(
             "the selected directive skill must yield exactly one scope: {:?}",
@@ -240,7 +244,10 @@ async fn an_auto_selected_directive_skill_narrows_the_turn_and_denies_a_disallow
         Vec::new(),
         dir.path().to_path_buf(),
         ToolPolicy::from_switches(Vec::new()),
-        stella_core::steering::tools::ToolAdvertisement::Full,
+        crate::agent::tool_stack::ToolAllowance::new(
+            stella_core::steering::tools::ToolAdvertisement::Full,
+            &stella_core::steering::ledger::SteeringLedger::default(),
+        ),
         crate::agent::tool_stack::session_gate(dir.path()),
         Principal::User,
     );
@@ -297,7 +304,11 @@ async fn a_directive_less_auto_selected_skill_scopes_nothing() {
         "a skill with no directive yields no scope: {:?}",
         block.skill_scopes
     );
-    let recall = inject_opening_recall(&mut Vec::new(), block);
+    let recall = inject_opening_recall(
+        &mut Vec::new(),
+        block,
+        &stella_core::steering::ledger::SteeringLedger::default(),
+    );
     assert!(recall.skill_scopes.is_empty());
     assert_eq!(recall.skill_effort(), None);
 }

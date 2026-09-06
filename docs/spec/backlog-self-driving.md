@@ -63,6 +63,7 @@ establishes it. Read the file before believing the row.
 | AIMD ceilings moved only from evidence | `crates/stella-autonomy/src/lib.rs` (`calibrate`) | Done. Additive-increase / multiplicative-decrease, provably convergent. |
 | The aperture ladder — 9 lenses, then `watch` | `crates/stella-autonomy/src/lib.rs` (`LENSES`, `advance`, `WATCH`) | Done. "No defects" is always a statement about a lens. |
 | Finding dedup by content digest | `crates/stella-autonomy/src/lib.rs` (`finding_digest`) | Done. Byte-for-byte contract with existing `seen.txt`. |
+| Dedup decay — a digest stops dropping repeats once its issue closes | `crates/stella-autonomy/src/seen.rs` (`live`), `filings.jsonl` written by `state.rs` (`record_filing`) | Done. Keyed on a closure that cited a change. A line with no filing record never decays, so an existing `seen.txt` is read whole. |
 | Dry-streak oracle advancing the ladder | `crates/stella-autonomy/src/lib.rs` (`dry_streak`) | Done. |
 | Self-diagnosis: `STUCK` / `STARVED` / `NOISY` / `FRAGILE` | `crates/stella-autonomy/src/lib.rs` (`metrics`, `starved`) | Done. Named pathologies, not a health score. |
 | Run liveness resolved by a reader, from heartbeats | `crates/stella-autonomy/src/lib.rs` (`fold_runs`) | Done. |

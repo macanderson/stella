@@ -131,7 +131,7 @@ pub(super) fn pass(
         findings.extend(found);
     }
 
-    let seen = durable.seen();
+    let seen = durable.live_seen();
     let fresh: Vec<Finding> = stella_autonomy::supply::novel(&findings, &seen)
         .into_iter()
         .cloned()
@@ -314,7 +314,7 @@ fn file(
         .block_on(backlog::file_finding(
             provider,
             &bound.convention,
-            &durable.seen(),
+            &durable.live_seen(),
             &draft,
             &cfg.attribution.issue,
         ))
@@ -323,7 +323,10 @@ fn file(
     durable.update_stats(|stats| stats.record_filing(outcome.canonical()));
 
     if let backlog::Filed::New(key) = &outcome {
-        durable.add_seen(&stella_autonomy::finding_digest(&finding.title))?;
+        durable.record_filing(
+            &stella_autonomy::finding_digest(&finding.title),
+            &key.to_string(),
+        )?;
         audit::record(
             durable,
             Audit::IssueFiled,

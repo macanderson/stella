@@ -192,7 +192,7 @@ pub(crate) async fn end_of_turn(messages: &[CompletionMessage]) -> Vec<String> {
     let outcomes = file_residue(
         &crate::issue_provider::GhIssueProvider,
         &bound.convention,
-        &st.seen(),
+        &st.live_seen(),
         &cfg.attribution.issue,
         &statements,
     )
@@ -202,7 +202,8 @@ pub(crate) async fn end_of_turn(messages: &[CompletionMessage]) -> Vec<String> {
     for outcome in &outcomes {
         match &outcome.result {
             Ok(Filed::New(key)) => {
-                let _ = st.add_seen(&stella_autonomy::finding_digest(&outcome.title));
+                let digest = stella_autonomy::finding_digest(&outcome.title);
+                let _ = st.record_filing(&digest, &key.to_string());
                 st.update_stats(|s| s.record_filing("new"));
                 notices.push(format!("residue gate filed #{key}: {}", outcome.title));
             }

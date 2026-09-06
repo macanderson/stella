@@ -282,6 +282,9 @@ impl LoopState {
     fn receipts_path(&self) -> PathBuf {
         self.dir.join("receipts.jsonl")
     }
+    fn filings_path(&self) -> PathBuf {
+        self.dir.join("filings.jsonl")
+    }
 
     /// Snapshot the ranked queue as the loop last saw it.
     ///
@@ -441,8 +444,63 @@ impl LoopState {
         self.seen().iter().filter(|l| !l.trim().is_empty()).count()
     }
 
+    /// Append a bare digest, with no filing beside it.
+    ///
+    /// The one caller is `self-driving seen --add`, where a person hands over
+    /// a digest and no issue key exists to pair it with. Such a line can never
+    /// decay, which is what an unknown age is meant to read as. Every path
+    /// that files through the tracker uses [`Self::record_filing`] instead.
     pub fn add_seen(&self, digest: &str) -> Result<(), String> {
         append_line(&self.seen_path(), digest)
+    }
+
+    /// The seen digests that still drop a repeat.
+    ///
+    /// This is what every filing path checks against, and it is smaller than
+    /// [`Self::seen`] by whatever has decayed. A digest decays when every
+    /// issue it was filed as has closed on a cited change — the loop's own
+    /// word that the defect is fixed. See [`stella_autonomy::seen`].
+    ///
+    /// [`Self::seen`] stays the durable set, and `seen_count` still reports
+    /// it: the file is what a move carries and what an operator counts.
+    pub fn live_seen(&self) -> Vec<String> {
+        let fixed: Vec<String> = self
+            .receipts()
+            .into_iter()
+            .filter(|receipt| receipt.by.is_some())
+            .map(|receipt| receipt.key)
+            .collect();
+        stella_autonomy::seen::live(&self.seen(), &self.filings(), &fixed)
+    }
+
+    /// Every filing this loop has made, as a digest and the issue it became.
+    ///
+    /// A line that does not parse is skipped, the same rule the receipts read
+    /// by. A skipped line costs one digest that can never decay, which is the
+    /// old behaviour rather than a new hazard.
+    pub fn filings(&self) -> Vec<stella_autonomy::seen::Filing> {
+        read_jsonl(&self.filings_path())
+            .values
+            .into_iter()
+            .filter_map(|value| serde_json::from_value(value).ok())
+            .collect()
+    }
+
+    /// Write down a filing: the digest into `seen.txt`, and what it became
+    /// beside it.
+    ///
+    /// One call rather than two, because a digest recorded with no filing
+    /// beside it is a line nothing can ever decay. That pairing is the whole
+    /// mechanism, so there is no way in that can skip half of it.
+    ///
+    /// `seen.txt` is written first. Losing the second write costs a line that
+    /// cannot decay; losing the first would re-file a finding the tracker has
+    /// already taken.
+    pub fn record_filing(&self, digest: &str, key: &str) -> Result<(), String> {
+        self.add_seen(digest)?;
+        let filing = stella_autonomy::seen::Filing::new(digest, key, &rfc3339_utc_now());
+        let line = serde_json::to_string(&filing).map_err(|e| e.to_string())?;
+        append_line(&self.filings_path(), &line)
     }
 
     // -- closure receipts ---------------------------------------------------
@@ -1063,5 +1121,132 @@ mod tests {
         assert_eq!(items[2]["rank"], "untriaged");
         assert_eq!(items[2]["number"], "3");
         assert!(doc["at"].as_str().unwrap().ends_with('Z'));
+    }
+
+    /// One closure receipt line, serialized by the type the loop writes, so
+    /// this fixture cannot drift from the shape `receipts()` reads.
+    fn receipt_line(key: &str, by: Option<stella_autonomy::Citation>) -> String {
+        let receipt = stella_autonomy::regress::ClosureReceipt {
+            key: key.to_owned(),
+            closed_at: "2026-09-01T00:00:00Z".to_owned(),
+            by,
+            present_at_close: Some(true),
+        };
+        format!("{}\n", serde_json::to_string(&receipt).unwrap())
+    }
+
+    /// A closure citing the pull request that carried the fix.
+    fn fixed_by(key: &str) -> Option<stella_autonomy::Citation> {
+        Some(stella_autonomy::Citation::PullRequest {
+            key: key.to_owned(),
+        })
+    }
+
+    /// **The witness.** A defect the loop filed, fixed and closed stops
+    /// suppressing, so its return is filed rather than dropped.
+    ///
+    /// Before this change `seen.txt` was the whole answer, `live_seen` did
+    /// not exist, and every filing path read `seen()`. A digest in that file
+    /// dropped the repeat whatever had happened to the issue since.
+    #[test]
+    fn a_closed_fix_lets_its_digest_be_filed_again() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("state");
+        let digest = stella_autonomy::finding_digest("driver.rs:812 retry counter never reset");
+        seed_state(&dir, &format!("{digest}\n"));
+        std::fs::write(
+            dir.join("filings.jsonl"),
+            format!("{{\"digest\":\"{digest}\",\"key\":\"4100\",\"at\":\"\"}}\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("receipts.jsonl"),
+            receipt_line("4100", fixed_by("4101")),
+        )
+        .unwrap();
+
+        let st = LoopState {
+            dir,
+            repo_root: tmp.path().to_path_buf(),
+        };
+
+        assert_eq!(st.seen(), vec![digest.clone()], "the file is unchanged");
+        assert!(
+            st.live_seen().is_empty(),
+            "the closed fix must stop suppressing, got {:?}",
+            st.live_seen()
+        );
+    }
+
+    /// A `seen.txt` written before `filings.jsonl` existed keeps every line,
+    /// so an upgrade re-files nothing.
+    #[test]
+    fn a_legacy_seen_set_is_read_whole() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("state");
+        seed_state(&dir, "aaaaaaaaaaaaaaaa\nbbbbbbbbbbbbbbbb\n");
+        std::fs::write(
+            dir.join("receipts.jsonl"),
+            receipt_line("4100", fixed_by("4101")),
+        )
+        .unwrap();
+
+        let st = LoopState {
+            dir,
+            repo_root: tmp.path().to_path_buf(),
+        };
+
+        assert_eq!(st.live_seen(), st.seen());
+        assert_eq!(st.seen_count(), 2);
+    }
+
+    /// A filing pairs the digest with the issue it became, in one call, so a
+    /// line that could never decay cannot be written by accident.
+    #[test]
+    fn recording_a_filing_writes_both_halves() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("state");
+        seed_state(&dir, "");
+        let st = LoopState {
+            dir: dir.clone(),
+            repo_root: tmp.path().to_path_buf(),
+        };
+
+        let key = "4100";
+        st.record_filing("d0d0d0d0d0d0d0d0", &format!("#{key}"))
+            .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dir.join("seen.txt")).unwrap(),
+            "d0d0d0d0d0d0d0d0\n",
+            "seen.txt still holds one bare digest per line"
+        );
+        let filings = st.filings();
+        assert_eq!(filings.len(), 1);
+        assert_eq!(filings[0].digest, "d0d0d0d0d0d0d0d0");
+        assert_eq!(filings[0].key, key, "the leading marker is dropped");
+        assert!(filings[0].at.ends_with('Z'));
+        assert_eq!(st.live_seen(), vec!["d0d0d0d0d0d0d0d0".to_owned()]);
+    }
+
+    /// A closure that cited no change is not a fix, so it decays nothing.
+    #[test]
+    fn a_closure_citing_nothing_keeps_the_line() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("state");
+        seed_state(&dir, "d0d0d0d0d0d0d0d0\n");
+        std::fs::write(
+            dir.join("filings.jsonl"),
+            "{\"digest\":\"d0d0d0d0d0d0d0d0\",\"key\":\"4100\",\"at\":\"\"}\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("receipts.jsonl"), receipt_line("4100", None)).unwrap();
+
+        let st = LoopState {
+            dir,
+            repo_root: tmp.path().to_path_buf(),
+        };
+
+        assert_eq!(st.live_seen(), st.seen(), "a declined issue is not a fix");
     }
 }

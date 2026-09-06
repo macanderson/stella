@@ -1327,7 +1327,7 @@ fn file_finding(
         .block_on(backlog::file_finding(
             &crate::issue_provider::GhIssueProvider,
             &bound.convention,
-            &st.seen(),
+            &st.live_seen(),
             &draft,
             &attribution.issue,
         ))
@@ -1340,7 +1340,7 @@ fn file_finding(
     st.update_stats(|s| s.record_filing(outcome.canonical()));
 
     if let backlog::Filed::New(key) = &outcome {
-        st.add_seen(&stella_autonomy::finding_digest(title))?;
+        st.record_filing(&stella_autonomy::finding_digest(title), &key.to_string())?;
         // Only for a filing that reached the tracker. A deduplicated finding
         // created no issue, and an event named `IssueCreated` firing for one
         // would make the count a subscriber keeps disagree with the tracker's.
