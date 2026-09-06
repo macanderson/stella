@@ -397,7 +397,7 @@ mod tests {
             (LaneCapability::Fallback, fallback.is_none()),
         ];
         for (name, unset) in &named {
-            assert!(unset, "`{name}` is set on the bare capability set");
+            assert!(*unset, "`{name}` is set on the bare capability set");
         }
 
         named.sort_by_key(|(name, _)| *name);

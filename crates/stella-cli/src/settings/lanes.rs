@@ -26,6 +26,7 @@
 //! is safe to read from a repository you cloned: a project file can only take
 //! a seam away.
 
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
@@ -88,10 +89,11 @@ impl LaneSettings {
     /// another took away.
     pub fn narrow(&mut self, scope: &Self) {
         for (lane, ceiling) in &scope.custom {
-            match self.custom.get_mut(lane) {
-                Some(held) => {
+            match self.custom.entry(lane.clone()) {
+                Entry::Occupied(mut held) => {
                     let allowed = ceiling.known();
-                    held.capabilities
+                    held.get_mut()
+                        .capabilities
                         .retain(|name| match LaneCapability::parse(name) {
                             Some(capability) => allowed.contains(&capability),
                             // A name neither side reads cannot be part of an
@@ -100,8 +102,8 @@ impl LaneSettings {
                             None => false,
                         });
                 }
-                None => {
-                    self.custom.insert(lane.clone(), ceiling.clone());
+                Entry::Vacant(slot) => {
+                    slot.insert(ceiling.clone());
                 }
             }
         }
