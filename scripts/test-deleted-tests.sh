@@ -177,7 +177,7 @@ fi
 
 # ── D10: the commit-message channel expires, and the guard says so ──────────
 #
-# #5894 is the recorded instance: one tree, two runs, opposite answers. The
+# `#5894` is the recorded instance: one tree, two runs, opposite answers. The
 # branch commit that named the deleted test passed while it was the tip, and
 # failed once `gh pr update-branch` put a merge commit on top of it.
 #

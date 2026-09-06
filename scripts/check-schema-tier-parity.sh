@@ -25,10 +25,10 @@
 #
 # `doc-warnings-schema` has to clean rustdoc before it runs, because cargo's
 # freshness check can call a stale `doc` unit up to date and print nothing
-# (#5139). `cargo clean --doc` takes no package filter — cargo refuses
+# (`#5139`). `cargo clean --doc` takes no package filter — cargo refuses
 # `--doc` alongside `-p` — so an unscoped one empties the whole `target/doc`
 # tree, including the workspace rustdoc `doc-warnings` had just built, and
-# every `make gate` run pays a full rebuild for it (#5991).
+# every `make gate` run pays a full rebuild for it (`#5991`).
 #
 # The scope cargo does offer is the target directory. So a recipe line here
 # that runs `cargo clean --doc` must set its own `CARGO_TARGET_DIR` on the
@@ -146,7 +146,7 @@ if [ -f Makefile ]; then
     note "     \`cargo clean --doc\` takes no package filter, so without its own"
     note "     CARGO_TARGET_DIR it empties the \`target/doc\` tree that"
     note "     \`doc-warnings\` caches the workspace rustdoc in, and every gate"
-    note "     run pays a full rebuild for it (#5991). Set CARGO_TARGET_DIR on"
+    note "     run pays a full rebuild for it. Set CARGO_TARGET_DIR on"
     note "     the same line, as \`doc-warnings-schema\` does."
     clean_unscoped=1
   done <Makefile

@@ -3,17 +3,17 @@
 # The pre-flight a session runs before it repairs a red `main`: is someone
 # already fixing this? See #4680, filed from the incident.
 #
-# On 2026-08-24 `main` was red from a single two-line composition break, and
-# three separate PRs fixed it independently, all merging inside 95 seconds:
+# On 2026-08-24 `main` was red from one two-line composition break. Three
+# separate PRs fixed it, each on its own, all merging inside 95 seconds:
 #
 #   18:13:22  #4672 — box the two AgentEvent literals the #4612 witness left bare
 #   18:13:—   #4673 — box the two FleetMsg::Event payloads #4663 added
 #   18:13:48  #4674 — box the two FleetMsg::Event values its own tests build
 #
 # All three changed the same two call sites in
-# `crates/stella-tui/src/fleet_dashboard/tests.rs` in the same way. The merges
-# happened to compose, because identical edits resolve cleanly, so it cost
-# duplicated work rather than correctness. It could as easily not have.
+# `crates/stella-tui/src/fleet_dashboard/tests.rs` the same way. The merges
+# happened to compose, because identical edits resolve cleanly. So it cost
+# duplicated work, not correctness. It could as easily not have.
 #
 # Nobody was wrong. `main-canary.yml` files one `main-red` issue and
 # `main-red-hold.yml` consumes it to hold merges — and with the hold in place

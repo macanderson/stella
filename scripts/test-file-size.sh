@@ -347,12 +347,12 @@ want "B9 growth on top of an inherited first-time crossing still fails" \
   expect-fail "$r" "src/big.rs is 1650 lines, over the 1500-line limit"
 unset FILE_SIZE_BASE_REF
 
-# ── The same rule for OBSOLETE and STALE entries (#2311) ─────────────────────
+# ── The same rule for OBSOLETE and STALE entries (`#2311`) ───────────────────
 #
-# #2267 taught the growth verdict to judge the change rather than the tree, and
+# `#2267` taught the growth verdict to judge the change rather than the tree, and
 # said in its own description that the OBSOLETE / STALE classification did not
 # inherit that reasoning. So a branch could still fail on a baseline entry
-# somebody else's split had already retired — the exact #2004 shape, one
+# somebody else's split had already retired — the exact `#2004` shape, one
 # classification over, with a summary line blaming the reader's own diff.
 #
 # O1 and S1 are the witnesses: each FAILS under the whole-tree classification
@@ -393,7 +393,7 @@ plant "$r" "src/unrelated.rs" 10
 commit "$r" "head: an unrelated change walks past it"
 export FILE_SIZE_BASE_REF="HEAD^1"
 want "S1 an entry already stale at the base is drift, not this change's failure" \
-  expect-pass "$r" "src/gone.rs (baseline entry, file no longer tracked) — gone at the base too"
+  expect-pass "$r" "src/gone.rs (baseline entry, its file is gone from the tree) — gone at the base too"
 unset FILE_SIZE_BASE_REF
 
 # This change is what removed the file, so the regeneration is its own.
@@ -406,7 +406,7 @@ git -C "$r" rm -q "src/gone.rs"
 commit "$r" "head: this change removes one of them"
 export FILE_SIZE_BASE_REF="HEAD^1"
 want "S2 an entry this change made stale still fails" \
-  expect-fail "$r" "src/gone.rs (baseline entry, file no longer tracked)"
+  expect-fail "$r" "src/gone.rs (baseline entry, its file is gone from the tree)"
 unset FILE_SIZE_BASE_REF
 
 # No base to compare against: the classification gets stricter, never weaker,

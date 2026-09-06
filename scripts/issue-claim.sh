@@ -36,7 +36,7 @@
 # — a fleet, or several worktrees on one machine. Comparing the login alone
 # read a peer session's claim as this session's own and cleared both to work
 # the same issue, which is the collision the whole script exists to stop
-# (#5875).
+# (`#5875`).
 #
 # So a claim carries a session word beside the login:
 #

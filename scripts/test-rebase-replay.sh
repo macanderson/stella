@@ -272,15 +272,15 @@ fi
 
 # ── 10. Both shapes on one branch ────────────────────────────────────────────
 #
-# R9 and R1 each carry one suspect. Neither can tell whether the upstream-move
-# skip runs per suspect or clears the whole list, and a skip hoisted out of the
-# loop would turn the guard into a blanket waiver for any branch that absorbed
-# a rename — passing every case above while the hazard shipped green (#5957).
+# R9 and R1 each carry one suspect. Neither can tell whether the skip runs per
+# suspect or clears the whole list. Hoist it out of the loop and the guard
+# waives any branch that absorbed a rename. Every case above still passes, and
+# the hazard ships green (`#5957`).
 #
-# So: one branch with an inherited rename AND a genuine edit-and-undo pair. The
-# verdict alone is not the assertion; a guard that flagged both would also fail
-# here. R10b is the half that pins the filter — the inherited path must not be
-# named.
+# So: one branch with an inherited rename AND a real edit-and-undo pair. The
+# verdict alone is not the assertion, since a guard that flagged both would
+# fail here too. R10b is the half that pins the filter. The inherited path must
+# not be named.
 r="$(new_repo mixed)"
 mkdir -p "$r/old"
 printf 'alpha\n' >"$r/old/bar.txt"
@@ -309,11 +309,11 @@ want_absent "R10b the inherited rename is not named alongside it" \
 # ── 11. A rename the branch's own merge commit made ──────────────────────────
 #
 # R9's rename belongs to the base branch. This one belongs to the merge commit
-# on the branch, which is what happens when two branches claim one numbered
-# document and the merge resolves the collision by renumbering — #5921 added
-# ADR 0027 while 0027 landed upstream, and its merge renamed the record to
-# 0028. The branch's non-merge history still says `a.md`, the diff says
-# `b.md`, and no non-merge commit removed anything (#5954).
+# on the branch. It happens when two branches claim one numbered document and
+# the merge renumbers to settle it. `#5921` added ADR 0027 while 0027 landed
+# upstream, and its merge renamed the record to 0028. The branch's non-merge
+# history still says `a.md`. The diff says `b.md`. No non-merge commit removed
+# anything (`#5954`).
 r="$(new_repo merge_renamed)"
 git -C "$r" checkout -q -b b
 printf 'first\n' >"$r/a.md"
@@ -344,9 +344,9 @@ fi
 
 # ── 12. The report says which commit did which ───────────────────────────────
 #
-# An unlabelled commit list printed the same shape for a real pair and for an
-# inherited rename, and two genuine Cargo.lock pairs were read as the known
-# false positive (#5956).
+# One flat commit list covers two findings: a real pair, and an inherited
+# rename. Two real Cargo.lock pairs were read as that false positive
+# (`#5956`).
 r="$(new_repo labelled)"
 git -C "$r" checkout -q -b b
 printf 'beta\n' >"$r/f.txt"

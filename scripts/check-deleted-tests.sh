@@ -51,14 +51,14 @@
 # they covered. So a removal fails the guard only while it is UNNAMED: writing
 # the test's name in the PR description (or in a commit message) passes it.
 #
-# ── The two channels are not equally durable (#5965) ─────────────────────────
+# ── The two channels are not equally durable (`#5965`) ───────────────────────
 #
 # The description is read from the pull request itself and survives anything.
 # A commit message is read by the `git log` walk below, which on CI's
 # `fetch-depth: 2` checkout reaches the tip commit and nothing behind it. So a
 # name written in a commit message counts while that commit is the tip, and
 # stops counting the moment a merge lands on top — `gh pr update-branch` is
-# enough. #5894 is the recorded instance: one tree, two runs, opposite answers,
+# enough. `#5894` is the recorded instance: one tree, two runs, opposite answers,
 # with the same deletion named in the same commit each time.
 #
 # The walk is left at depth 2 rather than deepened, because the tree comparison
@@ -306,7 +306,7 @@ fi
 
 # How far the commit-message channel could actually see. On CI's fetch-depth 2
 # checkout this is 1, and the failure text says so rather than leaving the
-# author to work out why a name that passed an hour ago no longer does.
+# author to work out why a name that passed an hour ago stops counting.
 walked=0
 if commits="$(git log --format='%B' "$base_ref..$head_ref" 2>/dev/null)"; then
   ack="$ack
@@ -362,7 +362,7 @@ fi
   echo "at fetch-depth 2. A name written in a commit message counts while that"
   echo "commit is the tip and stops counting once a merge lands on top of it, so"
   echo "the same deletion can pass one run and fail the next with nothing about"
-  echo "the tree having changed (#5965). The description does not expire."
+  echo "the tree having changed. The description does not expire."
   echo ""
   if [ "$stale_fallback" -eq 1 ]; then
     echo "THIS RUN READ A STALE DESCRIPTION. It could not fetch the PR's"

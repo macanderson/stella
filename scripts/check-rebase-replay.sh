@@ -56,10 +56,10 @@
 #
 # ── The report names who did what ────────────────────────────────────────────
 #
-# Each flagged path lists its commits oldest first, labelled "introduced by"
-# and "undone by". An unlabelled list printed the same shape for a real pair
-# and for the inherited rename the filter below drops, and two genuine
-# Cargo.lock pairs were read as that known false positive (#5956).
+# Each flagged path lists its commits oldest first. The first is labelled
+# "introduced by" and the last "undone by". Without them, one shape covers two
+# findings: a real pair, and the inherited rename the filter below drops. Two
+# real Cargo.lock pairs were read as that false positive (`#5956`).
 #
 # ── NOT in `make gate` ───────────────────────────────────────────────────────
 #
@@ -207,12 +207,10 @@ if [ -z "$suspects" ]; then
 fi
 
 # Each flagged path prints which commit introduced the edit and which undid it,
-# rather than an undifferentiated list (#5956). Two failures used to print the
-# same shape: a real edit-and-undo pair, and the inherited rename the filter
-# above now drops. A reader who knew the second existed had no cheap way to
-# tell them apart, and read two genuine Cargo.lock pairs as the known false
-# positive. Oldest first, so "introduced by" is the first line and "undone by"
-# the last — the order the hazard happens in.
+# rather than a flat list. One shape covered two findings: a real pair, and the
+# inherited rename the filter above drops. Two real Cargo.lock pairs were read
+# as that false positive. Oldest first, so the labels fall in the order the
+# hazard happens in.
 found=0
 while IFS= read -r path; do
   [ -n "$path" ] || continue

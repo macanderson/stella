@@ -409,7 +409,7 @@ issue-claim-test` covers it, both blocking branches included.
 It carries the same session word, and for the same reason: one login is one
 account, and the thing that has to be identified is the session. Comparing
 the login alone read a peer session's claim as this session's own and cleared
-both to work one issue (#5875). `scripts/lib/claim-session.sh` resolves the
+both to work one issue (`#5875`). `scripts/lib/claim-session.sh` resolves the
 word for both scripts, so a fleet sets `STELLA_CLAIM_SESSION` once rather
 than twice, and both fail open the same way: a run with no word of its own,
 and a claim comment carrying none, fall back to the author-only rule.
@@ -592,7 +592,7 @@ so an unscoped one empties the whole `target/doc` tree, `doc-warnings`'
 workspace rustdoc included, and every later gate run rebuilds it. The scope
 cargo does offer is the target directory, so this step builds and cleans
 under its own `CARGO_TARGET_DIR` (`target/doc-schema`) and touches nobody
-else's cache. `schema-tier-parity` holds that rule as well as the rung one:
+else's cache. `schema-tier-parity` holds that rule beside the rung one:
 a recipe line running `cargo clean --doc` without `CARGO_TARGET_DIR` on it
 fails the gate, because dropping the variable leaves a command that still
 works and quietly costs everyone the cache.
@@ -1228,7 +1228,7 @@ your change grows past what it inherited fails exactly as it always did.
 Inherited drift is survived, never absorbed: a first-time crossing you walked
 past still wants splitting, and still gets no baseline entry.
 
-The baseline's own bookkeeping is judged the same way (#2311). An entry whose
+The baseline's own bookkeeping is judged the same way (`#2311`). An entry whose
 file is already under the limit at the base, or already gone there, is
 somebody else's split or rename that left the entry standing: it is reported
 as drift and does not fail you. An entry your change makes obsolete or stale

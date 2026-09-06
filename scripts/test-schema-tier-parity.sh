@@ -131,7 +131,7 @@ expect "S8  no print-check-steps target fails" 1 "$d" "could not read CHECK_STEP
 #
 # `cargo clean --doc` takes no package filter, so an unscoped one empties the
 # whole `target/doc` tree — including the workspace rustdoc `doc-warnings`
-# built minutes earlier, which every later gate run then rebuilds (#5991). The
+# built minutes earlier, which every later gate run then rebuilds (`#5991`). The
 # scope cargo does offer is the target directory, and dropping it leaves a
 # command that still works, so nothing about the recipe shows the rule.
 
@@ -155,7 +155,7 @@ recipe_fixture() {
   printf '%s' "$dir"
 }
 
-# S9. The defect. This is the recipe as it stood before #5991.
+# S9. The defect. This is the recipe as it stood before `#5991`.
 d="$(recipe_fixture unscoped_clean 'cargo clean --doc')"
 expect "S9  an unscoped 'cargo clean --doc' recipe line fails" 1 "$d" \
   "runs an unscoped rustdoc clean"

@@ -496,14 +496,15 @@ prose-report: ## Name every remaining content-free construction, with its remedy
 	@python3 ./scripts/check-prose.py --report
 
 .PHONY: prose-update
-prose-update: ## Lower the count ratchet; leave every unit's header-length ceiling where it stands
+prose-update: ## Carry the entries a file move re-based; leave every other ceiling where it stands
 	@python3 ./scripts/check-prose.py --update
 
 # The other direction, and a PR of its own: reclaiming the slack a shortened
-# header earns is safe exactly when nothing is blocked on it, the same
-# reasoning file-size-retighten is built on.
+# header or a rewritten sentence earns is safe exactly when nothing is blocked
+# on it, the same reasoning file-size-retighten is built on. All three ratchets
+# move together here, so a branch that reclaims does it on purpose and says so.
 .PHONY: prose-retighten
-prose-retighten: ## Lower every unit's header-length ceiling to its current mean (a deliberate, separate pass)
+prose-retighten: ## Lower every count, grade and header-length ceiling to its current value (a deliberate, separate pass)
 	@python3 ./scripts/check-prose.py --update --retighten
 
 .PHONY: line-citations

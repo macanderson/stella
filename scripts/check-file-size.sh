@@ -547,7 +547,7 @@ effective_limit() {
 
 # Was this baseline entry ALREADY obsolete in the base tree — the file under
 # the limit there too? Then somebody else's split retired it and left the entry
-# behind, and failing this change for walking past it is #2004's bug.
+# behind, and failing this change for walking past it is `#2004`'s bug.
 #
 # A file absent at the base is one this change added, so its entry is this
 # change's business and the answer is no. Fail-closed, like `size_at_base`.
@@ -631,7 +631,7 @@ while IFS= read -r line; do
     fi
     ;;
   "OBSCAND "*)
-    # Deliberate word split, as above.
+    # Word split, as above.
     # shellcheck disable=SC2086
     set -- $line
     cand_path="$2"
@@ -652,12 +652,12 @@ while IFS= read -r line; do
     fi
     ;;
   "STALECAND "*)
-    # Deliberate word split, as above.
+    # Word split, as above.
     # shellcheck disable=SC2086
     set -- $line
     cand_path="$2"
     if stale_at_base "$cand_path"; then
-      drift="$drift$(printf '  %s (baseline entry, file no longer tracked) — gone at the base too; the entry was already stale' \
+      drift="$drift$(printf '  %s (baseline entry, its file is gone from the tree) — gone at the base too; the entry was already stale' \
         "$cand_path")
 "
     else
@@ -666,7 +666,7 @@ while IFS= read -r line; do
 "
         stale_header_emitted=1
       fi
-      report="$report$(printf '  %s (baseline entry, file no longer tracked)' "$cand_path")
+      report="$report$(printf '  %s (baseline entry, its file is gone from the tree)' "$cand_path")
 "
     fi
     ;;

@@ -110,8 +110,8 @@ printf '\n\033[1mclearing — a recovered main un-blocks the pull requests it st
 #
 # A fixture run line is `<head> <run id>` for a failed hold, `<head> ok` for a
 # hold that already passes, and `<head> none` for a head that carries no hold
-# run at all. The last two used to be one state — an absent line — and the
-# sweep read both as "nothing to do" (`#6052`).
+# run at all. Without the split those two are one state — an absent line — and
+# the sweep reads both as "nothing to do" (`#6052`).
 recovered_prs="5903 aaaaaaa
 5899 bbbbbbb
 5894 ccccccc"
@@ -181,15 +181,15 @@ clear_says "a repository with no open pull request says so and stops" \
   "cleared the hold on 0 of 0 open pull request" "" "" ""
 
 # A head with no hold run at all. Nothing can be re-run, and `main is not
-# known-broken` is a required check, so that pull request stays unmergeable —
-# and the sweep used to pass over it in silence, counting it as swept.
+# known-broken` is a required check, so that pull request stays unmergeable.
+# An unsplit sweep passes over it in silence and counts it as swept.
 unrun_prs="5903 aaaaaaa
-5940 ddddddd"
+9 ddddddd"
 unrun_runs="aaaaaaa 33951700124
 ddddddd none"
 
 clear_says "a head with no hold run at all is named" \
-  "no main-red-hold.yml run exists on the head of #5940" "" "$unrun_prs" "$unrun_runs"
+  "no main-red-hold.yml run exists on the head of #9" "" "$unrun_prs" "$unrun_runs"
 
 clear_says "...and the reader is told a push is what starts one" \
   "until its branch is pushed" "" "$unrun_prs" "$unrun_runs"
@@ -202,8 +202,8 @@ clear_says "...while the pull request that can be swept still is" \
 clear_lacks "a passing hold is not reported as a missing run" \
   "no main-red-hold.yml run exists" "" "$recovered_prs" "$stale_runs"
 
-# The cap used to be silent, so a repository with more open pull requests than
-# one page read as a clean sweep of a list it never saw the end of.
+# A silent cap makes a repository with more open pull requests than one page
+# read as a clean sweep of a list nothing ever saw the end of.
 capped_prs="1 aaaaaaa
 2 bbbbbbb
 3 ccccccc"

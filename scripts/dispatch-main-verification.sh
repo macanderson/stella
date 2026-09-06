@@ -28,16 +28,16 @@
 #
 # ── It claims only the runs it saw land ──────────────────────────────────────
 #
-# `gh workflow run` starts a run on a BRANCH, and that run judges whatever the
-# tip is when it lands rather than the commit this script was asked about. So
-# starting a workflow is not evidence that the commit got one. The closing line
-# used to name the `ci` run and speak for both, and on 2026-09-05 it said
-# `67a43001` "is being checked" while the canary run it started had attached to
-# `9455eebe`, one merge later. Both workflows are polled now, and each is
-# reported on its own.
+# `gh workflow run` starts a run on a BRANCH. That run judges whatever the tip
+# is when it lands, not the commit this script was asked about. Starting a
+# workflow is not evidence that the commit got one.
 #
-# The two waits share one deadline, so asking the second question costs no more
-# wall clock than asking the first did.
+# On 2026-09-05 one closing line named the `ci` run and spoke for both. It said
+# `67a43001` "is being checked". The canary run had gone to `9455eebe`, one
+# merge later. So both workflows are polled here, and each is reported alone.
+#
+# The two waits share one deadline. Asking the second question costs no more
+# wall clock than asking the first.
 #
 # The run it starts cannot come back here. `auto-tag.yml` acts only on a `ci`
 # run whose event was a push, and a run started this way carries the event
@@ -220,9 +220,9 @@ if start main-canary.yml; then
   canary_url="$wait_url"
 fi
 
-# A run that never attached is reported per workflow, because the two mean
-# different things: `ci` is the answer being asked for, and the canary is the
-# backstop the daily schedule asks again.
+# A run that never attached is reported per workflow. The two mean different
+# things. `ci` is the answer being asked for. The canary is a backstop, and the
+# daily schedule asks it again.
 missing() { # missing <workflow file> <what it means>
   warn "no $1 run has landed on ${short}"
   cat <<TXT

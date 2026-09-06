@@ -174,7 +174,7 @@ esac
 # The positive control for the session word, and the case the login alone
 # could never answer: a fleet, or several agent worktrees on one machine, all
 # run as one login. Comparing the login read a peer's claim as this session's
-# own and cleared both to work the same issue (#5875).
+# own and cleared both to work the same issue (`#5875`).
 #
 # `want` cannot drive this: it pins no session word, which is the fail-open
 # side. Each case here sets both halves.
