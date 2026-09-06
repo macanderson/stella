@@ -654,3 +654,15 @@ one role, activate it, run a turn, and observe exactly two things — the turn's
 composition changed, and the model count did not. Then assign a model to the
 role and observe the inverse: the model count changed, and the composition did
 not.
+
+**The script is
+`crates/stella-cli/tests/roleless_core_acceptance_cli.rs`**, and
+`make roleless-acceptance` runs it and prints what each step saw. It drives the
+real binary three times against a scripted provider, so it costs no money and
+needs no key. Its file header says where each observation is read from.
+
+The stage list comes from the `before_turn` requests the host sent the plugin,
+because no host emits a `stage` **event** for a stage a plugin contributed —
+`#6261` is where that gap is tracked. The model census is
+`SELECT DISTINCT call_role, model FROM telemetry`, the store's own projection
+of `step_usage`.
