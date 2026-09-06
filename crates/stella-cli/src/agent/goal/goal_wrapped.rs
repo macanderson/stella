@@ -370,18 +370,24 @@ pub(crate) async fn run_goal_wrapped_turn(
         // The skill's `effort:` override, for this arc.
         config.effort = Some(effort);
     }
-    // TODO(#6109): still the builder path, so this turn reports no lane. Same
-    // door as `agent::goal`'s raw arm, under a wrapper plugin, and the same
-    // open question about which lane a non-interactive door runs in.
-    let mut engine = Engine::with_sleeper(provider, &tools, config, &TokioSleeper)
-        .with_calibration(calibration)
-        // The arc's whistle (#4769), opened above and drained at every round's
-        // first step boundary — the wrapped arm drives its own rounds through
-        // this one engine, so one attachment covers all of them.
-        .with_steering(whistle.steering());
-    if let Some(hooks) = &cfg.hooks {
-        engine = engine.with_hooks(hooks, &hook_runner);
-    }
+    // The `GoalArc` lane — the same door as `agent::goal`'s raw arm, under a
+    // wrapper plugin, so it takes the same seams literal.
+    //
+    // The arc's whistle (#4769) is opened above and drained at every round's
+    // first step boundary. The wrapped arm drives its own rounds through this
+    // one engine, so one attachment covers all of them.
+    let engine = Engine::assemble(
+        provider,
+        &tools,
+        config,
+        &TokioSleeper,
+        crate::lane_capabilities::goal_arc(
+            cfg.hooks.as_ref(),
+            &hook_runner,
+            calibration,
+            whistle.steering(),
+        ),
+    );
 
     messages.push(CompletionMessage::user(
         stella_core::goal::goal_kickoff_text(goal),

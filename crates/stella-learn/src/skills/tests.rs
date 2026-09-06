@@ -496,6 +496,74 @@ fn below_threshold_skills_are_excluded() {
     assert!(selected.is_empty());
 }
 
+// ---- the body scores too, not only name + description ----
+
+/// **Witness.** A skill whose description shares no word with the prompt is
+/// still selected when its *body* does.
+///
+/// Fails on base. Base read only `name + description`. This skill's
+/// description is about Python import style. Its body is about cutting a
+/// release. The prompt below is about a release. Base saw no shared words
+/// and dropped the skill. The body shares two words with the prompt:
+/// "release" and "changelog".
+#[test]
+fn a_skill_is_selected_when_only_its_body_matches_the_prompt() {
+    let mut release_skill = skill(
+        "python-import-style",
+        "Format Python imports with isort",
+        &[],
+        SkillOrigin::Workspace,
+    );
+    release_skill.body = "Tag the release, then update the changelog and push the tag.".to_string();
+
+    let selected = select_skills(
+        std::slice::from_ref(&release_skill),
+        "please cut a new release and update the changelog",
+        &[],
+        &SelectionConfig::default(),
+    );
+    assert_eq!(
+        selected.len(),
+        1,
+        "a body-only match must still select the skill: {selected:?}"
+    );
+    assert!(selected[0].matched_terms.contains(&"release".to_string()));
+    assert!(selected[0].matched_terms.contains(&"changelog".to_string()));
+}
+
+/// **Control, next to the witness above.** The same skill, with a long
+/// off-topic body, is *not* selected by the same prompt.
+///
+/// A long body has more words, so it has more chances to share a word with
+/// any prompt by luck. This proves a long body cannot buy a skill past the
+/// two-shared-word floor just by being long.
+#[test]
+fn a_long_unrelated_body_does_not_select_an_off_topic_skill() {
+    let mut release_skill = skill(
+        "python-import-style",
+        "Format Python imports with isort",
+        &[],
+        SkillOrigin::Workspace,
+    );
+    release_skill.body = "This skill explains how to configure isort so that Python \
+        imports are grouped into standard library, third party, and local sections, \
+        sorted alphabetically within each group, with a blank line between groups. \
+        Run isort on save and check the diff before committing any changes to shared \
+        modules."
+        .to_string();
+
+    let selected = select_skills(
+        std::slice::from_ref(&release_skill),
+        "please cut a new release and update the changelog",
+        &[],
+        &SelectionConfig::default(),
+    );
+    assert!(
+        selected.is_empty(),
+        "a long off-topic body must not buy a free pass past corroboration: {selected:?}"
+    );
+}
+
 #[test]
 fn top_k_is_respected() {
     let skills: Vec<Skill> = (0..5)
@@ -556,10 +624,11 @@ fn the_auto_created_bonus_cannot_lift_a_skill_over_the_floor() {
         min_score: 0.6,
         domain_boost: 0.5,
         auto_created_bonus: 0.2,
+        body_weight: 0.5,
     };
     // Names reuse description terms so both skills score over the same
     // four-term vocabulary: coverage = 2/4 = 0.5, below the 0.6 floor.
-    let skills = vec![
+    let mut skills = vec![
         skill(
             "quaxle-marlow",
             "quaxle fenwick marlow jubilant",
@@ -573,6 +642,14 @@ fn the_auto_created_bonus_cannot_lift_a_skill_over_the_floor() {
             SkillOrigin::AutoCreated,
         ),
     ];
+    // The shared `skill()` fixture's filler body ("body of <name>") would
+    // otherwise repeat "quaxle"/"marlow" from the name and add a body score
+    // on top of the lexical one — noise from the fixture, not something this
+    // test is about (the body-only path has its own tests above). An
+    // unrelated body keeps this test isolated to the bonus.
+    for s in &mut skills {
+        s.body = "lorem ipsum dolor sit amet".to_string();
+    }
     let selected = select_skills(&skills, "quaxle fenwick", &[], &config);
     assert!(
         selected.is_empty(),
@@ -1162,10 +1239,10 @@ const SQLX_LESSON: &str = "Always add a down migration to every schema change \
 ///
 /// It was not, and the reason was structural rather than a tuning miss. The
 /// miner wrote `description: "Learned from N observations."` while
-/// `select_skills_reporting` scores `name + description` and nothing else, so
-/// a learned skill's entire searchable vocabulary was its 40-character slug
-/// plus two words that match no prompt ever written. The mechanism that mints
-/// skills and the mechanism that surfaces them were tuned against each other.
+/// `select_skills_reporting` scored only `name + description`, so a learned
+/// skill's entire searchable vocabulary was its 40-character slug plus two
+/// words that match no prompt ever written. The mechanism that mints skills
+/// and the mechanism that surfaces them were tuned against each other.
 #[test]
 fn a_mined_skill_is_selected_for_a_prompt_about_its_own_lesson() {
     let obs: Vec<SkillObservation> = (1..=3).map(|i| observation(SQLX_LESSON, i)).collect();
