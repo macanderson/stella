@@ -52,6 +52,13 @@ same grounds as check-invariants.sh's greps: the reviewable convention is that
 codes reach a record through these three doors, and a PR inventing a fourth
 has to touch this script or ship an undocumented code past review.
 
+**Keep every `.with(name, value)` chained straight onto the `emit` call.**
+`field_names` (below) reads field names off that chain, and it hedges when a
+helper hides some of them — but a hedge is a worse reference than an exact
+one. Pulling two `.with` calls into a shared function, the way
+`crates/stella-cli/src/diag_bridge/memory.rs` once did, is the shape that
+loses names silently; inlining them back is what fixed it.
+
 ## The website's table, and what is checked about it (#3045)
 
 `website/content/docs/diagnostics.mdx` carries a second table: a dozen codes
