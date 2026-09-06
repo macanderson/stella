@@ -1226,7 +1226,14 @@ above for every other (#2397). So a violation that was already there before
 your branch existed is reported as drift and does not fail you, while anything
 your change grows past what it inherited fails exactly as it always did.
 Inherited drift is survived, never absorbed: a first-time crossing you walked
-past still wants splitting, and still gets no baseline entry. The base is the
+past still wants splitting, and still gets no baseline entry.
+
+The baseline's own bookkeeping is judged the same way (#2311). An entry whose
+file is already under the limit at the base, or already gone there, is
+somebody else's split or rename that left the entry standing: it is reported
+as drift and does not fail you. An entry your change makes obsolete or stale
+does fail, and `make file-size-update` is its remedy, because retiring it is
+part of the work that made it obsolete. The base is the
 merge commit's first parent on a pull request, the merge base locally, and
 nothing at all in a shallow clone or a fresh repository — where the guard falls
 back to the strict whole-tree check, because an unresolvable base must make it

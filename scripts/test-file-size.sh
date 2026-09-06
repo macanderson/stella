@@ -347,6 +347,77 @@ want "B9 growth on top of an inherited first-time crossing still fails" \
   expect-fail "$r" "src/big.rs is 1650 lines, over the 1500-line limit"
 unset FILE_SIZE_BASE_REF
 
+# ── The same rule for OBSOLETE and STALE entries (#2311) ─────────────────────
+#
+# #2267 taught the growth verdict to judge the change rather than the tree, and
+# said in its own description that the OBSOLETE / STALE classification did not
+# inherit that reasoning. So a branch could still fail on a baseline entry
+# somebody else's split had already retired — the exact #2004 shape, one
+# classification over, with a summary line blaming the reader's own diff.
+#
+# O1 and S1 are the witnesses: each FAILS under the whole-tree classification
+# and is drift now. O2 and S2 are what stop that becoming a hole.
+
+# Somebody else split the file on `main` and left the entry behind. This change
+# touches something else. It must pass, and still report the debt.
+r="$(new_repo "obsolete_at_base")"
+plant "$r" "src/split.rs" 900
+set_baseline "$r" "2400 src/split.rs"
+commit "$r" "base: the split landed, the entry did not"
+plant "$r" "src/unrelated.rs" 10
+commit "$r" "head: an unrelated change walks past it"
+export FILE_SIZE_BASE_REF="HEAD^1"
+want "O1 an entry already obsolete at the base is drift, not this change's failure" \
+  expect-pass "$r" "its baseline entry outlived the split that fixed it; retire it"
+unset FILE_SIZE_BASE_REF
+
+# This change is the split. Retiring the entry is its own work, so it still
+# fails and still names `make file-size-update`.
+r="$(new_repo "obsolete_here")"
+plant "$r" "src/split.rs" 2400
+set_baseline "$r" "2400 src/split.rs"
+commit "$r" "base: the god file is still a god file"
+plant "$r" "src/split.rs" 900
+commit "$r" "head: this change splits it"
+export FILE_SIZE_BASE_REF="HEAD^1"
+want "O2 an entry this change made obsolete still fails" \
+  expect-fail "$r" "src/split.rs is now 900 lines (<= 1500) — drop its baseline entry"
+unset FILE_SIZE_BASE_REF
+
+# The base branch deleted or renamed the file and left its entry standing.
+r="$(new_repo "stale_at_base")"
+plant "$r" "src/keep.rs" 1600
+set_baseline "$r" "1600 src/keep.rs" "1800 src/gone.rs"
+commit "$r" "base: the entry already outlived its file"
+plant "$r" "src/unrelated.rs" 10
+commit "$r" "head: an unrelated change walks past it"
+export FILE_SIZE_BASE_REF="HEAD^1"
+want "S1 an entry already stale at the base is drift, not this change's failure" \
+  expect-pass "$r" "src/gone.rs (baseline entry, file no longer tracked) — gone at the base too"
+unset FILE_SIZE_BASE_REF
+
+# This change is what removed the file, so the regeneration is its own.
+r="$(new_repo "stale_here")"
+plant "$r" "src/keep.rs" 1600
+plant "$r" "src/gone.rs" 1800
+set_baseline "$r" "1600 src/keep.rs" "1800 src/gone.rs"
+commit "$r" "base: both files are there"
+git -C "$r" rm -q "src/gone.rs"
+commit "$r" "head: this change removes one of them"
+export FILE_SIZE_BASE_REF="HEAD^1"
+want "S2 an entry this change made stale still fails" \
+  expect-fail "$r" "src/gone.rs (baseline entry, file no longer tracked)"
+unset FILE_SIZE_BASE_REF
+
+# No base to compare against: the classification gets stricter, never weaker,
+# matching B5.
+r="$(new_repo "obsolete_no_base")"
+plant "$r" "src/split.rs" 900
+set_baseline "$r" "2400 src/split.rs"
+commit "$r" "the only commit: nothing to compare against"
+want "O3 an unresolvable base still fails an obsolete entry" \
+  expect-fail "$r" "drop its baseline entry"
+
 # ── --absolute: the post-merge canary's question (#3447) ─────────────────────
 #
 # Every case above is base-relative, which is the right mercy for an author who
