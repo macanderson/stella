@@ -130,10 +130,11 @@ pub(super) fn calibrate_cmd(
 
 /// The queue verb: the ranked defect batch this cycle draws from.
 pub(super) fn queue(st: &LoopState, limit: usize, format: QueryFormat) -> Result<(), String> {
+    let cfg = config::load(&st.repo_root);
     backlog::render_queue(
         st,
-        &crate::issue_provider::GhIssueProvider,
-        &config::load(&st.repo_root),
+        &crate::issue_provider::GhIssueProvider::from_manifest(&cfg.manifest),
+        &cfg,
         limit,
         format,
     )

@@ -219,7 +219,9 @@ fn drive(workspace_root: &Path, name: &str) -> Result<(), String> {
         crate::driver_plugin::capabilities::HostDriverCapabilities::new(
             name,
             resolved.gates().cloned(),
-            Box::new(crate::issue_provider::GhIssueProvider),
+            Box::new(crate::issue_provider::GhIssueProvider::for_workspace(
+                workspace_root,
+            )),
             crate::self_driving_cmd::config::load(workspace_root),
         ),
     );
