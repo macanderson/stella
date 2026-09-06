@@ -293,19 +293,26 @@ pub struct SubAgentSpec {
     /// The name of the seat this child runs on, as its requester spelled it.
     ///
     /// **Opaque to the engine, by design.** A plugin declares the roles its
-    /// process needs — `"planner"`, `"reviewer"`, `"second-opinion"` — and the
-    /// host resolves that name against whatever model the *user* assigned to
-    /// it. Nothing in `stella-core` may branch on the contents of this string:
+    /// process needs and sends a bare role name. The host writes the plugin
+    /// half in front of it, so the value that reaches this field is a whole
+    /// seat key, `<plugin-id>/<role>` — `"vera/verifier"`,
+    /// `"acme-plan/planner"`. `stella-plugin`'s `seat_key` is the one place a
+    /// key is built. The host then resolves the whole string against whatever
+    /// model the *user* assigned to it under `[seats]`.
+    ///
+    /// Nothing in `stella-core` may branch on the contents of this string:
     /// the moment the engine knows that `"planner"` means planning, the set of
     /// processes a plugin can express is capped at the set core anticipated,
-    /// which is the coupling the wrapper socket exists to remove.
+    /// which is the coupling the wrapper socket exists to remove. The engine
+    /// does not split the key either. A half is something a screen shows, not
+    /// something a lookup reads.
     ///
     /// `None` means "the requester named no seat", which every caller resolves
-    /// to the session's own model. That is also what an unassigned seat
-    /// resolves to, so a plugin that declares a `planner` role runs
-    /// single-model until a user decides otherwise — the plugin describes its
-    /// process, and whether that process is multi-model is the user's choice,
-    /// never the plugin's and never core's.
+    /// to the session's own model. A `delegate` child carries `None`, and so
+    /// does an unassigned seat, so a plugin that declares a `planner` role
+    /// runs single-model until a user decides otherwise — the plugin describes
+    /// its process, and whether that process is multi-model is the user's
+    /// choice, never the plugin's and never core's.
     pub seat: Option<String>,
     /// Receipt turn slot. Context receipts key on
     /// `(execution_id, turn_instance, step, call_seq)` and every turn

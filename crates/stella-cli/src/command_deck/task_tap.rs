@@ -887,12 +887,17 @@ mod tests {
         );
     }
 
-    /// Same shape for the invocation plane (#2685): the tap sits above the
-    /// discovery mount, so swallowing the live-slug answer would stop active
-    /// skill bodies surviving summarization on every deck session.
+    /// Every method the port tells a decorator to forward, over this tap.
+    ///
+    /// The tap observes board writes; it changes nothing about what the inner
+    /// executor mounts. It sits above the discovery mount, so swallowing the
+    /// live-slug answer would stop active skill bodies surviving
+    /// summarization on every deck session. The checks live in
+    /// `stella_tools::forwarding::assert_forwards`, so a method added to the
+    /// port is added there once.
     #[test]
-    fn the_task_tap_forwards_active_skill_slugs() {
-        let inner = Claiming;
+    fn the_task_tap_forwards_what_a_decorator_must() {
+        let inner = stella_tools::forwarding::LoadedExecutor;
         let registry = ToolRegistry::new(std::path::PathBuf::from("."));
         let tap = TaskTap {
             inner: &inner,
@@ -901,10 +906,6 @@ mod tests {
             dispatched_by: None,
             plan_gate: None,
         };
-        assert_eq!(
-            tap.active_skill_slugs(),
-            vec!["deploy".to_string()],
-            "the tap must forward the inner executor's live invocations"
-        );
+        stella_tools::forwarding::assert_forwards("TaskTap", &tap);
     }
 }

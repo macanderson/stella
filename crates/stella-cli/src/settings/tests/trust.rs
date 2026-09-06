@@ -37,7 +37,7 @@ fn every_code_execution_gate_is_reachable_by_one_grep() {
             // refuses to read the tier back.
             "plugin_cmd.rs",
             // "`stella self-driving`'s issue work".
-            "self_driving_cmd/work.rs",
+            "self_driving_cmd/work/steering.rs",
             // The definition, and the doc comment that is the normative list.
             "settings.rs",
             // "Project-scope lifecycle hooks" and "project-scope

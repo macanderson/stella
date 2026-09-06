@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 use stella_core::{BudgetGuard, EngineConfig, TurnOutcome};
 use stella_protocol::{
-    BudgetMode, CompletionMessage, CompletionResult, CompletionUsage, MessageRole, ToolCall,
-    ToolOutput, ToolSchema,
+    AgentEvent, BudgetMode, CompletionMessage, CompletionResult, CompletionUsage, MessageRole,
+    ToolCall, ToolOutput, ToolSchema,
 };
 use stella_serve::observe::TurnRef;
 use stella_serve::{ProviderDelta, ServerFrame, Session, SessionSpec, TurnOutcomeWire};
@@ -661,6 +661,8 @@ struct RequeryRun {
     signal_paths: Vec<String>,
     /// Whether a model call made after the ask saw the block.
     block_reached_the_model: bool,
+    /// Every `AgentEvent` the turn put on its own stream.
+    events: Vec<AgentEvent>,
 }
 
 /// Run a three-step turn whose first two steps each touch `src/adapter.rs`, so
@@ -687,6 +689,7 @@ async fn scripted_requery_turn(context: Option<&str>) -> RequeryRun {
         asks: 0,
         signal_paths: Vec::new(),
         block_reached_the_model: false,
+        events: Vec::new(),
     };
     let mut provider_calls = 0usize;
 
@@ -737,7 +740,7 @@ async fn scripted_requery_turn(context: Option<&str>) -> RequeryRun {
                     .unwrap();
             }
             ServerFrame::TurnComplete { outcome: done } => run.outcome = Some(done),
-            ServerFrame::Event { .. } => {}
+            ServerFrame::Event { event } => run.events.push(event),
             ServerFrame::TurnHeld { .. } | ServerFrame::TurnReleased => {
                 panic!("an unpaused turn must not announce a hold")
             }
@@ -745,6 +748,16 @@ async fn scripted_requery_turn(context: Option<&str>) -> RequeryRun {
     }
     run.messages = settled.lock().expect("settled transcript").clone();
     run
+}
+
+/// Whether `events` carries a `ContextRecall` — the re-query's own telemetry,
+/// distinct from the `ContextRecall` a turn's *opening* recall may also emit:
+/// this harness's opening messages carry no recallable frames, so every
+/// `ContextRecall` on a scripted run's stream is the re-query's.
+fn reported_a_recall(events: &[AgentEvent]) -> bool {
+    events
+        .iter()
+        .any(|event| matches!(event, AgentEvent::ContextRecall { .. }))
 }
 
 /// **The witness for `turn.steering_requery` on the API surface.**
@@ -770,6 +783,11 @@ async fn a_served_turn_requeries_the_steering_plane_after_its_work_moves_to_a_ne
     assert!(
         run.block_reached_the_model,
         "the host's block must reach the model call after it, or the re-query bought nothing"
+    );
+    assert!(
+        reported_a_recall(&run.events),
+        "an answered re-query must report its cost on the turn's event stream: {:?}",
+        run.events
     );
     assert_eq!(
         run.outcome,
@@ -835,6 +853,11 @@ async fn a_host_that_declines_a_requery_injects_nothing() {
             .content
             .starts_with(stella_core::receipts::RECALL_MARKER)),
         "a declined re-query must leave no injected block behind"
+    );
+    assert!(
+        !reported_a_recall(&run.events),
+        "a declined re-query must report no recall cost: {:?}",
+        run.events
     );
     assert_eq!(
         run.outcome,

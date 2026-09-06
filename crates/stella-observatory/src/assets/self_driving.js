@@ -42,7 +42,8 @@ const css = `
 #panel-self-driving .sd-stack .P1{background:var(--warn)}
 #panel-self-driving .sd-stack .P2{background:var(--c2)}
 #panel-self-driving .sd-stack .P3{background:var(--c3)}
-#panel-self-driving .sd-stack .untriaged{background:var(--c4)}
+#panel-self-driving .sd-stack .P4{background:var(--c4)}
+#panel-self-driving .sd-stack .untriaged{background:var(--neutral-mark)}
 #panel-self-driving .sd-legend{display:flex;flex-wrap:wrap;gap:var(--sp2);font:var(--fs-micro)/1.4 var(--mono);color:var(--text-3);margin-bottom:var(--sp1)}
 #panel-self-driving .sd-legend i{display:inline-block;width:9px;height:9px;margin-right:5px;vertical-align:-1px}
 #panel-self-driving .sd-qgroup{margin-top:var(--sp1)}
@@ -124,7 +125,7 @@ const OUTCOME = {
   "no change": "dim", failed: "bad", deferred: "dim", escalated: "warn", unknown: "dim",
 };
 const outcomeBadge = (o) => `<span class="badge ${OUTCOME[o] ?? "dim"}">${esc(o)}</span>`;
-const RANKS = ["P0", "P1", "P2", "P3", "untriaged"];
+const RANKS = ["P0", "P1", "P2", "P3", "P4", "untriaged"];
 
 /* Tween a counter from what it last showed to its new value. A number that
    did not change is written once and left alone. */
@@ -215,7 +216,7 @@ function renderQueue(d) {
   const stack = `<div class="sd-stack">${RANKS.filter((r) => num(byRank[r]))
     .map((r) => `<div class="${r}" style="width:${(100 * num(byRank[r]) / total).toFixed(1)}%" title="${r}: ${fmtInt(byRank[r])}"></div>`).join("")}</div>`;
   const legend = `<div class="sd-legend">${RANKS.filter((r) => num(byRank[r]))
-    .map((r) => `<span><i class="${r}" style="background:var(--${{ P0: "bad", P1: "warn", P2: "c2", P3: "c3", untriaged: "c4" }[r]})"></i>${r} ${fmtInt(byRank[r])}</span>`).join("")}
+    .map((r) => `<span><i class="${r}" style="background:var(--${{ P0: "bad", P1: "warn", P2: "c2", P3: "c3", P4: "c4", untriaged: "neutral-mark" }[r]})"></i>${r} ${fmtInt(byRank[r])}</span>`).join("")}
     <span style="margin-left:auto">${fmtInt(total)} open defects</span></div>`;
   const groups = loops.map((l) => {
     const q = l.queue;

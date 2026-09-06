@@ -67,13 +67,18 @@ pins what the turn bought: the model calls, the tool runs, and the reported
 cost. Four scenarios are plain, one model call per step: a one-step answer, a
 two-tool step, a retry after a 429, and a turn the loop detector stops.
 
-The rest are the paths that buy a call no step asked for, and each names the
-module it prices: the overflow summarizer, a mid-turn provider fallback, an
-output-budget clamp, a parked wait for a 429 that will not clear, a loop
-steer the model obeys, the prove-it re-ask, and a Stop hook that denies and
-holds the turn open. Several are pinned from both sides: what the arm buys,
-and the bound that stops it buying more. A failure names the scenario, the
-pinned numbers and the new ones.
+The rest are the paths that buy a call no step asked for. Each one names the
+module it prices. The overflow summarizer. Its head-dropping ladder, for when
+the summarizer's own request is refused for its size. Its starved retry. A
+mid-turn provider fallback. An output-budget clamp. A parked wait for a 429
+that will not clear, and every park such a wait can take before its allowance
+runs out. The length-continuation ladder. A loop steer the model obeys. The
+prove-it re-ask. A Stop hook that denies and holds the turn open.
+
+Several are pinned from both sides: what the arm buys, and the bound that
+stops it buying more. The parked-wait total reads its bound off `plan_park`
+and the wait ceiling rather than a literal, so a change to either moves the
+pin. A failure names the scenario, the pinned numbers and the new ones.
 
 It needs no verification machinery, which is why it could be rebuilt here at
 all. The engine does no I/O, so scripted ports are the whole harness

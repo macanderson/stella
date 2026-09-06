@@ -100,6 +100,34 @@ pub enum SkillOrigin {
     Contributed,
 }
 
+impl SkillOrigin {
+    /// Every origin, in declaration order.
+    ///
+    /// A test that means "for every origin that is not `AutoCreated`" reads
+    /// this and filters, rather than spelling the list. A spelled list goes
+    /// stale the day an origin joins the enum: the demotion-protection suite
+    /// named three of five, so a plugin's skill was protected by the code and
+    /// checked by nothing.
+    ///
+    /// `every_origin_is_listed` holds this table to the enum.
+    pub const ALL: &'static [Self] = &[
+        Self::Workspace,
+        Self::User,
+        Self::AutoCreated,
+        Self::Installed,
+        Self::Contributed,
+    ];
+
+    /// Whether a person wrote this skill, rather than the mining loop.
+    ///
+    /// The one question `decide_demotion` asks about provenance, named here so
+    /// a test can enumerate the protected origins instead of listing them.
+    #[must_use]
+    pub fn is_hand_authored(self) -> bool {
+        !matches!(self, Self::AutoCreated)
+    }
+}
+
 /// One workspace skill, parsed from a `SKILL.md`/`<slug>.md` file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Skill {

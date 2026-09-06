@@ -8,6 +8,8 @@
 
 use super::*;
 
+mod selection;
+
 // ---- parsing: frontmatter, layouts, diagnostics ----
 
 #[test]

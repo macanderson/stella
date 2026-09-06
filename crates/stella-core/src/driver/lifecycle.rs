@@ -37,8 +37,8 @@
 //! own `TurnState` to `Engine::drive`, which emits both boundaries itself
 //! (#2452). Nothing in this workspace calls these from outside `driver` today.
 //! They stay public for the host that frames its own turn, which is a supported
-//! shape rather than a hypothetical one — but note `stella-engine` does not
-//! re-export them, so such a host must depend on `stella-core` directly.
+//! shape rather than a hypothetical one, and `stella-engine` re-exports both
+//! so such a host reaches them through the facade.
 
 use super::{StepOutcome, TurnOutcome};
 

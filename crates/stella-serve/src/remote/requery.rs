@@ -27,8 +27,12 @@
 //!   die here. The set starts from the recall blocks the turn opened with.
 //!
 //! There is a finer dedup than that: "the turn already showed that frame".
-//! It stays on the CLI side. A frame handle names a thing in a workspace, and
-//! this server never sees one. The host knows what it sent.
+//! It stays on the CLI side. A fresh [`RequerySignal`] names only the drift,
+//! so **the host owns per-handle suppression, keyed by the turn id.** An
+//! answered ask also reports its cost, mirroring `SessionRequery::requery`
+//! (`stella-cli/src/memory/steering.rs`): the server never sees the host's
+//! own frames, only the text that came back, so it labels one frame as a
+//! host answer on the turn's event stream.
 //!
 //! # An ask nobody answers is not a failed turn
 //!
@@ -42,6 +46,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use stella_core::steering::TurnSignal;
+use stella_protocol::{AgentEvent, ContextFrameRef, ProviderShare};
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 
 use crate::frame::{RequerySignal, ServerFrame};
@@ -80,6 +86,11 @@ pub(crate) struct RemoteRequery {
     counter: AtomicU64,
     timeout: Duration,
     state: Mutex<RequeryState>,
+    /// Where this turn's telemetry goes — the same channel `run_session`
+    /// folds every other `AgentEvent` through. Answering a park is spend
+    /// either way, so this is never optional the way a test double's unwired
+    /// channel would suggest: every real turn has one.
+    events: UnboundedSender<AgentEvent>,
 }
 
 impl RemoteRequery {
@@ -90,6 +101,7 @@ impl RemoteRequery {
         frames: crate::backlog::FrameSink,
         pending: Pending,
         timeout: Duration,
+        events: UnboundedSender<AgentEvent>,
     ) -> Self {
         let produced = messages
             .iter()
@@ -109,6 +121,7 @@ impl RemoteRequery {
                 produced,
                 answered_fingerprint: fingerprint(&[], &[]),
             }),
+            events,
         }
     }
 
@@ -167,6 +180,45 @@ fn fingerprint(paths: &[String], errors: &[&str]) -> u64 {
     hasher.finish()
 }
 
+/// The telemetry for an answered ask.
+///
+/// The server witnesses one thing about a re-query: the block of text that
+/// came back, and what putting it in front of the model will cost. It never
+/// sees the host's own recall — which providers ran, which frames won fusion
+/// — so this reports one synthetic frame labelled `"served-requery"` rather
+/// than inventing provenance the host never sent. Mirrors
+/// `stella_protocol::Recall::telemetry_event`'s shape without its per-frame
+/// detail: the CLI's port runs the recall itself, this one only relays the
+/// host's answer to it.
+fn recall_event(block: &str) -> AgentEvent {
+    let tokens = stella_protocol::estimate_token_cost(block);
+    AgentEvent::ContextRecall {
+        tokens,
+        frames: vec![ContextFrameRef {
+            id: None,
+            citation_label: "host re-query answer".to_string(),
+            provider: "host".to_string(),
+            source: "served-requery".to_string(),
+            kind: "host".to_string(),
+            uri: None,
+            method: None,
+            token_cost: tokens,
+            block_id: None,
+            content_digest: None,
+        }],
+        provider_mix: vec![ProviderShare {
+            provider: "host".to_string(),
+            frames: 1,
+        }],
+        usage: None,
+        // The host's own fan-out latency never crosses the wire — `0` is
+        // this event's ordinary "not measured", the same reading a port
+        // with no CGP host behind it reports.
+        latency_ms: 0,
+        used_ann_index: None,
+    }
+}
+
 /// Give the host's block the mark the engine's turn-window rule reads.
 ///
 /// The block goes in as a user message, word for word.
@@ -205,6 +257,14 @@ impl stella_core::ports::SteeringRequery for RemoteRequery {
             return None;
         }
         let context = self.ask(signal).await;
+        // The spend happened in `ask` above, so it is reported here — before
+        // the dedup below can discard the text while the host's fan-out is
+        // already paid for. Mirrors `SessionRequery::requery`
+        // (`stella-cli/src/memory/steering.rs`), which reports for the same
+        // reason before its own dedup runs.
+        if let Some(block) = &context {
+            let _ = self.events.send(recall_event(block));
+        }
         let mut state = self.state.lock().expect("requery state");
         // The signal counts as answered either way. A drift the host had
         // nothing for must not be asked again on every later step.
@@ -216,7 +276,143 @@ impl stella_core::ports::SteeringRequery for RemoteRequery {
 
 #[cfg(test)]
 mod tests {
+    use stella_core::ports::SteeringRequery;
+
     use super::*;
+
+    /// A signal that clears the fingerprint gate and the step-spacing floor —
+    /// enough to buy an ask on a fresh [`RemoteRequery`]. `touched_paths` is
+    /// non-empty so the fingerprint differs from the constructor's `([], [])`
+    /// starting point; an empty signal would never clear the gate.
+    fn asking_signal(touched: &[String]) -> TurnSignal<'_> {
+        TurnSignal {
+            prompt: "fix the failing test",
+            recent_tool_calls: &[],
+            touched_paths: touched,
+            active_domains: &[],
+            step: 5,
+            since_last_query: MIN_STEPS_BETWEEN,
+            errors_seen: &[],
+        }
+    }
+
+    /// A fresh port, a channel to watch the frames it sends, and a channel to
+    /// watch the telemetry it reports.
+    fn wired_port() -> (
+        RemoteRequery,
+        tokio::sync::mpsc::UnboundedReceiver<ServerFrame>,
+        tokio::sync::mpsc::UnboundedReceiver<AgentEvent>,
+        Pending,
+    ) {
+        let (frame_tx, frame_rx) = tokio::sync::mpsc::unbounded_channel();
+        let sink = crate::backlog::FrameSink::new(
+            frame_tx,
+            crate::backlog::FrameBacklog::new(crate::backlog::DEFAULT_MAX_QUEUED_FRAMES),
+        );
+        let pending = Pending::new(
+            crate::observe::null_observer(),
+            crate::observe::event::TurnRef::new("turn-requery-events"),
+        );
+        let (events_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
+        let port = RemoteRequery::new(
+            &[],
+            sink,
+            pending.clone(),
+            Duration::from_millis(200),
+            events_tx,
+        );
+        (port, frame_rx, events_rx, pending)
+    }
+
+    /// **Witness.** This test fails to compile without the `events` field on
+    /// `RemoteRequery` and its extra constructor argument. With them, it
+    /// checks that an answered ask is reported, matching
+    /// `SessionRequery::requery`'s contract: the host's fan-out already
+    /// spent money, so the turn must show it.
+    #[tokio::test]
+    async fn an_answered_requery_reports_its_recall_cost() {
+        let (port, mut frame_rx, mut events_rx, pending) = wired_port();
+
+        // The host side: see the request, answer it. Off the requery
+        // future's own task, the way a real HTTP handler would run.
+        let host = tokio::spawn(async move {
+            let ServerFrame::RequeryRequest { request_id, .. } =
+                frame_rx.recv().await.expect("a request frame")
+            else {
+                panic!("expected a RequeryRequest frame");
+            };
+            pending
+                .resolve_requery(&request_id, Some("see src/a.rs".to_string()))
+                .expect("resolve");
+        });
+
+        let touched = vec!["src/a.rs".to_string()];
+        let block = port.requery(&asking_signal(&touched)).await;
+        host.await.expect("host task");
+
+        assert!(block.is_some(), "an answered ask returns a block");
+        match events_rx.try_recv().expect("a recall event was sent") {
+            AgentEvent::ContextRecall { frames, tokens, .. } => {
+                assert_eq!(frames.len(), 1, "one synthetic host frame: {frames:?}");
+                assert!(tokens > 0, "the block costs something: {tokens}");
+            }
+            other => panic!("expected ContextRecall, got {other:?}"),
+        }
+    }
+
+    /// **Witness, the declined half.** A quiet host is the ordinary answer.
+    /// It must cost the event stream nothing. Else a host with nothing new
+    /// would still show as recalling on every step.
+    #[tokio::test]
+    async fn a_declined_requery_reports_nothing() {
+        let (port, mut frame_rx, mut events_rx, pending) = wired_port();
+
+        let host = tokio::spawn(async move {
+            let ServerFrame::RequeryRequest { request_id, .. } =
+                frame_rx.recv().await.expect("a request frame")
+            else {
+                panic!("expected a RequeryRequest frame");
+            };
+            pending.resolve_requery(&request_id, None).expect("resolve");
+        });
+
+        let touched = vec!["src/a.rs".to_string()];
+        let block = port.requery(&asking_signal(&touched)).await;
+        host.await.expect("host task");
+
+        assert!(block.is_none(), "a declined ask returns nothing");
+        assert!(
+            events_rx.try_recv().is_err(),
+            "a declined ask reports no recall cost"
+        );
+    }
+
+    /// **Witness.** The wire carries no per-request answer history. So the
+    /// host must own per-handle suppression, and that must be written down,
+    /// not just true. This checks the module header and the spec row for
+    /// the same phrase. The phrase is built here from two halves, so the
+    /// check cannot pass by matching its own source code.
+    #[test]
+    fn the_module_header_and_the_spec_both_say_who_suppresses_a_seen_handle() {
+        // Built from two halves so this check cannot pass by matching its
+        // own source: the contiguous phrase exists only in the module
+        // header above and in the spec row, never in this line.
+        let phrase = format!(
+            "{}{}",
+            "the host owns per-handle", " suppression, keyed by the turn id"
+        );
+        let this_module = include_str!("requery.rs");
+        assert!(
+            this_module.contains(phrase.as_str()),
+            "the module header must name who owns cross-ask handle suppression"
+        );
+        let spec = include_str!("../../../../docs/spec/serve-surface.md");
+        assert!(
+            spec.contains(phrase.as_str()),
+            "docs/spec/serve-surface.md's requery-result row must state the \
+             same contract"
+        );
+    }
 
     /// A changed signal is what starts an ask. Two boundaries that saw the
     /// same paths and errors in a different order agree, and buy no second

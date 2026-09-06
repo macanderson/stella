@@ -47,7 +47,8 @@
 //! any other.
 
 use super::super::context_record::kind::Origin;
-use super::super::ingest::record::{EnforcementMode, Record, TruthBasis};
+use super::super::ingest::record::{EnforcementMode, Record};
+use super::trust::decreed_by_a_named_human_at;
 use super::{LoadedRecord, Trust};
 use stella_learn::rules::{Rule, RuleGuard};
 
@@ -131,18 +132,12 @@ fn may_block(origin: Option<Origin>) -> bool {
 ///
 /// [`Trust::Project`] never qualifies, however impeccable the fields look — see the
 /// module docs. A repository record's route to blocking is the decision ledger.
+/// The shared half is [`decreed_by_a_named_human_at`], which `sweep`'s
+/// `honored_probe` asks too. This gate's own condition is `origin = "user"`:
+/// a `system` record is Stella's own policy and approves nothing on the
+/// user's behalf.
 fn self_attested(record: &Record, trust: Trust) -> bool {
-    if trust != Trust::User {
-        return false;
-    }
-    let named_human = record.truth.as_ref().is_some_and(|truth| {
-        truth.basis == TruthBasis::Decree
-            && truth
-                .verified_by
-                .as_deref()
-                .is_some_and(|by| !by.trim().is_empty())
-    });
-    matches!(record.origin, Some(Origin::User)) && named_human
+    decreed_by_a_named_human_at(record, trust) && matches!(record.origin, Some(Origin::User))
 }
 
 /// Whether a guard's fields amount to something [`evaluate_guards`][ev] can act on.
@@ -272,7 +267,7 @@ pub fn rule_from_record(loaded: &LoadedRecord, ledger_approved: bool) -> (Rule, 
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::ingest::record::{Enforcement, Probe, ProbeKind, Truth};
+    use super::super::super::ingest::record::{Enforcement, Probe, ProbeKind, Truth, TruthBasis};
     use super::super::tests::{hard_guard, record_named, with_truth};
     use super::*;
 
@@ -319,6 +314,44 @@ mod tests {
             })
         );
         assert_eq!(decision.refusal, None);
+    }
+
+    /// The shared base case both gates read, asked of both of them at once.
+    ///
+    /// `verified_by = "   "` is a name nobody wrote. Two copies of one rule
+    /// drift: one trimmed the name and one did not, so this exact record
+    /// could not approve its own blocking guard and could still arm a
+    /// command. Whichever way the pair is tightened, both gates move.
+    #[test]
+    fn a_blank_verifier_refuses_at_both_self_attestation_gates() {
+        let mut record = user_decree_with_guard();
+        if let Some(truth) = record.truth.as_mut() {
+            truth.verified_by = Some("   ".to_string());
+            truth.probe = Some(Probe {
+                kind: ProbeKind::CommandSucceeds,
+                path: None,
+                pattern: None,
+                expect: None,
+                note: None,
+            });
+        }
+
+        assert!(
+            !self_attested(&record, Trust::User),
+            "a blank verifier must not approve a blocking guard"
+        );
+        assert!(
+            super::super::sweep::honored_probe(&record, Trust::User).is_none(),
+            "and must not arm a gated probe either"
+        );
+
+        // The same record with a real name passes both, so the assertions
+        // above are about the blank verifier and not about the fixture.
+        if let Some(truth) = record.truth.as_mut() {
+            truth.verified_by = Some("mac".to_string());
+        }
+        assert!(self_attested(&record, Trust::User));
+        assert!(super::super::sweep::honored_probe(&record, Trust::User).is_some());
     }
 
     // The absolute refusal — the acceptance test #890 asks for.

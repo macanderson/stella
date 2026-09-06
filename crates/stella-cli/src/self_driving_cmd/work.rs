@@ -83,6 +83,10 @@ use std::process::{Command, Stdio};
 
 use stella_protocol::issue::Issue;
 
+mod steering;
+
+pub(super) use steering::refuse_if_unsteered;
+
 use super::budget::RunBudget;
 use super::turn_flags::TurnFlags;
 use crate::settings::toml_config::WorkerKind;
@@ -787,64 +791,6 @@ pub(crate) fn start(
     Ok(outcome)
 }
 
-/// Refuse to work an issue with the workspace's steering switched off.
-///
-/// **A loop-driven turn must get exactly the steering a person-driven turn
-/// gets.** The whole design says the loop's behaviour comes from context
-/// records — how this repository wants code written, what to prefer, what to
-/// harden — and none of that reaches a turn when project steering is untrusted.
-///
-/// The trap is that it fails *silently and successfully*: the turn runs, writes
-/// plausible code, commits, and the pull request looks like every other one. A
-/// loop working unsteered is not a degraded loop, it is a loop doing work under
-/// nobody's standards, and it is worse than one that did not run — so this
-/// refuses rather than warns.
-///
-/// It refuses only when there is something to lose: a workspace with no records
-/// has no steering to miss, and demanding a trust flag from it would be
-/// ceremony.
-pub(super) fn refuse_if_unsteered(root: &Path) -> Result<(), String> {
-    refuse_unless_trusted(root, crate::settings::project_code_execution_trusted())
-}
-
-/// The rule of [`refuse_if_unsteered`], with the process it reads taken out.
-///
-/// Separated for the reason [`classify`] is: `project_code_execution_trusted`
-/// answers from the process environment, which this test suite shares with
-/// every other test running beside it. A pure function takes the answer as an
-/// argument, so both directions of the rule can be pinned without a race.
-fn refuse_unless_trusted(root: &Path, trusted: bool) -> Result<(), String> {
-    let records = root.join(".stella").join("rules");
-    let count = std::fs::read_dir(&records)
-        .map(|entries| {
-            entries
-                .filter_map(Result::ok)
-                .filter(|e| {
-                    e.path()
-                        .extension()
-                        .is_some_and(|ext| ext.eq_ignore_ascii_case("toml"))
-                })
-                .count()
-        })
-        .unwrap_or(0);
-
-    if count == 0 || trusted {
-        return Ok(());
-    }
-
-    Err(format!(
-        "refusing to work an issue with this workspace's steering switched off.\n\
-         \n\
-         {} declares context records and none of them would reach the turn, so it \
-         would write code under nobody's standards — and it would look exactly like \
-         a turn that did.\n\
-         \n\
-         Set STELLA_TRUST_PROJECT=1 to let this repository steer the loop it is \
-         driving.",
-        records.display()
-    ))
-}
-
 /// Turn `git worktree add`'s branch collision into an actionable message.
 ///
 /// The slug is deterministic per issue — deliberately, so `deliver` can find
@@ -1380,42 +1326,6 @@ mod tests {
         assert!(
             budget.exhausted().is_some(),
             "which is the condition `drive` reports as *budget reached*"
-        );
-    }
-
-    /// **Witness.** The loop refuses to work an issue when the workspace's
-    /// records would not reach the turn, and runs when they would.
-    ///
-    /// The failure this guards is silent. An untrusted checkout loads none of
-    /// its records, so the turn writes plausible code under nobody's standards
-    /// and the pull request looks like every other one. Both directions are
-    /// asserted, because a check that only ever refused would be satisfied by
-    /// a function that always refuses.
-    ///
-    /// A workspace with no records is the third cell: there is no steering to
-    /// miss, so asking it for a trust flag would be ceremony.
-    #[test]
-    fn the_loop_will_not_work_an_issue_that_its_records_cannot_steer() {
-        let bare = tempfile::tempdir().expect("workspace");
-        assert!(
-            refuse_unless_trusted(bare.path(), false).is_ok(),
-            "a workspace with no records has no steering to miss"
-        );
-
-        let steered = tempfile::tempdir().expect("workspace");
-        let rules = steered.path().join(".stella").join("rules");
-        std::fs::create_dir_all(&rules).expect("rules directory");
-        std::fs::write(rules.join("ctx.example.one.toml"), "").expect("a record file");
-
-        let refusal = refuse_unless_trusted(steered.path(), false)
-            .expect_err("records that cannot steer must stop the work");
-        assert!(
-            refusal.contains("STELLA_TRUST_PROJECT"),
-            "the refusal must name the remedy: {refusal}"
-        );
-        assert!(
-            refuse_unless_trusted(steered.path(), true).is_ok(),
-            "a trusted workspace steers the turn, so the work proceeds"
         );
     }
 

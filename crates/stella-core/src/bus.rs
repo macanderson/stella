@@ -71,11 +71,14 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use stella_protocol::{AgentEvent, Denial};
+use stella_protocol::Denial;
 
 // The event-name catalog, split to a sibling file (the `driver/settlement.rs`
 // pattern) so this file stays under its file-size ceiling (#1857).
 pub mod names;
+mod policy_bridge;
+
+pub use policy_bridge::bridge_policy_plane;
 
 // Envelope + decisions
 
@@ -727,64 +730,6 @@ impl HookBus {
     }
 }
 
-/// Bridge the policy/extension audit plane into an `AgentEvent` stream
-/// (receipts spec §6.4, #364 gap 6): subscribes an observer that maps the
-/// four audit event names — `policy.evaluated`, `policy.blocked`,
-/// `approval.requested`, `secret.detected` — onto
-/// [`AgentEvent::PolicyDecision`], content-free. Whatever journal the host
-/// hangs off `events` is what makes the plane durable; the bus itself still
-/// never writes (its module contract), and every other event name passes
-/// through untouched.
-///
-/// `subject` is the gated chain's event name (`tool.call.requested`,
-/// `file.updated`, …) — or the workspace-relative path for a secret
-/// detection. `outcome` is the decision record's compact JSON (`decision` +
-/// `handlers_consulted`) or the detector's kind list; neither ever carries
-/// file contents or a secret value.
-pub fn bridge_policy_plane(
-    bus: &HookBus,
-    events: crate::event_sender::EventSender,
-) -> HookSubscription {
-    use stella_protocol::PolicyKind;
-    bus.on("*", move |event| {
-        let kind = match event.name.as_str() {
-            names::POLICY_EVALUATED => PolicyKind::Evaluated,
-            names::POLICY_BLOCKED => PolicyKind::Blocked,
-            names::APPROVAL_REQUESTED => PolicyKind::ApprovalRequested,
-            names::SECRET_DETECTED => PolicyKind::SecretDetected,
-            _ => return Ok(()),
-        };
-        let (subject, outcome) = if kind == PolicyKind::SecretDetected {
-            (
-                event.payload["path"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_string(),
-                event.payload["kinds"].to_string(),
-            )
-        } else {
-            (
-                event.payload["event_name"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_string(),
-                serde_json::json!({
-                    "decision": event.payload["decision"],
-                    "handlers_consulted": event.payload["handlers_consulted"],
-                })
-                .to_string(),
-            )
-        };
-        events
-            .send(AgentEvent::PolicyDecision {
-                kind,
-                subject,
-                outcome,
-            })
-            .map_err(|e| e.to_string())
-    })
-}
-
 /// The running count of envelopes [`forward_to`] dropped because its bounded
 /// channel was full. A slow or wedged consumer's back-pressure surfaces here
 /// as an observable number the host can read, instead of as unbounded memory
@@ -1071,6 +1016,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+    use stella_protocol::AgentEvent;
 
     /// Bus + a `Vec` capturing every event a `"*"` observer sees.
     fn observed_bus(session: &str) -> (HookBus, Arc<Mutex<Vec<HookEvent>>>) {

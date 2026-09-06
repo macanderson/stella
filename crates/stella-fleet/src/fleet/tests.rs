@@ -474,12 +474,21 @@ async fn a_cancelled_dispatch_releases_its_claims_and_control_handle() {
     // return does. Without the RAII guards both leak: the claim row
     // outlives the process and blocks every later run on that path, and
     // `pause_task` keeps answering `true` for a worker that is gone.
+    //
+    // The repo root is this test's alone, and it has to stay that way. This is
+    // the one test here that asserts on a SINGLE poll, and the poll has to
+    // reach `register_controls`. On the way it takes the worktree lock, which
+    // `git::worktree_lock` keys by repo root in a process-global map — so a
+    // sibling test holding `/repo`'s lock at that instant parks this poll at
+    // the acquire, before the registration, and the assertion below fails
+    // with a worker that was never registered rather than one that leaked.
+    // Cargo runs these on parallel threads and a dozen of them share `/repo`.
     use futures_util::FutureExt;
 
     let gate = Arc::new(tokio::sync::Semaphore::new(0));
     let f = Fleet::new(
         GatedWorker { gate: gate.clone() },
-        WorktreeManager::new(OkGit::new(), "/repo"),
+        WorktreeManager::new(OkGit::new(), "/repo-cancelled-dispatch"),
         Ledger::open_in_memory().unwrap(),
         BudgetGuard::new(BudgetMode::Observed, None, None),
         SeqClock::new(),
