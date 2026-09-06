@@ -202,6 +202,12 @@ fn session_id() -> String {
 /// Before this returns, the plugin, the refusals, and the ending are all
 /// written down through [`crate::driver_plugin::session_log::record`].
 ///
+/// `flags` is what a work turn inherits. A driver that asks for `work_start`
+/// spends the operator's provider budget, and `--spend-limit` is the ceiling
+/// on it. It is the session-wide flag, not one this verb defines: a second
+/// flag of that name would collide with the global clap propagates into every
+/// subcommand, which is what `no_subcommand_flag_reuses_a_global_name` refuses.
+///
 /// # Errors
 ///
 /// Whatever [`crate::driver_plugin::bind_installed`] refuses, or the session's
@@ -229,7 +235,9 @@ fn drive(workspace_root: &Path, name: &str, flags: TurnFlags) -> Result<(), Stri
         crate::driver_plugin::capabilities::HostDriverCapabilities::new(
             name,
             resolved.gates().cloned(),
-            Box::new(crate::issue_provider::GhIssueProvider),
+            Box::new(crate::issue_provider::GhIssueProvider::for_workspace(
+                workspace_root,
+            )),
             config.clone(),
             workspace_root.to_path_buf(),
             crate::driver_plugin::work::WorkSlot::new(Box::new(

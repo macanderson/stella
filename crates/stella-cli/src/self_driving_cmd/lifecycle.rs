@@ -24,7 +24,7 @@ use super::{backlog, config, convention, state};
 pub(super) fn triage_issue(key: &str, dry_run: bool, format: QueryFormat) -> Result<(), String> {
     let root = state::repo_root();
     let bound = convention::load(&root);
-    let provider = crate::issue_provider::GhIssueProvider;
+    let provider = crate::issue_provider::GhIssueProvider::for_workspace(&root);
     let issue = backlog::resolve(&provider, key)?;
 
     let labels: Vec<&str> = issue.labels.iter().map(|l| l.name.as_str()).collect();
@@ -170,7 +170,12 @@ pub(super) fn close_issue(req: CloseRequest<'_>) -> Result<(), String> {
         ),
     })?;
 
-    let spelled = apply_closure(&crate::issue_provider::GhIssueProvider, key, &closure, None)?;
+    let spelled = apply_closure(
+        &crate::issue_provider::GhIssueProvider::for_workspace(&state::repo_root()),
+        key,
+        &closure,
+        None,
+    )?;
     println!("closed #{key} as {spelled}");
     Ok(())
 }
@@ -230,7 +235,7 @@ fn apply_closure(
     let canonical = stella_autonomy::resolution_of(closure);
 
     // The tracker's own spelling, for what a human reads. Never sent.
-    let spelled = cfg.vocabulary.resolution(canonical).to_owned();
+    let spelled = cfg.vocabulary().resolution(canonical).to_owned();
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()

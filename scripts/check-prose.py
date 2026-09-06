@@ -63,13 +63,15 @@ The baseline is a shared cell in the sense AGENTS.md describes for
 and compose into a red `main`. Two doors close that, mirroring
 `check-file-size.sh`'s own split:
 
-- The plain check judges a unit against `max(its baseline, its mean in the
-  base tree)`. Inherited drift is reported as drift and does not fail a
-  branch that did not cause it, so landing one ordinary header cannot
-  redden `main` on its own. `--absolute` opts out of the base comparison for
-  the one caller that must not get this mercy: a post-merge canary is
+- The plain check judges a count, a grade and a unit's mean against
+  `max(its baseline, the same value in the base tree)`. Inherited drift is
+  named on the way past and does not fail a branch that did not cause it, so
+  landing one ordinary header, or leaving somebody else's hard sentence
+  alone, cannot redden `main`. `--absolute` opts out of the base comparison
+  for the one caller that must not get this mercy: a post-merge canary is
   exactly asking whether drift already reached `main`, and the base-relative
-  reading would forgive the thing it exists to catch.
+  reading would forgive the thing it exists to catch. A file the base tree
+  does not have inherits nothing, so a first-time offender still fails.
 - `--update` alone leaves every unit's ceiling where it stands, except for a
   unit a file move took a header out of or into: that entry is re-based
   against the same files' lengths in the base tree, because a move changes a
@@ -105,9 +107,10 @@ Usage:
                   when the grade ratchet arrived
     --report      print every offending line, grouped by file, then each
                   unit's mean header length; changes nothing
-    --absolute    judge every unit's density against its baseline alone,
-                  ignoring the base tree. For the post-merge canary, which
-                  must catch drift a base-relative check would forgive.
+    --absolute    judge every count, grade and unit density against its
+                  baseline alone, ignoring the base tree. For the post-merge
+                  canary, which must catch drift a base-relative check would
+                  forgive.
 """
 
 from __future__ import annotations
@@ -343,12 +346,11 @@ GRADE_HEADER = """\
 def renamed_paths(root: Path, commit: str = "HEAD") -> dict[str, str]:
     """Old path -> new path, for every file git sees as renamed against `commit`.
 
-    The count and grade ratchets consult this from `--update` alone, against
-    HEAD: the plain check judges the tree as it stands, so a move fails until
-    someone runs `--update` — the same workflow the file-size ratchet has.
-    The density ratchet also consults it from the plain check, against the
-    base commit, because a unit's mean is arithmetic over a file *set* and a
-    move changes that set without anyone writing a word.
+    `--update` asks against HEAD, so a moved file's baseline entry follows it
+    to the new path. The plain check asks against the base commit, so every
+    ratchet reads the moved file's old path when it looks up what the base
+    tree held: a rename is not new prose, and a unit's mean is arithmetic
+    over a file *set* that a move changes with nobody writing a word.
 
     Fails open at every unknown (no git, no HEAD, an unreadable tree): an
     empty map means no entry is carried, which is the behaviour this had
@@ -430,18 +432,23 @@ def prose_only(text: str) -> list[str]:
     return CODE_SPAN.sub(lambda m: _blank(m.group(0)), "\n".join(lines)).split("\n")
 
 
-def scan(root: Path, path: str) -> list[tuple[int, str, str, str]]:
-    """Return (lineno, pattern name, matched text, remedy) for one file."""
-    try:
-        text = (root / path).read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return []
+def scan_text(text: str) -> list[tuple[int, str, str, str]]:
+    """Return (lineno, pattern name, matched text, remedy) for one file's text."""
     hits: list[tuple[int, str, str, str]] = []
     for lineno, line in enumerate(prose_only(text), start=1):
         for name, rx, remedy in PATTERNS:
             for m in rx.finditer(line):
                 hits.append((lineno, name, m.group(0), remedy))
     return hits
+
+
+def scan(root: Path, path: str) -> list[tuple[int, str, str, str]]:
+    """[`scan_text`] over one file in the working tree."""
+    try:
+        text = (root / path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+    return scan_text(text)
 
 
 def counts(root: Path) -> tuple[dict[tuple[str, str], int], dict[str, list]]:
@@ -627,7 +634,7 @@ def _git(root: Path, args: list[str]) -> str:
 
 
 def resolve_base_commit(root: Path, absolute: bool) -> str:
-    """The commit a unit's density is judged against, or "" for none.
+    """The commit this change is judged against, or "" for none.
 
     Mirrors `check-file-size.sh`'s `resolve_base_commit`: an explicit
     override (`PROSE_BASE_REF`, for hermetic tests with no `origin/main`),
@@ -710,6 +717,32 @@ def density_at_commit(root: Path, commit: str, unit: str, paths: list[str]) -> i
         total += length
         files += 1
     return round(total * 100 / files) if files else 0
+
+
+def counts_at_commit(root: Path, commit: str, path: str) -> dict[str, int]:
+    """Per-pattern hit counts for one file, read from `commit` by `git show`.
+
+    An empty map when the file did not exist there, which is what holds a
+    first-time offender to zero: a file the base tree never had cannot
+    inherit anything.
+    """
+    text = _git(root, ["show", f"{commit}:{path}"])
+    if not text:
+        return {}
+    per_pattern: dict[str, int] = {}
+    for _, name, _, _ in scan_text(text):
+        per_pattern[name] = per_pattern.get(name, 0) + 1
+    return per_pattern
+
+
+def grade_at_commit(root: Path, commit: str, path: str) -> int | None:
+    """One file's reading grade at `commit`, or None when it cannot be scored
+    there -- the file is absent, or holds too little prose."""
+    text = _git(root, ["show", f"{commit}:{path}"])
+    if not text:
+        return None
+    scored = reading_grade(prose_lines(path, prose_only(text)))
+    return None if scored is None else scored[0]
 
 
 def read_density_baseline(path: Path) -> dict[str, int]:
@@ -1105,16 +1138,29 @@ def main() -> int:
         print(f"check-prose: {BASELINE} retightened to {sum(merged.values())}, {density_msg}")
         return 0
 
-    # Judged against max(the recorded ceiling, this unit's mean in the base
-    # tree) -- the same rule check-file-size.sh uses, and for the same
-    # reason: a unit already over its ceiling before this change landed is
-    # inherited drift, and failing the branch that merely did not fix it is
-    # what turned this ratchet into a main-red generator. `--absolute` (the
-    # post-merge canary) skips the base entirely, because that is exactly
-    # the drift a canary exists to catch.
+    # All three ratchets are judged against max(the recorded ceiling, the same
+    # thing's value in the base tree) -- the rule check-file-size.sh uses, and
+    # for the same reason: a file or unit already over its ceiling before this
+    # change landed is inherited drift, and failing the branch that merely did
+    # not fix it is what turned these ratchets into main-red generators.
+    # `--absolute` (the post-merge canary) skips the base entirely, because
+    # that is exactly the drift a canary exists to catch. Inherited drift is
+    # still named on the way past, so forgiving it never means hiding it.
     absolute = "--absolute" in flagset
     base_commit = resolve_base_commit(root, absolute)
     base_moves = renamed_paths(root, base_commit) if base_commit else {}
+    came_from = {new: old for old, new in base_moves.items()}
+    inherited: list[str] = []
+
+    base_counts: dict[str, dict[str, int]] = {}
+
+    def counts_in_base(path: str) -> dict[str, int]:
+        if path not in base_counts:
+            base_counts[path] = counts_at_commit(
+                root, base_commit, came_from.get(path, path)
+            )
+        return base_counts[path]
+
     over = []
     for unit, mean in sorted(per_unit.items()):
         ceiling = density_baseline.get(unit, NEW_UNIT_MEAN)
@@ -1122,16 +1168,59 @@ def main() -> int:
             continue
         if base_commit:
             base_paths = base_tracked_paths(root, base_commit, unit, tracked, base_moves)
-            ceiling = max(ceiling, density_at_commit(root, base_commit, unit, base_paths))
+            was = density_at_commit(root, base_commit, unit, base_paths)
+            if mean <= was:
+                inherited.append(
+                    f"{unit}: {mean / 100:.2f} mean header lines, "
+                    f"{ceiling / 100:.2f} allowed, {was / 100:.2f} in the base tree"
+                )
+                continue
+            ceiling = max(ceiling, was)
         if mean > ceiling:
             over.append((unit, ceiling, mean))
 
     failures = []
     for pair in sorted(set(per_pair) | set(baseline)):
+        path, pattern = pair
         now = per_pair.get(pair, 0)
         allowed = baseline.get(pair, 0)
-        if now > allowed:
-            failures.append((pair, allowed, now))
+        if now <= allowed:
+            continue
+        if base_commit:
+            was = counts_in_base(path).get(pattern, 0)
+            if now <= was:
+                inherited.append(
+                    f"{path} [{pattern}]: {now} found, {allowed} allowed, "
+                    f"{was} in the base tree"
+                )
+                continue
+            allowed = max(allowed, was)
+        failures.append((pair, allowed, now))
+
+    grade_failures = []
+    for path, (grade, worst) in sorted(per_grade.items()):
+        allowed_grade = grade_baseline.get(path, NEW_FILE_GRADE)
+        if grade <= allowed_grade:
+            continue
+        if base_commit:
+            was = grade_at_commit(root, base_commit, came_from.get(path, path))
+            if was is not None and grade <= was:
+                inherited.append(
+                    f"{path}: grade {grade / 100:.2f}, "
+                    f"{allowed_grade / 100:.2f} allowed, "
+                    f"{was / 100:.2f} in the base tree"
+                )
+                continue
+            allowed_grade = max(allowed_grade, was or 0)
+        grade_failures.append((path, allowed_grade, grade, worst))
+
+    if inherited:
+        print(
+            "check-prose: drift inherited from the base tree, which this "
+            "change did not cause and does not fail on:"
+        )
+        for line in inherited:
+            print(f"  {line}")
 
     if failures:
         print("check-prose: FAIL -- content-free prose added.\n", file=sys.stderr)
@@ -1152,12 +1241,6 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-
-    grade_failures = []
-    for path, (grade, worst) in sorted(per_grade.items()):
-        allowed_grade = grade_baseline.get(path, NEW_FILE_GRADE)
-        if grade > allowed_grade:
-            grade_failures.append((path, allowed_grade, grade, worst))
 
     if grade_failures:
         print(

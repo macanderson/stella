@@ -217,7 +217,8 @@ before it crosses.
   out of the seam list (`participation_for`) rather than written beside it,
   and `granted = requested ∩ authorized` is kept as two sets so a lane that
   asked for more than it holds still shows the ask. `ConsentedGrade` is the
-  authority this crate can answer on its own; a host with a gate wraps it.
+  authority this crate can answer on its own; a host with a gate narrows the
+  grant afterwards and this crate never learns the gate exists.
 - `src/wrapper.rs` — the `[wrapper]` block: `Wrapper`, `WrapperStage`, the
   **open** `StageName` vocabulary over the closed `HostStage` twelve (#3963 —
   a manifest may contribute a stage under its own word, and the load checks

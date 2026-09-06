@@ -47,7 +47,7 @@
 //! would be a second place for the order to be wrong.
 
 use serde_json::Value;
-use stella_protocol::{RiskLevel, ToolContract};
+use stella_protocol::{LaneCapability, LaneId, RiskLevel, ToolContract};
 
 use crate::bus::HookDecision;
 use crate::hooks::decision::{GateVerdict, OperatorPosture, resolve_precedence};
@@ -259,6 +259,46 @@ impl std::fmt::Display for AuthzEvalError {
 
 impl std::error::Error for AuthzEvalError {}
 
+/// One seam of the turn loop, on one lane — what [`AuthzGate::check_lane`] is
+/// asked about.
+///
+/// A lane seam is not a tool call, and this type is what keeps it from having
+/// to pretend to be one. A [`ToolContract`] carries a name the model reads, an
+/// input schema, and a provenance grade; a seam has none of those. Dressing a
+/// seam as a contract would also hand every tool rule an opinion it was never
+/// written to hold: a rule built from an accepted `[[capabilities]]` list
+/// refuses any tool absent from that list, so a seam wearing a tool's clothes
+/// would lose every lane in the tree its every seam.
+///
+/// The lane id and the seam name are both [`stella_protocol`]'s, which is
+/// what keeps this crate unaware that plugins exist: a lane id is a string a
+/// loader validated, and
+/// [`LaneCapability`] is the one table the engine's own seam struct is held to
+/// (`driver::capabilities`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaneSeam {
+    /// The lane asking to hold the seam.
+    pub lane: LaneId,
+    /// The seam, carrying the grade the table gives it.
+    pub capability: LaneCapability,
+}
+
+impl LaneSeam {
+    /// The seam `capability`, on lane `lane`.
+    #[must_use]
+    pub fn new(lane: LaneId, capability: LaneCapability) -> Self {
+        Self { lane, capability }
+    }
+
+    /// A short stable label for audit lines and refusal reasons — never
+    /// parsed, only displayed. An identifier, never content, which is what
+    /// every string on this plane is held to (AGENTS.md #3).
+    #[must_use]
+    pub fn label(&self) -> String {
+        format!("{}:{}", self.lane.as_str(), self.capability.as_str())
+    }
+}
+
 /// The pluggable authorization port: one question, asked once per call,
 /// before the tool runs.
 ///
@@ -302,6 +342,33 @@ pub trait AuthzGate: Send + Sync {
             let trace = AuthzTrace::single(self.name(), &decision);
             AuthzEvaluation { decision, trace }
         })
+    }
+
+    /// Decide whether `principal` may hold `seam`.
+    ///
+    /// The second question, because a lane seam is not a tool call — see
+    /// [`LaneSeam`] for why it is not asked as one. A host asks it once per
+    /// requested seam while it resolves `granted = requested ∩ authorized`,
+    /// after the rung a person accepted at install and after the operator's
+    /// own ceiling. So a gate here can only ever **narrow**: it is asked
+    /// about seams that already cleared both, and its answer can drop one
+    /// and add none.
+    ///
+    /// The default is [`AuthzDecision::Allow`] — *this gate has no opinion
+    /// about lane seams* — the same answer every rule on this plane already
+    /// gives when it is asked about something it was not built for. A gate
+    /// written for tool calls therefore leaves a lane grant where the
+    /// consent rung and the operator ceiling left it, and governing a lane
+    /// is an override somebody types.
+    ///
+    /// `Err` is the absence of a decision and never a soft one, exactly as
+    /// [`Self::check`] has it: the host withholds the seam.
+    fn check_lane(
+        &self,
+        _seam: &LaneSeam,
+        _principal: &Principal,
+    ) -> Result<AuthzDecision, AuthzEvalError> {
+        Ok(AuthzDecision::Allow)
     }
 }
 
@@ -828,5 +895,30 @@ mod tests {
             }
             other => panic!("expected an ask, got {other:?}"),
         }
+    }
+
+    /// **The witness for the second question.** A gate written for
+    /// tool calls answers a lane seam with the default — it has no opinion —
+    /// so binding one cannot cost a lane a seam nobody wrote a rule about.
+    #[test]
+    fn a_gate_written_for_tool_calls_has_no_opinion_about_a_lane_seam() {
+        let seam = LaneSeam::new(
+            stella_protocol::LaneId::new("acme.replay"),
+            LaneCapability::Gate,
+        );
+        let principal = Principal::Plugin("acme".into());
+
+        let ceiling = RiskCeiling::new(RiskLevel::Low);
+        let gates: [&dyn AuthzGate; 2] = [&NoAuthz, &ceiling];
+
+        for gate in gates {
+            assert_eq!(
+                gate.check_lane(&seam, &principal),
+                Ok(AuthzDecision::Allow),
+                "`{}` answered a lane seam it was never asked to govern",
+                gate.name()
+            );
+        }
+        assert_eq!(seam.label(), "acme.replay:gate");
     }
 }

@@ -390,6 +390,61 @@ mod tests {
         assert_eq!(st.cycle_counter(), 1, "the counter moved with the row");
     }
 
+    /// **The manifest witness.** A workspace manifest that renames the label
+    /// set drives the ready queue: the shipped decode maps a `gh`-shaped
+    /// payload through the file, the readiness fold ranks what comes out, and
+    /// the rows carry the classes the file declared.
+    ///
+    /// No `gh` runs. `decode_list` takes the payload as text, so the whole
+    /// path is provable on a machine that has no GitHub CLI at all.
+    ///
+    /// Before the manifest existed, the class was a `match` on label names
+    /// inside `issue_provider.rs` that took no configuration of any kind, so
+    /// no workspace file could have produced this answer at any price.
+    #[test]
+    fn a_workspace_manifest_drives_the_ready_queue() {
+        let ws = tempfile::tempdir().expect("tempdir");
+        let path = ws.path().join(".stella/issues/github.toml");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        std::fs::write(
+            &path,
+            "open = [\"open\"]\nclosed = [\"closed\"]\n\n\
+             [classes]\nbug = [\"kind/defect\"]\nfeature = [\"kind/feature\"]\n",
+        )
+        .expect("write");
+
+        let cfg = crate::self_driving_cmd::config::load(ws.path());
+        let payload = r#"[
+          {"number":4,"title":"the blocker","body":"",
+           "labels":[{"name":"kind/feature"},{"name":"P2"}],
+           "createdAt":"2026-08-01T00:00:00Z","url":"https://example.test/4"},
+          {"number":5,"title":"waits on 4","body":"Blocked by: #4",
+           "labels":[{"name":"kind/defect"},{"name":"P1"}],
+           "createdAt":"2026-08-01T00:00:00Z","url":"https://example.test/5"}
+        ]"#;
+
+        let issues = crate::issue_provider::GhIssueProvider::from_manifest(&cfg.manifest)
+            .decode_list(payload)
+            .expect("the shipped decode reads the payload as text");
+        assert_eq!(
+            issues[1].class,
+            IssueClass::Bug,
+            "`kind/defect` means bug because this workspace's manifest says so"
+        );
+
+        let ready = ready_full(&FixtureProvider::with(issues), &cfg).expect("fixture read");
+        assert_eq!(
+            ready.iter().map(|i| i.key.as_str()).collect::<Vec<_>>(),
+            vec!["4"],
+            "the open blocker must hold its dependent back"
+        );
+        assert_eq!(
+            ready[0].class,
+            IssueClass::Feature,
+            "the ranked row must carry the manifest's class, not a compiled one"
+        );
+    }
+
     /// The ordering witness. A failed append must not leave the
     /// counter ahead of the ledger it counts.
     #[test]

@@ -232,7 +232,7 @@ fn scratch_loop_state(dir: &std::path::Path) -> Durable {
 fn a_stop_flag_parks_the_machine_and_dropping_it_returns_work() {
     let dir = tempfile::tempdir().expect("state dir");
     let durable = scratch_loop_state(dir.path());
-    let provider = crate::issue_provider::GhIssueProvider;
+    let provider = crate::issue_provider::GhIssueProvider::default();
     let state = LoopState {
         planned: true,
         batch: 3,

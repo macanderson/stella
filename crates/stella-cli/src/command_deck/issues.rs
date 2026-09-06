@@ -227,8 +227,10 @@ pub(super) fn handle_issues_input(
             let (in_tx, seq, page) = (in_tx.clone(), *seq, *page);
             let query = query.clone();
             let state = state.clone();
+            let root = cfg.workspace_root.clone();
             tokio::task::spawn_blocking(move || {
-                let outcome = issues_list(&GhIssueProvider, query.as_deref(), state, page);
+                let provider = GhIssueProvider::for_workspace(&root);
+                let outcome = issues_list(&provider, query.as_deref(), state, page);
                 let _ = in_tx.send(Inbound::IssuesList { seq, outcome });
             });
             true
@@ -247,9 +249,10 @@ pub(super) fn handle_issues_input(
                 labels.clone(),
                 assignee.clone(),
             );
+            let root = cfg.workspace_root.clone();
             tokio::task::spawn_blocking(move || {
                 let (key, outcome) = issues_create(
-                    &GhIssueProvider,
+                    &GhIssueProvider::for_workspace(&root),
                     &title,
                     &body,
                     &labels,
@@ -262,8 +265,9 @@ pub(super) fn handle_issues_input(
         WorkspaceInput::IssueAct { key, action, seq } => {
             let (in_tx, seq) = (in_tx.clone(), *seq);
             let (key, action) = (key.clone(), action.clone());
+            let root = cfg.workspace_root.clone();
             tokio::task::spawn_blocking(move || {
-                let outcome = issues_act(&GhIssueProvider, &key, &action);
+                let outcome = issues_act(&GhIssueProvider::for_workspace(&root), &key, &action);
                 let _ = in_tx.send(Inbound::IssueActDone { seq, key, outcome });
             });
             true
@@ -279,8 +283,8 @@ pub(super) fn handle_issues_input(
             // code graph and the store are synchronous SQLite, and the rules
             // are a directory walk.
             tokio::task::spawn_blocking(move || {
-                let outcome =
-                    start_work::draft_plan(&GhIssueProvider, &root, &model, &key).map(Box::new);
+                let provider = GhIssueProvider::for_workspace(&root);
+                let outcome = start_work::draft_plan(&provider, &root, &model, &key).map(Box::new);
                 let _ = in_tx.send(Inbound::IssueDraft { seq, outcome });
             });
             true
@@ -306,10 +310,12 @@ pub(super) fn handle_issues_input(
                 let hits = match field {
                     EntityField::Label => {
                         let query = query.clone();
+                        let root = root.clone();
                         // `gh` is a subprocess — the same reason every other
                         // tracker read on this tab is spawned blocking.
                         tokio::task::spawn_blocking(move || {
-                            label_hits(&GhIssueProvider, &query, TYPEAHEAD_HITS)
+                            let provider = GhIssueProvider::for_workspace(&root);
+                            label_hits(&provider, &query, TYPEAHEAD_HITS)
                         })
                         .await
                         .unwrap_or_default()

@@ -190,7 +190,7 @@ pub(crate) async fn end_of_turn(messages: &[CompletionMessage]) -> Vec<String> {
     };
     let bound = super::convention::load(&root);
     let outcomes = file_residue(
-        &crate::issue_provider::GhIssueProvider,
+        &crate::issue_provider::GhIssueProvider::from_manifest(&cfg.manifest),
         &bound.convention,
         &st.live_seen(),
         &cfg.attribution.issue,

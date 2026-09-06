@@ -1,0 +1,54 @@
+# What GitHub is, as a file.
+#
+# The Rust next to this file only moves data. It runs `gh` and reads what
+# comes back. Which words mean open, how a resolution is spelled, and which
+# labels mean which class are all read from here.
+#
+# Stella builds this file into the binary. So a workspace with no file of its
+# own still reads a real manifest. A file at `.stella/issues/github.toml`
+# takes its place.
+#
+# The schema is `doc:agent-native-delivery` §4.1.
+
+schema_version = 1
+name = "github"
+
+# One of `github`, `jira`, `linear` or `exec`. This build has one transport.
+# It runs `gh`, so Stella holds no token. That is the `exec` shape in §4.4.
+# A file that names some other kind still loads. Stella then prints a line to
+# say that the GitHub adapter is what runs.
+kind = "github"
+
+# What a raw status means.
+# A status in neither list is reported. It is never guessed. A guess of open
+# fills the queue with work nobody offered. A guess of closed drops work.
+open = ["open"]
+closed = ["closed"]
+
+# How this tracker spells a resolution.
+# Stella acts on three. A tracker with twenty close reasons maps these three.
+# The rest pass through as written.
+[resolutions]
+completed = "completed"
+not_planned = "not planned"
+duplicate = "duplicate"
+
+# What this tracker calls each part of an issue.
+[fields]
+title = "title"
+body = "body"
+labels = "labels"
+parent = "parent"
+
+# Which labels mean which class.
+# A plain GitHub repository has no issue type. So the class comes from the
+# labels. An issue in none of these lists is `Other`. A reader can see that.
+# A wrong class hides.
+#
+# The keys are Stella's own class names. §4.1 draws this block with `defect`
+# and `epic`. `IssueClass` is what shipped, so these follow the code.
+# `#1281` owns the rest.
+[classes]
+bug = ["bug"]
+feature = ["feature"]
+task = ["chore", "task", "refactor"]
