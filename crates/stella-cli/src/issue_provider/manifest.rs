@@ -387,18 +387,20 @@ feature = ["kind/enhancement"]
         assert_eq!(manifest.classes.class_of(&["bug"]), IssueClass::Bug);
     }
 
-    /// The `[classes]` block of a rendered manifest, as text.
+    /// The keys a rendered manifest's `[classes]` block sets, as text.
     ///
-    /// From the `[classes]` header to the next table header, so the caller
-    /// gets exactly what a reader would copy.
+    /// From the line after the `[classes]` header to the next table header.
+    /// The header itself is left out because [`ClassMap`] is the table's
+    /// value: keep the header and TOML nests the keys one level down, where a
+    /// root-level deserialize cannot see them.
     fn classes_block(document: &str) -> String {
         let start = document
             .find("\n[classes]\n")
             .expect("the document renders a [classes] block");
-        let body = &document[start + 1..];
+        let body = &document[start + "\n[classes]\n".len()..];
         let mut out = String::new();
-        for (index, line) in body.lines().enumerate() {
-            if index > 0 && line.starts_with('[') {
+        for line in body.lines() {
+            if line.starts_with('[') {
                 break;
             }
             out.push_str(line);

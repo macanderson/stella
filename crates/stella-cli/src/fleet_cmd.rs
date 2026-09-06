@@ -1193,6 +1193,13 @@ fn finalize_fleet_execution(
         return false;
     };
     let _ = store.record_delivery(*execution_id, delivery);
+    // The SQLite code behind a refused write goes unread here, and the reason
+    // is the terminal. `agent::warn_dropped_audit_writes` prints to stderr,
+    // and an attempt settles while the live grid owns the alternate screen —
+    // a line written there is wiped by the next frame. The deck's lanes carry
+    // the same detail through `forwarder::AuditWriteDetail`; a fleet attempt
+    // has no lane of its own, and the report channel that would hold it until
+    // teardown is `wrapped::HeldReports`, which is a plugin's, not a store's.
     agent::record_execution_end(
         store,
         *execution_id,

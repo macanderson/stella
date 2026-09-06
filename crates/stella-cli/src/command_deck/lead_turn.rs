@@ -226,17 +226,24 @@ pub(super) async fn run_lead_turn(
             TurnOutcome::Completed { cost_usd, .. } => ("completed", *cost_usd),
             TurnOutcome::Aborted { cost_usd, .. } => ("aborted", *cost_usd),
         };
-        if !agent::record_execution_end(
+        let end = agent::record_execution_end(
             store,
             *id,
             registry,
             outcome_label,
             cost,
             persistence_complete,
-        )
-        .fully_recorded()
-        {
-            forwarder::warn_audit_record_incomplete(in_tx, LEAD, persistence_complete);
+        );
+        if !end.fully_recorded() {
+            forwarder::warn_audit_record_incomplete(
+                in_tx,
+                LEAD,
+                persistence_complete,
+                &forwarder::AuditWriteDetail {
+                    dropped: &end.dropped,
+                    db_path: store.db_path(),
+                },
+            );
             // That warning lands AFTER the turn's Complete event, and the
             // deck's status fold maps a retryable Error back to Running — so
             // without this re-assert a finished turn would show as running
