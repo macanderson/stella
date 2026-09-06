@@ -116,6 +116,9 @@ use stella_protocol::{AgentEvent, TaskStatus};
 //               failure this crate returns, as named cases
 //   event_clock (crate-private) the millisecond stamp on `events.ts`, and
 //               the insert that writes it
+//   event_stream
+//               the structural rules a recorded `AgentEvent` stream obeys,
+//               and the reader that checks a recording against them
 //   export      the `/export` telemetry dump and `stella stats`' usage
 //               aggregate, plus the `ExportScope` that decides whether either
 //               covers one session or the whole workspace (#2558)
@@ -126,7 +129,8 @@ use stella_protocol::{AgentEvent, TaskStatus};
 //   integrity   `PRAGMA quick_check`/`integrity_check` verdicts plus the
 //               opt-in, never-deleting quarantine behind `stella doctor`
 //   journal     append-only per-session sidecar journal (crash-safe resume)
-//   mcp_usage   the MCP call log and its fold
+//   mcp_usage   the MCP call log, its fold, and the in-memory ledger the
+//               rows are drained from
 //   notify      persist-until-read cross-session notifications
 //   prune       retention/deletion for `store.db`: the explicit
 //               execution-cascade delete `stella stats prune` drives (#616)
@@ -160,6 +164,7 @@ pub mod drain;
 pub mod durable;
 pub mod efficacy;
 pub mod enterprise_telemetry;
+pub mod event_stream;
 pub mod export;
 pub mod forget;
 pub mod foundry;

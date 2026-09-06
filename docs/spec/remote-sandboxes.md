@@ -199,7 +199,7 @@ out of a task statement, an `rm` aimed at the wrong tree, a redirect into
 a sibling checkout — is covered by `shell_write_audit`
 (`crates/stella-tools/src/bash.rs`), which reads the command the model
 wrote before the spawn and refuses a resolvable write target outside the
-session's scope, with `stella_core::workspace_scope` deciding what that
+session's scope, with `stella_tools::workspace_scope` deciding what that
 scope is. That is `confine.rs`'s job with a caller that always fires:
 every `bash` call goes through it, where `confine.rs` armed only for a
 shell some host had handed a graded-tree path. Everything past what the

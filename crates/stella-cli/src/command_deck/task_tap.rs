@@ -93,7 +93,7 @@ impl<'a> TaskTap<'a> {
     /// worker lane, a board that never reached the threshold. That is an
     /// answer rather than a gap — nothing was approved, so there is no planned
     /// path for an actual one to be compared against.
-    pub(crate) fn plan_graph(&self) -> Option<stella_core::PlanGraph> {
+    pub(crate) fn plan_graph(&self) -> Option<stella_store::plan_graph::PlanGraph> {
         self.plan_gate
             .as_ref()
             .and_then(plan_gate::PlanGate::plan_graph)

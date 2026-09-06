@@ -465,7 +465,7 @@ mod tests {
         session: &std::path::Path,
         extra: &std::path::Path,
     ) -> crate::ctx::ToolCtx {
-        let scope = stella_core::workspace_scope::SessionScope::new(session.to_path_buf())
+        let scope = crate::workspace_scope::SessionScope::new(session.to_path_buf())
             .with_additional([extra.to_path_buf()]);
         crate::ctx::ToolCtx::bare(session.to_path_buf()).with_scope(scope)
     }

@@ -90,6 +90,7 @@ pub mod task_contract;
 pub mod task_id;
 pub mod tokens;
 pub mod tool;
+pub mod turn_slots;
 
 pub use attachment::{
     Attachment, AttachmentKind, AttachmentSource, classify_media_type, human_bytes,

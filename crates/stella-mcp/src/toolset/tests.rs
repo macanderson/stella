@@ -564,7 +564,7 @@ async fn usage_ledger_records_a_successful_call_with_server_tool_and_reason() {
         .await;
     assert!(!out.is_error());
 
-    let drained = stella_core::mcp_usage::drain_usage(&ledger);
+    let drained = stella_store::mcp_usage::drain_usage(&ledger);
     assert_eq!(drained.len(), 1);
     assert_eq!(drained[0].server, "files");
     assert_eq!(drained[0].tool, "read");

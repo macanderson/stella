@@ -40,8 +40,8 @@
 //! schema surface is the same bytes in every session.
 
 use serde_json::Value;
-use stella_core::mcp_usage::{McpUsageRecord, push_usage};
 use stella_protocol::{ToolOutput, ToolSchema};
+use stella_store::mcp_usage::{McpUsageRecord, push_usage};
 
 use super::wire_name;
 use crate::client::McpClient;
@@ -706,14 +706,14 @@ mod tests {
 
     #[tokio::test]
     async fn a_successful_resource_call_is_recorded_in_the_usage_ledger() {
-        use stella_core::mcp_usage::drain_usage;
+        use stella_store::mcp_usage::drain_usage;
         let client = resources_client(
             "docs",
             serde_json::json!([]),
             &[("resources/list", serde_json::json!({ "resources": [] }))],
         )
         .await;
-        let ledger: stella_core::mcp_usage::McpUsageLedger = Arc::new(Mutex::new(Vec::new()));
+        let ledger: stella_store::mcp_usage::McpUsageLedger = Arc::new(Mutex::new(Vec::new()));
         let set = McpToolSet::from_clients(vec![client]).with_usage_ledger(ledger.clone());
 
         let out = set

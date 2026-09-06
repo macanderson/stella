@@ -4,7 +4,7 @@
 //! The write-confinement witness: what the file tools may and may not touch.
 //!
 //! Driven through the tools' public API rather than through
-//! `stella_core::workspace_scope` directly — the pure decision has its own
+//! `stella_tools::workspace_scope` directly — the pure decision has its own
 //! unit and property tests, and what needs proving *here* is that the tools
 //! actually consult it before opening anything.
 
@@ -12,7 +12,7 @@ use stella_tools::ctx::ToolCtx;
 use stella_tools::registry::Tool;
 use stella_tools::{delete::DeleteFile, edit::EditFile, read::ReadFile, write::WriteFile};
 
-use stella_core::workspace_scope::SessionScope;
+use stella_tools::workspace_scope::SessionScope;
 
 /// A session root with a worktree directory already in it, as
 /// `.stella/worktrees/<name>` — the shape every worktree Stella creates takes.

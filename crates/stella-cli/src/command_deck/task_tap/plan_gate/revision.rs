@@ -32,8 +32,8 @@
 
 use std::sync::{Arc, Mutex};
 
-use stella_core::{RevisionError, RevisionGate};
 use stella_protocol::{ErrorClass, PlanRevision, RevisionProposal, TaskItem, ToolOutput};
+use stella_store::plan_graph::{RevisionError, RevisionGate};
 
 use super::PlanGate;
 

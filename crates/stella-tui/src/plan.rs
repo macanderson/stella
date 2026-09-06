@@ -94,7 +94,7 @@ pub enum PlanStepState {
     /// producer makes, and the producer with the strongest reason not to
     /// report drift is the one that drifted. [`Plan::steps`] therefore reads
     /// it off the two lanes disagreeing (`mark_drift`), which is the same
-    /// discipline `stella_core::plan_graph::PlanGraph::divergences` applies on
+    /// discipline `stella_store::plan_graph::PlanGraph::divergences` applies on
     /// the engine side.
     ///
     /// [`Plan::lanes`] has no producer today, so no live session reaches this

@@ -11,7 +11,7 @@
 //! inserting a task authors `r{n+1}` beside `r1` instead of over it and SPEC
 //! 7.3's `planned 6` stays recoverable. A [`DivergenceCause`] can never be
 //! blank. A [`Divergence`] is derived by
-//! `stella_core::plan_graph::PlanGraph::divergences` and stored nowhere, so no
+//! `stella_store::plan_graph::PlanGraph::divergences` and stored nowhere, so no
 //! producer can assert drift the graph does not show, or hide drift it does.
 //!
 //! Types only, no logic (AGENTS.md #1). Every one of them round-trips through
@@ -301,7 +301,7 @@ pub struct PlanNode {
     ///
     /// `None` on [`PlanRevision::FIRST`] and `Some` on every later revision —
     /// the approved plan diverged from nothing, and everything after it
-    /// diverged from something. `stella_core::plan_graph::PlanGraph` is where
+    /// diverged from something. `stella_store::plan_graph::PlanGraph` is where
     /// that rule is enforced on construction; on the wire it is a shape a
     /// reader can check.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -480,7 +480,7 @@ mod tests {
             revision: PlanRevision::FIRST.next(),
             subject: "repair the unresolved import".into(),
             gate: "tests".into(),
-            cause: cause("E0432: unresolved import `stella_core::plan_graph`"),
+            cause: cause("E0432: unresolved import `stella_store::plan_graph`"),
             issue: Some("#5043".into()),
         };
         let json = serde_json::to_string(&proposal).expect("serialize");

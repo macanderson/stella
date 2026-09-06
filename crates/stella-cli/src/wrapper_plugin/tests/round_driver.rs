@@ -192,7 +192,7 @@ async fn a_door_with_no_grant_installs_no_plane() {
 /// assembly to reach a plane through. And the plane pinned every child turn to
 /// one fixed slot, so a second child turn reused the first's receipt key and
 /// the first round of a goal loop already owned the slot it sat on. The lane
-/// rule ([`stella_core::turn_slots`]) is what makes both statable at once:
+/// rule ([`stella_protocol::turn_slots`]) is what makes both statable at once:
 /// the plane counts only its own calls, and residue keeps it clear of a
 /// counter it cannot see.
 #[tokio::test]
@@ -241,8 +241,8 @@ async fn a_round_driving_door_serves_child_turns_clear_of_its_own_rounds() {
     );
     for slot in &slots {
         assert_eq!(
-            stella_core::turn_slots::lane_of(*slot),
-            stella_core::turn_slots::CHILD_TURN_LANE
+            stella_protocol::turn_slots::lane_of(*slot),
+            stella_protocol::turn_slots::CHILD_TURN_LANE
         );
     }
     // Against the door's own rounds, at the arithmetic `Engine::run_goal` and

@@ -185,7 +185,7 @@ Structural invariants that span *several* events — legal stage ordering,
 `tool_start`/`tool_result` pairing, a single terminal `complete`, monotonic
 budget — cannot be expressed in JSON Schema at all, so a stream that validates
 against this schema line by line can still be an illegal stream.
-`stella_core::event_stream` is what checks them: `validate_stream` over a
+`stella_store::event_stream` is what checks them: `validate_stream` over a
 parsed stream, `conform_jsonl` over a recording. It replaces
 `stella_pipeline::replay`, which went with the crate #3865 deleted from this
 workspace and left the rules unchecked by anything until #4585.

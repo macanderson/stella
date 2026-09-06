@@ -10,9 +10,9 @@
 //! every turn restarts `step` at 0, so two calls sharing an execution row and a
 //! `turn_instance` overwrite each other's `step_manifest`/`step_receipt` rows
 //! unless they also differ in `call_seq` — and `call_seq` is a small closed set
-//! ([`RECEIPT_SEQ_WORKER`](crate::receipts::RECEIPT_SEQ_WORKER) and its
-//! siblings), not a counter anyone may extend. So `turn_instance` is the axis
-//! that has to keep them apart.
+//! (`stella-core`'s `receipts::RECEIPT_SEQ_WORKER` and its siblings), not a
+//! counter anyone may extend. So `turn_instance` is the axis that has to keep
+//! them apart.
 //!
 //! # The rule
 //!
@@ -44,15 +44,14 @@
 //!
 //! | Lane | Sequence | Allocated by |
 //! |---|---|---|
-//! | [`WORKER_LANE`] | the round index, from 0 | `Engine::run_goal` via [`goal_round_turn_offset`](crate::goal::goal_round_turn_offset); `stella fleet`'s attempt driver |
+//! | [`WORKER_LANE`] | the round index, from 0 | `Engine::run_goal` via `stella-core`'s `goal::goal_round_turn_offset`; `stella fleet`'s attempt driver |
 //! | [`VERIFIER_LANE`] | the round index, from 0 | `Engine::assess`, which is handed the round's worker slot and adds one |
 //! | [`CHILD_TURN_LANE`] | the child turn's index in the run | a wrapper plugin's `child_turn` plane |
 //! | [`FANOUT_LANE`] | the fan-out's index in the run | a wrapper plugin's `candidate_fanout` plane |
 //!
-//! The last two are lanes this crate never writes to itself. They are declared
-//! here anyway rather than in the host that fills them, because the whole
-//! content of the rule is that the four counters agree on one partition, and a
-//! partition stated in two places is a partition that drifts.
+//! No lane is allocated here. The four counters sit in four crates that all
+//! depend on this one, and a partition stated twice is a partition that
+//! drifts.
 //!
 //! A door that opens a **fresh execution row per turn** — `stella run`'s
 //! one-shot driver — is outside the constraint entirely: its rounds are already

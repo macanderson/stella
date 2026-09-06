@@ -11,11 +11,14 @@ spawns a task. Most functions are total, allocation-light helpers over their
 own data (`AgentEvent::type_tag`, `ProviderError::is_retryable`,
 `ContextUsage::is_consistent`, `classify_media_type`).
 
-Three modules are not that shape, and they are here on a narrower rule: a
+A few modules are not that shape, and they are here on a narrower rule: a
 **shared primitive** two crates on either side of a boundary must compute
 identically. `hash::record_hash`, `glob::match_glob` and
 `frontmatter::parse_frontmatter` each had two callers that a re-layering put
-in different crates, and a copy in each would be a copy that drifts. Each is
+in different crates, and a copy in each would be a copy that drifts.
+`turn_slots` arrived on the same rule: four counters in four crates partition
+one `turn_instance` axis, and a partition stated twice is a partition that
+drifts. Each is
 pure, total, and depends on nothing outside the standard library. A helper
 that only one crate calls does not qualify, and a function that decides what
 the program does next never does. The crate also depends on **no other workspace crate**,
@@ -145,8 +148,9 @@ round-trip tests travel with its supporting type, not with `kind.rs`.
 | [`src/role.rs`](src/role.rs) | `Role` (worker/triage/plan/research/verifier/embed/vision/image/video) and `ModelRef`. |
 | [`src/error.rs`](src/error.rs) | `ProviderError` and its retry classification. |
 | [`src/cache.rs`](src/cache.rs) | `CacheCause` and the one-line hint each carries, so the CLI receipt and the deck panel print identical wording. |
-| [`src/hash.rs`](src/hash.rs), [`src/glob.rs`](src/glob.rs), [`src/frontmatter.rs`](src/frontmatter.rs) | The three shared primitives: a record's canonical `sha256:` digest (ADR 0004), the `*`-only glob a rule guard and a hook matcher both match on, and the `---` header parser every markdown file in the workspace carries. Each has callers in two crates that must agree byte for byte. |
-| [`src/plan_graph.rs`](src/plan_graph.rs) | The plan graph (SPEC §7.4): `PlanNode`, `TaskNode`, `PlanEdge` with its `[:NEXT]`/`[:THEN]` `PlanEdgeKind`, the one-based `PlanRevision`, and the never-blank `DivergenceCause` a `Divergence` carries. The rules are the types — there is no `r0`, and a cause that says nothing is refused on the wire. `stella_core::plan_graph` owns every decision made with them. |
+| [`src/hash.rs`](src/hash.rs), [`src/glob.rs`](src/glob.rs), [`src/frontmatter.rs`](src/frontmatter.rs) | Three of the shared primitives: a record's canonical `sha256:` digest (ADR 0004), the `*`-only glob a rule guard and a hook matcher both match on, and the `---` header parser every markdown file in the workspace carries. Each has callers in two crates that must agree byte for byte. |
+| [`src/turn_slots.rs`](src/turn_slots.rs) | The fourth shared primitive: which `turn_instance` a model call takes when several share one execution row. A slot is a lane plus a sequence within it, so a door's worker turns, its verifier's, and the two planes a wrapper plugin's host serves never collide however many calls each makes. |
+| [`src/plan_graph.rs`](src/plan_graph.rs) | The plan graph (SPEC §7.4): `PlanNode`, `TaskNode`, `PlanEdge` with its `[:NEXT]`/`[:THEN]` `PlanEdgeKind`, the one-based `PlanRevision`, and the never-blank `DivergenceCause` a `Divergence` carries. The rules are the types — there is no `r0`, and a cause that says nothing is refused on the wire. `stella_store::plan_graph` owns every decision made with them. |
 
 ## Key concepts
 

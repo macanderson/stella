@@ -4,13 +4,19 @@
 //! The `plan_revisions` and `plan_edges` tables: one turn's plan graph — every
 //! revision, the `[:NEXT]` chain each authored, and the `[:THEN]` chain of what
 //! ran (`design/tui-v2/SPEC.md` §7.4). The DDL is `crate::ddl`; this is the
-//! read/write API over it, in [`stella_protocol::plan_graph`] values, because
-//! composing them back into a graph belongs to `stella_core::plan_graph`.
+//! read/write API over it, in [`stella_protocol::plan_graph`] values.
+//! [`graph`] composes those rows back into a [`PlanGraph`] and decides what
+//! may be written next. It sits beside the table because the rows it composes
+//! are these; the engine crate it came from never reached it.
 //! `doc:adr/0017-plan-graph-persistence` says why the record lives here.
 //!
 //! A plan graph only grows, so every write upserts on the row's natural key
 //! and re-writing one is a no-op. Do not add a delete path: retention here is
 //! `Store::prune`'s, keyed on the execution.
+
+pub mod graph;
+
+pub use graph::{PlanGraph, PlanGraphError, RevisionError, RevisionGate};
 
 use rusqlite::{OptionalExtension, params};
 use stella_protocol::plan_graph::{
@@ -31,7 +37,7 @@ impl Store {
     /// [`Store::record_task_board`]): a graph is a whole record, and a write
     /// that failed partway would leave the table holding a plan whose lanes
     /// do not reach their own tasks — which
-    /// `stella_core::plan_graph::PlanGraph::restore` would then refuse, losing
+    /// [`PlanGraph::restore`] would then refuse, losing
     /// the turn's whole plan rather than the half that failed.
     ///
     /// `nodes` and `edges` come off one graph and are not checked against each
@@ -98,7 +104,7 @@ impl Store {
     ///
     /// The rows are handed back as [`stella_protocol::plan_graph`] values and
     /// nothing more. Deciding whether they compose into a graph belongs to
-    /// `stella_core::plan_graph::PlanGraph::restore`, which is the one place
+    /// [`PlanGraph::restore`], which is the one place
     /// that knows what a lane is.
     pub fn plan_graph(&self, execution_id: i64) -> Result<(Vec<PlanNode>, Vec<PlanEdge>)> {
         let conn = self.lock();

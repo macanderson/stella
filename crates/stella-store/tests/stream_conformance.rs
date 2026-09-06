@@ -4,7 +4,7 @@
 //! The structural rules, run over a recording on disk rather than over a
 //! stream a test just built.
 //!
-//! `crates/stella-core/src/event_stream.rs`'s own unit tests construct every
+//! `crates/stella-store/src/event_stream.rs`'s own unit tests construct every
 //! stream they check, which proves the rules but not that they survive a
 //! round trip through bytes somebody else wrote. This file checks the
 //! recording — `tests/fixtures/from_a_newer_stella.jsonl`, restored in #4585
@@ -22,7 +22,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use stella_core::event_stream::{JsonlError, conform_jsonl, parse_jsonl, to_jsonl};
+use stella_store::event_stream::{JsonlError, conform_jsonl, parse_jsonl, to_jsonl};
 
 fn fixture(name: &str) -> String {
     let path: PathBuf = [env!("CARGO_MANIFEST_DIR"), "tests", "fixtures", name]
@@ -68,7 +68,7 @@ fn breaking_the_recording_is_caught_through_the_same_read_path() {
     assert!(
         violations.iter().any(|violation| matches!(
             violation,
-            stella_core::event_stream::StreamViolation::UnmatchedToolStart { .. }
+            stella_store::event_stream::StreamViolation::UnmatchedToolStart { .. }
         )),
         "an unanswered tool call must be caught; got {violations:?}"
     );
@@ -82,7 +82,7 @@ fn breaking_the_recording_is_caught_through_the_same_read_path() {
     assert!(
         violations.iter().any(|violation| matches!(
             violation,
-            stella_core::event_stream::StreamViolation::EventAfterRunComplete { .. }
+            stella_store::event_stream::StreamViolation::EventAfterRunComplete { .. }
         )),
         "an event after run_complete must be caught; got {violations:?}"
     );

@@ -1,5 +1,5 @@
-//! Shared MCP tool-usage telemetry: the record shape and the session-scoped
-//! ledger handle.
+//! The in-memory ledger the `mcp_usage` rows are drained from: the record
+//! shape and the session-scoped handle.
 //!
 //! External MCP servers' tools are called through `stella-mcp`'s `McpToolSet`,
 //! which bypasses `stella-tools::ToolRegistry` entirely (an `mcp__…` name never
@@ -10,8 +10,10 @@
 //! `store.db` once per execution — the same "written by one object, drained via
 //! another" shape the memory-citation ledger uses.
 //!
-//! Both `stella-mcp` and `stella-tools` depend on `stella-core`, so the type
-//! lives here to avoid a dependency cycle between them.
+//! It lives beside the table it feeds ([`McpUsageRow`](crate::mcp_usage::McpUsageRow)),
+//! because the buffer and the row are one shape at two moments. Every writer
+//! and every drainer — `stella-mcp`, `stella-tools`, `stella-cli` — already
+//! depends on this crate, so nothing here is reached through an extra edge.
 
 use std::sync::{Arc, Mutex};
 
@@ -37,9 +39,8 @@ impl McpUsageRecord {
     /// Build a record. `called_at_ms` is the call time, in milliseconds
     /// since the Unix epoch, chosen by the caller.
     ///
-    /// This crate holds no clock of its own — [`crate::ports::Clock`]'s own
-    /// doc comment says so. The caller reads the real clock (`stella-mcp`'s
-    /// `McpToolSet`, right when a call finishes) and passes the value in. A
+    /// The caller reads the real clock (`stella-mcp`'s `McpToolSet`, right
+    /// when a call finishes) and passes the value in. A
     /// plain argument, not a `&dyn Clock`, because this constructor has no
     /// other reason to hold a clock. It also lets a test pick any instant it
     /// wants.
@@ -112,13 +113,13 @@ mod tests {
     }
 
     /// **Witness.** The old constructor, `now()`, read the real clock inside
-    /// this crate. That is the exact thing [`crate::ports::Clock`]'s doc
-    /// comment says this crate must never do. `now()` also took no
+    /// `stella-core`, the crate that then held this module — the exact thing
+    /// that crate's `ports::Clock` doc comment forbids. `now()` also took no
     /// timestamp argument, so no test could place a record at a chosen
     /// instant.
     ///
-    /// `stella-store`'s `mcp_usage` table orders rows by `called_at_ms`. A
-    /// test built on `now()` could only see two real clock reads, taken
+    /// The `mcp_usage` table orders rows by `called_at_ms`. A test built on
+    /// `now()` could only see two real clock reads, taken
     /// milliseconds apart. `new` takes the timestamp as a plain argument, so
     /// this test places one record far in the past and one far in the
     /// future, with no wait at all. `now()` had no way to do that.

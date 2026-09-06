@@ -26,7 +26,7 @@
 //! A projection of owned data onto `Line<'static>`, like every other view in
 //! this module. The keys named in the action row are
 //! `deck_ui::row_keys`'s, and the withholding they release is
-//! `stella_core::plan_graph::RevisionGate::admits`'s — this file draws the
+//! `stella_store::plan_graph::RevisionGate::admits`'s — this file draws the
 //! sentence and holds none of the state behind it.
 
 use ratatui::style::{Modifier, Style};

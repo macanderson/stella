@@ -48,7 +48,7 @@ pub(super) fn index_hold(ui: &mut DeckUi) -> Option<DeckAction> {
 /// unanswered — SPEC 8.1 item 3's "nothing runs until approval".
 ///
 /// The deck's half of the withholding
-/// `stella_core::plan_graph::RevisionGate::admits` states engine-side. Both
+/// `stella_store::plan_graph::RevisionGate::admits` states engine-side. Both
 /// halves are needed and neither implies the other: the engine gate withholds
 /// the *tool calls* of a turn already in flight, and this withholds the
 /// *prompts* the deck would start, which never pass through it.

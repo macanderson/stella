@@ -110,7 +110,7 @@ their board is not an audit trail.
 The store speaks `stella_protocol::plan_graph` values and nothing else.
 `stella-store` does not depend on `stella-core`, so it cannot hold a
 `PlanGraph`; it hands back nodes and edges, and
-`stella_core::plan_graph::PlanGraph::restore` decides whether they compose into
+`stella_store::plan_graph::PlanGraph::restore` decides whether they compose into
 a graph. One place knows what a lane is, and it is not SQL.
 
 ## Consequences

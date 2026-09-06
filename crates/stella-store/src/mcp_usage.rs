@@ -11,8 +11,15 @@
 //! Nothing is summed on the way in. Each call is its own row, because the
 //! thing being counted is "this tool ran under this execution at this time".
 //! [`fold_mcp_usage_stats`] sums them on the way out.
+//!
+//! [`ledger`] holds the in-memory half: the record `stella-mcp` appends on
+//! every call, and the handle the CLI drains into [`Store::record_mcp_usage`].
+
+pub mod ledger;
 
 use rusqlite::params;
+
+pub use ledger::{McpUsageLedger, McpUsageRecord, drain_usage, push_usage};
 
 use crate::{Result, Store};
 

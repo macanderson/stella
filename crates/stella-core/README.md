@@ -109,10 +109,8 @@ build (that is the reason [`stella-model`](../stella-model) and
 [`stella-tools`](../stella-tools) are separate crates rather than modules
 here); it needs a dependency direction the current graph forbids — two crates
 that must not know each other need a shared home, which is how
-[`stella-home`](../stella-home) earned its existence, though note the graph
-sometimes resolves the other way: [`src/mcp_usage.rs`](src/mcp_usage.rs) lives
-*here* precisely so `stella-mcp` and `stella-tools` need no edge between them;
-or it is a genuinely separate deliverable with its own binary and release
+[`stella-home`](../stella-home) earned its existence; or it is a genuinely
+separate deliverable with its own binary and release
 cadence, like [`stella-serve`](../stella-serve). Otherwise extend this crate —
 a new module in the layout below is cheap, while a new crate costs a
 workspace-table row, an impacted-crates scope, CI time and a README, and a
@@ -165,7 +163,6 @@ lib.rs), never as a planning assumption.
 | [`src/receipts.rs`](src/receipts.rs) | `ReceiptLedger` — `BlockRegistered` + `StepManifest` context receipts, content-free (digests, never payloads). |
 | [`src/engine_markers.rs`](src/engine_markers.rs) | `ENGINE_MARKERS` — the closed table of marker prefixes on engine-written `User`-role messages, defined from the owning constants and tied by test to `receipts::user_block_kind`, to `driver::loop_evidence::turn_start_index`, and to the CLI's injection-defense prompt clause (#2722, #2837). |
 | [`src/accounted_call.rs`](src/accounted_call.rs), [`src/event_sender.rs`](src/event_sender.rs) | A one-shot accounted provider call for callers that are not the engine, and the channel wrapper that can journal an event durably before admitting it. |
-| [`src/event_stream.rs`](src/event_stream.rs) | `validate_stream` / `conform_jsonl` — the four structural rules an emitted `AgentEvent` stream obeys (legal stage ordering, `tool_start`/`tool_result` pairing, a single terminal `run_complete`, monotonic budget), plus the JSONL reader that tolerates a torn tail and refuses interior corruption. The half of the wire contract JSON Schema cannot state; restored here after #3865 deleted `stella_pipeline::replay` (#4585). |
 | [`src/bus.rs`](src/bus.rs) | The in-process extension bus: observers (`emit`) and policy hooks (`emit_blocking`) over a dotted event-name catalog. |
 | [`src/hooks.rs`](src/hooks.rs) | Settings-declared *shell* hooks — the registry, matcher selection and blocking decisions for every `HookEvent`, in-turn and loop alike; [`src/hooks/payload.rs`](src/hooks/payload.rs) is the JSON a hook reads on stdin; [`src/hooks/decision.rs`](src/hooks/decision.rs) is the #2684 decision plane (stdout-JSON `HookDecision` fold, the `resolve_precedence` ladder, the `ApprovalRoute` port). |
 | [`src/skill_invocation.rs`](src/skill_invocation.rs) | The skill-invocation vocabulary (#2682): the invocation directives parser (`context`/`allowed-tools`/`model`/`effort`), `$ARGUMENTS` substitution, the invocation marker, and the active-invocation tracking the compaction seam reads (#2685). The catalog is `stella_learn::skills`. |
@@ -175,8 +172,6 @@ lib.rs), never as a planning assumption.
 | [`src/goal.rs`](src/goal.rs) | The goal loop: worker turn → verifier verdict → feedback, bounded by round cap, budget and turn abort. The verifier runs as a sub-agent. **A wrapper living inside the engine crate** — slated to leave for the wrapper contract (#3380); do not grow it. |
 | [`src/router.rs`](src/router.rs) | Role → model resolution over a caller-supplied `ProviderProfile`, plus the per-provider circuit breaker. |
 | [`src/tasks.rs`](src/tasks.rs) | `TaskBoard` — the transition rules behind the `task_*` tools; records `SpawnRequest`s rather than spawning. |
-| [`src/plan_graph.rs`](src/plan_graph.rs) + [`src/plan_graph/`](src/plan_graph) | `PlanGraph` — who may write a `[:NEXT]` or `[:THEN]` edge, when a revision is authored, and what counts as drift (SPEC §7.4). Approval is the only constructor; a revision is authored beside its predecessor rather than over it; `ran` refuses a task the current revision does not have, which is why every difference between the two lanes is a revision somebody recorded a reason for. Divergences are derived, never stored. |
-| [`src/mcp_usage.rs`](src/mcp_usage.rs) | The MCP usage record/ledger types, homed here so `stella-mcp` and `stella-tools` need no edge between them. |
 
 ## Key concepts
 
@@ -327,9 +322,8 @@ which is why the engine's own suite is split across
 turn-driver audit witnesses; also `budget_boundaries.rs`,
 `usage_completeness.rs`). `proptest!` blocks live in
 [`src/retry.rs`](src/retry.rs), [`src/loop_detect.rs`](src/loop_detect.rs),
-[`src/tasks.rs`](src/tasks.rs) and [`src/workspace_scope.rs`](src/workspace_scope.rs);
-past failing seeds are committed under
-[`proptest-regressions/`](proptest-regressions). No feature flag, no env var, no
+[`src/tasks.rs`](src/tasks.rs); a failing case writes its seed to
+`proptest-regressions/`, and that seed is committed. No feature flag, no env var, no
 fixture server and no network — driver tests wire scripted `Provider`s, counting
 `ToolExecutor`s and no-op `Sleeper`s, so the suite runs in seconds. Keep it that
 way: a test here that needs a file or a socket means the logic under test is in

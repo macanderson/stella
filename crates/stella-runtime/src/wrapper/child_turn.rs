@@ -253,7 +253,7 @@ impl<D> ChildTurns<D> {
                 .or(manifest.loop_grant.max_calls),
             ceiling: DEFAULT_HOST_MAX_CHILD_TURNS,
             budget_usd: None,
-            turn_lane: stella_core::turn_slots::CHILD_TURN_LANE,
+            turn_lane: stella_protocol::turn_slots::CHILD_TURN_LANE,
             spent: AtomicU32::new(0),
             ledger: Mutex::new(Vec::new()),
         }
@@ -293,7 +293,7 @@ impl<D> ChildTurns<D> {
     /// The `turn_instance` lane this plane's child turns are recorded in.
     ///
     /// A **lane**, not a slot, and that is the whole of #3833/#3882's
-    /// allocation: `stella_core::turn_slots` partitions `turn_instance` by
+    /// allocation: `stella_protocol::turn_slots` partitions `turn_instance` by
     /// residue, so this plane hands its `n`-th child turn the `n`-th slot of
     /// the lane it was given, and can never land on a slot
     /// a door's own rounds or the fan-out plane beside it will use — however
@@ -306,7 +306,7 @@ impl<D> ChildTurns<D> {
     /// **one** row, so a fixed slot collided with whichever round landed on it
     /// and both doors declined to serve `child_turn` at all rather than guess.
     ///
-    /// Defaults to [`stella_core::turn_slots::CHILD_TURN_LANE`], so a host that
+    /// Defaults to [`stella_protocol::turn_slots::CHILD_TURN_LANE`], so a host that
     /// says nothing still gets the lane this rule reserves for it.
     #[must_use]
     pub fn in_turn_lane(mut self, lane: u32) -> Self {
@@ -316,7 +316,7 @@ impl<D> ChildTurns<D> {
 
     /// The `turn_instance` the `seq`-th child turn of this plane lands on.
     fn slot_for(&self, seq: u32) -> u32 {
-        stella_core::turn_slots::slot(self.turn_lane, seq)
+        stella_protocol::turn_slots::slot(self.turn_lane, seq)
     }
 
     /// The effective ceiling on child turns, after the clamp.

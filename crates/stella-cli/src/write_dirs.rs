@@ -9,7 +9,7 @@
 //! own list would revoke a permission nobody asked to revoke — the failure
 //! would look like a tool refusing a path the committed config plainly allows.
 //!
-//! The decision itself lives in `stella_core::workspace_scope::SessionScope`;
+//! The decision itself lives in `stella_tools::workspace_scope::SessionScope`;
 //! this module only answers *which directories the host hands it*, which is
 //! why the whole resolution is one pure function over borrowed data
 //! (invariant 2).
@@ -79,7 +79,7 @@ pub(crate) fn registry_for(cfg: &crate::config::Config) -> stella_tools::ToolReg
 /// narrowing [`registry_for`]'s doc promises cannot happen.
 ///
 /// The root is honoured as given: a worktree root makes
-/// `stella_core::workspace_scope` treat that worktree as the workspace, which
+/// `stella_tools::workspace_scope` treat that worktree as the workspace, which
 /// is what lets a worker write its own tree while the origin project stays
 /// invisible to it.
 pub(crate) fn registry_rooted_at(

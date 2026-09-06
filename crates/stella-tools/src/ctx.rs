@@ -56,9 +56,9 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::workspace_scope::{ScopeDecision, SessionScope};
 use serde_json::Value;
 use stella_core::bus::HookBus;
-use stella_core::workspace_scope::{ScopeDecision, SessionScope};
 
 /// What a tool may touch while it runs: the workspace root for path
 /// resolution, and the session's event channel scoped to this call's
@@ -72,7 +72,7 @@ pub struct ToolCtx {
     tool: String,
     bus: Option<HookBus>,
     allowed: Vec<String>,
-    /// Where this session may write ([`stella_core::workspace_scope`]).
+    /// Where this session may write ([`crate::workspace_scope`]).
     ///
     /// Carried on the context rather than constructed per tool because it is
     /// one session-wide answer that several tools must give identically: a
@@ -275,7 +275,7 @@ impl ToolCtx {
 
     /// Whether a model-supplied path may be read, as a refusal string when it
     /// may not. Only worktrees are ever refused — see
-    /// [`stella_core::workspace_scope`] on why reads are otherwise open.
+    /// [`crate::workspace_scope`] on why reads are otherwise open.
     pub fn refuse_read(&self, path: &str) -> Option<String> {
         let absolute = self.absolutize(path);
         let decision = self.scope.may_read(&absolute);
@@ -302,9 +302,9 @@ impl ToolCtx {
     /// file. Only the directory part is canonicalized, which is all the scope
     /// decision needs: a leaf cannot move a path into a different directory.
     ///
-    /// This is deliberately I/O, which is why it lives here and not in
-    /// `stella_core::workspace_scope` (invariant #2). It also does not close
-    /// any race — `rootfd`'s descriptor walk does that; this only makes the
+    /// This touches the filesystem, so it lives here. Every function in
+    /// `crate::workspace_scope` is a pure test over a path already resolved.
+    /// It also does not close any race — `rootfd`'s descriptor walk does that; this only makes the
     /// *policy* question answerable.
     fn absolutize(&self, path: &str) -> PathBuf {
         let requested = Path::new(path);
@@ -387,7 +387,7 @@ impl ToolCtx {
                  working on, and writing one changes work this session does not own. \
                  Work in the session root instead.",
                 path.display(),
-                stella_core::workspace_scope::WORKTREES_SUBPATH
+                crate::workspace_scope::WORKTREES_SUBPATH
             ),
             ScopeDecision::OutsideScope => {
                 let roots = self
@@ -512,7 +512,7 @@ fn canonical_or_given(root: &Path) -> PathBuf {
 }
 
 /// Lexical `.`/`..` collapse — the same normalization
-/// [`stella_core::workspace_scope`] applies before deciding, repeated here so
+/// [`crate::workspace_scope`] applies before deciding, repeated here so
 /// the path handed to `strip_prefix` is the one the decision was made about.
 fn lexically_normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();

@@ -5,7 +5,7 @@
 //! item 3).
 //!
 //! Not part of [`SessionModel::apply`]'s fold, because a proposal is not an
-//! `AgentEvent`: `stella_core::plan_graph::RevisionGate` authors it
+//! `AgentEvent`: `stella_store::plan_graph::RevisionGate` authors it
 //! host-side from a `GateBoard` the host already evaluated, and it reaches the
 //! deck on `Inbound::RevisionProposed`. A replayed event log therefore shows
 //! the gate board that provoked the proposal rather than the proposal — the

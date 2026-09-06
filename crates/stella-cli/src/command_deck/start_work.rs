@@ -70,12 +70,12 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::Command;
 
-use stella_core::plan_graph::PlanGraph;
 use stella_learn::rules::{ProposedAction, Rule, evaluate_guards};
 use stella_protocol::issue::{Issue, IssueKey, IssueProvider};
 use stella_protocol::plan_graph::TaskNode;
 use stella_protocol::tokens::estimate_tokens_for_bytes;
 use stella_store::ModelRates;
+use stella_store::plan_graph::PlanGraph;
 use stella_tui::{DraftContract, DraftRule, DraftSources, DraftTask, StartWorkDraft};
 
 /// Most tasks a draft proposes.

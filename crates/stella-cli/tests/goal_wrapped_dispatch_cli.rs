@@ -430,7 +430,7 @@ async fn a_goal_run_dispatches_each_round_through_the_bound_wrapper() {
 
     // The execution row this goal run opened names the wrapper that drove
     // it, and the store shows two rounds' worth of turn_instance under that
-    // one row — the goal loop's own round math (`stella_core::turn_slots`'
+    // one row — the goal loop's own round math (`stella_protocol::turn_slots`'
     // worker lane, with the verifier lane beside it), advancing exactly as it
     // does on the raw arm.
     let conn = rusqlite::Connection::open(store_path(workspace.path())).expect("open store.db");
@@ -466,7 +466,7 @@ async fn a_goal_run_dispatches_each_round_through_the_bound_wrapper() {
     // run beside this loop without overwriting a round (#3833).
     assert!(
         turn_instances.starts_with(&[0, 1, 4, 5]),
-        "goal rounds must allocate through `stella_core::turn_slots`' worker and verifier \
+        "goal rounds must allocate through `stella_protocol::turn_slots`' worker and verifier \
          lanes: {turn_instances:?}"
     );
 }

@@ -192,9 +192,9 @@ mod tests {
             .expect("execution");
         let root = tempfile::tempdir().expect("root");
         let registry = stella_tools::ToolRegistry::new(root.path().to_path_buf());
-        stella_core::mcp_usage::push_usage(
+        stella_store::mcp_usage::push_usage(
             &registry.mcp_usage_ledger(),
-            stella_core::mcp_usage::McpUsageRecord::new("github", "search_issues", "", 1),
+            stella_store::mcp_usage::McpUsageRecord::new("github", "search_issues", "", 1),
         );
         store
             .record_mcp_usage(

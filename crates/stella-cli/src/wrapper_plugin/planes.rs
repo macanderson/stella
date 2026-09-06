@@ -80,7 +80,8 @@ pub(crate) fn child_turn_plane(
     manifest: &stella_plugin::PluginManifest,
     dispatcher: Arc<dyn SubAgentDispatcher>,
 ) -> SessionChildTurns {
-    ChildTurns::declare(manifest, dispatcher).in_turn_lane(stella_core::turn_slots::CHILD_TURN_LANE)
+    ChildTurns::declare(manifest, dispatcher)
+        .in_turn_lane(stella_protocol::turn_slots::CHILD_TURN_LANE)
 }
 
 /// This host's candidate fan-out plane for one installed plugin (#3892).
@@ -114,7 +115,7 @@ pub(crate) fn candidate_fanout_plane(
     workspaces: crate::candidate_workspaces::CandidateSubstrate,
 ) -> SessionCandidateFanouts {
     CandidateFanouts::declare(manifest, workspaces)
-        .in_turn_lane(stella_core::turn_slots::FANOUT_LANE)
+        .in_turn_lane(stella_protocol::turn_slots::FANOUT_LANE)
 }
 
 /// What this host will do for a plugin, assembled after the resources exist.
@@ -225,7 +226,7 @@ pub(crate) fn session_host(
 /// allocation, not two: a fixed child-turn slot collided with whichever of the
 /// door's own rounds landed on it, and neither door could hand the plane a
 /// per-round slot because a plugin's points run *between* the rounds they are
-/// about. [`stella_core::turn_slots`] settles it by residue instead — the plane
+/// about. [`stella_protocol::turn_slots`] settles it by residue instead — the plane
 /// counts only its own calls and still never lands on a round's slot — and both
 /// doors reach `child_turn` through this one assembly.
 ///
@@ -236,7 +237,7 @@ pub(crate) fn session_host(
 /// invocation root's (`crate::fleet_cmd::wrapped`'s module doc).
 ///
 /// **No candidate fan-out plane, and no longer for want of a slot.**
-/// [`stella_core::turn_slots::FANOUT_LANE`] is reserved beside every round the
+/// [`stella_protocol::turn_slots::FANOUT_LANE`] is reserved beside every round the
 /// same way the child lane is, so the collision that justified declining it is
 /// gone. What is left is the capability itself: a fan-out is N *writing* worker
 /// turns in isolated trees plus an adoption that lands one of them, and both

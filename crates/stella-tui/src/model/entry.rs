@@ -412,7 +412,7 @@ pub enum TranscriptEntry {
     /// somebody may be typing into and refuses bare letters for that reason.
     ///
     /// The proposal is carried whole. Every field on it is content the
-    /// producer settled — `stella_core::plan_graph::RevisionGate` authors it
+    /// producer settled — `stella_store::plan_graph::RevisionGate` authors it
     /// from a board the host evaluated — and nothing here re-derives any of it.
     RevisionProposal { proposal: RevisionProposal },
     /// A goal-check verdict from the verifier loop (`AgentEvent::GoalVerdict`) —

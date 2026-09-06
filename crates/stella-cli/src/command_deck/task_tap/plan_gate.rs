@@ -65,12 +65,12 @@
 
 use std::sync::Mutex;
 
-use stella_core::plan_graph::PlanGraph;
 use stella_protocol::{
     AgentEvent, CompletionMessage, DivergenceCause, MessageRole, PlanRevision, Question,
     QuestionOption, QuestionOutcome, QuestionRequest, ScopeProposal, StageKind, StageScope,
     TaskItem, TaskNode, ToolOutput,
 };
+use stella_store::plan_graph::PlanGraph;
 use stella_tools::registry::question::QuestionBroker;
 
 use crate::settings::PlanReviewPolicy;
