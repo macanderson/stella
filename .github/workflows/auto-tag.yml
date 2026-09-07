@@ -51,13 +51,20 @@ name: auto-tag
 # reporting success. It stays only as a fallback for a repository that still
 # grants a bypass.
 #
-# Nothing required asks whether the branch and main compose, because `strict`
-# is off and every check runs on the branch rather than on the merge result. So
-# the last step re-asks the lockfile question against the MERGE RESULT before
-# merging: `Cargo.lock` is a shared cell, and a sync branch cut before a new
-# crate landed composes into a lock that resolves for neither side (#3336).
+# `Cargo.lock` is a shared cell, and a sync branch cut before a new crate
+# landed composes into a lock that resolves for neither side (#3336). Every
+# check on the branch ran when the branch last changed, and `strict` is off, so
+# main can move after that and nothing makes the branch catch up. The last step
+# re-asks the lockfile question against the MERGE RESULT before merging.
 # scripts/sync-versions.sh asks the same question about its own output at both
 # call sites, so the tag cannot carry an unresolvable lock either.
+#
+# That covers this workflow's own branch merging into main. The same collision
+# lands from the other direction, and this step never saw it: a branch adding a
+# crate merges after a bump it was cut before (#5943). Both directions ask
+# scripts/check-merge-lockfile-sync.sh now — `ci.yml` runs it on every pull
+# request, and `lock-recheck.yml` runs it again for open pull requests each
+# time main moves.
 #
 # GATED ON GREEN CI. This runs via `workflow_run` after the `ci` workflow
 # finishes on main, and only tags when that run *succeeded* — a commit that
@@ -590,9 +597,9 @@ jobs:
           # shape is AGENTS.md § Gotchas' shared-cell collision, and #3332's
           # post-merge canary is the backstop for when it still gets through).
           #
-          # No required check asks it. `strict` is off on main's protection, so
-          # a sync branch is never made to catch up before it merges, and every
-          # check above ran on the branch rather than on the merge result. The
+          # The checks above ran when the branch last changed. `strict` is
+          # off on main's protection, so a sync branch is never made to catch
+          # up, and main can move between that run and this merge. The
           # question has to be asked here or it is not asked at all.
           #
           # Refusing rather than rebuilding the branch on the new tip: a rebuilt
@@ -601,18 +608,15 @@ jobs:
           # merge moved main starts another auto-tag run, which force-updates
           # this same branch from the then-current tip. The version write-back
           # is deferred, never dropped, and main stays green.
-          git fetch origin main
+          #
+          # The merge, the check and the restore live in
+          # scripts/check-merge-lockfile-sync.sh, so this path and the two
+          # pointed the other way — ci.yml's pull request step and
+          # lock-recheck.yml's sweep — cannot disagree about the question, and
+          # the logic is covered by scripts/test-merge-lockfile-sync.sh rather
+          # than by a run of this workflow (#5943).
           merge_verdict=0
-          if git merge --no-commit --no-ff FETCH_HEAD >/dev/null 2>&1; then
-            ./scripts/check-lockfile-sync.sh || merge_verdict=$?
-          else
-            merge_verdict=1
-            echo "::warning::${BRANCH} no longer merges cleanly into main."
-          fi
-          # --abort is a no-op error when main was already an ancestor (nothing
-          # was merged); the reset puts the tree back either way.
-          git merge --abort 2>/dev/null || true
-          git reset --hard HEAD >/dev/null
+          ./scripts/check-merge-lockfile-sync.sh origin/main || merge_verdict=$?
 
           # #3842: the refusal below used to be invisible outside this run's
           # log. `exit 0` is right — a stale sync branch is routine and

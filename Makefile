@@ -943,6 +943,22 @@ lockfile-sync: ## Assert Cargo.lock resolves against the manifests as committed 
 lockfile-sync-test: ## Test the lockfile guard against synthetic skewed workspaces (hermetic; not part of `gate`)
 	./scripts/test-lockfile-sync.sh
 
+.PHONY: merge-lockfile-sync
+merge-lockfile-sync: ## Assert Cargo.lock still resolves once origin/main is merged in (#5943)
+	@./scripts/check-merge-lockfile-sync.sh
+
+.PHONY: merge-lockfile-sync-test
+merge-lockfile-sync-test: ## Test the merged-lock guard against a two-branch collision (hermetic; not part of `gate`)
+	./scripts/test-merge-lockfile-sync.sh
+
+.PHONY: recheck-lock-compositions
+recheck-lock-compositions: ## Print which open PRs a lock re-check would send back to ci (#5943)
+	@./scripts/recheck-lock-compositions.sh --dry-run
+
+.PHONY: recheck-lock-compositions-test
+recheck-lock-compositions-test: ## Test the lock re-check sweep, its fail-open branches included (hermetic; not part of `gate`)
+	./scripts/test-recheck-lock-compositions.sh
+
 .PHONY: release-lockfile-test
 release-lockfile-test: ## Test that the release version stamp leaves Cargo.lock resolvable, new members included (hermetic; not part of `gate`)
 	./scripts/test-release-lockfile.sh

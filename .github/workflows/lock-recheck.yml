@@ -1,0 +1,64 @@
+name: lock-recheck
+
+# Re-ask the merged-lock question when `main` moves (#5943).
+#
+# `ci.yml` asks whether `Cargo.lock` still resolves once a pull request and
+# `main` are merged. That answer is about the `main` of the moment it ran.
+# `strict` is off, so nothing makes a branch catch up, and the green stands
+# after `main` moves under it.
+#
+# On 2026-09-06 a release sync bumped every version at 09:51. A branch adding
+# the `stella-learn` crate merged at 09:59 with a lock entry at the old
+# version and a check from before the bump. Every `--locked` build on `main`
+# failed, and three sessions each wrote the same repair (#5939).
+#
+# This workflow is the missing event. `scripts/recheck-lock-compositions.sh`
+# asks the question again for each open pull request and runs `ci` again on
+# the ones whose answer changed. The new run reports under the same name on
+# the same commit, so the required check goes red and the merge waits.
+#
+# Same shape as `dod-recheck.yml` and `main-red-clear.yml`, for the same bug
+# one gate over: a check that was right when it ran, on a commit with no event
+# left to correct it.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "**/Cargo.toml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # To read each open pull request's number and head commit.
+  pull-requests: read
+  # To run `ci` again on a pull request whose answer changed.
+  actions: write
+
+# One sweep at a time. A cancelled sweep costs nothing: the next push asks the
+# same questions of the same pull requests.
+concurrency:
+  group: lock-recheck
+  cancel-in-progress: true
+
+jobs:
+  recheck:
+    name: open pull requests still compose with main
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # The sweep merges each pull request head into this tip, so it needs
+          # a merge base for every open branch. A shallow clone has none.
+          fetch-depth: 0
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+
+      - name: Ask every open pull request whether its lock still composes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/recheck-lock-compositions.sh

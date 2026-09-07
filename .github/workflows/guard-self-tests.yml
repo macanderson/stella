@@ -311,6 +311,14 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-lockfile-sync.sh
 
+      - name: the merged-lock guard against a two-branch collision (#5943)
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-merge-lockfile-sync.sh
+
+      - name: which open pull requests a lock re-check sends back to ci (#5943)
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-recheck-lock-compositions.sh
+
       - name: the red-main hold, blocking branch included
         if: ${{ !cancelled() }}
         run: ./scripts/test-main-red-hold.sh
