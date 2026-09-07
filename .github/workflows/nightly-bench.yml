@@ -15,6 +15,12 @@ name: nightly-bench
 # it caught cycling. Those signals are visible on a cheap model, which is what
 # makes a nightly affordable at well under a dollar a night.
 #
+# It also gates on whether the night happened at all: a run where more of the
+# requested trials raised than finished exits 8, because a loop verdict over
+# the surviving minority describes a task set nobody asked for. Harbor's agent
+# timeout is what usually kills them, and the remedy is a task set or a timeout
+# this runner can finish, never a greener reading of the same night.
+#
 # NOT on `pull_request`/`push`: every run spends real money and needs Docker,
 # harbor, and a provider key. Schedule + manual dispatch only, exactly like
 # `live-smoke.yml`.
@@ -296,6 +302,7 @@ jobs:
               5) echo "**FAIL (report)** — the run completed but the JSON report could not be written." ;;
               6) echo "**FAIL (no winner)** — \`--require-winner\` was set and no arm cleared both bars." ;;
               7) echo "**FAIL (reconciliation)** — the job directory held trials this run did not ask for, so every figure above covers a task set that is not the requested one." ;;
+              8) echo "**FAIL (unfinished)** — more of the requested trials raised than finished, so every figure above covers a night that mostly did not happen. Look at the exceptions on the table before reading anything else." ;;
               "") echo "**FAIL** — loop-bench never ran; an earlier step failed." ;;
               *) echo "**FAIL** — exit $EXIT_CODE is outside the harness's contract: a build failure or a crash, not a verdict." ;;
             esac

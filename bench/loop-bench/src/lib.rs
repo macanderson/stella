@@ -89,6 +89,33 @@
 //! which of the two failed. It is off unless a floor is configured, because
 //! the pass rate this harness produces is a flash-tier model's under a cap:
 //! a floor is only meaningful once a job's own history has established one.
+//!
+//! # The third gate: most of the run never finished (`#6025`)
+//!
+//! A trial harbor killed is not evidence about the loop, which is why
+//! `CRASHED` is a row verdict and not an exit code. That holds while the dead
+//! trials are the minority. It stops holding once they outnumber the live
+//! ones: what survives is not the pinned task set the nightly job calls its
+//! fixed seed, and a verdict over it is a verdict about a run that mostly did
+//! not happen.
+//!
+//! [`most_trials_crashed`] is that check — red when more than half the
+//! requested trials raised. It makes a third claim, distinct from the other
+//! two: `loop_broken` says the loop misbehaved, [`below_pass_floor`] says the
+//! agent solved too little, and this says the night measured too little to
+//! say either.
+//!
+//! A majority rather than a tuned count, so it needs no history to set and it
+//! survives a change to the task set: `--tasks`, `--n` and `--trials` all move
+//! the denominator, and a count pinned to four would then mean something else.
+//!
+//! What it costs is measured, not assumed. The 29 nightly runs from
+//! 2026-08-10 to 2026-09-07 that uploaded a report each asked for four trials.
+//! One night lost none, fourteen lost one, five lost two, and nine lost three;
+//! no night lost all four. This rule fires on those nine, and eight of them
+//! were already red for loop health. The ninth is the night it exists for:
+//! run 33306583016, on 2026-08-30, reported a green nightly over three trials
+//! that never finished.
 
 pub mod artifacts;
 pub mod compare;
@@ -655,6 +682,23 @@ pub fn below_pass_floor(reports: &[TrialReport], min_pass: usize) -> bool {
     min_pass > 0 && tally(reports).solved < min_pass
 }
 
+/// The third gate (`#6025`) — more of the requested trials raised than
+/// finished, so the run is too small a sample to gate on.
+///
+/// Read off [`Tally::crashed`], which is harbor's own record that a trial
+/// raised. A `NOT-RUN` row is a different absence and needs no help from here:
+/// it gates red on its own through [`TrialReport::loop_broken`].
+///
+/// A strict majority, so a run that lost exactly half still reports its
+/// figures. Two trials out of four are two observations; one out of four is an
+/// anecdote wearing a pass rate. See the crate docs for the nights this was
+/// measured against and why the rule is a proportion rather than a count.
+#[must_use]
+pub fn most_trials_crashed(reports: &[TrialReport]) -> bool {
+    let counts = tally(reports);
+    counts.crashed * 2 > counts.total
+}
+
 /// The JSON a CI consumer trends over time.
 ///
 /// An object, where a single run used to emit a bare array of trials (#1299).
@@ -817,6 +861,16 @@ pub fn print_table(reports: &[TrialReport]) {
             "  ⚠ {crashed}/{n} trial(s) did not finish — harbor recorded an exception. \
              Those are infrastructure outcomes, NOT the model getting the task wrong; \
              the {solved}/{n} pass rate is over a run that partly did not happen."
+        );
+    }
+    // The same fact once it is a majority, said in the words the exit code
+    // uses, so the table names the gate that decided the run rather than
+    // leaving a reader to compare two numbers.
+    if most_trials_crashed(reports) {
+        println!(
+            "  ⚠ that is most of the run: the figures above cover {}/{n} trial(s) \
+             that finished, which is too small a sample to gate on.",
+            n - crashed
         );
     }
     // A per-verdict tally, so a run is greppable at a glance.
