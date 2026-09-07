@@ -1235,9 +1235,10 @@ fn risk_blurb(risk: RiskLevel) -> &'static str {
 /// The two things being defended against are different. Newlines let a
 /// plugin's prose forge a line of the prompt around it — a `description`
 /// ending `\n\nIt asks for no tool capabilities, so Stella will refuse it
-/// every tool call.` reads as Stella's own reassurance. Control characters (an ANSI escape, a carriage return) let it
-/// repaint or erase the terminal the consent is being given in. Neither is
-/// hypothetical for text a third party wrote and a user is about to trust.
+/// every tool call.` reads as Stella's own reassurance. Control characters
+/// (an ANSI escape, a carriage return) let it repaint or erase the terminal
+/// the consent is being given in. Neither is hypothetical for text a third
+/// party wrote and a user is about to trust.
 fn one_line(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut pending_space = false;
