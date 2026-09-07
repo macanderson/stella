@@ -272,6 +272,43 @@ want "--body-file is read" \
   post 5835 --finding conflict:5828 --body-file "$tmp_body" \
   --fixture-login ada --fixture-findings ""
 
+# ── No `gh` at all ──────────────────────────────────────────────────────────
+#
+# A `check` with no `gh` proceeds, like every other unknown. A `post` cannot:
+# it owes the caller a write, and reporting "proceed" would tell a sweep its
+# finding is up when nothing was sent. The runs below use a PATH holding one
+# pair of symlinks, so `gh` is absent for real rather than stubbed.
+
+bare_bin="$(mktemp -d)"
+trap 'rm -f "$tmp_body"; rm -rf "$bare_bin"' EXIT
+ln -s "$(command -v bash)" "$bare_bin/bash"
+ln -s "$(command -v dirname)" "$bare_bin/dirname"
+
+out="$(PATH="$bare_bin" "$SCRIPT" check 5835 2>&1)"
+rc=$?
+case "$rc,$out" in
+0,*"could not ask"*)
+  ok "a check with no gh proceeds and says it could not ask"
+  ;;
+*)
+  bad "expected exit 0 and 'could not ask', got exit $rc: $out"
+  ;;
+esac
+
+out="$(PATH="$bare_bin" "$SCRIPT" post 5835 --finding conflict:5828 --body x 2>&1)"
+rc=$?
+case "$rc,$out" in
+0,*)
+  bad "a post with no gh reported success while posting nothing: $out"
+  ;;
+*,*"nothing was posted"*)
+  ok "a post with no gh fails and says nothing was posted"
+  ;;
+*)
+  bad "expected a non-zero exit naming 'nothing was posted', got exit $rc: $out"
+  ;;
+esac
+
 # ── The parse itself ────────────────────────────────────────────────────────
 #
 # Every case above drives a fixture. Those rows are already parsed, so the jq

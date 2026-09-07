@@ -303,6 +303,12 @@ if [ "$mode" = "post" ]; then
 fi
 
 if [ "$use_fixture" -eq 0 ] && ! command -v gh >/dev/null 2>&1; then
+  # `post` is the one mode that owes the caller a write. Reporting "proceed"
+  # there would tell a sweep its finding is up when nothing was sent.
+  if [ "$mode" = "post" ]; then
+    echo "pr-claim: gh is not installed, so nothing was posted on #$pr." >&2
+    exit 3
+  fi
   echo "note: gh is not installed, so this run could not ask whether #$pr is" >&2
   echo "      already being swept. Proceeding: a check that can block a sweep" >&2
   echo "      is worse than the duplication it stops." >&2
