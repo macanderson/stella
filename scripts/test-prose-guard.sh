@@ -1053,5 +1053,86 @@ commit_all "$r"
 expect_output_contains "S9 a resolved base is named on the way past" "$r" \
   "Judged against"
 
+# ── X: a split is a move git cannot name ─────────────────────────────────────
+#
+# `renamed_paths` reads git's own rename pairs, and a split produces none: the
+# source file is still there, so git reports a modify beside an add. The new
+# file's sentences were then charged to whoever moved them -- a fresh file is
+# held to grade 6.00, and the prose in it was written by nobody on the branch.
+# That made `mod` hierarchy, the remedy AGENTS.md names for a crowded file,
+# cost a rewrite of every comment the split carried.
+#
+# X1 is the witness: it fails before `split_sources` existed. X3 and X4 are the
+# direction that must not change.
+
+# $1 = root, $2 = relative path, $3 = sentence count. Like `hard_doc`, but
+# every line differs: the split share is measured over the SET of prose lines
+# a file holds, so a file of one repeated sentence is one line to it.
+hard_doc_varied() {
+  mkdir -p "$(dirname "$1/$2")"
+  : >"$1/$2"
+  i=0
+  while [ "$i" -lt "$3" ]; do
+    printf 'Considerable organizational infrastructure %d necessitates comprehensive architectural documentation regarding institutional configuration management, alongside verification.\n' "$i" >>"$1/$2"
+    i=$((i + 1))
+  done
+  (cd "$1" && git add -A) >/dev/null 2>&1
+}
+
+# $1 = root, $2 = source path, $3 = new path, $4 = lines to move. Moves the
+# LAST $4 lines of $2 into $3, which is the shape of a split: the source keeps
+# its head, the child takes a tail, and both are staged.
+split_tail() {
+  total="$(wc -l <"$1/$2" | tr -d ' ')"
+  keep=$((total - $4))
+  head -n "$keep" "$1/$2" >"$1/$2.head"
+  tail -n "$4" "$1/$2" >"$1/$3"
+  mv "$1/$2.head" "$1/$2"
+  (cd "$1" && git add -A) >/dev/null 2>&1
+}
+
+# X1: the grade ceiling follows the sentences. Half of a hard-to-read file is
+# moved into a new one, and the new file must be judged against what the source
+# read before the split rather than against the new-file ceiling.
+r="$(new_root x1)"
+hard_doc_varied "$r" docs/big.md 60
+baseline "$r"
+commit_all "$r"
+split_tail "$r" docs/big.md docs/tail.md 30
+PROSE_BASE_REF=HEAD expect_pass "X1 a split carries the source's reading grade" "$r"
+PROSE_BASE_REF=HEAD expect_output_contains \
+  "X1 the inheritance is named, not hidden" "$r" "docs/tail.md"
+
+# X2: the source keeps its own ceiling. A split is not a hand-off -- the file
+# that stayed is judged exactly as it was.
+r="$(new_root x2)"
+hard_doc_varied "$r" docs/big.md 60
+baseline "$r"
+commit_all "$r"
+split_tail "$r" docs/big.md docs/tail.md 30
+PROSE_BASE_REF=HEAD expect_pass "X2 the source half passes too" "$r"
+
+# X3: a split is not an amnesty. Prose ADDED to the new file is new prose, and
+# a banned construction there is still a first-time offender at zero allowance.
+r="$(new_root x3)"
+hard_doc_varied "$r" docs/big.md 60
+baseline "$r"
+commit_all "$r"
+split_tail "$r" docs/big.md docs/tail.md 30
+printf 'The cost is deliberate.\n' >>"$r/docs/tail.md"
+(cd "$r" && git add -A) >/dev/null 2>&1
+PROSE_BASE_REF=HEAD expect_fail "X3 a split does not forgive prose added in transit" "$r"
+
+# X4: a file that merely appeared beside a shrinking one claims nothing. This
+# new file shares no sentence with the source, so it is held to grade 6.00 the
+# way any first-time file is.
+r="$(new_root x4)"
+hard_doc_varied "$r" docs/big.md 60
+baseline "$r"
+commit_all "$r"
+split_tail "$r" docs/big.md docs/moved.md 30
+hard_doc_varied "$r" docs/unrelated.md 40
+PROSE_BASE_REF=HEAD expect_fail "X4 an unrelated new file inherits nothing" "$r"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

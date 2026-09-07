@@ -737,6 +737,95 @@ def counts_at_commit(root: Path, commit: str, path: str) -> dict[str, int]:
     return per_pattern
 
 
+# Git calls a pair a rename at 50% similarity. A split is held higher than
+# that: the text moves verbatim, and what a split rewrites in transit is the
+# parent's own header, the imports, and the links it repoints. A file that is
+# a fifth new prose is a new file wearing a move's clothes.
+SPLIT_SHARE = 0.8
+# Below this many prose lines a share is noise -- a short new file can match a
+# long one by accident on a handful of ordinary sentences.
+SPLIT_FLOOR = 20
+
+
+def split_sources(root: Path, commit: str) -> dict[str, str]:
+    """New path -> the file it was split out of, for every file this change adds.
+
+    A rename is a move git can name: the old path is gone, so `git diff -M`
+    pairs the delete with the add and [`renamed_paths`] reads the pair off.
+    A **split** leaves the old path standing -- `envelope.rs` beside a new
+    `envelope/inbound.rs` -- so git reports a modify beside an add and pairs
+    nothing. The sentences in the new file are the sentences that were in the
+    old one, and every ratchet keyed by path reads them as newly written. That
+    charged a split the reading grade of a file nobody had opened, which is
+    the one move `mod` hierarchy is for (AGENTS.md, "God files").
+
+    A new file is judged split out of `old` when at least `SPLIT_SHARE` of the
+    prose lines it holds sat in `old` at `commit` and have since left `old`.
+    Requiring the lines to be **gone** from the source is what stops a copy
+    claiming one allowance twice.
+
+    Its honest limit: two new files can each claim the same source, so a split
+    that duplicates a line between them is charged for it once rather than
+    twice. Prose *written* during the split is still new -- it is in neither
+    line set, so it lowers the share and, past the threshold, carries nothing.
+
+    Fails open at every unknown, like [`renamed_paths`]: an empty map allows
+    nothing that was not allowed before it could ask.
+    """
+    status = _git(root, ["diff", "-M", "--name-status", commit])
+    if not status:
+        return {}
+    added: list[str] = []
+    modified: list[str] = []
+    for line in status.splitlines():
+        fields = line.split("\t")
+        if len(fields) != 2 or not fields[1].endswith(SCANNED):
+            continue
+        if fields[0] == "A":
+            added.append(fields[1])
+        elif fields[0] == "M":
+            modified.append(fields[1])
+    if not added or not modified:
+        return {}
+
+    def prose_set(path: str, text: str) -> set[str]:
+        return {
+            line.strip()
+            for line in prose_lines(path, prose_only(text))
+            if line.strip()
+        }
+
+    shed: dict[str, set[str]] = {}
+    for path in modified:
+        was = prose_set(path, _git(root, ["show", f"{commit}:{path}"]))
+        if not was:
+            continue
+        try:
+            now = prose_set(path, (root / path).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            continue
+        gone = was - now
+        if gone:
+            shed[path] = gone
+
+    out: dict[str, str] = {}
+    for path in added:
+        try:
+            lines = prose_set(path, (root / path).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            continue
+        if len(lines) < SPLIT_FLOOR:
+            continue
+        best, share = "", 0.0
+        for source, gone in shed.items():
+            hit = len(lines & gone) / len(lines)
+            if hit > share:
+                best, share = source, hit
+        if share >= SPLIT_SHARE:
+            out[path] = best
+    return out
+
+
 def grade_at_commit(root: Path, commit: str, path: str) -> int | None:
     """One file's reading grade at `commit`, or None when it cannot be scored
     there -- the file is absent, or holds too little prose."""
@@ -1184,6 +1273,10 @@ def main() -> int:
     base_commit = resolve_base_commit(root, absolute)
     base_moves = renamed_paths(root, base_commit) if base_commit else {}
     came_from = {new: old for old, new in base_moves.items()}
+    # A split is a move git cannot name, and its prose is no newer for that.
+    if base_commit:
+        for new, old in split_sources(root, base_commit).items():
+            came_from.setdefault(new, old)
     inherited: list[str] = []
 
     base_counts: dict[str, dict[str, int]] = {}

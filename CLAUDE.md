@@ -171,6 +171,16 @@
     move can still only lower a count. Stage the move (`git mv`) or git
     reports a delete beside an untracked file and there is nothing to follow.
 
+    A **split** carries too, and git can never name that one: the source file
+    is still there, so git reports a modify beside an add and pairs nothing.
+    The plain check pairs them itself. A new file whose prose lines mostly
+    came out of a file the same change shrank is judged against that file's
+    numbers in the base tree, not against the new-file ceiling. So the `mod`
+    hierarchy AGENTS.md prescribes for a crowded file costs no rewrite of the
+    comments it carries. Stage the new file, and note that prose written
+    during the split is still new prose: it sits in neither line set, so it
+    lowers the share and is judged as new past the threshold.
+
     **`make prose-update` carries; `make prose-retighten` reclaims.** All
     three ratchets take that split. `--update` writes only the entries a move
     re-based and leaves every other number where it stands, so a branch
