@@ -35,6 +35,16 @@
 //! workspace keeps the window it already paid for. Nothing rewrites that
 //! file. An append-only ledger is not edited; it simply stops growing.
 //!
+//! # The output ledgers use the same key
+//!
+//! [`APPRAISALS_FILE`] and the demotion lineage carry
+//! [`stella_learn::ledger::ArtifactKind`] beside the id, the same as
+//! [`TRIALS_FILE`]. [`latest_verdicts`], [`consecutive_negative_appraisals`],
+//! [`record_demotion`] and [`demoted_skills`] each take a `kind` and read
+//! only that kind's rows. A memory record and a skill can share an id and
+//! stay two rows, not one. An old row with no kind still reads as a skill
+//! row — the same default [`TRIALS_FILE`] uses.
+//!
 //! # How the loop closes
 //!
 //! Every piece here has a production caller:
@@ -104,10 +114,15 @@ pub const LEGACY_TRIALS_FILE: &str = "skill_trials.jsonl";
 /// the delta between them is the skill's own.
 pub const LIVE_WINDOW_TASK: &str = "live-window";
 
-/// The `proposal_lineage_id` prefix a skill's demotion events are filed
-/// under, so the fold in [`demoted_skills`] can tell them from directive
-/// events in the same ledger.
-const SKILL_LINEAGE_PREFIX: &str = "skill:";
+/// The `proposal_lineage_id` prefix `kind`'s demotion events are filed under.
+/// [`demoted_skills`] uses it to tell one kind's lineage from another's, and
+/// from a directive event, in the same ledger.
+///
+/// Built from [`ArtifactKind::as_str`], the same word the trial ledger
+/// writes. A skill row keeps the plain `skill:` prefix an old build wrote.
+fn lineage_prefix(kind: ArtifactKind) -> String {
+    format!("{}:", kind.as_str())
+}
 
 /// One queued candidate: enough to appraise and then render it, without
 /// re-mining.
@@ -129,15 +144,20 @@ pub struct QueuedCandidate {
     pub body: Option<String>,
 }
 
-/// The newest verdict per skill, as the creation gate reads it.
+/// The newest verdict per id of `kind`, as the creation gate reads it.
 ///
-/// Later lines win: an appraisal is a measurement at a point in time, and a
-/// skill that stopped helping must not be held up by the run that said it did.
-/// A missing or unreadable ledger yields an empty map, which the gate reads as
-/// [`EvalEvidence::Unevaluated`] — the honest answer when nobody has looked.
-pub fn latest_verdicts(workspace_root: &Path) -> HashMap<String, EvalEvidence> {
+/// Later lines win: an appraisal is a measurement at a point in time, and an
+/// artifact that stopped helping must not be held up by the run that said it
+/// did. `kind` keeps a memory and a skill sharing an id as two verdicts, not
+/// one folded together. A missing or unreadable ledger yields an empty map,
+/// which the gate reads as [`EvalEvidence::Unevaluated`] — the honest answer
+/// when nobody has looked.
+pub fn latest_verdicts(workspace_root: &Path, kind: ArtifactKind) -> HashMap<String, EvalEvidence> {
     let mut verdicts = HashMap::new();
     for appraisal in read_jsonl::<SkillAppraisal>(&path(workspace_root, APPRAISALS_FILE)) {
+        if appraisal.kind != kind {
+            continue;
+        }
         verdicts.insert(
             appraisal.skill.clone(),
             EvalEvidence::from_verdict(&appraisal.verdict),
@@ -287,7 +307,7 @@ pub fn sweep(
     let mut out = Vec::new();
     for id in ids {
         let trials = by_id.remove(&id).unwrap_or_default();
-        let appraisal = appraise(&id, &trials, config);
+        let appraisal = appraise(kind, &id, &trials, config);
         let origin = origins
             .get(&id)
             .copied()
@@ -298,44 +318,52 @@ pub fn sweep(
     out
 }
 
-/// How many of the newest appraisals of `skill` are demotable verdicts
-/// (`Harms` or `Inert`), counted back from the ledger's end until the first
-/// verdict that is not.
+/// How many of the newest appraisals of `skill` under `kind` are demotable
+/// verdicts (`Harms` or `Inert`), counted back from the ledger's end until the
+/// first verdict that is not.
 ///
 /// The hysteresis input: one confident negative is recorded and visible, but
-/// only a run of them retires a skill — the length is
+/// only a run of them retires an artifact — the length is
 /// `context.promotion.skill.demote_after_consecutive_negatives` (default 3),
 /// because a single unlucky window must not undo a promotion that took a
-/// task set to earn.
-pub fn consecutive_negative_appraisals(workspace_root: &Path, skill: &str) -> usize {
+/// task set to earn. `kind` gives a memory and a skill sharing an id their
+/// own runs.
+pub fn consecutive_negative_appraisals(
+    workspace_root: &Path,
+    kind: ArtifactKind,
+    skill: &str,
+) -> usize {
     read_jsonl::<SkillAppraisal>(&path(workspace_root, APPRAISALS_FILE))
         .iter()
         .rev()
-        .filter(|a| a.skill == skill)
+        .filter(|a| a.kind == kind && a.skill == skill)
         .take_while(|a| a.verdict.demotes())
         .count()
 }
 
-/// Append the demotion state row for `skill` to the `context_records` ledger.
+/// Append the demotion state row for `skill` under `kind` to the
+/// `context_records` ledger.
 ///
 /// An INSERT and only an INSERT: the ledger's own triggers abort `UPDATE` and
 /// `DELETE` (`stella-context::store::schema`, `migrate_v8`), so a demotion is
-/// a new `promotion_event` row with [`PromotionAction::Retired`] against the
-/// `skill:<name>` lineage, and un-demoting is a later row against the same
-/// lineage — never an edit. The skill's file is untouched: demotion is
-/// removal from *selection*, and restore must survive it.
+/// a new `promotion_event` row against the `<kind>:<skill>` lineage
+/// ([`lineage_prefix`]), and un-demoting is a later row against the same
+/// lineage — never an edit. The artifact's own file or record is untouched:
+/// demotion is removal from *selection*, and restore must survive it. A
+/// memory and a skill sharing an id demote as two rows, one lineage each.
 ///
 /// [`PromotionActor::System`] because no person was asked, which also caps
 /// what this call can ever grant: `PromotionEventRecord::new` refuses a
 /// system actor carrying blocking enforcement outright.
 pub fn record_demotion(
     store: &ContextStore,
+    kind: ArtifactKind,
     skill: &str,
     reason: &str,
     occurred_at: &str,
 ) -> Result<String, String> {
     let event = PromotionEventRecord::new(
-        format!("{SKILL_LINEAGE_PREFIX}{skill}"),
+        format!("{}{skill}", lineage_prefix(kind)),
         PromotionAction::Retired,
         PromotionActor::System,
         None,
@@ -348,18 +376,20 @@ pub fn record_demotion(
     Ok(event.record_id)
 }
 
-/// The skills currently demoted out of selection — the last-write-wins fold
-/// over the `skill:` lineages in the promotion-event ledger.
+/// The ids of `kind` currently demoted out of selection — the last-write-wins
+/// fold over that kind's lineages in the promotion-event ledger.
 ///
 /// Last write wins for the same reason `proposals_cmd::decisions` folds that
-/// way: a skill demoted and later reinstated is reinstated, and both acts
+/// way: an artifact demoted and later reinstated is reinstated, and both acts
 /// remain readable. An unreadable ledger folds to the empty set, which fails
-/// toward offering a skill that should be excluded — recoverable on the next
-/// sweep — rather than silently withholding every skill a user has.
-pub fn demoted_skills(store: &ContextStore) -> HashSet<String> {
+/// toward offering an artifact that should be excluded — recoverable on the
+/// next sweep — rather than silently withholding every one a user has. A
+/// memory and a skill sharing an id fold as two standings, not one.
+pub fn demoted_skills(store: &ContextStore, kind: ArtifactKind) -> HashSet<String> {
+    let prefix = lineage_prefix(kind);
     let mut standing: HashMap<String, PromotionAction> = HashMap::new();
     for event in crate::proposals_cmd::promotion_events(store) {
-        if let Some(skill) = event.proposal_lineage_id.strip_prefix(SKILL_LINEAGE_PREFIX) {
+        if let Some(skill) = event.proposal_lineage_id.strip_prefix(&prefix) {
             standing.insert(skill.to_string(), event.action);
         }
     }

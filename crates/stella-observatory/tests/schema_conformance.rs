@@ -48,7 +48,9 @@
 use std::path::Path;
 
 use sha2::{Digest, Sha256};
-use stella_context::{ContextDelta, ContextStore, EpisodeInput, LedgerAppend};
+use stella_context::{
+    ContextDelta, ContextStore, EpisodeInput, LedgerAppend, MemoryInput, MemoryKind,
+};
 use stella_observatory::respond;
 use stella_protocol::{
     AgentEvent, ContextFrameRef, ContextProviderUsage, ContextUsage, ErrorClass, ProviderShare,
@@ -145,6 +147,12 @@ const ROUTES: &[(&str, Option<&str>)] = &[
         "/api/context-lifecycle",
         Some("/unreadable_reflections/0/execution_id"),
     ),
+    // Same split: the `context.db` half is proved by
+    // `context_records_join_a_real_memory_node` in the `context_lifecycle`
+    // module; here the store-only fixture proves the `context_blocks`
+    // rollup resolves and an absent ledger is a state, not a 500.
+    ("/api/context-records", Some("/totals/records")),
+    ("/api/context-record?id=nod_missing", Some("/found")),
 ];
 
 /// One tool call's full event round-trip — the announcement and its result.

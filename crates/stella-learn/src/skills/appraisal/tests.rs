@@ -42,7 +42,12 @@ fn a_skill_that_helps_is_promoted_with_its_lift_recorded() {
     let mut trials = arm("fix-git", false, false, 6);
     trials.extend(arm("fix-git", true, true, 6));
 
-    let appraisal = appraise("witness-assertions", &trials, &AppraisalConfig::default());
+    let appraisal = appraise(
+        ArtifactKind::Skill,
+        "witness-assertions",
+        &trials,
+        &AppraisalConfig::default(),
+    );
     let SkillVerdict::Helps { lift } = appraisal.verdict else {
         panic!("expected Helps, got {:?}", appraisal.verdict);
     };
@@ -63,7 +68,12 @@ fn a_skill_that_helps_is_promoted_with_its_lift_recorded() {
 #[test]
 fn frequency_without_lift_never_promotes() {
     let trials = window(30, 20, 20);
-    let appraisal = appraise("noise", &trials, &AppraisalConfig::default());
+    let appraisal = appraise(
+        ArtifactKind::Skill,
+        "noise",
+        &trials,
+        &AppraisalConfig::default(),
+    );
     assert!(!appraisal.verdict.promotes(), "{:?}", appraisal.verdict);
     assert!(
         matches!(appraisal.verdict, SkillVerdict::Inert { .. }),
@@ -167,7 +177,12 @@ fn a_regressing_skill_is_demoted_with_its_evidence() {
     // The with-skill arm solves nothing; the without-skill arm solves
     // everything. Removing the skill confidently wins.
     let trials = window(8, 0, 8);
-    let appraisal = appraise("stale-convention", &trials, &AppraisalConfig::default());
+    let appraisal = appraise(
+        ArtifactKind::Skill,
+        "stale-convention",
+        &trials,
+        &AppraisalConfig::default(),
+    );
 
     let SkillVerdict::Harms { lift } = appraisal.verdict else {
         panic!("expected Harms, got {:?}", appraisal.verdict);
@@ -197,7 +212,12 @@ fn a_regressing_skill_is_demoted_with_its_evidence() {
 #[test]
 fn a_hand_authored_skill_is_never_auto_demoted() {
     let trials = window(8, 0, 8);
-    let appraisal = appraise("house-style", &trials, &AppraisalConfig::default());
+    let appraisal = appraise(
+        ArtifactKind::Skill,
+        "house-style",
+        &trials,
+        &AppraisalConfig::default(),
+    );
     assert!(
         appraisal.verdict.demotes(),
         "the fixture's window really does regress"
@@ -266,7 +286,12 @@ fn every_origin_is_listed() {
 fn a_short_window_is_insufficient_not_inert() {
     // Six a side clears `min_samples_per_arm` but not the 20-trial window.
     let trials = window(6, 4, 4);
-    let appraisal = appraise("quiet", &trials, &AppraisalConfig::default());
+    let appraisal = appraise(
+        ArtifactKind::Skill,
+        "quiet",
+        &trials,
+        &AppraisalConfig::default(),
+    );
     assert!(
         matches!(appraisal.verdict, SkillVerdict::Insufficient { .. }),
         "got {:?}",
@@ -293,7 +318,12 @@ fn a_short_window_is_insufficient_not_inert() {
 fn a_one_sided_window_measures_nothing() {
     for selected in [true, false] {
         let trials = arm("live", selected, true, 10);
-        let appraisal = appraise("always-on", &trials, &AppraisalConfig::default());
+        let appraisal = appraise(
+            ArtifactKind::Skill,
+            "always-on",
+            &trials,
+            &AppraisalConfig::default(),
+        );
         let SkillVerdict::Insufficient {
             reason: KeepReason::InsufficientSamples { n, .. },
         } = &appraisal.verdict
@@ -342,7 +372,7 @@ fn a_guard_regression_holds_a_helpful_skill() {
         guards: vec![Guard::strict(Metric::CostUsd)],
         ..AppraisalConfig::default()
     };
-    let appraisal = appraise("expensive", &trials, &config);
+    let appraisal = appraise(ArtifactKind::Skill, "expensive", &trials, &config);
     assert!(
         matches!(appraisal.verdict, SkillVerdict::GuardBlocked { .. }),
         "got {:?}",
@@ -375,7 +405,7 @@ fn a_harmful_skill_is_demoted_even_under_a_guard_set() {
         ],
         ..AppraisalConfig::default()
     };
-    let appraisal = appraise("stale", &trials, &config);
+    let appraisal = appraise(ArtifactKind::Skill, "stale", &trials, &config);
     assert!(matches!(appraisal.verdict, SkillVerdict::Harms { .. }));
 }
 
@@ -384,7 +414,12 @@ fn a_harmful_skill_is_demoted_even_under_a_guard_set() {
 #[test]
 fn an_appraisal_round_trips() {
     let trials = window(8, 8, 0);
-    let appraisal = appraise("helper", &trials, &AppraisalConfig::default());
+    let appraisal = appraise(
+        ArtifactKind::Skill,
+        "helper",
+        &trials,
+        &AppraisalConfig::default(),
+    );
     let json = serde_json::to_string(&appraisal).unwrap();
     let back: SkillAppraisal = serde_json::from_str(&json).unwrap();
     assert_eq!(appraisal, back);
@@ -434,7 +469,7 @@ proptest! {
     /// Appraisal is total for any window, including empty and one-sided ones.
     #[test]
     fn appraisal_never_panics(trials in proptest::collection::vec(arb_trial(), 0..40)) {
-        let _ = appraise("s", &trials, &AppraisalConfig::default());
+        let _ = appraise(ArtifactKind::Skill, "s", &trials, &AppraisalConfig::default());
     }
 
     /// A skill is never both promotable and demotable — the two directions of
@@ -443,7 +478,7 @@ proptest! {
     fn a_verdict_never_points_both_ways(
         trials in proptest::collection::vec(arb_trial(), 0..60),
     ) {
-        let appraisal = appraise("s", &trials, &AppraisalConfig::default());
+        let appraisal = appraise(ArtifactKind::Skill, "s", &trials, &AppraisalConfig::default());
         prop_assert!(!(appraisal.verdict.promotes() && appraisal.verdict.demotes()));
     }
 
@@ -452,7 +487,7 @@ proptest! {
     fn no_window_can_demote_a_hand_authored_skill(
         trials in proptest::collection::vec(arb_trial(), 0..60),
     ) {
-        let appraisal = appraise("s", &trials, &AppraisalConfig::default());
+        let appraisal = appraise(ArtifactKind::Skill, "s", &trials, &AppraisalConfig::default());
         for origin in SkillOrigin::ALL.iter().copied().filter(|o| o.is_hand_authored()) {
             prop_assert_eq!(
                 decide_demotion(origin, &appraisal),
@@ -468,8 +503,8 @@ proptest! {
     ) {
         let config = AppraisalConfig::default();
         prop_assert_eq!(
-            serde_json::to_string(&appraise("s", &trials, &config)).unwrap(),
-            serde_json::to_string(&appraise("s", &trials, &config)).unwrap()
+            serde_json::to_string(&appraise(ArtifactKind::Skill, "s", &trials, &config)).unwrap(),
+            serde_json::to_string(&appraise(ArtifactKind::Skill, "s", &trials, &config)).unwrap()
         );
     }
 }

@@ -927,7 +927,7 @@ deleted-tests-test: ## Test the deleted-test guard's live-vs-stale PR body handl
 # reads a PR's description and commit messages, which a single local tree
 # does not carry (#6190).
 .PHONY: closing-keywords-test
-closing-keywords-test: ## Test the negated-closing-keyword guard (hermetic; not part of `gate`; #6190)
+closing-keywords-test: ## Test the closing-keywords guard (hermetic; not part of `gate`; #6190, #6347)
 	python3 ./scripts/test-closing-keywords.py
 
 # The canary's other half: it detects, this is what consumes the detection at
@@ -952,6 +952,17 @@ dispatch-main-verification: ## Start the ci and canary runs main's tip never got
 .PHONY: dispatch-main-verification-test
 dispatch-main-verification-test: ## Test the main-tip dispatcher (hermetic; not part of `gate`)
 	./scripts/test-dispatch-main-verification.sh
+
+# auto-tag.yml's last resort — the ordinary and admin merges both fail, so it
+# arms GitHub's native auto-merge and ends the job. That merge lands later,
+# asynchronously, still under the run's own token, so the resulting push
+# raises no workflow-triggering event either (#5857). This is the wait in
+# between: it holds the "check main's tip" step below until the armed PR
+# actually merges (or is closed), so the dispatcher above asks about the
+# right commit instead of the one from before the sync PR.
+.PHONY: wait-for-armed-merge-test
+wait-for-armed-merge-test: ## Test the armed-auto-merge wait (hermetic; not part of `gate`)
+	./scripts/test-wait-for-armed-merge.sh
 
 .PHONY: main-red-hold
 main-red-hold: ## Ask whether an open `main-red` issue should hold a PR (reads the tracker)

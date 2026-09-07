@@ -221,7 +221,8 @@ pub fn steering_withheld(withheld_by: Withholder, counts: &[(usize, &str, &str)]
         detail: Some(
             match withheld_by {
                 Withholder::ProjectUntrusted => {
-                    "set STELLA_TRUST_PROJECT=1 to let this repo steer the session"
+                    "set run.auto_trust_project = true in ~/.stella/stella.toml to let repos \
+                     steer sessions from now on, or STELLA_TRUST_PROJECT=1 for this one"
                 }
                 Withholder::ManagedCeiling => {
                     "your org's managed settings forbid it; STELLA_TRUST_PROJECT does not lift it"

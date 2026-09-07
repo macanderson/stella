@@ -17,6 +17,7 @@
 use std::path::Path;
 
 use stella_context::EpisodeOutcome;
+use stella_learn::ledger::ArtifactKind;
 use stella_learn::self_tuning::TaskOutcome;
 use stella_learn::skills::appraisal::{AppraisalConfig, SkillTrial, SkillVerdict, appraise};
 
@@ -187,7 +188,12 @@ fn the_measured_gate_holds_a_candidate_until_a_recorded_lift_promotes_it() {
             });
         }
     }
-    let appraisal = appraise(&candidate.name, &trials, &AppraisalConfig::default());
+    let appraisal = appraise(
+        ArtifactKind::Skill,
+        &candidate.name,
+        &trials,
+        &AppraisalConfig::default(),
+    );
     assert!(
         matches!(appraisal.verdict, SkillVerdict::Helps { .. }),
         "the fixture must measure a lift: {:?}",
@@ -363,14 +369,15 @@ async fn a_promoted_skill_that_stops_helping_is_demoted_and_no_longer_selected()
     let mut memory = session(dir.path());
     for pass in 1..=3 {
         memory.auto_create_skills(&log_path(dir.path()), true);
-        let negatives = appraisals::consecutive_negative_appraisals(dir.path(), &name);
+        let negatives =
+            appraisals::consecutive_negative_appraisals(dir.path(), ArtifactKind::Skill, &name);
         assert_eq!(
             negatives, pass,
             "each sweep records exactly one negative appraisal"
         );
     }
     assert!(
-        appraisals::demoted_skills(&memory.store).contains(&name),
+        appraisals::demoted_skills(&memory.store, ArtifactKind::Skill).contains(&name),
         "three consecutive negatives demote the skill"
     );
 

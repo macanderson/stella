@@ -1322,11 +1322,24 @@ def main() -> int:
         return 1
 
     total = sum(per_pair.values())
+    # Say which mode ran, mirroring check-file-size.sh's mode_note. The
+    # base-relative rule is silent by nature -- it only shows itself when
+    # something drifts -- so a checkout too shallow to resolve a base falls
+    # back to strict and reads as an ordinary green line forever. That is
+    # exactly how guard-self-tests.yml shipped this ratchet as a whole-tree
+    # check while every one of its three allowances believed otherwise
+    # (#6273); naming the mode is what makes the difference legible in a log
+    # rather than a thing to re-derive.
+    if base_commit:
+        mode_note = f" Judged against {base_commit[:12]}."
+    else:
+        mode_note = " No base resolved -- strict whole-tree check."
     print(
         f"check-prose: OK -- {total} grandfathered construction(s) "
         f"in {len(files)} file(s), none added; "
         f"{len(per_unit)} unit(s) within their header-length ceiling; "
         f"{len(per_grade)} file(s) within their reading-grade ceiling."
+        f"{mode_note}"
     )
     return 0
 

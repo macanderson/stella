@@ -28,12 +28,12 @@
 //!
 //! # Nothing here writes to a skill ledger
 //!
-//! `SkillAppraisal::skill` is a bare string. `appraisals::record_demotion`
-//! files under a `skill:<name>` lineage. A rule id in either would clash with
-//! a skill of the same name (`#6103`). So this writes to neither. A verdict is
-//! acted on and never stored, the way the memory sweep acts on one. A
-//! retraction is filed under the record's own `lineage_id`, which is unique in
-//! the workspace.
+//! `appraisals::record_demotion` and `appraisals::latest_verdicts` key by
+//! `(kind, id)`, so a rule id and a skill of the same name appraise and demote
+//! as separate rows. This module still writes to neither: a verdict is acted
+//! on and never stored, the way the memory sweep acts on one. A retraction is
+//! filed under the record's own `lineage_id`, which is unique in the
+//! workspace.
 //!
 //! # A candidate with no window
 //!

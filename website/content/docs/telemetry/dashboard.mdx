@@ -30,12 +30,12 @@ This isn't a policy choice, it's built into how it works:
 
 ## What you can see
 
-The navigation has eleven tabs, plus a **window** selector: `24h`, `7d`,
+The navigation has twelve tabs, plus a **window** selector: `24h`, `7d`,
 `30d`, or `all` (the default). The Overview KPIs, the tokens-per-run
 timeline, the Executions table, and every Activity chart follow the
 selected window. The leaderboard panels labeled *all-time* ignore it. A
-twelfth tab, **transcript**, only appears while you have a turn open. It's
-a sub-page of Sessions, not something you navigate to directly.
+thirteenth tab, **transcript**, only appears while you have a turn open.
+It's a sub-page of Sessions, not something you navigate to directly.
 
 <CardGrid size="md">
   <OptionCard name="overview">
@@ -104,7 +104,22 @@ a sub-page of Sessions, not something you navigate to directly.
   <OptionCard name="self-improve">
     The self-improvement loop, tracked from `.stella`: a self-rating for
     each reflection, shortcomings the agent owns up to, lessons it pulled
-    out, and skills it learned automatically.
+    out, and skills it learned automatically. Its **selection health**
+    table says which injected records earn their tokens. Each row opens
+    that record on the Records tab.
+  </OptionCard>
+  <OptionCard name="records">
+    Every context record that steers this workspace, ranked by what needs
+    a decision first. That means the memories recall puts in front of the
+    model, and the rules published under `.stella/rules`. Each card shows
+    the record's own words. It shows how often it was rendered, across how
+    many tasks, and how its uses were judged. Open one to see every use
+    with its verdict. You also see the turns it was rendered into, and
+    each one opens the transcript. The page names the records it is
+    rendered beside, and says what would change its standing. **View
+    source** shows the words as stored and as the model saw them. It gives
+    the `stella context` or `stella memory` command that changes them.
+    The dashboard itself never writes.
   </OptionCard>
   <OptionCard name="org / hub">
     Spend across **every project on this machine**, not just this one.

@@ -122,4 +122,11 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./scripts/check-main-verified.sh
+        # `--announce` opens/refreshes/closes a `main-unverified`-labelled
+        # issue on the same shape as the reconciliation step above — before
+        # this the finding printed into this step's log and reached nobody
+        # (#5731, #5811, #5856). Its own label, not `main-red`: "nothing
+        # verified this commit" is a different state from "a check said no
+        # about this commit", and main-red-hold.yml reads only `main-red`, so
+        # this never blocks a merge on an absence of information.
+        run: ./scripts/check-main-verified.sh --announce

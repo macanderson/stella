@@ -50,7 +50,7 @@ fn candidate(name: &str) -> SkillCandidate {
 #[test]
 fn an_absent_ledger_yields_no_verdicts() {
     let root = workspace("absent");
-    assert!(latest_verdicts(&root).is_empty());
+    assert!(latest_verdicts(&root, ArtifactKind::Skill).is_empty());
     assert!(queued_candidates(&root).is_empty());
     assert!(
         sweep(
@@ -69,6 +69,7 @@ fn an_absent_ledger_yields_no_verdicts() {
 fn the_newest_verdict_per_skill_wins() {
     let root = workspace("newest");
     let helping = SkillAppraisal {
+        kind: ArtifactKind::Skill,
         skill: "s".into(),
         verdict: SkillVerdict::Helps { lift: 1.0 },
         report: stella_learn::comparison::compare(
@@ -86,11 +87,14 @@ fn the_newest_verdict_per_skill_wins() {
     };
     record_appraisal(&root, &helping);
     assert_eq!(
-        latest_verdicts(&root).get("s"),
+        latest_verdicts(&root, ArtifactKind::Skill).get("s"),
         Some(&EvalEvidence::MeasuredLift)
     );
     record_appraisal(&root, &stale);
-    assert_eq!(latest_verdicts(&root).get("s"), Some(&EvalEvidence::NoLift));
+    assert_eq!(
+        latest_verdicts(&root, ArtifactKind::Skill).get("s"),
+        Some(&EvalEvidence::NoLift)
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -339,4 +343,99 @@ fn the_sweep_still_reads_the_rows_an_older_build_wrote() {
     assert!(matches!(swept[0].0.verdict, SkillVerdict::Harms { .. }));
     assert!(swept[0].1.is_demotion());
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A fresh `context.db`, for the demotion-lineage tests below.
+fn context_store() -> (tempfile::TempDir, stella_context::ContextStore) {
+    let dir = tempfile::tempdir().expect("workspace");
+    let store =
+        stella_context::ContextStore::open(dir.path().join("context.db")).expect("context.db");
+    (dir, store)
+}
+
+/// **The witness for the output-side key.** Two kinds can share one id. Each
+/// must appraise and demote as its own row, never as one collapsed row.
+#[test]
+fn two_appraisals_under_one_id_do_not_collide() {
+    let root = workspace("output-kinds");
+    let skill_appraisal = SkillAppraisal {
+        kind: ArtifactKind::Skill,
+        skill: "shared".into(),
+        verdict: SkillVerdict::Helps { lift: 1.0 },
+        report: stella_learn::comparison::compare(
+            &[],
+            &stella_learn::comparison::ComparisonConfig::new(
+                "without_skill",
+                stella_learn::comparison::Metric::PassRate,
+            ),
+        ),
+        harm: None,
+    };
+    let memory_appraisal = SkillAppraisal {
+        kind: ArtifactKind::Memory,
+        verdict: SkillVerdict::Harms { lift: -1.0 },
+        ..skill_appraisal.clone()
+    };
+    record_appraisal(&root, &skill_appraisal);
+    record_appraisal(&root, &memory_appraisal);
+
+    // Two verdicts, not one folded together.
+    assert_eq!(
+        latest_verdicts(&root, ArtifactKind::Skill).get("shared"),
+        Some(&EvalEvidence::MeasuredLift),
+        "the memory row must not shadow the skill row"
+    );
+    assert_eq!(
+        latest_verdicts(&root, ArtifactKind::Memory).get("shared"),
+        Some(&EvalEvidence::NoLift)
+    );
+
+    // Only the memory row is demotable. Only its hysteresis sees a negative.
+    assert_eq!(
+        consecutive_negative_appraisals(&root, ArtifactKind::Skill, "shared"),
+        0
+    );
+    assert_eq!(
+        consecutive_negative_appraisals(&root, ArtifactKind::Memory, "shared"),
+        1
+    );
+
+    // A demotion under one kind leaves the other selectable.
+    let (_dir, store) = context_store();
+    record_demotion(
+        &store,
+        ArtifactKind::Memory,
+        "shared",
+        "it stopped helping",
+        "2026-09-06T00:00:00Z",
+    )
+    .expect("the demotion writes");
+    assert!(
+        demoted_skills(&store, ArtifactKind::Memory).contains("shared"),
+        "the demoted kind excludes it"
+    );
+    assert!(
+        !demoted_skills(&store, ArtifactKind::Skill).contains("shared"),
+        "the skill of the same id is unaffected"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A build before this change wrote a demotion under the bare `skill:`
+/// prefix. [`demoted_skills`] must still find it.
+#[test]
+fn a_skill_demotion_written_before_kinds_existed_still_folds() {
+    let (_dir, store) = context_store();
+    let event = stella_records::context_record::PromotionEventRecord::new(
+        "skill:old-timer".to_string(),
+        stella_records::context_record::PromotionAction::Retired,
+        stella_records::context_record::PromotionActor::System,
+        None,
+        None,
+        "a demotion event a build before this change wrote",
+        "2026-01-01T00:00:00Z",
+    )
+    .expect("a valid event");
+    crate::proposals_cmd::record_event(&store, &event).expect("the event writes");
+    assert!(demoted_skills(&store, ArtifactKind::Skill).contains("old-timer"));
 }

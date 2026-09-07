@@ -611,6 +611,11 @@ svg text{font:10px var(--mono);fill:var(--text-3)}
 .feed-item:last-child{border-bottom:0}
 .feed-item b{color:var(--text);font-weight:600}
 .feed-item .when{color:var(--text-3);font-size:var(--fs-micro);margin-left:6px}
+/* A selection-health row opens its record on the Records tab — the id was a
+   bare string with nothing to click, on the one table whose whole point is
+   deciding what to do about a record. */
+.rec-link{color:var(--mark);text-decoration:none}
+.rec-link:hover{text-decoration:underline}
 .mem-card{border:1px solid var(--hairline);border-radius:var(--radius);
           padding:11px var(--sp2);margin-bottom:var(--sp1)}
 .mem-card .name{font:600 var(--fs-sm)/1.5 var(--mono);color:var(--text)}
@@ -1117,6 +1122,7 @@ footer b{color:var(--identity);font-weight:600}
       <button role="tab" id="tab-mcp" aria-controls="panel-mcp" data-tab="mcp">MCP</button>
       <button role="tab" id="tab-memory" aria-controls="panel-memory" data-tab="memory">Memory &amp; rules</button>
       <button role="tab" id="tab-improve" aria-controls="panel-improve" data-tab="improve">Self-improve</button>
+      <button role="tab" id="tab-records" aria-controls="panel-records" data-tab="records">Records</button>
       <button role="tab" id="tab-self-driving" aria-controls="panel-self-driving" data-tab="self-driving">Self-Driving</button>
       <button role="tab" id="tab-hub" aria-controls="panel-hub" data-tab="hub">Org / hub</button>
       <button role="tab" id="tab-config" aria-controls="panel-config" data-tab="config">Config</button>
@@ -1484,6 +1490,14 @@ footer b{color:var(--identity);font-weight:600}
     </div>
   </section>
 
+  <!-- ══ RECORDS ═══════════════════════════════════════════════════════ -->
+  <!-- The context-records drill-down: drawn by /assets/records.js from
+       /api/context-records and /api/context-record. Three views under one
+       tab, addressed by fragment: the list, one record, its source. -->
+  <section data-tab="records" id="panel-records" role="tabpanel" aria-labelledby="tab-records" tabindex="0">
+    <div id="rec-root"></div>
+  </section>
+
   <!-- ══ CONFIG ════════════════════════════════════════════════════════ -->
   <!-- ══ SELF_DRIVING ══════════════════════════════════════════════════════ -->
   <section data-tab="self-driving" id="panel-self-driving" role="tabpanel" aria-labelledby="tab-self-driving" tabindex="0">
@@ -1741,9 +1755,15 @@ const fmtMs = (v) => { const n = num(v);
   return n >= 60000 ? (n / 60000).toFixed(1) + "m" : n >= 1000 ? (n / 1000).toFixed(1) + "s" : n + "ms"; };
 const fmtInt = (v) => num(v).toLocaleString("en-US");
 const pct = (v) => (100 * num(v)).toFixed(0) + "%";
+/* Two spellings reach this: the store's `YYYY-MM-DD HH:MM:SS`, which is UTC
+   with no marker and needs one appended, and context.db's RFC 3339 with its
+   own `Z` (or offset), which must not get a second. Appending `Z` to both
+   made every ledger timestamp unparseable, so an episode's `ended`, a use's
+   `observed_at` and a memory's `recorded_at` all rendered as `—`. */
 const utc = (s) => {
   if (typeof s !== "string" || !s) return null;
-  const d = new Date(s.replace(" ", "T") + "Z");
+  const iso = s.replace(" ", "T");
+  const d = new Date(/(?:Z|[+-]\d\d:?\d\d)$/i.test(iso) ? iso : iso + "Z");
   return Number.isNaN(d.getTime()) ? null : d;
 };
 /* Clock skew is real: the workspace DB and the browser can disagree, and a
@@ -3834,7 +3854,8 @@ function renderLifecycle(d) {
         <th scope="col" class="num">helpful</th><th scope="col" class="num">not helpful</th>
         <th scope="col">standing</th></tr></thead><tbody>` +
       health.map(h => `<tr>
-        <td class="main" title="${esc(h.context_record_id)}">${esc(h.context_record_id)}</td>
+        <td class="main" title="${esc(h.context_record_id)}"><a class="rec-link"
+          href="#records/${esc(h.context_record_id)}">${esc(h.context_record_id)}</a></td>
         <td class="num">${fmtInt(h.uses)}</td>
         <td class="num">${fmtInt(h.distinct_tasks)}</td>
         <td class="num">${fmtInt(h.assessed_uses)}</td>
@@ -3846,7 +3867,8 @@ function renderLifecycle(d) {
       `</tbody></table>
       <div class="when" style="margin-top:6px">shipped defaults: failing =
         ≥${fmtInt(pol.min_attributable_uses ?? 5)} assessed uses with
-        ≥${pct(pol.not_helpful_ratio_threshold ?? 0.8)} judged not helpful</div>`
+        ≥${pct(pol.not_helpful_ratio_threshold ?? 0.8)} judged not helpful ·
+        <a class="rec-link" href="#records">every record, with its words →</a></div>`
     : `<div class="empty">Nothing assessed yet.<br>
        Every time recalled context is judged for whether it helped, the verdict
        lands here — which injected records are earning their tokens.</div>`;
@@ -5061,6 +5083,11 @@ async function loadTab(tab, force) {
       // The agents view rides the same never-cached fetch cadence; it is a
       // separate script so its charts and motion stay reviewable on their own.
       if (window.SelfDriving) await window.SelfDriving.load(force);
+    } else if (tab === "records") {
+      // Owned by /assets/records.js, which caches per project itself and
+      // takes the route's argument: "" lists, "<id>" opens one record,
+      // "<id>/source" its source.
+      if (window.Records) await window.Records.route(state.recordsArg, force);
     } else if (tab === "config") {
       const data = cached ?? await api("/api/config");
       lazyCache[key] = data;
@@ -5088,6 +5115,7 @@ function switchTab(tab, arg = "") {
   if (tab === "transcript" && !arg) { location.hash = "sessions"; return; }
   const left = state.tab === "transcript" && tab !== "transcript";
   state.tab = tab;
+  state.recordsArg = tab === "records" ? arg : "";
   if (tab === "transcript") $("tab-transcript").hidden = false;
   TABS.forEach(b => {
     const on = b.dataset.tab === tab;
@@ -5096,7 +5124,7 @@ function switchTab(tab, arg = "") {
   });
   document.querySelectorAll("section[data-tab]").forEach(s =>
     s.classList.toggle("on", s.dataset.tab === tab));
-  const route = tab === "transcript" ? `${tab}/${arg}` : tab;
+  const route = (tab === "transcript" || (tab === "records" && arg)) ? `${tab}/${arg}` : tab;
   if (location.hash !== "#" + route) history.replaceState(null, "", "#" + route);
   if (left) closeTranscript();
   if (tab === "transcript") {
@@ -5155,6 +5183,10 @@ function routeTo(hash) {
   // `<execution>` alone, or `<execution>/sub/<agent>` for one of the turn's
   // sub-agents assumed into the page.
   if (tab === "transcript" && !/^\d+(\/sub\/[^/]+)?$/.test(arg)) return false;
+  // `<record id>`, or `<record id>/source`. The id's alphabet is the one
+  // the server accepts (`context_records::valid_id`); anything else is not
+  // a route, the same way a non-numeric execution is not one above.
+  if (tab === "records" && arg && !/^[\^A-Za-z0-9_.:@-]{1,200}(\/source)?$/.test(arg)) return false;
   switchTab(tab, arg);
   return true;
 }
@@ -5167,7 +5199,9 @@ const currentRoute = () =>
   state.tab === "transcript" && tx
     ? `transcript/${tx.id}`
       + (txSub ? `/sub/${encodeURIComponent(txSub.ids[txSub.idx])}` : "")
-    : state.tab;
+    : state.tab === "records" && state.recordsArg
+      ? `records/${state.recordsArg}`
+      : state.tab;
 addEventListener("hashchange", () => {
   if (!routeTo(location.hash)) history.replaceState(null, "", "#" + currentRoute());
 });
@@ -5405,5 +5439,6 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) refr
 addEventListener("pagehide", stopPolling);
 </script>
 <script src="/assets/self_driving.js"></script>
+<script src="/assets/records.js"></script>
 </body>
 </html>

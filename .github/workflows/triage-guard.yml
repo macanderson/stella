@@ -24,7 +24,17 @@ jobs:
           # A guard naming only `triage-bot` does not enforce SCR-005 — it
           # locks every login out of a facet SCR-005 requires somebody to
           # set, which is how #5205 made the whole backlog unprioritisable.
-          TRIAGE_LOGINS: triage-bot macanderson
+          #
+          # `github-actions[bot]` is the login a workflow posts under when it
+          # authenticates with the run's own token, which is what
+          # `triage-schedule.yml` does. That token raises no workflow event —
+          # the rule AGENTS.md names for `auto-tag.yml` and `main-canary.yml` —
+          # so the sweep's writes never reach this guard and the entry is inert
+          # today. It starts mattering the day the sweep needs a PAT or an App
+          # token, whose writes do raise events: without the entry the guard
+          # would strip each priority the sweep wrote and put `triage` back,
+          # and the next sweep would size the same issue again.
+          TRIAGE_LOGINS: triage-bot macanderson github-actions[bot]
         with:
           script: |
             const issue = context.payload.issue;
