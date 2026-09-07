@@ -73,7 +73,11 @@ pub struct ArtifactTrial {
 }
 
 /// What a row with no kind meant. See [`ArtifactTrial::kind`].
-fn skill_kind() -> ArtifactKind {
+///
+/// `pub(crate)` rather than private: [`crate::skills::appraisal::SkillAppraisal`]
+/// needs the identical default for the same reason, on the ledger a sweep
+/// writes rather than the one it reads.
+pub(crate) fn skill_kind() -> ArtifactKind {
     ArtifactKind::Skill
 }
 
