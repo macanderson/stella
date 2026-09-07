@@ -400,7 +400,9 @@ is a dead attempt — reported, not blocking, because that is the state where
 the next session most needs to proceed. A `Refs #N` PR — the carrier when a
 fix uses no closing keyword so `dod-check` does not hold an unrelated
 issue's checklist against it — is named too, but only as a weaker signal
-that never blocks by itself. Then the claim comments,
+that never blocks by itself. Then the issue's own state: a closed issue
+stands the session down and names the reason, because an audit that folds
+an issue into a batch leaves no PR and no claim behind. Then the claim comments,
 on the red-`main` rules — the tracker is the table so a peer in another
 worktree can see it, a comment carries its author and timestamp, a claim
 lapses so a crashed session cannot hold an issue shut, and every unknown

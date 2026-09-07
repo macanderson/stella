@@ -63,6 +63,16 @@
 # It also does not replace reading the open PRs. A merged or open PR closing
 # the issue is a stronger signal than any claim, and this prints one when it
 # finds it — that is the check that would have saved this session twice.
+#
+# ── A closed issue is not work to claim ──────────────────────────────────────
+#
+# The pull requests say who finished; the claims say who started. Neither
+# says whether the issue is still open. An audit can fold an issue into a
+# batch and close it, leaving no PR and no claim behind. On 2026-09-06 a
+# session claimed an issue two minutes after such a fold and spent an hour
+# on it. So the check reads the issue's own state and stands down on a
+# closed one, naming the reason. An unreadable state proceeds, like every
+# other unknown here.
 
 set -uo pipefail
 
@@ -84,6 +94,8 @@ fixture_session=""
 fixture_claims=""
 fixture_prs=""
 fixture_prs_failed=0
+fixture_issue_state="OPEN"
+fixture_issue_state_failed=0
 select_now=""
 use_fixture=0
 
@@ -134,6 +146,20 @@ while [ $# -gt 0 ]; do
   # this — a failed query has no rows to fake.
   --fixture-prs-failed)
     fixture_prs_failed=1
+    use_fixture=1
+    shift
+    ;;
+  # Test-only: the issue's own state as `gh issue view --json state,stateReason`
+  # would report it, `STATE` or `STATE:REASON`. Defaults to OPEN, so a fixture
+  # that says nothing about the state models an ordinary open issue.
+  --fixture-issue-state)
+    fixture_issue_state="${2:-}"
+    use_fixture=1
+    shift 2
+    ;;
+  # Test-only: the state query itself failing, as opposed to answering.
+  --fixture-issue-state-failed)
+    fixture_issue_state_failed=1
     use_fixture=1
     shift
     ;;
@@ -325,6 +351,48 @@ if [ -n "$refs_hits" ]; then
   echo "      the live fix can sit in a Refs-only PR while the one that would" >&2
   echo "      close the issue is dead." >&2
   printf '     %s\n' "$refs_hits" >&2
+fi
+
+# ── A closed issue is not work to claim ──────────────────────────────────────
+#
+# After the pull requests, since a MERGED closing PR is the clearer report of
+# the same fact, and before the identity read, since a closed issue is closed
+# for every session alike. `state_ok` is whether the tracker answered at all:
+# "OPEN" is a claim about a state that was read, and a query that failed to
+# ask must never be reported in that shape.
+issue_state=""
+issue_reason=""
+state_ok=1
+if [ "$use_fixture" -eq 1 ]; then
+  if [ "$fixture_issue_state_failed" -eq 1 ]; then
+    state_ok=0
+  else
+    state_line="$fixture_issue_state"
+  fi
+elif ! state_line="$(CLICOLOR_FORCE=0 NO_COLOR=1 gh issue view "$issue" \
+  --json state,stateReason --jq '"\(.state):\(.stateReason // "")"' 2>/dev/null)"; then
+  state_ok=0
+fi
+if [ "$state_ok" -eq 1 ]; then
+  issue_state="${state_line%%:*}"
+  issue_reason="${state_line#*:}"
+  [ "$issue_reason" = "$state_line" ] && issue_reason=""
+fi
+
+if [ "$state_ok" -eq 0 ]; then
+  echo "note: could not read #$issue's state, so this run cannot tell an open" >&2
+  echo "      issue from a closed one. Proceeding (fail-open); the claim check" >&2
+  echo "      below still runs." >&2
+elif [ "$issue_state" = "CLOSED" ]; then
+  echo "STAND DOWN  #$issue is closed (${issue_reason:-no reason recorded})." >&2
+  echo "" >&2
+  echo "     A closed issue is not work to claim. COMPLETED means the work" >&2
+  echo "     landed and the issue is stale. NOT_PLANNED is usually a fold: an" >&2
+  echo "     audit moved it into a batch issue, and the closing comment names" >&2
+  echo "     which one. Read that comment, then the batch's member list. If" >&2
+  echo "     the member is still unticked there, claim the batch and say" >&2
+  echo "     which member you are taking." >&2
+  exit 1
 fi
 
 if [ "$use_fixture" -eq 1 ]; then
