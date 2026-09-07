@@ -476,7 +476,12 @@ impl Tool for Bash {
             description: format!(
                 "Run a shell command in the workspace root. Returns stdout+stderr with a \
                 timeout backstop. You can READ anything on this machine — system headers, the \
-                toolchain, a dependency's source. You can only CHANGE things inside this \
+                toolchain, a dependency's source. To see a file in the workspace, use \
+                read_file rather than cat, sed -n, head or tail: read_file records what you \
+                were shown, and edit_file needs that record to tell a stale needle from a file \
+                that changed underneath you. Several files, or several ranges, go in ONE \
+                read_file call through its files argument — reach for a chain of sed and you \
+                lose the record for every one of them. You can only CHANGE things inside this \
                 session's directories (get_environment reports the workspace root), so a \
                 command that creates, edits, deletes or moves a file elsewhere is refused \
                 before it runs. Prefer write_file/edit_file/delete_file over shell equivalents \
@@ -1172,6 +1177,49 @@ mod tests {
         // No plane, no promise: never advertise a capability that is absent.
         let without = Bash::new(None);
         assert!(!without.schema().description.contains("$STELLA_SCRATCH"));
+    }
+
+    /// **Witness.** The schema steers reads the way it steers writes.
+    ///
+    /// One measured execution routed 23 of its file reads through
+    /// `sed -n 'A,Bp'` and 2 through `read_file`, while sending every one of
+    /// its 14 edits through `edit_file` and none through `sed -i`. The write
+    /// side of this description named the shell spellings it wanted avoided
+    /// and was obeyed; the read side named none and leaked. A shell read
+    /// records nothing in the read ledger, so `edit_file` cannot later tell a
+    /// stale needle from a file something else rewrote, `write_file`'s
+    /// no-clobber guard refuses the overwrite, and the unchanged-read ceiling
+    /// cannot see the paging sweep it was built to stop.
+    ///
+    /// [`drift_advisory`] is where the other repair is forbidden: preference
+    /// injected into a bash *result* is re-sent as input on every later turn,
+    /// and it named the schema and the system prompt as the two places it
+    /// belongs. The system prompt took its half; this is the other one.
+    #[test]
+    fn the_bash_schema_steers_reads_the_way_it_steers_writes() {
+        let described = Bash::new(None).schema().description;
+        assert!(
+            described.contains("read_file"),
+            "bash must name the tool that reads a workspace file: {described}"
+        );
+        for shell_read in ["cat", "sed -n", "head", "tail"] {
+            assert!(
+                described.contains(shell_read),
+                "bash must name `{shell_read}` as the spelling to avoid, the way it \
+                 already names the shell spellings of a write: {described}"
+            );
+        }
+        assert!(
+            described.contains("ONE read_file call"),
+            "several files in one call is what makes read_file cheaper than a chain \
+             of sed, so the schema has to say it: {described}"
+        );
+        // The write half is what this is modelled on, and a rewrite that drops
+        // it trades one asymmetry for the mirror image.
+        assert!(
+            described.contains("Prefer write_file/edit_file/delete_file"),
+            "the write-side steer stays beside the read-side one: {described}"
+        );
     }
 
     /// End-to-end counterpart to the unit witness above: a real `bash` call

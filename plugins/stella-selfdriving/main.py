@@ -8,8 +8,9 @@ an SDK means the protocol is too hard. This file is the whole program.
 # What it is
 
 A driver, not a wrapper. It never runs inside a turn. It starts them. The host
-opens one session. This program says what a cycle should do, asks the host to
-do it, and says what should happen next:
+opens a session, and opens another one each time this program answers `sleep`.
+This program says what a cycle should do, asks the host to do it, and says what
+should happen next:
 
     host   {"point": "drive", "body": {"session": "cycle-7"}}
  -> plugin {"call": "backlog_next", "id": 1}

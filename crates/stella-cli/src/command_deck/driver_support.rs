@@ -17,6 +17,7 @@ use stella_tools::ToolRegistry;
 use stella_tui::{AgentMeta, AgentStatus, Inbound, WorkspaceInput};
 use tokio::sync::mpsc::{self, UnboundedSender};
 
+use super::task_tap::{RevisionSlot, parked_revisions};
 use super::{
     LEAD, agent, ci_status_token, now_ms, observe_pr, pr_status_token, session_clear,
     sessions_view, system_notice, worker_control,
@@ -304,19 +305,29 @@ pub(super) fn service_rerun_gate(input: &WorkspaceInput, in_tx: &UnboundedSender
 /// the same repair step under two ids that never resolve to one task.
 ///
 /// It does **not** build a `PlanGraph` here. The live one belongs to the
-/// turn's `PlanGate`, this is between turns, and a throwaway graph
-/// reconstructed from the board would restart at `r1` — so every number it
-/// produced would contradict the `r{n}` the reader just approved. The
-/// engine-side gate, where `RevisionGate::admits` withholds the *tool calls*
-/// of a turn already in flight, is #5296.
+/// turn's `PlanGate`, and a throwaway graph reconstructed from the board would
+/// restart at `r1`, so every number it produced would contradict the `r{n}`
+/// the reader just approved. What this does instead is say yes on that gate —
+/// `RevisionGate::agree` through the slot the running turn parked its gate in
+/// — and the turn's next guarded tool call writes the revision through
+/// `RevisionGate::approve`. Reading the yes off the board row instead, which
+/// is what the engine-side gate did until now, made a row the model created
+/// with the same subject indistinguishable from consent.
+///
+/// The notice says the write is still to come, because it is: the plan can
+/// move while the answer is in flight, and `RevisionGate::approve` refuses a
+/// proposal it moved past. A sentence claiming the revision was written would
+/// be one the plan can contradict.
 pub(super) fn service_approve_revision(
     input: &WorkspaceInput,
+    revisions: &RevisionSlot,
     registry: &ToolRegistry,
     in_tx: &UnboundedSender<Inbound>,
 ) -> bool {
     let WorkspaceInput::ApproveRevision { proposal, .. } = input else {
         return false;
     };
+    let answered = agree_to(revisions, proposal);
     let board = registry.task_board();
     let mut guard = board.lock().unwrap_or_else(|p| p.into_inner());
     let message = if let Some(existing) = guard
@@ -325,8 +336,11 @@ pub(super) fn service_approve_revision(
         .find(|item| item.subject == proposal.subject)
     {
         format!(
-            "{} was already approved — task {} \"{}\" is on the board",
-            proposal.revision, existing.id, existing.subject
+            "{} was already approved — task {} \"{}\" is on the board{}",
+            proposal.revision,
+            existing.id,
+            existing.subject,
+            answered.note()
         )
     } else {
         // The cause rides the row's description, which is where the drift
@@ -348,10 +362,11 @@ pub(super) fn service_approve_revision(
             None,
         );
         format!(
-            "{} approved — task {} \"{}\", because the {} gate reported: {}",
+            "{} approved — task {} \"{}\"{}, because the {} gate reported: {}",
             proposal.revision,
             task.id,
             task.subject,
+            answered.note(),
             proposal.gate,
             proposal.cause.as_str()
         )
@@ -359,6 +374,94 @@ pub(super) fn service_approve_revision(
     drop(guard);
     let _ = in_tx.send(Inbound::Notice(message));
     true
+}
+
+/// Service `x dismiss` on a standing plan revision (SPEC 8.1). Returns `true`
+/// if `input` was that verb.
+///
+/// A dismissal writes nothing — no revision, no board row — and it still has
+/// to happen here. The gate withholding a running turn's tool calls is the
+/// turn's, the deck cannot reach it, and a card cleared on screen while that
+/// gate still stands leaves the turn refused until it ends. That was the state
+/// of this key before: drawn, labelled, and wired to nothing.
+pub(super) fn service_dismiss_revision(
+    input: &WorkspaceInput,
+    revisions: &RevisionSlot,
+    in_tx: &UnboundedSender<Inbound>,
+) -> bool {
+    let WorkspaceInput::DismissRevision { proposal, .. } = input else {
+        return false;
+    };
+    let dropped = parked_revisions(revisions)
+        .and_then(|gate| gate.lock().unwrap_or_else(|p| p.into_inner()).dismiss());
+    let message = match dropped {
+        Some(dropped) => format!(
+            "{} dismissed — the plan is unchanged and the turn goes on without \"{}\"",
+            dropped.revision, dropped.subject
+        ),
+        // Nothing was holding it: the turn that put the change up has already
+        // ended, so the card was the last of it. Said plainly rather than
+        // silently, because a key that answers nothing leaves the reader
+        // waiting to see what it did.
+        None => format!(
+            "{} dismissed — no turn was holding it, so nothing was waiting on the answer",
+            proposal.revision
+        ),
+    };
+    let _ = in_tx.send(Inbound::Notice(message));
+    true
+}
+
+/// What became of a yes offered to the running turn's gate.
+enum Answered {
+    /// The gate took it, and its next guarded tool call writes the revision.
+    Recorded,
+    /// No turn is running, or none is holding a change. The board row is then
+    /// the whole of the approval.
+    NoHold,
+    /// A turn is holding a *different* change. The reader answered the card in
+    /// front of them, and it is not the question being asked, so their yes is
+    /// not applied to the other one.
+    OtherChange,
+}
+
+impl Answered {
+    /// What the notice says about the revision this has not written yet.
+    fn note(&self) -> &'static str {
+        match self {
+            Self::Recorded => " — the plan change is written on the turn's next tool call",
+            Self::NoHold => "",
+            Self::OtherChange => {
+                " — the running turn is holding a different change, which this answer leaves standing"
+            }
+        }
+    }
+}
+
+/// Say yes on the gate the running turn is reading, for `proposal` and nothing
+/// else.
+///
+/// The match is what keeps this from repeating the defect it fixes one level
+/// down: a yes applied to whatever happens to be standing is consent the
+/// reader did not give to the change they were shown. The deck already refuses
+/// to send `a` on a card that is not the standing one, so this is the second
+/// answer to the same question rather than the only one.
+fn agree_to(revisions: &RevisionSlot, proposal: &stella_protocol::RevisionProposal) -> Answered {
+    let Some(gate) = parked_revisions(revisions) else {
+        return Answered::NoHold;
+    };
+    let mut gate = gate.lock().unwrap_or_else(|p| p.into_inner());
+    match gate.pending() {
+        None => Answered::NoHold,
+        Some(standing) if standing == proposal => match gate.agree() {
+            Ok(_) => Answered::Recorded,
+            // Unreachable: a proposal is standing, and its absence is the
+            // only thing `agree` refuses. Reported rather than asserted away,
+            // so a future refusal reaches the reader instead of a panic.
+            Err(_) => Answered::NoHold,
+        },
+        Some(_) => Answered::OtherChange,
+    }
 }
 
 /// Service a session-registry / inbox verb from the deck. Returns `true` if
@@ -867,8 +970,55 @@ mod undo_delete_tests {
 }
 
 #[cfg(test)]
-mod approve_revision_tests {
+mod revision_verb_tests {
     use super::*;
+    use stella_store::plan_graph::RevisionGate;
+
+    /// An empty slot: no turn is running, which is where these two verbs still
+    /// have to do something sensible.
+    fn no_turn() -> RevisionSlot {
+        RevisionSlot::default()
+    }
+
+    /// A slot holding a gate with `subject` standing, as a running turn's
+    /// forwarder would have left it.
+    /// Returns the slot the verbs read, the gate to assert on, and the card
+    /// the reader is looking at.
+    fn turn_holding(
+        case: &str,
+    ) -> (
+        RevisionSlot,
+        super::super::SharedRevisions,
+        stella_protocol::RevisionProposal,
+    ) {
+        // `RevisionGate::observe` mints the proposal, so the card the test
+        // presses `a` on is the one the gate is holding rather than a
+        // hand-built copy that could differ from it in some field.
+        let gate =
+            super::super::SharedRevisions::new(std::sync::Mutex::new(RevisionGate::default()));
+        let standing = gate
+            .lock()
+            .expect("the gate")
+            .observe(
+                stella_protocol::PlanRevision::new(2).expect("r2"),
+                &[],
+                &stella_protocol::GateBoard {
+                    patch: None,
+                    gates: vec![stella_protocol::GateRow {
+                        name: "tests".into(),
+                        state: stella_protocol::GateState::Failed {
+                            case: case.into(),
+                            log: "assertion `left == right` failed".into(),
+                        },
+                        deterministic: true,
+                    }],
+                },
+            )
+            .expect("a plain gate failure puts a change up")
+            .clone();
+        let slot = RevisionSlot::new(Some(std::sync::Arc::clone(&gate)));
+        (slot, gate, standing)
+    }
 
     fn proposal(subject: &str) -> stella_protocol::RevisionProposal {
         stella_protocol::RevisionProposal {
@@ -881,19 +1031,44 @@ mod approve_revision_tests {
         }
     }
 
-    fn approve(registry: &ToolRegistry, subject: &str) -> String {
+    fn approve_card(
+        revisions: &RevisionSlot,
+        registry: &ToolRegistry,
+        card: &stella_protocol::RevisionProposal,
+    ) -> String {
         let (tx, mut rx) = mpsc::unbounded_channel();
         assert!(service_approve_revision(
             &WorkspaceInput::ApproveRevision {
                 agent: LEAD.into(),
-                proposal: Box::new(proposal(subject)),
+                proposal: Box::new(card.clone()),
             },
+            revisions,
             registry,
             &tx,
         ));
         match rx.try_recv() {
             Ok(Inbound::Notice(text)) => text,
             other => panic!("an approval always answers in words: {other:?}"),
+        }
+    }
+
+    fn approve(registry: &ToolRegistry, subject: &str) -> String {
+        approve_card(&no_turn(), registry, &proposal(subject))
+    }
+
+    fn dismiss(revisions: &RevisionSlot, card: &stella_protocol::RevisionProposal) -> String {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        assert!(service_dismiss_revision(
+            &WorkspaceInput::DismissRevision {
+                agent: LEAD.into(),
+                proposal: Box::new(card.clone()),
+            },
+            revisions,
+            &tx,
+        ));
+        match rx.try_recv() {
+            Ok(Inbound::Notice(text)) => text,
+            other => panic!("a dismissal always answers in words: {other:?}"),
         }
     }
 
@@ -955,5 +1130,113 @@ mod approve_revision_tests {
         let board = registry.task_board();
         let guard = board.lock().unwrap_or_else(|p| p.into_inner());
         assert_eq!(guard.items().len(), 1);
+    }
+
+    /// **Witness.** `a` says yes on the gate the running turn is reading, so
+    /// the hold that turn is under can be lifted by the answer rather than by
+    /// whatever the board happens to contain.
+    ///
+    /// Before the driver could reach that gate, this verb wrote a board row
+    /// and nothing else, and the notice claimed a revision that had not been
+    /// written yet.
+    #[test]
+    fn approving_says_yes_on_the_running_turns_gate() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = ToolRegistry::new(dir.path().to_path_buf());
+        let (slot, gate, card) = turn_holding("a_short_cycle_is_detected");
+        assert!(
+            !gate.lock().expect("the gate").agreed(),
+            "nobody has answered yet"
+        );
+
+        let notice = approve_card(&slot, &registry, &card);
+        assert!(
+            gate.lock().expect("the gate").agreed(),
+            "the yes is on the gate the turn reads"
+        );
+        assert!(
+            notice.contains("written on the turn's next tool call"),
+            "the notice says the write is still to come: {notice}"
+        );
+    }
+
+    /// A yes goes to the change it answers and to no other. The gate is
+    /// holding one thing; the card the reader pressed names another; the hold
+    /// stays where it is, and the notice says so.
+    ///
+    /// The defect this whole change fixes is consent inferred rather than
+    /// given. Applying a yes to whatever happens to be standing is the same
+    /// error one level down.
+    #[test]
+    fn a_yes_to_one_change_is_not_a_yes_to_the_one_the_gate_is_holding() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = ToolRegistry::new(dir.path().to_path_buf());
+        let (slot, gate, _) = turn_holding("a_short_cycle_is_detected");
+
+        let notice = approve_card(&slot, &registry, &proposal("repair something else"));
+        assert!(
+            !gate.lock().expect("the gate").agreed(),
+            "the standing change was not answered"
+        );
+        assert!(notice.contains("holding a different change"), "{notice}");
+    }
+
+    /// **Witness.** `x` drops the standing change on that same gate, which is
+    /// what lifts the hold — `RevisionGate::admits` answers `true` again and
+    /// the turn's next tool call runs.
+    ///
+    /// This verb reached no driver at all before: the deck cleared its card
+    /// and the turn stayed refused until it ended.
+    #[test]
+    fn dismissing_drops_the_change_the_running_turn_is_held_on() {
+        let (slot, gate, card) = turn_holding("a_short_cycle_is_detected");
+        assert!(
+            !gate.lock().expect("the gate").admits(),
+            "a standing change withholds"
+        );
+
+        let notice = dismiss(&slot, &card);
+        assert!(
+            gate.lock().expect("the gate").admits(),
+            "the hold is lifted"
+        );
+        assert!(notice.contains("r2 dismissed"), "{notice}");
+        assert!(
+            notice.contains("the plan is unchanged"),
+            "a dismissal writes no revision, and says so: {notice}"
+        );
+    }
+
+    /// With no turn running there is nothing to lift, and the verb says that
+    /// rather than reporting a hold it did not release.
+    #[test]
+    fn dismissing_with_no_turn_running_says_nothing_was_waiting() {
+        let notice = dismiss(&no_turn(), &proposal("repair a_short_cycle_is_detected"));
+        assert!(notice.contains("no turn was holding it"), "{notice}");
+    }
+
+    /// Neither verb answers the other's input.
+    #[test]
+    fn each_verb_claims_only_its_own_input() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = ToolRegistry::new(dir.path().to_path_buf());
+        let (tx, _rx) = mpsc::unbounded_channel();
+        assert!(!service_approve_revision(
+            &WorkspaceInput::DismissRevision {
+                agent: LEAD.into(),
+                proposal: Box::new(proposal("repair it")),
+            },
+            &no_turn(),
+            &registry,
+            &tx,
+        ));
+        assert!(!service_dismiss_revision(
+            &WorkspaceInput::ApproveRevision {
+                agent: LEAD.into(),
+                proposal: Box::new(proposal("repair it")),
+            },
+            &no_turn(),
+            &tx,
+        ));
     }
 }

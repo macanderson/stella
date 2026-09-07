@@ -1325,12 +1325,21 @@ pub enum WorkspaceInput {
     /// proposal whose revision number the plan has moved past, and a subject
     /// on its own carries no number to check.
     ///
-    /// `e edit` and `x dismiss` are absent from this enum on purpose. Both are
-    /// answered entirely inside the deck — `e` hands the subject to the
-    /// composer and stands the proposal down, `x` drops it — and neither
-    /// writes anything, so a round trip to the driver would be a message whose
-    /// only effect is latency.
+    /// `e edit` is absent from this enum on purpose: it is answered inside the
+    /// deck, which hands the subject to the composer and stands the proposal
+    /// down, so a round trip would be a message whose only effect is latency.
     ApproveRevision {
+        agent: AgentId,
+        proposal: Box<stella_protocol::RevisionProposal>,
+    },
+    /// `x` on a highlighted revision proposal: drop it — SPEC 8.1's
+    /// `x dismiss`.
+    ///
+    /// It writes no revision, and it still has to travel. A running turn
+    /// withholds its tool calls while the change stands, and only the driver
+    /// can reach the gate that withholds them. A dismissal the deck answered
+    /// alone would clear the card and leave the turn refused.
+    DismissRevision {
         agent: AgentId,
         proposal: Box<stella_protocol::RevisionProposal>,
     },

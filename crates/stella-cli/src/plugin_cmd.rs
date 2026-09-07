@@ -128,15 +128,22 @@ pub enum PluginCmd {
         #[arg(value_name = "NAME")]
         name: String,
     },
-    /// Open one driver session against an installed plugin that declares
-    /// `[driver]`, and report what it says to do next.
+    /// Drive an installed plugin that declares `[driver]`: open a session,
+    /// re-open it whenever the driver asks to sleep, and stop when it halts.
     ///
-    /// One session per invocation: what re-opens it after a `sleep` is the
-    /// loop the driver is describing, not this verb (#3599 B2).
+    /// One invocation is the whole loop. It ends when the driver halts, when a
+    /// session fails, when `--spend-limit` is reached across every session, or
+    /// when `--max-sessions` is.
     Drive {
         /// The plugin's `name`, as `stella plugin list` prints it.
         #[arg(value_name = "NAME")]
         name: String,
+        /// Stop after this many sessions, however the driver ends them.
+        ///
+        /// The bound for a driver that always asks to sleep. Without it the run
+        /// ends only on a halt, a failure, or `--spend-limit`.
+        #[arg(long, value_name = "N")]
+        max_sessions: Option<u32>,
     },
 }
 
@@ -178,7 +185,12 @@ pub(crate) fn run_plugin(cmd: &PluginCmd, globals: &crate::cli::GlobalArgs) -> R
         // driver that asks for `work_start` spends the operator's provider
         // budget, and `--spend-limit` is what bounds it — the same flag, read
         // from the same place, as every other turn this binary runs.
-        PluginCmd::Drive { name } => drive(&root, name, TurnFlags::from_globals(globals)?),
+        PluginCmd::Drive { name, max_sessions } => drive(
+            &root,
+            name,
+            *max_sessions,
+            TurnFlags::from_globals(globals)?,
+        ),
     }
 }
 
@@ -187,7 +199,7 @@ pub(crate) fn run_plugin(cmd: &PluginCmd, globals: &crate::cli::GlobalArgs) -> R
 /// Minted the way `self_driving_cmd::state::new_run_id` mints a run id — a
 /// timestamp plus a salt off the clock's sub-second remainder and the process
 /// id — so two sessions started in the same second are still distinguishable.
-fn session_id() -> String {
+pub(crate) fn session_id() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
@@ -195,113 +207,86 @@ fn session_id() -> String {
     format!("drive-{}-{salt:04x}", now.as_secs())
 }
 
-/// `stella plugin drive <name>` — open one driver session.
+/// `stella plugin drive <name>` — drive an installed plugin until it stops.
 ///
-/// The session's identifier is minted here and echoed into the driver's own
-/// telemetry, so a driver's records and the host's can be joined afterwards.
-/// Before this returns, the plugin, the refusals, and the ending are all
-/// written down through [`crate::driver_plugin::session_log::record`].
+/// One invocation opens a sequence of sessions: the driver ends each one with
+/// `sleep` or `halt`, and `stella_autonomy::drive::next_session` says whether
+/// another one follows and after how long.
+/// [`crate::driver_plugin::sequence`] does the opening, the waiting and the
+/// ledger; every session's identifier is minted here and echoed into the
+/// driver's own telemetry, so its records and the host's can be joined
+/// afterwards.
 ///
 /// `flags` is what a work turn inherits. A driver that asks for `work_start`
 /// spends the operator's provider budget, and `--spend-limit` is the ceiling
-/// on it. It is the session-wide flag, not one this verb defines: a second
-/// flag of that name would collide with the global clap propagates into every
-/// subcommand, which is what `no_subcommand_flag_reuses_a_global_name` refuses.
+/// on it — one ceiling for the whole run rather than one per session, which is
+/// what makes it a ceiling at all. It is the session-wide flag, not one this
+/// verb defines: a second flag of that name would collide with the global clap
+/// propagates into every subcommand, which is what
+/// `no_subcommand_flag_reuses_a_global_name` refuses. `max_sessions` is this
+/// verb's own bound, for a driver that would sleep for ever.
 ///
 /// # Errors
 ///
-/// Whatever [`crate::driver_plugin::bind_installed`] refuses, or the session's
+/// Whatever [`crate::driver_plugin::bind_installed`] refuses, or a session's
 /// own failure — a driver that could not be started, timed out, died, or ended
-/// without saying what should happen next.
-fn drive(workspace_root: &Path, name: &str, flags: TurnFlags) -> Result<(), String> {
+/// without saying what should happen next. A failure ends the run: the same
+/// host would meet it again the same way.
+fn drive(
+    workspace_root: &Path,
+    name: &str,
+    max_sessions: Option<u32>,
+    flags: TurnFlags,
+) -> Result<(), String> {
     let name = checked_name(name)?;
     let mut warn = |line: String| eprintln!("  ! {line}");
     let resolved = crate::driver_plugin::resolve(workspace_root, name, &mut warn)?;
-    // Saved now, before `serving()` consumes `resolved`: the record below
-    // needs it once the session has closed.
-    let program = resolved.program().to_string();
-    println!("driver \"{name}\": starting `{program}`");
+    println!("driver \"{name}\": starting `{}`", resolved.program());
 
-    let session = session_id();
-    // The capabilities are built here rather than inside the binder because
-    // this is where the workspace is: the tracker adapter and the loop's own
-    // configuration are both facts about the directory `stella` was run in.
+    // The capabilities are built per session rather than inside the binder
+    // because this is where the workspace is: the tracker adapter and the
+    // loop's own configuration are both facts about the directory `stella` was
+    // run in.
     let config = crate::self_driving_cmd::config::load(workspace_root);
     // The ceiling the operator named, narrowed per turn to what is left of it
-    // rather than handed down whole, which is `RunBudget`'s own rule.
-    let capped = flags.spend_limit.is_some();
-    let budget = crate::self_driving_cmd::budget::RunBudget::new(flags);
-    let capabilities = Box::new(
-        crate::driver_plugin::capabilities::HostDriverCapabilities::new(
-            name,
-            resolved.gates().cloned(),
-            Box::new(crate::issue_provider::GhIssueProvider::for_workspace(
-                workspace_root,
-            )),
-            config.clone(),
-            workspace_root.to_path_buf(),
-            crate::driver_plugin::work::WorkSlot::new(Box::new(
-                crate::driver_plugin::work::SpawnedWorkRunner::new(
-                    workspace_root.to_path_buf(),
-                    config,
-                    budget,
-                ),
-            )),
-        ),
-    );
-    let bound = resolved.serving(capabilities);
-    // Said before the session rather than inferred from the refusals after it,
-    // so an operator learns which asks will degrade from the host rather than
-    // from a driver's own halt message.
-    if bound.offers_calls() {
-        println!(
-            "  this build serves `backlog_next`, `backlog_claim`, `work_start`, `work_status` \
-             and `work_abandon`; every other capability this session asks for will be refused \
-             as unsupported"
-        );
-        if !capped {
-            println!(
-                "  no --spend-limit was given, so a turn this session asks for spends until it \
-                 finishes"
-            );
-        }
-    }
-    let next = bound.open(&session);
-    let refusals = bound.refusals();
+    // rather than handed down whole, which is `RunBudget`'s own rule. Shared
+    // across the run's sessions, so what an earlier one spent is gone from
+    // what a later one may.
+    let budget = std::sync::Arc::new(std::sync::Mutex::new(
+        crate::self_driving_cmd::budget::RunBudget::new(flags),
+    ));
+    let limits = stella_autonomy::drive::DriveLimits {
+        spend_cap: budget
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .cap(),
+        // The host's own clamp, so the wait honoured is the one the socket
+        // already reduced a greedy ask to.
+        max_sleep_secs: stella_runtime::wrapper::MAX_SLEEP_SECS,
+        session_ceiling: max_sessions,
+    };
 
-    // Printed whichever way the session ended. A driver that asked for a
-    // capability and then failed is the case where the refusals matter most:
-    // they are usually why it failed.
-    for refusal in &refusals {
-        eprintln!("  ! {refusal}");
-    }
-
-    // Written down whichever way the session ended. A write that fails is
-    // reported, but never fails the session — the same rule
-    // `self_driving_cmd::audit` uses for its own ledger.
-    if let Err(error) = crate::driver_plugin::session_log::record(
+    let mut host = crate::driver_plugin::sequence::PluginDriveHost::new(
         workspace_root,
-        &crate::driver_plugin::session_log::DriverSessionRecord {
-            at: crate::timefmt::rfc3339_utc_now(),
-            plugin: name.to_string(),
-            session_id: session.clone(),
-            program,
-            refusals,
-            outcome: crate::driver_plugin::session_log::DriverSessionOutcome::from_result(&next),
-        },
-    ) {
-        eprintln!("  ! {error}");
-    }
+        name,
+        resolved,
+        config,
+        std::sync::Arc::clone(&budget),
+    );
+    let end = crate::driver_plugin::sequence::run(&mut host, &limits);
 
-    match next? {
-        stella_plugin::DriveNext::Sleep { secs } => {
-            println!("session {session} ended: sleep {secs}s before the next one");
-        }
-        stella_plugin::DriveNext::Halt { reason } => {
-            println!("session {session} ended: halt — {reason}");
+    match end.reason {
+        // The one ending that is an error: a session the host could not carry
+        // to an answer. `sequence` has already printed and recorded it.
+        stella_autonomy::drive::StopReason::Failed { message } => Err(message),
+        reason => {
+            println!(
+                "{}",
+                crate::driver_plugin::sequence::ending_line(&reason, end.sessions)
+            );
+            Ok(())
         }
     }
-    Ok(())
 }
 
 /// The directory a tier installs into, or a reason it cannot be resolved.

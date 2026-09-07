@@ -12,7 +12,9 @@ use crate::subsession::SupervisorMsg;
 
 pub(crate) mod plan_gate;
 
-pub(crate) use plan_gate::{PlanSetup, SharedRevisions};
+pub(crate) use plan_gate::{
+    PlanSetup, RevisionSlot, SharedRevisions, park_revisions, parked_revisions,
+};
 
 /// Hands `task_assign`'s spawn requests to the driver's supervisor channel,
 /// and turns the board into a **scope**: the same board traffic is what the

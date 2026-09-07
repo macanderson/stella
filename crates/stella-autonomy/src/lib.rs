@@ -58,6 +58,7 @@ mod convention;
 pub mod curate;
 mod deliver;
 mod doctrine;
+pub mod drive;
 pub mod escalation;
 pub mod gate;
 pub mod meta;

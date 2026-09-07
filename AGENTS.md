@@ -96,6 +96,9 @@ machine runs before pushing:
 ```bash
 make gate                # = no-scratch + no-secrets + design-refs
                          #   + action-pins + cargo-install-pins
+                         #   + untrusted-checkout (no workflow_run job
+                         #     checks out a ref its trigger does not
+                         #     vouch for)
                          #   + license-allowlist-parity + repro-wiring
                          #   + shellcheck + invariants + doc-links
                          #   + adr-numbering
@@ -323,8 +326,11 @@ it, the case where the tip already has a run included.
 
 A seventh, `main-red-hold.yml`, is the canary's other half: the canary *detects*,
 and this is what consumes the detection at the point a merge is still a
-decision. It runs on `pull_request`, asks the tracker whether a `main-red`
-issue is open, and fails if one is — naming it. On 2026-08-19 the canary
+decision. It runs on `pull_request`. Each run asks the tracker whether a
+`main-red` issue is open at that moment, and fails if one is — naming it. That
+answer is a snapshot, and the paragraph below is how it gets re-taken when
+`main` moves under a pull request that is finished and waiting.
+On 2026-08-19 the canary
 worked exactly as designed and it did not help: it filed its issue at 16:57:01,
 and four more PRs merged onto the non-compiling tree over the next 35 minutes,
 the first of them **twelve seconds later** (#3917). Once `main` is red every
@@ -340,24 +346,35 @@ required status checks: a throwaway PR went red and unmergeable while a
 hand-filed, `main-red`-labelled issue stood, and green again once
 `unblocks-main` landed on it.
 
-**A hold outlives the outage unless something clears it.** Branch protection
-reads the last check run for that name on that commit, and the hold fires on
-`pull_request` — so a pull request that is finished and waiting has no event
-left to correct it. On 2026-09-05 `main` broke, a repair landed, the canary
-closed the issue, and ten open pull requests stayed unmergeable on a check
-whose own question now answered the other way. A push to each branch clears
-it; the two moves a session reaches for first, an empty commit and
-close-and-reopen, are the two this repository forbids.
-`scripts/clear-main-red-holds.sh` is what clears them: it asks whether any
-`main-red` issue is still open, and if none is, re-runs the failed hold on
-every open pull request, which reports under the same name on the same commit.
-It has two callers because neither sees every recovery — `main-canary.yml`, on
-the run that closes the issue, since GitHub starts no workflow from an event
+**A hold goes stale in both directions unless something re-asks it.** Branch
+protection reads the last check run for that name on that commit, and the hold
+fires on `pull_request` — so a pull request that is finished and waiting has no
+event left to correct it, while `main` breaks and gets fixed underneath.
+
+The stale failure blocks work that should land. On 2026-09-05 `main` broke, a
+repair landed, the canary closed the issue, and ten open pull requests stayed
+unmergeable on a check whose own question now answered the other way. The stale
+pass is the dangerous one: `#5928`'s hold ran at 09:41, the `main-red` issue
+for that outage was filed at 10:07, and it merged onto the broken tree during
+the red window with that 26-minute-old green as its required check. Both are
+one bug — the hold is a point-in-time answer that branch protection reads as a
+standing one. A push to the branch fixes either; the two moves a session
+reaches for first, an empty commit and close-and-reopen, are the two this
+repository forbids.
+
+`scripts/refresh-main-red-holds.sh` re-asks for them. One tracker query decides
+what every hold should be saying — failing while a `main-red` issue is open,
+passing while none is — and it re-runs the hold on each open pull request whose
+last run says the other thing, which reports under the same name on the same
+commit. One sweep rather than two, because it is one question: a second script
+for the break direction is a second copy to drift. It has two callers because
+neither sees every transition — `main-canary.yml`, on the push run that files
+or closes the issue, since GitHub starts no workflow from an event
 `GITHUB_TOKEN` raised; and `main-red-clear.yml`, when a person closes the issue
 or takes the label off it. Both fail open, and running it twice re-runs nothing
-the first pass cleared. `make clear-main-red-holds` prints what a sweep would
-re-run without re-running it; `make main-red-hold-test` covers the clearing
-half beside the blocking one.
+the first pass already moved. `make refresh-main-red-holds` prints what a sweep
+would re-run without re-running it; `make main-red-hold-test` covers both
+directions beside the blocking one.
 
 **The same staleness reaches `dod-check`, one gate over.** That check reads the
 linked issue's checklist and fires on pull request events, so the object it
@@ -445,13 +462,50 @@ It carries the same session word, and for the same reason: one login is one
 account, and the thing that has to be identified is the session. Comparing
 the login alone read a peer session's claim as this session's own and cleared
 both to work one issue (`#5875`). `scripts/lib/claim-session.sh` resolves the
-word for both scripts, so a fleet sets `STELLA_CLAIM_SESSION` once rather
-than twice, and both fail open the same way: a run with no word of its own,
-and a claim comment carrying none, fall back to the author-only rule.
+word for every claim script here, so a fleet sets `STELLA_CLAIM_SESSION` once
+rather than once per script, and they all fail open the same way: a run with
+no word of its own, and a claim comment carrying none, fall back to the
+author-only rule.
 
 Run it **before writing code and again before opening the PR**. The gap
 between those two is enough: a peer's PR can merge inside one issue's worth of
 work, and then the check that was clean at the start is stale at the end.
+
+**A pull request is the third thing two sessions take at once, and
+`scripts/pr-claim.sh` is that mechanic pointed at one.** Three sweep sessions
+read one pull request in eight minutes, each worked out the same merge
+conflict, and each posted it; a fourth stopped, because it read the comments
+first. Duplication here does not lose work, it publishes it, and the
+maintainer is left to diff three long comments to learn they say one thing
+(`#5861`).
+
+```bash
+./scripts/pr-claim.sh check 5835    # exit 0 proceed, 1 stand down
+./scripts/pr-claim.sh claim 5835    # check, then post the claim
+./scripts/pr-claim.sh post 5835 --finding conflict:5828 --body-file note.md
+```
+
+The claim half takes the rules above: a lapsing comment, a session word beside
+the login, and every unknown proceeding loudly. A merged or closed pull request
+stands a sweep down too, since neither one takes a comment.
+
+`post` is the half that would have stopped all three. It asks the claim
+question too, then asks whether the same finding already stands, and writes
+only when neither answer is yes — the finding question alone can only see what
+somebody already published, so it turns a second sweep away after it has spent
+its diagnosis rather than before. `--ignore-claim` posts over a live claim, for
+the operator who read it and said on the pull request why. The caller names the
+finding, because two sessions that find one thing write it up two ways, and a
+digest of the words would call them different. A key that has to go stale
+carries what it depends on: a finding about the head commit puts the head sha
+in the key. A read that failed says so and posts anyway, rather than reporting
+that nothing stands.
+
+Take the claim when you start to read the pull request, not when you are ready
+to write. Each of those three sessions spent twenty minutes on the conflict
+before it had anything to say, so a claim taken at the end would have saved
+none of it. `make pr-claim N=5835` asks by hand; `make pr-claim-test` covers
+both gates, the blocking branches included.
 
 An eighth, `windows-check.yml`, is the only compiler in this project that
 looks at a `#[cfg(windows)]` arm: `ci.yml` runs on `ubuntu-latest` and

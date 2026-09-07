@@ -212,6 +212,15 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-action-pins.sh
 
+      # Also toolchain-free. A workflow_run job runs with this repository's
+      # token whatever produced the triggering run, so a checkout of
+      # `github.event.workflow_run.head_sha` there is a pwn request — CodeQL
+      # alert 129 against auto-tag.yml, which holds `contents: write` on main
+      # (#6367).
+      - name: no workflow_run job checks out an untrusted ref
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-untrusted-checkout.sh
+
       # Also toolchain-free. `--locked` pins a tool's own dependency graph,
       # not the tool itself — this catches a `cargo install` that floats on
       # whatever version is newest at run time (#915).

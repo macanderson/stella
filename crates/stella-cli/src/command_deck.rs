@@ -118,9 +118,10 @@ mod voice_cmd;
 mod whistle;
 mod worker_control;
 use driver_support::{
-    graph_ready_callback, handle_supervisor_msg, service_approve_revision, service_edit_memory,
-    service_registry_action, service_reject_memory, service_rerun_gate, service_undo_delete,
-    spawn_mcp_connect, spawn_notification_poller, spawn_pr_monitor,
+    graph_ready_callback, handle_supervisor_msg, service_approve_revision,
+    service_dismiss_revision, service_edit_memory, service_registry_action, service_reject_memory,
+    service_rerun_gate, service_undo_delete, spawn_mcp_connect, spawn_notification_poller,
+    spawn_pr_monitor,
 };
 use lead_turn::run_lead_turn;
 use panel_snapshots::{engine_config_inbound, tool_policy_inbound};
@@ -1913,8 +1914,8 @@ pub async fn run_deck_session(
         // The lead lane's pause seam — `p` on the lead row (#1219).
         let lead_pause = lead_control::LeadPause::new();
         let mut friction = TurnFriction::default(); // #3962
-        // Outlives the turn future, so a cancel can still drain it (#4853).
-        let drain = forwarder::forwarder_slot();
+        // Outlive the turn future: a cancel drains it (#4853), keys reach it.
+        let slots = forwarder::turn_slots();
         let end = {
             // Both arms return `Result<(), CliFailure>`, so one pinned future
             // drives either path through the same select loop.
@@ -1936,7 +1937,7 @@ pub async fn run_deck_session(
                 recall,
                 memory.as_ref(),
                 &mut friction,
-                &drain,
+                &slots,
             );
             tokio::pin!(turn);
             loop {
@@ -2349,14 +2350,19 @@ pub async fn run_deck_session(
                         ) => {
                             voice::service(&input, &mut voice_lane, &deck_tx, cfg);
                         }
-                        // `a approve r{n}` on a revision proposal: one row on
-                        // the task board, serviced mid-turn on the same
-                        // reasoning as the three above. The reader is looking
-                        // at a gate that just failed, and the whole point of
-                        // the proposal is that the plan changes before more
-                        // work runs against the old one.
-                        Some(input @ WorkspaceInput::ApproveRevision { .. }) => {
-                            service_approve_revision(&input, &registry, &in_tx);
+                        // `a approve r{n}` and `x dismiss` on a revision
+                        // proposal, serviced mid-turn on the same reasoning as
+                        // the three above and for a sharper reason: the
+                        // running turn is refusing its own tool calls until
+                        // one of them is pressed, so a verb held to the turn
+                        // boundary could never arrive.
+                        Some(
+                            input @ (WorkspaceInput::ApproveRevision { .. }
+                            | WorkspaceInput::DismissRevision { .. }),
+                        ) => {
+                            let slot = &slots.revisions;
+                            let _ = service_approve_revision(&input, slot, &registry, &in_tx)
+                                || service_dismiss_revision(&input, slot, &in_tx);
                         }
                         // INSPECT is answered mid-turn too: the receipts of
                         // earlier steps are already durable, and watching the
@@ -2616,7 +2622,7 @@ pub async fn run_deck_session(
                     dispatch.cancelled(&submitted);
                 }
                 dropped_turn::close_dropped_turn(
-                    &drain,
+                    &slots.drain,
                     execution.as_ref(),
                     registry.as_ref(),
                     "cancelled",
@@ -2656,7 +2662,7 @@ pub async fn run_deck_session(
                 dispatch.reset();
                 queue.clear();
                 dropped_turn::close_dropped_turn(
-                    &drain,
+                    &slots.drain,
                     execution.as_ref(),
                     registry.as_ref(),
                     "cleared",

@@ -3,10 +3,11 @@
 
 //! Where a driver session's record goes.
 //!
-//! `stella plugin drive` opens one session and serves whatever the grant
+//! `stella plugin drive` opens a session and serves whatever the grant
 //! allows. Before this module, it printed the outcome and threw it away.
 //! The session id, every refused ask, and how the session ended were all
-//! gone once the terminal scrolled.
+//! gone once the terminal scrolled. One run opens many sessions
+//! ([`super::sequence`]). This file is where the whole run survives.
 //!
 //! # Which ledger, and why not the other two
 //!

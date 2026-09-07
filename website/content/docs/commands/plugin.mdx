@@ -15,7 +15,7 @@ stella plugin list
 stella plugin doctor
 stella plugin panel <name> [--allow|--deny]
 stella plugin remove <name>
-stella plugin drive <name>
+stella plugin drive <name> [--max-sessions N]
 ```
 
 ## What a plugin declares
@@ -183,7 +183,18 @@ Its hooks stop working right away. stella reads the full list of plugins from di
 stella plugin drive selfdriving
 ```
 
-Opens **one driver session** with an installed plugin that has a `[driver]` block. It prints what the plugin says to do next: either `sleep <n>s` or `halt — <reason>`.
+Drives an installed plugin that has a `[driver]` block. It opens a session, prints what the plugin says to do next, and acts on it: `sleep <n>s` waits that long and opens another session, and `halt — <reason>` ends the run. One command is the whole loop.
+
+A run ends four ways:
+
+| Ending | What happened |
+| --- | --- |
+| halt | The driver said it was done, and gave a reason. |
+| failure | A session could not be carried to an answer: the program would not start, timed out, or died. The command exits non-zero. |
+| spend limit | `--spend-limit` is reached. The cap covers every session of the run together, not one each. |
+| session limit | `--max-sessions N` is reached. Use it to bound a driver that only ever asks to sleep. |
+
+Every session is written to `.stella/private/driver-sessions.jsonl`, with its own id and how it ended, so a run you were not watching can be read back afterwards.
 
 A driver works differently from every other plugin type on this page. A `[loop]` plugin is asked for input during a turn that's already running. A driver has no turn to join, because its job is to start turns. Because of this, a driver has no participation grade; `participation = "none"` is the only value allowed. Its own permissions live in a separate block:
 
@@ -202,15 +213,15 @@ Drivers use `[driver.process]` instead of `[runtime]`, because these are two dif
 
 **A `[driver]` block with no `[driver.process]` is just a description, not a working program.** It shows what a driver like this would ask for, but stella doesn't start anything. The plugin `plugins/stella-selfdriving` works this way, and the install prompt tells you so directly.
 
-Every action a driver asks for is done **by stella itself**, not by the plugin. The plugin never holds its own API keys or tokens. Right now stella performs five of them: `backlog_next` reads the ranked defect queue, `backlog_claim` takes a lease on one issue, and `work_start` / `work_status` / `work_abandon` run one issue through a turn in a checkout of its own. Every other action returns `unsupported`, so a driver that asks for one is told no, and it explains why. More actions will work over time. Also note: running `stella plugin drive` only opens one session. Something else, the loop itself, is what reopens a session after it goes to sleep.
+Every action a driver asks for is done **by stella itself**, not by the plugin. The plugin never holds its own API keys or tokens. Right now stella performs five of them: `backlog_next` reads the ranked defect queue, `backlog_claim` takes a lease on one issue, and `work_start` / `work_status` / `work_abandon` run one issue through a turn in a checkout of its own. Every other action returns `unsupported`, so a driver that asks for one is told no, and it explains why. More actions will work over time.
 
 `work_start` spends money, so give it a ceiling:
 
 ```bash
-stella plugin drive selfdriving --spend-limit 25
+stella plugin drive selfdriving --spend-limit 25 --max-sessions 20
 ```
 
-`--spend-limit` is the session-wide flag, so it works before or after the command name. The number is the whole session's cap in US dollars, and each turn gets what is left of it. With no `--spend-limit`, spend is added up and reported and nothing is refused.
+`--spend-limit` is the session-wide flag, so it works before or after the command name. The number is the whole run's cap in US dollars — every session of it added together — and each turn gets what is left of it. When the cap is reached the run stops between sessions rather than in the middle of one. With no `--spend-limit`, spend is added up and reported and nothing is refused, which is when `--max-sessions` is the bound worth setting.
 
 ## Scopes
 

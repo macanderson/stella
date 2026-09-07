@@ -2,7 +2,8 @@
 #
 # The session word a claim carries beside its author.
 #
-# `scripts/main-red-claim.sh` and `scripts/issue-claim.sh` both read it.
+# Every claim script here reads it: `scripts/main-red-claim.sh`,
+# `scripts/issue-claim.sh` and `scripts/pr-claim.sh`.
 #
 # ## Why a login is not enough
 #
