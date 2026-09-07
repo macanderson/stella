@@ -140,7 +140,7 @@ fn collect(
         receipts: drawn.receipts.map(|counts| Receipts {
             total: counts.total,
             checked: counts.checked,
-            skipped: counts.skipped,
+            skipped: counts.skipped.len(),
         }),
         findings: novel
             .into_iter()

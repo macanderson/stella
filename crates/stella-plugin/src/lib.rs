@@ -168,7 +168,8 @@ pub use driver::{
     DeliverState, DriveNext, DrivePoint, DriveRequest, DriveResponse, DriveSession, DriverArgs,
     DriverCall, DriverCallOutcome, DriverCallRequest, DriverCallResponse, DriverFamily,
     DriverGrant, DriverMessage, DriverOk, MergeReport, OpenReport, PullRequestArgs, ReadyReport,
-    UnitArgs, WorkReport, WorkState,
+    SweepReceipts, SweepReport, SweepSkip, SweepSkipReason, SweptSupply, UnitArgs, WorkReport,
+    WorkState,
 };
 pub use error::ManifestError;
 pub use evidence::{CheckOutcome, MeasurementRule, OracleCheck, UnmetCheck};

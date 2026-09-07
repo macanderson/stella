@@ -67,12 +67,14 @@ use crate::host_call::HostCallFailure;
 use crate::runtime::Runtime;
 
 pub mod deliver;
+pub mod sweep;
 
 pub use deliver::{
     DecideArgs, DeliverAction, DeliverCi, DeliverDecision, DeliverEscalation, DeliverMergeability,
     DeliverObservation, DeliverReview, DeliverState, MergeReport, OpenReport, PullRequestArgs,
     ReadyReport,
 };
+pub use sweep::{SweepReceipts, SweepReport, SweepSkip, SweepSkipReason, SweptSupply};
 
 /// The capabilities a **driver** may ask the host for.
 ///
@@ -941,6 +943,14 @@ pub struct DriverOk {
     /// landed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge: Option<MergeReport>,
+    /// What [`DriverCall::SweepRegress`] and [`DriverCall::SweepMeta`]
+    /// answered with: one draw from one supply.
+    ///
+    /// One member for both verbs, and [`SweepReport::supply`] says which one
+    /// answered. The two report the same counts over different records, so a
+    /// member each would be one shape wearing two names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sweep: Option<SweepReport>,
 }
 
 /// The ranked queue one [`DriverCall::BacklogNext`] read produced.
@@ -1334,6 +1344,55 @@ mod tests {
                 panic!("a served answer decoded as a refusal: {failure}")
             }
         }
+    }
+
+    /// A sweep report survives the wire whole: which supply answered, the
+    /// counts, and each reason a record could not be re-checked.
+    #[test]
+    fn a_sweep_report_round_trips_with_its_reasons() {
+        let answered = DriverCallResponse::ok(
+            9,
+            DriverOk {
+                sweep: Some(SweepReport {
+                    supply: SweptSupply::Regress,
+                    offered: 3,
+                    fresh: 1,
+                    filed: vec!["4310".into()],
+                    receipts: Some(SweepReceipts {
+                        total: 13,
+                        checked: 11,
+                        skipped: vec![SweepSkip {
+                            reason: SweepSkipReason::AbsentAtClose,
+                            count: 2,
+                        }],
+                    }),
+                }),
+                ..DriverOk::default()
+            },
+        );
+        let json = serde_json::to_string(&answered).expect("a sweep report serializes");
+        assert!(json.contains(r#""supply":"regress""#), "{json}");
+        assert!(json.contains(r#""reason":"absent_at_close""#), "{json}");
+        let back: DriverCallResponse = serde_json::from_str(&json).expect("and reads back");
+        assert_eq!(back, answered);
+    }
+
+    /// A supply that reads no receipts drops the ledger key, and a draw that
+    /// filed nothing drops the key list. The emptiest report is two counts.
+    #[test]
+    fn a_meta_report_carries_neither_receipts_nor_filed_keys() {
+        let json = serde_json::to_string(&DriverOk {
+            sweep: Some(SweepReport {
+                supply: SweptSupply::Meta,
+                offered: 0,
+                fresh: 0,
+                filed: Vec::new(),
+                receipts: None,
+            }),
+            ..DriverOk::default()
+        })
+        .expect("a meta report serializes");
+        assert_eq!(json, r#"{"sweep":{"supply":"meta","offered":0,"fresh":0}}"#);
     }
 
     /// A page the host never sent is `None`, not an empty one — the two are

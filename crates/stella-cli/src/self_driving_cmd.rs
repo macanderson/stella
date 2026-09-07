@@ -53,7 +53,7 @@ mod runs;
 pub(crate) mod state;
 mod stats;
 mod stop;
-mod supply;
+pub(crate) mod supply;
 mod surface;
 mod sweep;
 mod triage;

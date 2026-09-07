@@ -114,13 +114,20 @@ scope = [
 # in-turn influence: `participation = "none"` above stays the honest answer,
 # because this plugin still never runs inside a turn. It starts them.
 #
-# THE BACKLOG READ, THE CLAIM, THE WORK AND THE DELIVERY ARE SERVED.
-# `backlog_next` reads the tracker through the same
+# THE BACKLOG READ, THE CLAIM, THE WORK, THE DELIVERY AND TWO SWEEPS ARE
+# SERVED. `backlog_next` reads the tracker through the same
 # `IssueProvider` port the `stella self-driving` verbs use. `backlog_claim`
 # takes the same lease `stella self-driving drive` takes. The three `work`
 # verbs run one issue through one bounded `stella run`, in a checkout of its
 # own. The `deliver` verbs push that branch, read the forge, decide, take the
-# pull request out of draft, and merge.
+# pull request out of draft, and merge. `sweep_regress` and `sweep_meta` draw
+# from the two supplies that need no lens, through the same code the cycle
+# driver runs.
+#
+# A SWEEP DRAWS ONLY FROM A SUPPLY YOU OPENED. Each supply is shut until an
+# operator opens it under `[self_driving.supply]` in stella.toml. Granting
+# these two verbs does not open one: an ask against a shut supply is refused
+# by the name of the switch that opens it.
 #
 # Every other verb below comes back `unsupported` until the phase that builds
 # it lands. The loop degrades; it does not die. All of them are declared now
@@ -198,6 +205,11 @@ calls = [
   "deliver_ready",
   "deliver_merge",
   # sweep — where the next question comes from when the queue runs dry.
+  #
+  # `sweep_audit` runs an open lens's own tooling, which the host cannot yet do
+  # on a driver's behalf (`#6182`). It is declared here because this file is a
+  # consent document and the whole shape belongs in front of a reader; the ask
+  # comes back refused, naming that issue.
   "sweep_audit",
   "sweep_regress",
   "sweep_meta",
