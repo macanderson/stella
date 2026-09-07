@@ -371,10 +371,10 @@ pub(crate) async fn grant_shared_tree(
 /// Run the granted invocation once before the turn, and say what it reported.
 ///
 /// Returns the wire value the plan carries and one sentence for the door to
-/// print. Every answer other than [`TestBaseline::Failed`] says it has no red
-/// to offer: a passing suite and an unobservable run both leave the oracle with
-/// nothing to lock onto, and neither may be dressed up as the precondition a
-/// flip needs.
+/// print. Every answer other than [`stella_plugin::TestBaseline::Failed`] says
+/// it has no red to offer: a passing suite and an unobservable run both leave
+/// the oracle with nothing to lock onto, and neither may be dressed up as the
+/// precondition a flip needs.
 async fn observed_baseline(
     root: &Path,
     invocation: &stella_plugin::TestInvocation,
