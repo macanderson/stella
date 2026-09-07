@@ -156,10 +156,17 @@ pub(crate) async fn run_raw_one_shot(
         ),
         None => None,
     };
+    let provider = build_provider(cfg)?;
     // Pinned *before* the turn runs, which is the whole content of the tamper
     // claim: an identity snapshotted afterwards vouches for nothing. The same
-    // call observes what the tests say before the work, which is the red half a
-    // flip needs (#1292) — and is a whole test run, so it says what it found.
+    // call observes what the tests said before the work, which is the red half
+    // a flip needs, and it says what it found because it is a whole test run.
+    //
+    // Below the provider rather than above it, because that is the last
+    // instant refusal a run can hit — a model id the catalog does not know —
+    // and nobody should sit through a test suite to be told they mistyped one.
+    // Nothing above this line is paid, so the rule the resolve keeps is intact:
+    // every refusal a user can act on lands before the first model call.
     let candidate = match &resolved {
         Some(_) => Some(
             crate::wrapper_candidate::grant_shared_tree(&cfg.workspace_root, test_command)
@@ -174,7 +181,6 @@ pub(crate) async fn run_raw_one_shot(
     {
         eprintln!("  ! {line}");
     }
-    let provider = build_provider(cfg)?;
     // Concrete `Arc<ToolRegistry>` (not `Arc<dyn ToolExecutor>`) so the
     // registry's ledgers are reachable after the turn — the trait object
     // hides them. It still coerces to `&dyn ToolExecutor` for the engine.
@@ -543,11 +549,12 @@ pub(crate) fn goal_plugin_missing_message(variant: &str, reason: &str) -> String
 /// Resolve the wrapper plugin that supplies the goal verb, and pin the
 /// candidate grant its `[oracle]` observes.
 ///
-/// Both happen before the provider is built and before a single paid call — a
-/// `--pipeline` naming nothing installed must fail as a typo, a workspace with
-/// nothing installed must fail as an install, and a `--test-command` the
-/// host's parser refuses must stop the run here rather than after it is paid
-/// for.
+/// Both happen before a single paid call — a `--pipeline` naming nothing
+/// installed must fail as a typo, a workspace with nothing installed must fail
+/// as an install, and a `--test-command` the host's parser refuses must stop
+/// the run here rather than after it is paid for. The caller places this after
+/// it has built a provider, because minting the grant runs the whole test
+/// suite and a model id the catalog does not know is an instant refusal.
 ///
 /// The grant is minted once for the arc, never per round. What the watch
 /// covers is the artifacts the test command names — the witness the flip is
@@ -667,11 +674,12 @@ pub(crate) fn bind_goal_wrapper(
 /// honoured now instead of being refused for want of a wrapper: every goal run
 /// has one.
 ///
-/// The bind happens before the provider is built and before a single paid
-/// call — the ordering [`run_raw_one_shot`] documents, for the same reason. A
-/// `--pipeline` naming nothing installed must fail as a typo, and a goal run
-/// with nothing installed at all must fail as an install, not after the money
-/// is spent.
+/// The bind happens before a single paid call — the ordering
+/// [`run_raw_one_shot`] documents, for the same reason. A `--pipeline` naming
+/// nothing installed must fail as a typo, and a goal run with nothing installed
+/// at all must fail as an install, not after the money is spent. It sits after
+/// the provider is built for the reason that door gives too: minting the grant
+/// runs the whole test suite, and every instant refusal belongs in front of it.
 pub async fn run_goal_cmd(
     cfg: &Config,
     goal: &str,
@@ -688,8 +696,8 @@ pub async fn run_goal_cmd(
         crate::enterprise_telemetry::ExecutionSurface::Goal,
     )?;
     let variant = pipeline.plugin().unwrap_or(DEFAULT_GOAL_WRAPPER);
-    let (resolved, candidate) = resolve_goal_wrapper(cfg, variant, test_command).await?;
     let provider = build_provider(cfg)?;
+    let (resolved, candidate) = resolve_goal_wrapper(cfg, variant, test_command).await?;
     let registry: std::sync::Arc<ToolRegistry> =
         std::sync::Arc::new(crate::write_dirs::registry_for(cfg));
 
