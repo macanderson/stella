@@ -160,10 +160,15 @@
       "status": "implemented",
       "title": "ADR 0031: A turn has no step cap by default"
     },
-    "adr/0032-free-text-is-not-evidence": {
-      "path": "docs/adr/0032-free-text-is-not-evidence.md",
+    "adr/0032-a-loop-rung-reads-structure": {
+      "path": "docs/adr/0032-a-loop-rung-reads-structure.md",
       "status": "implemented",
-      "title": "ADR 0032: Free text is not evidence"
+      "title": "ADR 0032: A loop rung reads structure, not progress"
+    },
+    "adr/0033-free-text-is-not-evidence": {
+      "path": "docs/adr/0033-free-text-is-not-evidence.md",
+      "status": "implemented",
+      "title": "ADR 0033: Free text is not evidence"
     },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",

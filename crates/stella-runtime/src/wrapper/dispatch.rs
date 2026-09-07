@@ -293,7 +293,7 @@ pub struct DispatchReport {
     pub outcome: Outcome,
     /// The final round's advisory note, in the wrapper's own words —
     /// [`ObservedEvidence::detail`],
-    /// carried verbatim whatever the verdict was (ADR 0032).
+    /// carried verbatim whatever the verdict was (ADR 0033).
     ///
     /// **Never an input to anything.** `judge` reads [`EvidenceSet`], whose
     /// fields are closed so that totality is the compiler's job, and this

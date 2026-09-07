@@ -405,7 +405,7 @@ async fn without_a_child_turn_plane_the_loop_ends_undecided_after_one_round() {
     );
 }
 
-/// **The ADR 0032 witness.** A round the verifier passes still carries the
+/// **The ADR 0033 witness.** A round the verifier passes still carries the
 /// verifier's own sentence.
 ///
 /// `ObservedEvidence::detail` had exactly one reader: the correction a

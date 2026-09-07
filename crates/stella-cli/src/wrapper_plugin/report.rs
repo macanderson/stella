@@ -124,7 +124,7 @@ pub(super) fn report_lines(
         let tag = scope.map_or_else(String::new, |scope| format!("[{scope}] "));
         lines.push(format!("  ◇ {tag}{}", report.summary()));
         // The wrapper's own account of the round, under the host's summary of
-        // it (ADR 0032). Its own line rather than folded into `summary()`,
+        // it (ADR 0033). Its own line rather than folded into `summary()`,
         // which is one line by contract and rides into
         // `VerdictEvidence::summary` as a journal field. A held-open round
         // already reads this string in its correction; this is what a round

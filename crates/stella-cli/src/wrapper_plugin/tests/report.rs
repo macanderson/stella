@@ -48,7 +48,7 @@ fn faulted_report() -> stella_runtime::wrapper::DispatchReport {
         outcome: stella_plugin::Outcome::Undecided {
             reason: stella_plugin::UndecidedReason::NoOracle,
         },
-        // No plugin answered, so there is nothing it wanted said (ADR 0032).
+        // No plugin answered, so there is nothing it wanted said (ADR 0033).
         note: None,
         // A rule with no requirements draws no rows: nothing was declared, so
         // there is no gate to report on.
@@ -452,7 +452,7 @@ fn a_finished_run_puts_the_verdict_on_the_stream_before_the_board() {
     );
 }
 
-/// **Witness (ADR 0032).** A round that stopped on a *met* verdict still
+/// **Witness (ADR 0033).** A round that stopped on a *met* verdict still
 /// prints the wrapper's own words.
 ///
 /// The correction a held-open round renders is the only reader

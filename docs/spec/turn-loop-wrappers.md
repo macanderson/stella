@@ -434,7 +434,7 @@ already satisfies that rule. It does not, it never did, and the spend is now
 visible on the receipt against a declared role instead of being described as a
 `judge`.
 
-**Settled (`doc:adr/0032-free-text-is-not-evidence`).** This subsection put
+**Settled (`doc:adr/0033-free-text-is-not-evidence`).** This subsection put
 the model call in `after_turn` and stopped. It left the shape of the evidence
 open. That is the half slice 7 (`#3911`) was blocked behind.
 

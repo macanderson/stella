@@ -1,10 +1,10 @@
 ---
-id: adr/0032-free-text-is-not-evidence
-title: "ADR 0032: Free text is not evidence"
+id: adr/0033-free-text-is-not-evidence
+title: "ADR 0033: Free text is not evidence"
 status: implemented
 ---
 
-# ADR 0032: Free text is not evidence
+# ADR 0033: Free text is not evidence
 
 - Status: accepted
 - Date: 2026-09-07

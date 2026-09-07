@@ -140,7 +140,7 @@ impl Verdict {
     /// the note being thrown away. The correction is the *unmet* reader; the
     /// round's report is the other one, and it carries the same string
     /// whatever the verdict was (`stella_runtime::wrapper::DispatchReport`'s
-    /// `note`, ADR 0032). Both read one string the plugin wrote once.
+    /// `note`, ADR 0033). Both read one string the plugin wrote once.
     #[must_use]
     pub fn with_detail(mut self, detail: Option<String>) -> Self {
         if let (Some(detail), Self::Unmet { unmet, .. }) = (detail, &mut self) {

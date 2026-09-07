@@ -17,7 +17,7 @@
 //! [`super::run_goal_turn`] (raw) and `run_goal_pipeline_turn`
 //! (classic) both call — decides met/unmet here exactly as it does on those
 //! two arms. Moving that decision onto the wrapper's own `judge`/`again` is
-//! now a piece of work rather than an open question: `doc:adr/0032-free-text-is-not-evidence` settles
+//! now a piece of work rather than an open question: `doc:adr/0033-free-text-is-not-evidence` settles
 //! how [`stella_core::goal::GoalVerifierVerdict`] is encoded — `met` as a
 //! `0`/`1` measurement [`stella_plugin::EvidenceSet`] already carries, and
 //! the two free-text fields as the advisory `ObservedEvidence::detail` that
