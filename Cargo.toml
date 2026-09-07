@@ -84,9 +84,9 @@ serde_json = "1"
 # RFC 8785 JSON Canonicalization Scheme — the version the Context Graph Protocol
 # workspace pins for `contextgraph-types`' `record-hash` feature, so a shared
 # preimage canonicalizes to the same bytes on both sides. Byte-identity of the
-# whole record digest is narrower than that: stella's preimage also drops
-# explicit nulls and CGP's does not, so the two agree on a null-free record
-# only. `stella_protocol::hash` states the boundary and pins it with a test.
+# whole record digest is narrower: stella's preimage also drops `null`-valued
+# object members, and CGP's keeps them, so the two agree on a record whose
+# objects carry no such member. `stella_protocol::hash` pins that boundary.
 serde_json_canonicalizer = "0.3.2"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "process", "fs", "io-util", "sync"] }

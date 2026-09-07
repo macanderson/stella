@@ -16,9 +16,10 @@
 //!
 //! Step 3 has no counterpart in CGP, whose `record_hash_preimage` drops
 //! `record_hash` and canonicalizes. So the two preimages are byte-identical for
-//! a record carrying no explicit `null` and differ for one that does, and an
-//! export-interop claim holds only under that condition.
-//! `strip_nulls_is_the_only_divergence_from_cgps_preimage` pins both halves.
+//! a record whose objects carry no `null`-valued member, and differ for one
+//! that does. A `null` sitting in an array is outside that boundary: step 3
+//! recurses into arrays without removing their elements, so both sides keep it.
+//! `strip_nulls_is_the_only_divergence_from_cgps_preimage` pins all three cases.
 //!
 //! It lives here because two crates hash against it: `stella-records` seals a
 //! record, and `stella-core::receipts` derives a frame's `frame_hash`. Beside
@@ -198,6 +199,39 @@ mod tests {
         );
         assert_eq!(canonical_preimage(&with_null).unwrap(), r#"{"a":1}"#);
         assert_eq!(cgp_preimage(&with_null), r#"{"a":1,"b":null}"#);
+
+        // Step 3 recurses, so the divergence reaches a nested member and a
+        // member of an object inside an array. Without these two the test
+        // would still pass with `strip_nulls` flattened to the top level.
+        let nested_null = json!({ "outer": { "a": 1, "b": null } });
+        assert_eq!(
+            canonical_preimage(&nested_null).unwrap(),
+            r#"{"outer":{"a":1}}"#
+        );
+        assert_eq!(cgp_preimage(&nested_null), r#"{"outer":{"a":1,"b":null}}"#);
+
+        let null_under_an_array = json!({ "items": [{ "a": 1, "b": null }] });
+        assert_eq!(
+            canonical_preimage(&null_under_an_array).unwrap(),
+            r#"{"items":[{"a":1}]}"#
+        );
+        assert_eq!(
+            cgp_preimage(&null_under_an_array),
+            r#"{"items":[{"a":1,"b":null}]}"#
+        );
+
+        // A null array *element* is not a member, so step 3 leaves it and the
+        // two sides still agree. This is the edge of the boundary above.
+        let null_array_element = json!({ "items": [null, 1] });
+        assert_eq!(
+            canonical_preimage(&null_array_element).unwrap(),
+            cgp_preimage(&null_array_element),
+            "a null array element is kept on both sides"
+        );
+        assert_eq!(
+            canonical_preimage(&null_array_element).unwrap(),
+            r#"{"items":[null,1]}"#
+        );
     }
 
     #[test]
