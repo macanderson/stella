@@ -293,19 +293,17 @@ stops there — it neither files nor blocks anything. `main` failed the same
 test three times running across two days and the `main-red` chain never fired
 once, because nothing in it had ever asked `ci.yml` what it found.
 `scripts/main-canary.sh`'s `ci-tests` row (`scripts/check-ci-tests.sh`, `make
-ci-tests`) is that question, read cheaply: it does not run the suite a second
-time — the canary's `compile` row already pays for asking whether the tree
-*builds*, and doubling a full workspace test run on every push is the cost
-`main-canary.yml`'s header argues against paying twice. It reads the
-CONCLUSION of the run `ci.yml` already produced for the most recent commit
-that has a completed one, and reports "nothing to say" — not red — on a
-still-queued run, a cancelled one, a `startup_failure`, or a run this build
-does not recognise, the same fail-open discipline `check-main-verified.sh`
-uses for the adjacent question above. Landing it as a row of the canary's
-existing `checks` array, rather than a fourth workflow step, means a green
-suite closes the same `main-red` issue a red one opened, with the
-single-issue-lifecycle code that already exists for the other four rows —
-without a second actor racing the canary to open or close it.
+ci-tests`) asks it cheaply. It never runs the suite twice. The `compile` row
+already pays to ask whether the tree *builds*, and a second full test run on
+every push is the cost `main-canary.yml`'s header argues against. The row
+reads the CONCLUSION `ci.yml` already wrote for the newest commit that has a
+finished run. It answers "nothing to say" — not red — on a queued run, a
+cancelled one, a `startup_failure`, or a run it does not know. That is the
+fail-open rule `check-main-verified.sh` uses for the question above. It is a
+row of the canary's `checks` array, not a fourth workflow step, so a green
+suite closes the same `main-red` issue a red one opened, through the
+one-issue code the other four rows already share. No second actor races the
+canary to open or close it.
 
 One cause of that absence is a push that raised no event, and the canary
 cannot see it from the inside: it is suppressed by the same rule.
