@@ -1058,6 +1058,22 @@ fn the_emit_spelling_a_host_parses_is_the_one_a_person_reads() {
     }
 }
 
+/// **The witness.** The two hand-run sweep verbs are on the declared
+/// surface, so a host can discover them and the CLI's own parity test holds
+/// the clap tree to them. Before `#6184` the behaviour behind both was
+/// reachable only from inside the `drive` loop, and neither had a row here.
+#[test]
+fn the_hand_run_sweep_verbs_are_declared() {
+    for path in ["sweep regress", "sweep meta"] {
+        let verb = host_verb(path).unwrap_or_else(|| panic!("`{path}` has a HOST_SURFACE row"));
+        assert_eq!(
+            verb.emits,
+            Emits::QueryEnvelope,
+            "`{path}` prints a human report by default and the query envelope under --format json"
+        );
+    }
+}
+
 /// The declaration agrees with itself: feeding the surface its own paths must
 /// find nothing. The baseline the two drift cases below are read against.
 #[test]

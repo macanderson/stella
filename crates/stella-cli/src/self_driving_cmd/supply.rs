@@ -263,37 +263,15 @@ fn pass_with(
     }
 
     if cfg.supply.regress {
-        let receipts = durable.receipts();
-        let report = stella_autonomy::regress::sweep(&receipts, |cite| present_on_base(root, cite));
-        audit::record(
-            durable,
-            Audit::Swept,
-            None,
-            &format!(
-                "regress: {} of {} receipt(s) re-checked, {} could not be, {} fix(es) gone",
-                report.checked,
-                receipts.len(),
-                report.skipped.len(),
-                report.findings.len()
-            ),
-        );
-        findings.extend(report.findings);
+        let drawn = draw_regress(durable, root);
+        audit::record(durable, Audit::Swept, None, &drawn.summary);
+        findings.extend(drawn.findings);
     }
 
     if cfg.supply.meta {
-        let rows = durable.cycles().rows;
-        let found = stella_autonomy::meta::sweep(&rows, &durable.calibration());
-        audit::record(
-            durable,
-            Audit::Swept,
-            None,
-            &format!(
-                "meta: {} finding(s) over {} cycle(s)",
-                found.len(),
-                rows.len()
-            ),
-        );
-        findings.extend(found);
+        let drawn = draw_meta(durable);
+        audit::record(durable, Audit::Swept, None, &drawn.summary);
+        findings.extend(drawn.findings);
     }
 
     let seen = durable.live_seen();
@@ -318,8 +296,8 @@ fn pass_with(
     let mut filed = 0_u32;
     for finding in &fresh {
         match file(durable, provider, cfg, root, finding) {
-            Ok(true) => filed += 1,
-            Ok(false) => {}
+            Ok(Some(_)) => filed += 1,
+            Ok(None) => {}
             Err(error) => audit::record(
                 durable,
                 Audit::Transient,
@@ -329,6 +307,67 @@ fn pass_with(
         }
     }
     filed > 0
+}
+
+/// What one supply offered when it was drawn from.
+///
+/// The loop reads this to decide what to file; `sweep.rs` renders it for an
+/// operator running the same supply by hand. One draw, two readers, so a
+/// hand-run report cannot describe a different sweep from the one the loop
+/// does.
+pub(super) struct Drawn {
+    /// What the supply offers, before the seen set is consulted.
+    pub findings: Vec<Finding>,
+    /// One line naming what was read and what came back.
+    pub summary: String,
+    /// The receipt ledger this draw read, for the supply that reads one.
+    pub receipts: Option<Receipts>,
+}
+
+/// How much of the closure ledger one `regress` draw could re-ask.
+pub(super) struct Receipts {
+    /// Receipts on file.
+    pub total: usize,
+    /// Those whose cited change could be looked for on the base.
+    pub checked: u64,
+    /// Those that could not be — no change cited, or none visible at close.
+    pub skipped: usize,
+}
+
+/// Re-check every fix this loop has claimed, and offer the ones that are gone.
+pub(super) fn draw_regress(durable: &Durable, root: &Path) -> Drawn {
+    let receipts = durable.receipts();
+    let report = stella_autonomy::regress::sweep(&receipts, |cite| present_on_base(root, cite));
+    Drawn {
+        summary: format!(
+            "regress: {} of {} receipt(s) re-checked, {} could not be, {} fix(es) gone",
+            report.checked,
+            receipts.len(),
+            report.skipped.len(),
+            report.findings.len()
+        ),
+        receipts: Some(Receipts {
+            total: receipts.len(),
+            checked: report.checked,
+            skipped: report.skipped.len(),
+        }),
+        findings: report.findings,
+    }
+}
+
+/// Fold the loop's own ledger and offer what its pathology signals say.
+pub(super) fn draw_meta(durable: &Durable) -> Drawn {
+    let rows = durable.cycles().rows;
+    let findings = stella_autonomy::meta::sweep(&rows, &durable.calibration());
+    Drawn {
+        summary: format!(
+            "meta: {} finding(s) over {} cycle(s)",
+            findings.len(),
+            rows.len()
+        ),
+        findings,
+        receipts: None,
+    }
 }
 
 /// Write down what a closure cited, and whether that change was on the base.
@@ -371,7 +410,7 @@ pub(super) fn record_receipt(durable: &Durable, key: &str, closure: &Closure) {
 /// A commit is asked about by sha. A pull request is looked for by the `(#N)`
 /// a squash merge leaves in the subject line. Anything else answers `false`.
 /// A document names a choice, and a choice cannot leave a branch.
-fn present_on_base(root: &Path, cite: &Citation) -> bool {
+pub(super) fn present_on_base(root: &Path, cite: &Citation) -> bool {
     match cite {
         Citation::Commit { sha } => {
             let sha = sha.trim();
@@ -449,15 +488,16 @@ fn noisy(durable: &Durable) -> bool {
 
 /// File one finding through the door every filing goes through.
 ///
-/// `Ok(true)` means the tracker took it. A repeat and a refusal are both
-/// `Ok(false)`. Neither is an error, and both are counted already.
-fn file(
+/// The tracker hands back a key when it takes the finding. A repeat and a
+/// refusal are both `Ok(None)`. Neither is an error, and both are counted
+/// already.
+pub(super) fn file(
     durable: &Durable,
     provider: &dyn IssueProvider,
     cfg: &LoopConfig,
     root: &Path,
     finding: &Finding,
-) -> Result<bool, String> {
+) -> Result<Option<String>, String> {
     let bound = convention::load(root);
     let draft = IssueDraft {
         title: finding.title.clone(),
@@ -488,17 +528,10 @@ fn file(
     durable.update_stats(|stats| stats.record_filing(outcome.canonical()));
 
     if let backlog::Filed::New(key) = &outcome {
-        durable.record_filing(
-            &stella_autonomy::finding_digest(&finding.title),
-            &key.to_string(),
-        )?;
-        audit::record(
-            durable,
-            Audit::IssueFiled,
-            Some(&key.to_string()),
-            &finding.title,
-        );
-        return Ok(true);
+        let key = key.to_string();
+        durable.record_filing(&stella_autonomy::finding_digest(&finding.title), &key)?;
+        audit::record(durable, Audit::IssueFiled, Some(&key), &finding.title);
+        return Ok(Some(key));
     }
 
     audit::record(
@@ -507,7 +540,7 @@ fn file(
         None,
         &format!("not filed ({}): {}", outcome.canonical(), finding.title),
     );
-    Ok(false)
+    Ok(None)
 }
 
 #[cfg(test)]
