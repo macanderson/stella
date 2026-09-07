@@ -10,7 +10,9 @@ stella plugin drive stella-selfdriving
 
 The install prints the whole grant and asks. With no terminal attached it
 prints the same text and refuses instead of assuming an answer. The drive
-opens one session against the program.
+opens a session against the program, re-opens it whenever the program asks to
+sleep, and stops when it halts — or when `--spend-limit` or `--max-sessions`
+is reached.
 
 ## What this is
 

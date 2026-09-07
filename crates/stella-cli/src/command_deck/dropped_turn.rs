@@ -340,7 +340,7 @@ mod tests {
         // The turn future is dropped: its own sender goes with it, the
         // registry's clone does not, and the event is still in the channel.
         drop(tx);
-        let slot = forwarder::forwarder_slot();
+        let slot = forwarder::turn_slots().drain;
         *slot.lock().expect("slot") = Some(forwarder);
         (slot, in_rx)
     }

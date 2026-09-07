@@ -20,19 +20,25 @@
 //! here and nowhere else. Two gates would each hold half the answer and
 //! disagree about the rest.
 //!
-//! # A yes goes through the plan graph
+//! # A yes is said on the gate, and written into the plan graph
 //!
-//! The person driving says yes on the deck, and that verb puts the repair on
-//! the task board (`driver_support::service_approve_revision`). So a board
-//! that carries the waiting subject **is** their yes, and the next
-//! [`PlanGate::review`] writes it: [`PlanGate::approve_revision`] hands the
-//! graph to `RevisionGate::approve`. The `[:NEXT]` edge and the cause come
-//! from `PlanGraph::revise`. One writer makes them, so no second path can
-//! disagree.
+//! The person driving answers on the deck, and that key reaches the gate
+//! through a [`RevisionSlot`]: `a` records the yes with `RevisionGate::agree`
+//! and `x` drops the proposal with `RevisionGate::dismiss`
+//! (`driver_support::service_approve_revision` and its dismiss sibling). The
+//! next [`PlanGate::review`] writes a recorded yes:
+//! [`PlanGate::approve_revision`] hands the graph to `RevisionGate::approve`,
+//! and the `[:NEXT]` edge and the cause come from `PlanGraph::revise`. One
+//! writer makes them, so no second path can disagree.
+//!
+//! Reading the yes off the task board instead — which is what this did until
+//! the deck could reach the gate — made a row the model itself created with
+//! the waiting subject indistinguishable from consent, and gave `x` nowhere to
+//! act, so a dismissed proposal held the turn until it ended.
 
 use std::sync::{Arc, Mutex};
 
-use stella_protocol::{ErrorClass, PlanRevision, RevisionProposal, TaskItem, ToolOutput};
+use stella_protocol::{ErrorClass, PlanRevision, RevisionProposal, ToolOutput};
 use stella_store::plan_graph::{RevisionError, RevisionGate};
 
 use super::PlanGate;
@@ -43,6 +49,46 @@ use super::PlanGate;
 /// ledgers. A lane with no plan gate still gets one, so its proposals reach
 /// the deck the way they always did.
 pub(crate) type SharedRevisions = Arc<Mutex<RevisionGate>>;
+
+/// Where a running turn parks its plan-change gate so the deck's keys can
+/// reach the gate that turn is reading.
+///
+/// The driver loop owns it and the turn borrows it, the way the forwarder slot
+/// beside it is owned and borrowed — for the same reason. The gate is built
+/// inside `run_lead_turn` and dies with it, and the keyboard lives in the
+/// driver loop, so neither one can hand the other a handle directly.
+///
+/// Empty between turns, and that is an answer rather than a gap: with no turn
+/// running there is no held tool call to release, and the verbs say so.
+pub(crate) type RevisionSlot = Mutex<Option<SharedRevisions>>;
+
+/// Park `revisions` in `slot` for as long as the returned guard lives.
+///
+/// A guard rather than a pair of assignments, because a turn can end by being
+/// dropped: the deck's cancel drops the whole turn future, and a slot cleared
+/// only on the path that returns normally would leave the deck's keys acting
+/// on the gate of a turn that is over.
+pub(crate) fn park_revisions<'a>(
+    slot: &'a RevisionSlot,
+    revisions: &SharedRevisions,
+) -> ParkedRevisions<'a> {
+    *slot.lock().unwrap_or_else(|p| p.into_inner()) = Some(Arc::clone(revisions));
+    ParkedRevisions(slot)
+}
+
+/// What [`park_revisions`] hands back: the slot is emptied when this drops.
+pub(crate) struct ParkedRevisions<'a>(&'a RevisionSlot);
+
+impl Drop for ParkedRevisions<'_> {
+    fn drop(&mut self) {
+        *self.0.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    }
+}
+
+/// The running turn's plan-change gate, or `None` when no turn is running.
+pub(crate) fn parked_revisions(slot: &RevisionSlot) -> Option<SharedRevisions> {
+    slot.lock().unwrap_or_else(|p| p.into_inner()).clone()
+}
 
 /// What the model is told while a plan change waits on the person driving.
 ///
@@ -59,13 +105,18 @@ const REVISION_STALE: &str = "the plan change could not be written, so nothing r
      person driving is asked again.";
 
 impl PlanGate {
-    /// Settle the waiting plan change against `board`, and return the refusal
-    /// a guarded tool call gets while it is still waiting.
+    /// Settle the waiting plan change, and return the refusal a guarded tool
+    /// call gets while it is still waiting.
     ///
     /// `None` in three cases: nothing is waiting; there is no plan to write a
-    /// yes into; or the board carries the change, so it is written and work
-    /// goes on.
-    pub(super) fn settle_revision(&self, board: &[TaskItem]) -> Option<ToolOutput> {
+    /// yes into; or the person driving has said yes, so the change is written
+    /// and work goes on.
+    ///
+    /// The yes is read off the gate rather than off the task board. A board
+    /// row is not consent: the model creates rows itself, and one whose
+    /// subject happens to be the waiting change's would otherwise release a
+    /// hold nobody answered.
+    pub(super) fn settle_revision(&self) -> Option<ToolOutput> {
         let waiting = self.pending_revision()?;
         let planned = self
             .state
@@ -78,7 +129,7 @@ impl PlanGate {
             // so a hold raised before one exists could never be lifted.
             return None;
         }
-        if !board.iter().any(|item| item.subject == waiting.subject) {
+        if !self.revision_agreed() {
             return Some(ToolOutput::classified_error(
                 ErrorClass::RefusedByPolicy,
                 hold_message(REVISION_HELD, &waiting),
@@ -95,6 +146,14 @@ impl PlanGate {
                 hold_message(REVISION_STALE, &waiting),
             )),
         }
+    }
+
+    /// Whether the person driving has said yes to the waiting change.
+    fn revision_agreed(&self) -> bool {
+        self.revisions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .agreed()
     }
 
     /// The plan change on the table, if there is one.
@@ -154,7 +213,8 @@ mod tests {
 
     use async_trait::async_trait;
     use stella_protocol::{
-        Answer, GateBoard, GateRow, GateState, QuestionOutcome, QuestionRequest, TaskStatus,
+        Answer, GateBoard, GateRow, GateState, QuestionOutcome, QuestionRequest, TaskItem,
+        TaskStatus,
     };
     use stella_tools::ToolRegistry;
     use stella_tools::registry::question::QuestionResponder;
@@ -305,9 +365,22 @@ mod tests {
             "the hold names the gate that failed: {message}"
         );
 
-        // The deck's approve verb puts the repair on the board. That row is
-        // the person's yes, and the next call reads it.
+        // A board row is not an answer. The model creates rows itself, so one
+        // whose subject matches the waiting change is a coincidence, and the
+        // hold stands.
         plan.push(row("4", &waiting.subject));
+        assert!(
+            gate.review(&plan).await.is_some(),
+            "a row nobody was asked about is not consent"
+        );
+
+        // The deck's approve verb says yes on this gate. The next call reads
+        // that, writes the change, and goes on.
+        revisions
+            .lock()
+            .expect("the gate")
+            .agree()
+            .expect("standing");
         assert!(
             gate.review(&plan).await.is_none(),
             "work goes on once the change is answered"
@@ -334,6 +407,53 @@ mod tests {
         );
     }
 
+    /// **The witness for `x dismiss`.** A change dropped on the gate lifts the
+    /// hold, and the turn's next tool call runs — with no plan revision
+    /// written, because declining a change is not reverting one.
+    ///
+    /// Nothing could reach this gate before, so a reader who did not want the
+    /// repair task had no way to release the turn: it stayed refused until it
+    /// ended.
+    #[tokio::test]
+    async fn dropping_the_waiting_change_lifts_the_hold_and_writes_no_revision() {
+        let registry = ToolRegistry::new(std::path::PathBuf::from("."));
+        let (gate, revisions, _events) = gate(&registry);
+        let plan = board(3);
+        assert!(gate.review(&plan).await.is_none(), "r1 runs");
+        let waiting = observe(&revisions, &gate);
+
+        assert!(
+            gate.review(&plan).await.is_some(),
+            "nothing runs while a change waits"
+        );
+
+        // What `x` does, from the driver's side.
+        let dropped = revisions
+            .lock()
+            .expect("the gate")
+            .dismiss()
+            .expect("a change was standing");
+        assert_eq!(dropped.subject, waiting.subject);
+
+        assert!(
+            gate.review(&plan).await.is_none(),
+            "the hold is lifted and the next tool call runs"
+        );
+        let graph = gate.plan_graph().expect("a plan was put up this turn");
+        assert_eq!(
+            graph.revision(),
+            PlanRevision::FIRST,
+            "a dismissal writes no revision"
+        );
+        assert!(
+            graph
+                .planned(graph.revision())
+                .iter()
+                .all(|task| task.subject != waiting.subject),
+            "and inserts no task"
+        );
+    }
+
     /// A change put up before any plan cannot be written, since a plan graph
     /// is what it would be written into. It must not wedge the turn either.
     #[tokio::test]
@@ -352,7 +472,7 @@ mod tests {
             "there is no plan, so there is nothing to write into"
         );
         assert!(
-            gate.settle_revision(&board(2)).is_none(),
+            gate.settle_revision().is_none(),
             "a change nobody can write must not wedge the turn"
         );
     }

@@ -475,6 +475,15 @@ async fn main() -> std::io::Result<()> {
                         proposal.revision, proposal.subject
                     )));
                 }
+                // `x` on the same row. The demo runs no turn, so there is no
+                // hold to lift and the answer is the sentence the real driver
+                // sends when it has lifted one.
+                WorkspaceInput::DismissRevision { proposal, .. } => {
+                    let _ = react_tx.send(Inbound::Notice(format!(
+                        "{} dismissed — the plan is unchanged",
+                        proposal.revision
+                    )));
+                }
                 // The demo has no microphone: a dictation gesture answers
                 // with the failure the real driver would send if it had no
                 // recorder, so the deck's voice state settles.

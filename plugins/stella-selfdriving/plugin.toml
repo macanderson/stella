@@ -7,8 +7,9 @@
 # would be true.
 #
 # Stella starts it. `[driver.process]` at the foot of this file names
-# `main.py`, and `stella plugin drive stella-selfdriving` opens one session
-# against it (#3783, #6063). The program asks for the capabilities listed in
+# `main.py`, and `stella plugin drive stella-selfdriving` opens a session
+# against it — and another one whenever the program asks to sleep, until it
+# halts (#3783, #6063). The program asks for the capabilities listed in
 # `[driver] calls` and gets exactly those; anything else comes back refused,
 # and Stella performs what it does serve as this plugin rather than as you.
 #

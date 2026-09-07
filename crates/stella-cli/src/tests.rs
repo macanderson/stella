@@ -573,8 +573,18 @@ fn plugin_drive_reads_the_session_wide_spend_limit() {
     assert_eq!(cli.globals.spend_limit, Some(25.0));
     match cli.command {
         Some(Command::Plugin {
-            cmd: plugin_cmd::PluginCmd::Drive { ref name },
-        }) => assert_eq!(name, "selfdriving"),
+            cmd:
+                plugin_cmd::PluginCmd::Drive {
+                    ref name,
+                    max_sessions,
+                },
+        }) => {
+            assert_eq!(name, "selfdriving");
+            assert_eq!(
+                max_sessions, None,
+                "the run is bounded by the spend limit alone unless --max-sessions is given"
+            );
+        }
         _ => panic!("expected the parse to bind `plugin drive selfdriving`"),
     }
 }

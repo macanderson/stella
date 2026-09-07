@@ -8,7 +8,7 @@ name: main-red-clear
 # after the outage ends. On 2026-09-05, ten pull requests stayed unmergeable
 # on a check whose own question had already changed its answer.
 #
-# `scripts/clear-main-red-holds.sh` re-runs those holds. This workflow is one
+# `scripts/refresh-main-red-holds.sh` re-runs those holds. This workflow is one
 # of its two callers, and covers the recovery a person performs by hand:
 # closing the `main-red` issue, or taking the label off it.
 #
@@ -79,7 +79,7 @@ jobs:
           DRILL_PR: ${{ inputs.drill }}
         run: |
           if [ -n "$DRILL_PR" ]; then
-            ./scripts/clear-main-red-holds.sh --drill "$DRILL_PR"
+            ./scripts/refresh-main-red-holds.sh --drill "$DRILL_PR"
           else
-            ./scripts/clear-main-red-holds.sh
+            ./scripts/refresh-main-red-holds.sh
           fi

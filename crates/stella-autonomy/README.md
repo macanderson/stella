@@ -80,6 +80,7 @@ the CLI does — so the dashboard and the terminal cannot disagree.
 |---|---|
 | [`src/lib.rs`](src/lib.rs) | The dedup digest, the `AimdLimits`/`Calibration`/`calibrate` controller, the `Lens`/`Tooling`/`LENSES` aperture ladder and `advance`, `CycleRecord`/`dry_streak`, the `Supply`/`Demand`/`Floors`/`CyclePlan`/`plan_cycle` governor, `Metrics`/`metrics`/`starved`, `QueueIssue` (ranked by `priority::triage` — see that module), and `Liveness`/`liveness`/`RunRow`/`fold_runs`. |
 | [`src/step.rs`](src/step.rs) | The top-level loop machine: `LoopState`/`LoopObservation`/`step`, the `Unblock` remedies for a broken base, and the `Blocked` reasons. |
+| [`src/drive.rs`](src/drive.rs) | The session sequencer: `next_session` says whether a driver plugin gets another session and after how long, given how the last one ended and what the whole run has spent. `stella plugin drive` is its host. |
 | [`src/deliver.rs`](src/deliver.rs) | The per-PR delivery machine: `PrState`/`Observation`/`deliver_next`, the fix/rebase ceilings, and the escalation reasons. |
 | [`src/doctrine.rs`](src/doctrine.rs) | The policy knobs a human sets: `Doctrine`, `ForeignBreakage`, contention policy and `contention_verdict`. |
 | [`src/priority.rs`](src/priority.rs) | `triage`: rank by the ladder the repo actually uses, with unassessed issues distinct from unrankable ones. |
