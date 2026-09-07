@@ -324,6 +324,19 @@ case "$out" in
   *) fail=$((fail + 1)); echo "FAIL a pending run did not say what it left open:"; echo "$out" ;;
 esac
 
+# A filed issue carries the backlog beside the absence. "Nothing verified
+# these commits" and "this repository is 46 runs deep" are one finding, and an
+# issue that reports the first without the second sends the reader hunting for
+# a cause that is on the same screen.
+out="$("$SCRIPT" --fixture-commits "$pending_and_missing" \
+  --fixture-runs "$B queued none $(now_iso)" \
+  --announce --dry-run --fixture-queue 46 2>&1)"
+case "$out" in
+  *"46 of the 100 most recent runs"*)
+    pass=$((pass + 1)); echo "ok   a filed issue names the backlog beside the absence" ;;
+  *) fail=$((fail + 1)); echo "FAIL the filed issue did not name the backlog:"; echo "$out" ;;
+esac
+
 # Nor does it file: an answer that has not arrived is not yet an absence, and
 # the stuck threshold above owns the point where it becomes one.
 out="$("$SCRIPT" --fixture-commits "$pending_commits" --fixture-runs "$pending_runs" \

@@ -335,17 +335,17 @@ queue_depth() {
     --jq '[.[] | select(.status != "completed")] | length' 2>/dev/null || true
 }
 
-# Both reports below print this block, so it is written once.
+# Read once, up front, so the three places that print the block below cost one
+# API call between them rather than one each.
+depth=""
+[ -n "$still_running" ] && depth="$(queue_depth)"
+case "$depth" in '' | *[!0-9]*) depth="" ;; esac
+
+# Every report that prints this block prints the same one.
 pending_report() {
   printf 'These commits have a ci run that has not concluded yet:\n\n%s' "$still_running"
-  local depth
-  depth="$(queue_depth)"
-  case "$depth" in
-  '' | *[!0-9]*) ;;
-  *)
+  [ -n "$depth" ] &&
     printf '\n%s of the 100 most recent runs in this repository have not finished.\n' "$depth"
-    ;;
-  esac
 }
 
 # ── Announcing ───────────────────────────────────────────────────────────────
@@ -405,13 +405,22 @@ Closing automatically — reopen if you disagree.
       printf 'check-main-verified: green, nothing open to close\n' || true
     fi
   else
-    body="\`main-canary.yml\`'s \`check-main-verified.sh\` step found commit(s) on
+    # A `main-unverified` issue filed during a forty-run backlog reads very
+    # differently once the reader can see the backlog, and nothing else on the
+    # issue says it.
+    pending_block=""
+    [ -n "$still_running" ] && pending_block="
+\`\`\`
+$(pending_report)
+\`\`\`
+"
+    body="\`main-canary.yml\`'s \`check-main-verified.sh\` job found commit(s) on
 \`main\` that **nothing has verified** — as distinct from a commit a check said
 no about, which \`main-canary.sh\`'s own issue already owns.
 
 \`\`\`
 ${unverified}\`\`\`
-
+${pending_block}
 This is NOT \"main is red\". A failing run is a verified commit and the canary
 owns that. These commits have no answer at all, which every other mechanism
 here reads as green: the canary files only when its job runs and fails, the
