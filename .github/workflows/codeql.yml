@@ -118,9 +118,10 @@
 #
 # The advisory posture above is unchanged, for a reason #3260 did not have.
 # The backlog is empty now, so a required check would cost nothing today.
-# What argues against it is the hit rate: this query fired 52 times and was
-# right none of them. Make CodeQL required once a run produces an alert
-# somebody agrees with.
+# What argues against it is the hit rate: of the alerts this query has ever
+# produced here, the fifty a person read were wrong, and the rest closed on
+# their own when the code they pointed at moved. Make CodeQL required once a
+# run produces an alert somebody agrees with.
 name: CodeQL
 
 on:

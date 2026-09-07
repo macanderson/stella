@@ -907,9 +907,10 @@ runs it over rust, python, javascript-typescript and the workflow files. Its
 header carries the two things a later session needs: why it is not a required
 check, and the three shapes `rust/cleartext-logging` gets wrong here — a
 correlation id read as a session token, a guard read as a leak, and a keyboard
-key read as a cryptographic one. All 52 of that rule's alerts were read against
-the code and dismissed one by one, in `#6388`. Read that header before you
-dismiss a new alert, and before you assume a new one is noise.
+key read as a cryptographic one. Every alert that rule had open was read
+against the code and dismissed with its own written reason, in `#6388`. Read
+that header before you dismiss a new alert, and before you assume a new one is
+noise.
 
 ---
 
