@@ -41,6 +41,33 @@ the corpus is replicated.
 **Editing the corpus is therefore a five-repo change.** Land it everywhere in
 the same sitting; the check will notice within a day if you do not.
 
+## Keeping each repo's compiled summary honest
+
+`docs/scr/` is the record. What an agent actually holds in context at session
+start is the compiled **summary** of it: every repo's `AGENTS.md` carries the
+same directives, restated under a "## Standing decisions" heading, one bullet
+per record. That summary is part of the corpus contract too, and the same
+`scr-corpus-check` workflow checks it — but not byte-for-byte, because it is
+not meant to be byte-identical. At least SCR-001's compiled bullet names each
+repo's own toolchain command (`cargo test -p <crate>` in the Rust repos,
+`pnpm --filter <package> test` here, `uv run pytest` in arenabench), so a
+literal-bytes comparison would fail on correct, legitimately differing
+content.
+
+What the check compares instead is structure and titles: every repo's summary
+has exactly one bullet per `docs/scr/` record, and the short title naming that
+record — the text between the id link and the colon, e.g. "Tests/builds
+(inner loop)" — is expected to read the same in every repo, even where the
+sentence after it does not. This is what would have caught oxagen#2673: the
+record and the corpus check were both back in sync after
+`docs/scr/SCR-004-residue-becomes-issues.md` was rewritten, but one repo's
+`AGENTS.md` still summarized the directive it replaced, and nothing looked at
+that file to notice.
+
+**Editing a record's directive is therefore also an `AGENTS.md` edit, in the
+same five-repo change** — update the compiled bullet's title (and body, where
+it isn't repo-specific) alongside the record it summarizes.
+
 ## The autonomy ladder
 
 Each SCR carries an `autonomy` field naming its current rung:
