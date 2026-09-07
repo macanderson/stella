@@ -68,7 +68,7 @@ home_count="$(grep -cE "$invariant_re" "$home" || true)"
 # the bolded name appears *anywhere* in $home is a different question and the
 # wrong one: $home is mostly prose, and its prose uses bold lead-ins too. A
 # paragraph opening `**Both steps file, under different labels.**` made every
-# `N. **Both.**` in the tree read as a restatement of an invariant named
+# `N. **Both.**` in the tree read as a restatement of a numbered rule named
 # "Both" — and `docs/spec/pipeline-as-plugins.md` has one, as the third option
 # in a design list.
 home_names="$(sed -n 's/^[0-9]\{1,\}\. \*\*\([^*]*\)\*\*.*/\1/p' "$home")"
