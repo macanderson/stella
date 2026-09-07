@@ -6,7 +6,8 @@
 #
 # Stella builds this file into the binary. So a workspace with no file of its
 # own still reads a real manifest. A file at `.stella/issues/github.toml`
-# takes its place.
+# takes its place. `linear.toml` beside this one is the other tracker that
+# ships, read by the same code.
 #
 # The schema is `doc:agent-native-delivery` §4.1.
 
@@ -18,6 +19,10 @@ name = "github"
 # A file that names some other kind still loads. Stella then prints a line to
 # say that the GitHub adapter is what runs.
 kind = "github"
+
+# The rest of §4.1 — `[connection]`, `[states.write]`, `[capabilities]`,
+# `[branch]`, `[fields.write]` — is not read by this build and so is not
+# written here. A file carrying those keys still loads; they are skipped.
 
 # What a raw status means.
 # A status in neither list is reported. It is never guessed. A guess of open
@@ -46,7 +51,6 @@ parent = "parent"
 # A wrong class hides.
 #
 # The keys are Stella's own class names, and §4.1 draws the same three.
-# `#1281` owns the rest.
 [classes]
 bug = ["bug"]
 feature = ["feature"]

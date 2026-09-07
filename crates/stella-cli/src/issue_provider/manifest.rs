@@ -1,9 +1,17 @@
 //! What a tracker is, kept in a file.
 //!
-//! GitHub ships as a manifest, the way any other tracker has to. `github.toml`
-//! sits next to this file. Stella builds it into the binary. A workspace file
-//! at `.stella/issues/github.toml` takes its place. So the built-in path and
-//! the file path are one path.
+//! GitHub and Linear both ship as manifests, the way any other tracker has to.
+//! `github.toml` and `linear.toml` sit next to this file. Stella builds them
+//! into the binary. A workspace file at `.stella/issues/<name>.toml` takes the
+//! matching one's place. So the built-in path and the file path are one path.
+//!
+//! # Adding a tracker is a file and a row
+//!
+//! [`BUILT_IN`] is the whole list. A tracker is a `.toml` beside this file and
+//! a row in that table. No branch anywhere reads a provider name and does
+//! something different, which is the property Linear was moved here to prove:
+//! Linear is the tracker whose quirks are best known, so a format that cannot
+//! carry it carries nobody.
 //!
 //! # What the file holds
 //!
@@ -15,17 +23,26 @@
 //!
 //! # What the file does not hold
 //!
-//! `[connection]`, `[states]`, `[capabilities]` and `[fields.write]` are the
-//! rest of `doc:agent-native-delivery` §4.1. `#1281` owns them, and Linear's
-//! move onto the same file. No second schema for them is defined here.
+//! `[connection]`, `[states.write]`, `[capabilities]`, `[branch]` and
+//! `[fields.write]` are the rest of `doc:agent-native-delivery` §4.1. Nothing
+//! in this build reads them, so no schema for them is defined here. A key this
+//! loader does not read is skipped, so a manifest carrying them still loads.
+//!
+//! # One transport, said out loud
+//!
+//! [`RUNNING_TRANSPORT`] is the only adapter this build has. It runs `gh`.
+//! A manifest declaring some other `kind` still loads, and
+//! [`ProviderManifest::resolve`] prints which adapter will actually run. That
+//! is §4.2's rule: a gap is declared, never discovered mid-run.
 //!
 //! # A missing file is still an answer
 //!
 //! No file, a bad file, a key left out: each one gives a working provider.
 //! The compiled table below covers one case. That case is a built-in file this
-//! build cannot parse. A test pins that the shipped file parses, so a shipped
-//! build never reaches it.
+//! build cannot parse. A test pins that every shipped file parses, so a
+//! shipped build never reaches it.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::Deserialize;
@@ -33,9 +50,25 @@ use stella_protocol::issue::{IssueClass, Vocabulary};
 
 use crate::settings::toml_config::{IssuesSection, TomlConfig};
 
-/// The shipped GitHub manifest. A workspace with no file of its own still
-/// reads a real one.
-pub(crate) const EMBEDDED_GITHUB: &str = include_str!("github.toml");
+/// The provider id of the tracker whose manifest ships beside this file
+/// alongside GitHub's.
+pub(crate) const LINEAR: &str = "linear";
+
+/// Every tracker this build ships a manifest for, keyed by provider id.
+///
+/// A workspace with no file of its own still reads a real manifest for any
+/// name on this list. Adding a tracker is a `.toml` beside this file and a row
+/// here — there is no other place a provider id is spelled.
+pub(crate) const BUILT_IN: &[(&str, &str)] = &[
+    (super::GITHUB, include_str!("github.toml")),
+    (LINEAR, include_str!("linear.toml")),
+];
+
+/// The one adapter this build has. It runs `gh`.
+///
+/// A manifest declaring any other `kind` loads and is used for its words; the
+/// resolution says which adapter will run them. See the module docs.
+const RUNNING_TRANSPORT: &str = super::GITHUB;
 
 /// The manifest schema this build reads.
 const SUPPORTED_SCHEMA_VERSION: u32 = 1;
@@ -109,6 +142,68 @@ impl ClassMap {
     }
 }
 
+/// Which vocabulary keys a file actually wrote.
+///
+/// [`Vocabulary`] carries `#[serde(default)]`, and its default is GitHub's, so
+/// deserializing a file straight into it cannot tell a key left out from a key
+/// written to GitHub's value. That is harmless while GitHub is the only
+/// tracker and wrong the moment a second one ships: a workspace
+/// `.stella/issues/linear.toml` naming only its labels would come back saying
+/// `open` means `open`, and `started` — the state most Linear issues are
+/// actually in — would read as a status this build has never heard of.
+///
+/// `Option` per key is what makes the shadowing key by key, which is the
+/// contract AGENTS.md states for this directory. A file overrides what it
+/// writes and inherits the rest.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct VocabularyOverlay {
+    open: Option<Vec<String>>,
+    closed: Option<Vec<String>>,
+    resolutions: Option<BTreeMap<String, String>>,
+    fields: Option<FieldOverlay>,
+}
+
+/// Which field names a file actually wrote, on the same rule as its parent.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct FieldOverlay {
+    title: Option<String>,
+    body: Option<String>,
+    labels: Option<String>,
+    parent: Option<String>,
+}
+
+impl VocabularyOverlay {
+    /// Lay what the file wrote over the built-in manifest's words.
+    fn apply(self, mut base: Vocabulary) -> Vocabulary {
+        if let Some(open) = self.open {
+            base.open = open;
+        }
+        if let Some(closed) = self.closed {
+            base.closed = closed;
+        }
+        if let Some(resolutions) = self.resolutions {
+            base.resolutions = resolutions;
+        }
+        if let Some(fields) = self.fields {
+            if let Some(title) = fields.title {
+                base.fields.title = title;
+            }
+            if let Some(body) = fields.body {
+                base.fields.body = body;
+            }
+            if let Some(labels) = fields.labels {
+                base.fields.labels = labels;
+            }
+            if let Some(parent) = fields.parent {
+                base.fields.parent = parent;
+            }
+        }
+        base
+    }
+}
+
 /// Everything in a manifest that is not the kernel's [`Vocabulary`].
 ///
 /// A second struct, not a `#[serde(flatten)]` field. `Vocabulary` stays the
@@ -159,14 +254,35 @@ impl ProviderManifest {
         })
     }
 
-    /// The shipped GitHub manifest.
+    /// The shipped manifest for the default provider, GitHub.
+    ///
+    /// For a caller with no provider name in hand — a `Default` impl, or an
+    /// adapter built without a workspace root.
     pub(crate) fn embedded() -> Self {
-        match Self::parse(EMBEDDED_GITHUB) {
+        Self::built_in(super::GITHUB)
+    }
+
+    /// The shipped manifest for one provider id.
+    ///
+    /// A name on [`BUILT_IN`] gives that tracker's file. A name that is not
+    /// gives GitHub's, and says so — a workspace that named a tracker this
+    /// build has never heard of still gets a provider that works, rather than
+    /// a startup that does not.
+    pub(crate) fn built_in(provider: &str) -> Self {
+        let Some((_, raw)) = BUILT_IN.iter().find(|(id, _)| *id == provider) else {
+            eprintln!(
+                "warning: this build ships no manifest for issue provider `{provider}`; using \
+                 GitHub's. Write `.stella/issues/{provider}.toml` to say how that tracker \
+                 spells open, closed, its resolutions, its fields and its classes."
+            );
+            return Self::built_in(super::GITHUB);
+        };
+        match Self::parse(raw) {
             Ok(manifest) => manifest,
             Err(error) => {
                 eprintln!(
-                    "warning: the built-in GitHub manifest did not parse ({error}); using the \
-                     compiled table. This is a defect in the build, not in your workspace."
+                    "warning: the built-in `{provider}` manifest did not parse ({error}); using \
+                     the compiled table. This is a defect in the build, not in your workspace."
                 );
                 Self::compiled_github()
             }
@@ -197,37 +313,48 @@ impl ProviderManifest {
     /// because the shell and most editors read a leading dot as the whole
     /// stem — and the workspace's own `github.toml` is ignored with no word.
     pub(crate) fn resolve(root: &Path, issues: &IssuesSection) -> Self {
-        let embedded = Self::embedded();
         let mut provider = issues.provider.trim().to_ascii_lowercase();
         if provider.is_empty() {
             provider = super::GITHUB.to_owned();
         }
-        if provider != super::GITHUB {
-            eprintln!(
-                "warning: no built-in manifest for issue provider `{provider}`; using GitHub's. \
-                 Declare it in `.stella/issues/{provider}.toml` to say how that tracker spells \
-                 open, closed, its resolutions, and its classes."
-            );
-        }
+        let built_in = Self::built_in(&provider);
 
         let path = issues
             .manifest
             .clone()
             .unwrap_or_else(|| format!(".stella/issues/{provider}.toml"));
 
-        let Ok(raw) = std::fs::read_to_string(root.join(&path)) else {
-            return embedded;
+        let resolved = match std::fs::read_to_string(root.join(&path)) {
+            Err(_) => built_in,
+            Ok(raw) => match Self::parse(&raw) {
+                Ok(manifest) => manifest.inherit(built_in, &raw, &path),
+                Err(error) => {
+                    eprintln!(
+                        "warning: {path} could not be read ({error}); using the built-in \
+                         manifest for `{provider}`"
+                    );
+                    built_in
+                }
+            },
         };
+        resolved.announce_transport();
+        resolved
+    }
 
-        match Self::parse(&raw) {
-            Ok(manifest) => manifest.inherit(embedded, &path),
-            Err(error) => {
-                eprintln!(
-                    "warning: {path} could not be read ({error}); using the built-in manifest \
-                     for `{provider}`"
-                );
-                embedded
-            }
+    /// Say which adapter will run these words, when it is not the one the
+    /// manifest names.
+    ///
+    /// The words and the transport are two facts, and a manifest can be right
+    /// about the first while this build has nothing to speak them over. Saying
+    /// it at load is §4.2's declared degradation. Discovering it mid-run, at
+    /// the moment a tool fires, is what that rule exists to prevent.
+    fn announce_transport(&self) {
+        if self.kind != RUNNING_TRANSPORT {
+            eprintln!(
+                "notice: the `{}` manifest declares `kind = \"{}\"`, and this build ships only \
+                 the `{}` transport; its words are used and the GitHub adapter is what runs.",
+                self.name, self.kind, RUNNING_TRANSPORT
+            );
         }
     }
 
@@ -247,24 +374,22 @@ impl ProviderManifest {
     /// A file with no `[classes]` block keeps the shipped map. Without that
     /// rule, a file written before the block existed would class every issue
     /// as `Other`.
-    fn inherit(mut self, embedded: Self, path: &str) -> Self {
+    ///
+    /// The words inherit key by key, through [`VocabularyOverlay`], which is
+    /// why the raw text is read again here: what the parse returned cannot
+    /// say which keys the file wrote.
+    fn inherit(mut self, built_in: Self, raw: &str, path: &str) -> Self {
+        self.vocabulary = toml::from_str::<VocabularyOverlay>(raw)
+            .unwrap_or_default()
+            .apply(built_in.vocabulary);
         if self.classes.is_empty() {
-            self.classes = embedded.classes;
+            self.classes = built_in.classes;
         }
         if self.schema_version > SUPPORTED_SCHEMA_VERSION {
             eprintln!(
                 "warning: {path} declares manifest schema {} and this build reads {}; \
                  anything newer in it is ignored",
                 self.schema_version, SUPPORTED_SCHEMA_VERSION
-            );
-        }
-        if self.kind != super::GITHUB {
-            eprintln!(
-                "warning: {path} declares provider `{}` with `kind = \"{}\"`, and this build \
-                 ships only the `{}` transport; GitHub's adapter is what will run",
-                self.name,
-                self.kind,
-                super::GITHUB
             );
         }
         self
@@ -284,17 +409,195 @@ fn issues_section(root: &Path) -> IssuesSection {
 
 #[cfg(test)]
 mod tests {
+    use stella_protocol::issue::{IssueState, RESOLUTION_NOT_PLANNED};
+
     use super::*;
 
-    /// **The shipping witness.** The built-in file parses, and it declares
-    /// what the compiled table holds.
+    /// **The Linear witness.** A workspace bound to Linear, carrying no file
+    /// of its own, resolves Linear's own words rather than GitHub's.
+    ///
+    /// Every assertion here fails without a shipped `linear.toml`. A provider
+    /// name this build had no manifest for fell back to GitHub's, so `started`
+    /// was an unknown status, `completed` read as neither open nor closed, the
+    /// body field was `body`, and a `Bug` label — Linear's own spelling, which
+    /// GitHub's lowercase map does not carry — classed as `Other`.
+    #[test]
+    fn a_linear_workspace_resolves_linears_own_words() {
+        let manifest = ProviderManifest::built_in(LINEAR);
+
+        assert_eq!(manifest.name, LINEAR);
+        assert_eq!(manifest.kind, LINEAR);
+
+        assert_eq!(
+            manifest.vocabulary.state_of("started"),
+            Some(IssueState::Open),
+            "an issue in a `started` workflow state is open"
+        );
+        assert_eq!(
+            manifest.vocabulary.state_of("backlog"),
+            Some(IssueState::Open)
+        );
+        assert_eq!(
+            manifest.vocabulary.state_of("canceled"),
+            Some(IssueState::Closed),
+            "Linear cancels rather than declining, and that closes the issue"
+        );
+        assert_eq!(
+            manifest.vocabulary.state_of("completed"),
+            Some(IssueState::Closed)
+        );
+
+        assert_eq!(
+            manifest.vocabulary.resolution(RESOLUTION_NOT_PLANNED),
+            "canceled",
+            "Stella's `not planned` is Linear's `canceled`"
+        );
+        assert_eq!(
+            manifest.vocabulary.fields.body, "description",
+            "Linear calls the body a description"
+        );
+
+        assert_eq!(manifest.classes.class_of(&["Bug"]), IssueClass::Bug);
+        assert_eq!(
+            manifest.classes.class_of(&["Improvement"]),
+            IssueClass::Feature
+        );
+        assert_eq!(manifest.classes.class_of(&["Chore"]), IssueClass::Task);
+    }
+
+    /// **The shadow witness, for Linear.** A workspace file of the same name
+    /// takes the place of the shipped Linear manifest, and its `[classes]`
+    /// block is what decides the class.
+    ///
+    /// Unreachable before Linear shipped as a manifest. The file was read even
+    /// then, but what it shadowed and what it inherited were both GitHub's, so
+    /// the last assertion here answered `open` and not `started`.
+    #[test]
+    fn a_workspace_linear_manifest_shadows_the_shipped_one() {
+        let ws = workspace();
+        write(
+            ws.path(),
+            ".stella/issues/linear.toml",
+            "[classes]\nbug = [\"type/regression\"]\n",
+        );
+
+        let manifest = ProviderManifest::resolve(
+            ws.path(),
+            &IssuesSection {
+                provider: LINEAR.to_owned(),
+                manifest: None,
+            },
+        );
+
+        assert_eq!(
+            manifest.classes.class_of(&["type/regression"]),
+            IssueClass::Bug,
+            "the workspace's own label mapping is what classes the issue"
+        );
+        assert_eq!(
+            manifest.classes.class_of(&["Bug"]),
+            IssueClass::Other,
+            "the shipped Linear label must not survive a mapping that replaced it"
+        );
+        assert_eq!(
+            manifest.vocabulary.state_of("started"),
+            Some(IssueState::Open),
+            "a file that says nothing about states keeps the shipped Linear ones, not GitHub's"
+        );
+    }
+
+    /// **The table witness.** Adding a tracker is a file and a row, and the
+    /// row's key is the name and the kind the file itself declares.
+    ///
+    /// A mistyped key resolves under a name no `[issues] provider` can reach,
+    /// and the loader then answers with GitHub's manifest and one line of
+    /// warning. Holding all three equal is what makes [`BUILT_IN`] the only
+    /// place a provider id is spelled.
+    #[test]
+    fn every_built_in_manifest_parses_under_its_own_name() {
+        for (id, raw) in BUILT_IN {
+            let manifest = ProviderManifest::parse(raw)
+                .unwrap_or_else(|error| panic!("the shipped `{id}` manifest parses ({error})"));
+            assert_eq!(&manifest.name, id, "`{id}` must name itself");
+            assert_eq!(&manifest.kind, id, "`{id}` must declare its own kind");
+            assert_eq!(manifest.schema_version, SUPPORTED_SCHEMA_VERSION);
+            assert!(
+                !manifest.vocabulary.open.is_empty() && !manifest.vocabulary.closed.is_empty(),
+                "`{id}` must say which statuses are open and which are closed"
+            );
+            assert!(
+                !manifest.classes.is_empty(),
+                "`{id}` must map at least one label onto a class"
+            );
+        }
+    }
+
+    /// **The key-by-key witness.** A workspace file overrides the keys it
+    /// writes and inherits the rest from its own tracker's shipped manifest.
+    ///
+    /// This is the shadowing rule AGENTS.md states for `.stella/issues/`, and
+    /// it was not what the loader did: `Vocabulary` defaults to GitHub's
+    /// words, so any key a file left out came back as GitHub's rather than as
+    /// the built-in's. Invisible while GitHub was the only tracker, because
+    /// the two answers were the same one.
+    #[test]
+    fn a_workspace_file_inherits_the_keys_it_does_not_write() {
+        let ws = workspace();
+        write(
+            ws.path(),
+            ".stella/issues/linear.toml",
+            "closed = [\"shipped\"]\n\n[fields]\ntitle = \"name\"\n",
+        );
+
+        let manifest = ProviderManifest::resolve(
+            ws.path(),
+            &IssuesSection {
+                provider: LINEAR.to_owned(),
+                manifest: None,
+            },
+        );
+
+        assert_eq!(
+            manifest.vocabulary.state_of("shipped"),
+            Some(IssueState::Closed),
+            "the key the file wrote wins"
+        );
+        assert_eq!(
+            manifest.vocabulary.state_of("started"),
+            Some(IssueState::Open),
+            "the key it left out comes from Linear's shipped manifest"
+        );
+        assert_eq!(manifest.vocabulary.fields.title, "name");
+        assert_eq!(
+            manifest.vocabulary.fields.body, "description",
+            "one field name written must not reset the others to GitHub's"
+        );
+        assert_eq!(
+            manifest.vocabulary.resolution(RESOLUTION_NOT_PLANNED),
+            "canceled",
+            "an unwritten [resolutions] block keeps Linear's spelling"
+        );
+    }
+
+    /// A provider name no manifest ships for still gives a working provider,
+    /// and it is GitHub's.
+    #[test]
+    fn an_unknown_provider_name_falls_back_to_github() {
+        assert_eq!(
+            ProviderManifest::built_in("jira"),
+            ProviderManifest::built_in(super::super::GITHUB)
+        );
+    }
+
+    /// **The shipping witness.** The built-in GitHub file parses, and it
+    /// declares what the compiled table holds.
     ///
     /// If the file stopped parsing, every workspace would fall back to that
     /// table. One line on stderr would be the only sign. If the two drifted,
     /// the fallback would answer one way and the file another.
     #[test]
     fn the_shipped_manifest_parses_and_matches_the_compiled_table() {
-        let shipped = ProviderManifest::parse(EMBEDDED_GITHUB).expect("the shipped file parses");
+        let shipped = ProviderManifest::built_in(super::super::GITHUB);
         assert_eq!(shipped, ProviderManifest::compiled_github());
         assert_eq!(shipped.vocabulary, Vocabulary::github());
         assert_eq!(shipped.name, "github");
