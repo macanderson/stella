@@ -105,6 +105,62 @@ want "an old finding still stops a copy — a published comment does not lapse" 
   post 5835 --finding conflict:5828 --body "the same analysis" \
   --fixture-login ada --fixture-findings "grace 999999"
 
+# ── A peer's claim also stops a post ────────────────────────────────────────
+#
+# The finding gate alone can only see what is already published. Two sweeps
+# that both begin before either posts each spend a full diagnosis, and only the
+# second is turned away. The claim turns the second one back at the start,
+# which is where the twenty minutes are.
+
+want "a peer's live claim stops a post before the finding gate" \
+  expect-block "already being swept" \
+  post 5835 --finding conflict:5828 --body "the analysis" \
+  --fixture-login ada --fixture-claims "grace - 300" --fixture-findings ""
+
+want "...and says nothing was posted, with the way through" \
+  expect-block "Nothing was posted. Pass --ignore-claim" \
+  post 5835 --finding conflict:5828 --body "the analysis" \
+  --fixture-login ada --fixture-claims "grace - 300" --fixture-findings ""
+
+want "--ignore-claim posts over a peer's claim" \
+  expect-proceed "nothing carries that key" \
+  post 5835 --finding conflict:5828 --body "the analysis" --ignore-claim \
+  --fixture-login ada --fixture-claims "grace - 300" --fixture-findings ""
+
+# The holder of the claim is the session that must still be able to publish.
+# Blocking it would leave the finding on nobody.
+want "a session's own claim does not stop its own post" \
+  expect-proceed "nothing carries that key" \
+  post 5835 --finding conflict:5828 --body "the analysis" \
+  --fixture-login ada --fixture-session s1 --fixture-claims "ada s1 300" \
+  --fixture-findings ""
+
+# A lapsed claim is not a claim here either.
+want "a lapsed claim does not stop a post" \
+  expect-proceed "nothing carries that key" \
+  post 5835 --finding conflict:5828 --body "the analysis" \
+  --fixture-login ada --fixture-claims "grace - 999999" --fixture-findings ""
+
+# Fail-open reaches the composed gate: an unreadable claim list must not hold
+# a finding back.
+want "an unreadable claim list still lets a post through" \
+  expect-proceed "nothing carries that key" \
+  post 5835 --finding conflict:5828 --body "the analysis" \
+  --fixture-login ada --fixture-claims-failed --fixture-findings ""
+
+want "an unknown identity still lets a post through" \
+  expect-proceed "nothing carries that key" \
+  post 5835 --finding conflict:5828 --body "the analysis" \
+  --fixture-login "" --fixture-claims "grace - 300" --fixture-findings ""
+
+# A finding that already stands still wins over a claim of this session's own:
+# the published copy is the thing that costs a reader.
+want "a standing finding stops a post even when this session holds the claim" \
+  expect-block "is already posted on" \
+  post 5835 --finding conflict:5828 --body "the analysis" \
+  --fixture-login ada --fixture-session s1 --fixture-claims "ada s1 300" \
+  --fixture-findings "grace 300"
+
 # ── The unknown proceeds ────────────────────────────────────────────────────
 #
 # A read that failed is not an empty list. The wrong report here is the one

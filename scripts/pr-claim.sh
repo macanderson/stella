@@ -6,6 +6,7 @@
 #   `scripts/pr-claim.sh check <n>     # exit 0 proceed, 1 stand down`
 #   `scripts/pr-claim.sh claim <n>     # check, then post the claim`
 #   `scripts/pr-claim.sh post <n> --finding <key> --body-file <path>`
+#   `scripts/pr-claim.sh post <n> --finding <key> --body <text> --ignore-claim`
 #   `scripts/pr-claim.sh select --now <unix-seconds>      # JSON in, rows out`
 #   `scripts/pr-claim.sh findings --finding <key> --now <unix-seconds>`
 #
@@ -30,13 +31,17 @@
 #
 # ── Two gates ────────────────────────────────────────────────────────────────
 #
-# `check` asks whether a peer holds the pull request. `post` asks whether this
-# finding is already up. They fire at different times, and only the second one
-# would have stopped all three comments above.
+# `check` asks whether a peer holds the pull request. `post` asks that too, and
+# then asks whether this finding is already up.
 #
-# Take the claim when you start to read the pull request. Each of the three
-# sweeps spent twenty minutes on the conflict before it had a word to say. A
-# claim taken at the end saves none of that.
+# The second question alone can only see what is already published. Two sweeps
+# that both begin before either posts each spend a full diagnosis, and only the
+# second is turned away. The claim turns the second one back at the start,
+# which is where the twenty minutes are. So take the claim when you start to
+# read the pull request. A claim taken at the end saves none of them.
+#
+# `--ignore-claim` posts over a live claim. It is for the operator who read the
+# claim, judged it stale or aimed elsewhere, and said so on the pull request.
 #
 # ── The finding key ──────────────────────────────────────────────────────────
 #
@@ -86,6 +91,7 @@ pr=""
 finding=""
 body=""
 body_file=""
+ignore_claim=0
 fixture_login=""
 fixture_session=""
 fixture_claims=""
@@ -118,6 +124,13 @@ while [ $# -gt 0 ]; do
   --body-file)
     body_file="${2:-}"
     shift 2
+    ;;
+  # Post even though a peer's live claim stands. For the operator who read the
+  # claim, decided it was stale or covers other ground, and said so on the pull
+  # request.
+  --ignore-claim)
+    ignore_claim=1
+    shift
     ;;
   # The clock the pure modes read, so a test can pin it.
   --now)
@@ -327,12 +340,135 @@ if [ "$use_fixture" -eq 0 ]; then
   fi
 fi
 
+# ── Who holds the pull request ────────────────────────────────────────────
+#
+# `held_by` names the freshest live claim this session cannot account for.
+# Every unknown leaves it empty, which is the fail-open side. An unreadable
+# login, an unreadable comment list and a claim nobody can date each let the
+# run go on. `identity_ok` and `claims_ok` say which unknown was hit, so a
+# caller can report the reason rather than "nothing holds it".
+me=""
+my_session=""
+held_by=""
+held_session=""
+held_age=""
+identity_ok=1
+claims_ok=1
+
+scan_claims() {
+  if [ "$use_fixture" -eq 1 ]; then
+    me="$fixture_login"
+  elif ! me="$(gh api user --jq .login 2>/dev/null)"; then
+    me=""
+  fi
+  if [ -z "$me" ]; then
+    echo "note: could not read this session's login, so a claim on #$pr cannot" >&2
+    echo "      be told from one of its own. Proceeding (fail-open)." >&2
+    identity_ok=0
+    return
+  fi
+
+  if [ "$use_fixture" -eq 1 ]; then
+    my_session="$fixture_session"
+  elif ! my_session="$(resolve_session)"; then
+    my_session=""
+  fi
+  if [ -z "$my_session" ]; then
+    echo "note: this run has no session word, so a claim of its own login cannot" >&2
+    echo "      be told from a peer session's. Proceeding on those (fail-open)." >&2
+  fi
+
+  local claims=""
+  if [ "$use_fixture" -eq 1 ]; then
+    if [ "$fixture_claims_failed" -eq 1 ]; then
+      claims_ok=0
+    else
+      claims="$fixture_claims"
+    fi
+  elif [ "$comments_ok" -eq 0 ]; then
+    claims_ok=0
+  elif ! claims="$(printf '%s' "$comments_json" | select_claims "$(date -u +%s)")"; then
+    claims_ok=0
+  fi
+  if [ "$claims_ok" -eq 0 ]; then
+    echo "note: could not read #$pr's comments. Proceeding (fail-open)." >&2
+    return
+  fi
+
+  # Its own claim is no reason to stand a session down. Re-running the
+  # pre-flight is what a session does when it comes back to work it started.
+  # Same login and same word is its own. Same login with either word missing is
+  # unprovable, and an unknown proceeds.
+  local who claim_session age
+  while read -r who claim_session age; do
+    [ -n "$who" ] || continue
+    if [ "$who" = "$me" ]; then
+      [ -z "$my_session" ] && continue
+      [ "$claim_session" = "-" ] && continue
+      [ "$claim_session" = "$my_session" ] && continue
+    fi
+    case "$age" in
+    '' | *[!0-9]*) continue ;;
+    esac
+    [ "$age" -lt "$window_seconds" ] || continue
+    if [ -z "$held_age" ] || [ "$age" -lt "$held_age" ]; then
+      held_by="$who"
+      held_session="$claim_session"
+      held_age="$age"
+    fi
+  done <<EOF
+$claims
+EOF
+}
+
+# The stand-down a live peer claim earns, shared by both gates so they cannot
+# drift into saying different things about one claim.
+report_held() {
+  local minutes=$((held_age / 60)) held_where
+  if [ "$held_session" = "-" ]; then
+    held_where="session unknown"
+  else
+    held_where="session $held_session"
+  fi
+  echo "STAND DOWN  #$pr is already being swept." >&2
+  echo "" >&2
+  echo "     claimed by @$held_by ($held_where), ${minutes}m ago" \
+    "(window: ${window_minutes}m)" >&2
+  echo "" >&2
+  if [ "$held_by" = "$me" ]; then
+    echo "     That login is yours, so this is another of your own sessions —" >&2
+    echo "     a second agent in a second worktree, which is the case the" >&2
+    echo "     session word exists to catch." >&2
+    echo "" >&2
+  fi
+  echo "     What to do:" >&2
+  echo "       - Pick another pull request. The claim lapses by itself after" >&2
+  echo "         ${window_minutes}m, so a session that died cannot hold this shut." >&2
+  echo "       - Working it anyway? Say so on #$pr, so the next session reads a" >&2
+  echo "         reason rather than a collision." >&2
+}
+
 # ── post: has this finding already been published? ───────────────────────────
 #
 # This gate runs on its own. A sweep that means to publish asks this and
 # nothing else, because a finding that already stands is a duplicate whoever
 # holds the pull request.
 if [ "$mode" = "post" ]; then
+  # The claim gate runs here too. A finding gate on its own can only see what
+  # is already published, so two sweeps that both begin before either posts
+  # each spend a full diagnosis, and only the second is turned away. A claim
+  # taken at the start turns the second one back before it spends anything.
+  if [ "$ignore_claim" -eq 0 ]; then
+    scan_claims
+    if [ -n "$held_by" ]; then
+      report_held
+      echo "" >&2
+      echo "     Nothing was posted. Pass --ignore-claim once you have read the" >&2
+      echo "     claim and said on #$pr why you are posting anyway." >&2
+      exit 1
+    fi
+  fi
+
   hits=""
   hits_ok=1
   if [ "$use_fixture" -eq 1 ]; then
@@ -432,95 +568,16 @@ elif [ "$pr_state" = "MERGED" ] || [ "$pr_state" = "CLOSED" ]; then
   exit 1
 fi
 
-if [ "$use_fixture" -eq 1 ]; then
-  me="$fixture_login"
-elif ! me="$(gh api user --jq .login 2>/dev/null)"; then
-  me=""
-fi
-if [ -z "$me" ]; then
-  echo "note: could not read this session's login, so a claim on #$pr cannot" >&2
-  echo "      be told from one of its own. Proceeding (fail-open)." >&2
+scan_claims
+if [ "$identity_ok" -eq 0 ]; then
   proceed "ok  proceed (identity unknown)"
 fi
-
-if [ "$use_fixture" -eq 1 ]; then
-  my_session="$fixture_session"
-elif ! my_session="$(resolve_session)"; then
-  my_session=""
-fi
-if [ -z "$my_session" ]; then
-  echo "note: this run has no session word, so a claim of its own login cannot" >&2
-  echo "      be told from a peer session's. Proceeding on those (fail-open)." >&2
-fi
-
-claims=""
-claims_ok=1
-if [ "$use_fixture" -eq 1 ]; then
-  if [ "$fixture_claims_failed" -eq 1 ]; then
-    claims_ok=0
-  else
-    claims="$fixture_claims"
-  fi
-elif [ "$comments_ok" -eq 0 ]; then
-  claims_ok=0
-elif ! claims="$(printf '%s' "$comments_json" | select_claims "$(date -u +%s)")"; then
-  claims_ok=0
-fi
 if [ "$claims_ok" -eq 0 ]; then
-  echo "note: could not read #$pr's comments. Proceeding (fail-open)." >&2
   proceed "ok  proceed (comments unreadable)"
 fi
 
-# The freshest claim this session cannot account for. Its own is no reason to
-# stand it down: re-running the pre-flight is what a session does when it comes
-# back to work it started. Same login and same word is its own. Same login with
-# either word missing is unprovable, and an unknown proceeds.
-held_by=""
-held_session=""
-held_age=""
-while read -r who claim_session age; do
-  [ -n "$who" ] || continue
-  if [ "$who" = "$me" ]; then
-    [ -z "$my_session" ] && continue
-    [ "$claim_session" = "-" ] && continue
-    [ "$claim_session" = "$my_session" ] && continue
-  fi
-  case "$age" in
-  '' | *[!0-9]*) continue ;;
-  esac
-  [ "$age" -lt "$window_seconds" ] || continue
-  if [ -z "$held_age" ] || [ "$age" -lt "$held_age" ]; then
-    held_by="$who"
-    held_session="$claim_session"
-    held_age="$age"
-  fi
-done <<EOF
-$claims
-EOF
-
 if [ -n "$held_by" ]; then
-  minutes=$((held_age / 60))
-  if [ "$held_session" = "-" ]; then
-    held_where="session unknown"
-  else
-    held_where="session $held_session"
-  fi
-  echo "STAND DOWN  #$pr is already being swept." >&2
-  echo "" >&2
-  echo "     claimed by @$held_by ($held_where), ${minutes}m ago" \
-    "(window: ${window_minutes}m)" >&2
-  echo "" >&2
-  if [ "$held_by" = "$me" ]; then
-    echo "     That login is yours, so this is another of your own sessions —" >&2
-    echo "     a second agent in a second worktree, which is the case the" >&2
-    echo "     session word exists to catch." >&2
-    echo "" >&2
-  fi
-  echo "     What to do:" >&2
-  echo "       - Pick another pull request. The claim lapses by itself after" >&2
-  echo "         ${window_minutes}m, so a session that died cannot hold this shut." >&2
-  echo "       - Working it anyway? Say so on #$pr, so the next session reads a" >&2
-  echo "         reason rather than a collision." >&2
+  report_held
   exit 1
 fi
 

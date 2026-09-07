@@ -454,8 +454,12 @@ The claim half takes the rules above: a lapsing comment, a session word beside
 the login, and every unknown proceeding loudly. A merged or closed pull request
 stands a sweep down too, since neither one takes a comment.
 
-`post` is the half that would have stopped all three. It asks whether the same
-finding already stands, and writes only when it does not. The caller names the
+`post` is the half that would have stopped all three. It asks the claim
+question too, then asks whether the same finding already stands, and writes
+only when neither answer is yes — the finding question alone can only see what
+somebody already published, so it turns a second sweep away after it has spent
+its diagnosis rather than before. `--ignore-claim` posts over a live claim, for
+the operator who read it and said on the pull request why. The caller names the
 finding, because two sessions that find one thing write it up two ways, and a
 digest of the words would call them different. A key that has to go stale
 carries what it depends on: a finding about the head commit puts the head sha
