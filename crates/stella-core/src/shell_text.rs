@@ -28,7 +28,7 @@
 ///
 /// Four near-copies of this list had accumulated in `stella-tools`' `bash.rs`
 /// — the `cd` skip list, the grep-scan boundary, `segment_args` and
-/// [`bare_sleep_seconds`] — and they had already diverged: the grep boundary
+/// [`blocking_sleep_seconds`] — and they had already diverged: the grep boundary
 /// omitted `&`, so `ls & grep -rn "struct X" .` scanned past the background
 /// operator (#2301).
 ///
@@ -186,7 +186,7 @@ pub fn shell_words(command: &str) -> Vec<String> {
 /// GNU `sleep` takes an optional unit suffix — `s`, `m`, `h`, `d` — and
 /// `sleep 10m` asks for exactly the 600 seconds `sleep 600` does. Reading only
 /// the bare number made every suffixed form invisible to
-/// [`bare_sleep_seconds`], and invisible in the worst direction: the `?` below
+/// [`blocking_sleep_seconds`], and invisible in the worst direction: the `?` below
 /// is a whole-command answer, so `sleep 10m; echo done` did not merely
 /// contribute zero, it classified as *not a sleep at all*.
 ///
@@ -210,39 +210,92 @@ fn sleep_arg_seconds(arg: &str) -> Option<u64> {
     Some((secs * per_unit_secs).round() as u64)
 }
 
-/// The accumulated seconds a *bare* sleep command blocks for, or `None` if
-/// any segment does real work beyond sleeping and a harmless no-op.
+/// The seconds a command spends waiting in `sleep`, or `None` when it calls
+/// `sleep` nowhere in the foreground.
 ///
-/// Only a bare sleep is worth naming: `sleep 2 && curl` retry backoffs are
-/// ordinary and must stay unflagged, so this requires **every** segment of
-/// the command to be `sleep N` or an inert no-op (`echo`, `printf`, `true`)
-/// — anything else (a real command sharing the line) disqualifies the whole
-/// command. That matches the pathological shape #2022 observed
-/// (`sleep 300; echo done`) rather than a compound one that happens to
-/// contain a sleep, and it is deliberately biased toward saying nothing: the
-/// expensive direction here is the false positive, because clamping or
-/// scolding a legitimate retry loop breaks real tasks.
+/// Every `sleep N` segment counts, whatever else shares the line. Only
+/// [`bare_sleep_seconds`] existed before, and it answered `None` the moment a
+/// segment did real work — so a sleep beside real work read as no sleep at
+/// all. That is the shape a paid panel lost two tasks to. One trial
+/// backgrounded a `pip install` and slept 490 seconds waiting on it; another
+/// slept 280 seconds and then tailed the log it was waiting for. Both blocked
+/// for the whole interval, both were invisible to `bash`'s per-call advisory,
+/// and together they were most of a quarter of that panel's measured tool time
+/// (`macanderson/arenabench` match `13f7f2bb533d`, tasks `pytorch-model-cli`
+/// and `rstan-to-pystan`, joined `tool_start` → `tool_result`).
 ///
-/// The accumulation across segments saturates for the reason
-/// `sleep_arg_seconds` does: two absurd sleeps on one line
+/// A retry backoff stays quiet because it is short, not because it shares a
+/// line: `sleep 2 && curl` reports its 2 seconds and the caller's threshold
+/// ignores them. Reporting the seconds and letting the caller pick a threshold
+/// is what separates the two cases honestly; command shape separated them by
+/// guessing, and guessed wrong on the two above.
+///
+/// A backgrounded segment is skipped. `sleep 300 &` returns to the prompt at
+/// once, so the call waits on nothing and there is nothing to report.
+///
+/// An argument that is not a duration — `sleep $DELAY` — contributes nothing
+/// and disqualifies nothing, so a command pairing it with `sleep 490` still
+/// reports the 490 seconds it certainly waits.
+///
+/// The accumulation saturates for the reason `sleep_arg_seconds` does: two
+/// absurd sleeps on one line
 /// (`sleep 99999999999999999999; sleep 99999999999999999999`) each saturate to
 /// `u64::MAX`, and a plain `+` on that pair is an overflow panic on model
 /// text in library code.
+pub fn blocking_sleep_seconds(command: &str) -> Option<u64> {
+    sleep_seconds_in(&shell_words(command))
+}
+
+/// The same seconds, but only for a command that does nothing *except*
+/// sleep — every segment is `sleep N` or an inert no-op (`echo`, `printf`,
+/// `true`).
+///
+/// This is the narrower question, and the turn-level stall rung
+/// (`crate::driver::loop_escalation`) is what asks it. That rung sums over
+/// every call in a window and steers the model at a threshold picked from a
+/// measured distribution: trials sleeping incidentally landed at 47, 73 and
+/// 114 seconds, trials sleeping instead of working at 307 and 1,089. Both
+/// groups were measured with this predicate, so moving the rung onto
+/// [`blocking_sleep_seconds`] would raise every number under a threshold
+/// chosen for the old ones, and the incidental group is the one that would
+/// cross first. Re-measuring that distribution needs a panel, so the rung
+/// keeps the predicate its threshold was calibrated against.
+///
+/// A backgrounded sleep is excluded here too, which can only lower the sum
+/// and so can only make that rung steer less often.
 pub fn bare_sleep_seconds(command: &str) -> Option<u64> {
     let words = shell_words(command);
-    let segments = segments(&words);
+    let bare = segments(&words).iter().all(|segment| match segment {
+        [] => true,
+        [cmd, _] if cmd == "sleep" => true,
+        [cmd, ..] => matches!(cmd.as_str(), "echo" | "printf" | "true"),
+    });
+    bare.then(|| sleep_seconds_in(&words)).flatten()
+}
 
+/// The shared walk behind both readings: sum every foreground `sleep N`,
+/// skipping a segment the shell backgrounds and an argument that is not a
+/// duration.
+fn sleep_seconds_in(words: &[String]) -> Option<u64> {
     let mut total_secs = 0u64;
     let mut saw_sleep = false;
-    for segment in &segments {
-        match segment {
-            [] => {}
-            [cmd, arg] if cmd == "sleep" => {
-                total_secs = total_secs.saturating_add(sleep_arg_seconds(arg)?);
-                saw_sleep = true;
-            }
-            [cmd, ..] if matches!(cmd.as_str(), "echo" | "printf" | "true") => {}
-            _ => return None,
+    let mut start = 0usize;
+    for end in 0..=words.len() {
+        let separator = words.get(end).filter(|w| is_operator_word(w.as_str()));
+        if end < words.len() && separator.is_none() {
+            continue;
+        }
+        let segment = &words[start..end];
+        start = end + 1;
+        if separator.map(String::as_str) == Some("&") {
+            continue;
+        }
+        if let [cmd, arg] = segment
+            && cmd == "sleep"
+            && let Some(secs) = sleep_arg_seconds(arg)
+        {
+            total_secs = total_secs.saturating_add(secs);
+            saw_sleep = true;
         }
     }
     saw_sleep.then_some(total_secs)
@@ -486,7 +539,10 @@ pub fn basename(word: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::{bare_sleep_seconds, basename, is_operator_word, shell_words, shell_writes};
+    use super::{
+        bare_sleep_seconds, basename, blocking_sleep_seconds, is_operator_word, shell_words,
+        shell_writes,
+    };
 
     #[test]
     fn shell_words_splits_operators_attached_to_a_word_in_core() {
@@ -554,11 +610,73 @@ mod tests {
 
     /// The shapes #2022 measured, and the accumulation across one command.
     #[test]
-    fn a_bare_sleep_is_detected_and_summed() {
+    fn a_sleep_is_detected_and_summed() {
+        assert_eq!(blocking_sleep_seconds("sleep 300; echo done"), Some(300));
+        assert_eq!(blocking_sleep_seconds("sleep 120"), Some(120));
+        assert_eq!(blocking_sleep_seconds("sleep 30 && sleep 30"), Some(60));
+        assert_eq!(blocking_sleep_seconds("sleep 2.5"), Some(3));
+    }
+
+    /// The two shapes that cost a paid panel most of a quarter of its tool
+    /// time. Each one waits for the whole interval; each one read as no sleep
+    /// at all while the rule required every segment to be a sleep or a no-op.
+    #[test]
+    fn a_long_sleep_beside_real_work_is_counted() {
+        // `pytorch-model-cli`: background the install, then block on a fixed
+        // wait rather than on the thing being waited for.
+        let backgrounded_install = "timeout 500 pip install --quiet torch &\nBGPID=$!\nsleep 490\nwait $BGPID 2>/dev/null\necho DONE";
+        assert_eq!(blocking_sleep_seconds(backgrounded_install), Some(490));
+
+        // `rstan-to-pystan`: sleep through the install, then read its log.
+        assert_eq!(
+            blocking_sleep_seconds("sleep 280; tail -30 apt_install.log; ps aux | grep apt"),
+            Some(280)
+        );
+    }
+
+    /// A retry backoff still reports, and reports something small — which is
+    /// what lets a caller's threshold tell it from the waits above without
+    /// guessing at command shape.
+    #[test]
+    fn a_retry_backoff_reports_its_own_short_wait() {
+        assert_eq!(
+            blocking_sleep_seconds("sleep 2 && curl -s http://localhost:8080"),
+            Some(2)
+        );
+        assert_eq!(
+            blocking_sleep_seconds("for i in $(seq 30); do check && break; sleep 1; done"),
+            Some(1)
+        );
+    }
+
+    /// A backgrounded sleep returns to the prompt at once, so the call waits
+    /// on nothing.
+    #[test]
+    fn a_backgrounded_sleep_blocks_nothing() {
+        assert_eq!(blocking_sleep_seconds("sleep 300 &"), None);
+        assert_eq!(blocking_sleep_seconds("sleep 300 & sleep 40"), Some(40));
+    }
+
+    /// A command that calls `sleep` nowhere reports nothing, and the word
+    /// alone is not a call: `sleep` has to be in command position with one
+    /// argument.
+    #[test]
+    fn a_command_that_never_sleeps_reports_nothing() {
+        assert_eq!(blocking_sleep_seconds("grep sleep /app/main.c"), None);
+        assert_eq!(blocking_sleep_seconds("cargo test -p stella-core"), None);
+    }
+
+    /// The narrow reading stays narrow, because the stall rung's threshold
+    /// was measured against it. A sleep beside real work is `None` here even
+    /// though the reading beside it counts every second of it.
+    #[test]
+    fn the_bare_reading_still_refuses_a_sleep_beside_real_work() {
+        assert_eq!(bare_sleep_seconds("sleep 280; tail -30 apt.log"), None);
+        assert_eq!(bare_sleep_seconds("echo waiting; sleep 300; ls"), None);
         assert_eq!(bare_sleep_seconds("sleep 300; echo done"), Some(300));
-        assert_eq!(bare_sleep_seconds("sleep 120"), Some(120));
-        assert_eq!(bare_sleep_seconds("sleep 30 && sleep 30"), Some(60));
-        assert_eq!(bare_sleep_seconds("sleep 2.5"), Some(3));
+        // A backgrounded sleep waits on nothing, so it lowers this sum too —
+        // the only direction that can make the rung steer less often.
+        assert_eq!(bare_sleep_seconds("sleep 300 &"), None);
     }
 
     /// Two absurd sleeps on ONE line, which is the pair the per-segment
@@ -571,11 +689,11 @@ mod tests {
     #[test]
     fn two_absurd_sleeps_in_one_command_saturate_rather_than_overflowing() {
         assert_eq!(
-            bare_sleep_seconds("sleep 99999999999999999999"),
+            blocking_sleep_seconds("sleep 99999999999999999999"),
             Some(u64::MAX)
         );
         assert_eq!(
-            bare_sleep_seconds("sleep 99999999999999999999; sleep 99999999999999999999"),
+            blocking_sleep_seconds("sleep 99999999999999999999; sleep 99999999999999999999"),
             Some(u64::MAX)
         );
     }
@@ -586,17 +704,18 @@ mod tests {
     /// so the pathological shape wearing a suffix bypassed the rung entirely.
     #[test]
     fn a_suffixed_sleep_is_read_in_seconds() {
-        assert_eq!(bare_sleep_seconds("sleep 300s"), Some(300));
-        assert_eq!(bare_sleep_seconds("sleep 5m"), Some(300));
-        assert_eq!(bare_sleep_seconds("sleep 10m; echo done"), Some(600));
-        assert_eq!(bare_sleep_seconds("sleep 1h"), Some(3600));
-        assert_eq!(bare_sleep_seconds("sleep 1d"), Some(86400));
-        assert_eq!(bare_sleep_seconds("sleep 2m && sleep 30"), Some(150));
-        // A suffix with no number is not a duration, and a duration this
-        // cannot read still disqualifies the whole command rather than
-        // silently counting as zero.
-        assert_eq!(bare_sleep_seconds("sleep m"), None);
-        assert_eq!(bare_sleep_seconds("sleep later"), None);
+        assert_eq!(blocking_sleep_seconds("sleep 300s"), Some(300));
+        assert_eq!(blocking_sleep_seconds("sleep 5m"), Some(300));
+        assert_eq!(blocking_sleep_seconds("sleep 10m; echo done"), Some(600));
+        assert_eq!(blocking_sleep_seconds("sleep 1h"), Some(3600));
+        assert_eq!(blocking_sleep_seconds("sleep 1d"), Some(86400));
+        assert_eq!(blocking_sleep_seconds("sleep 2m && sleep 30"), Some(150));
+        // A suffix with no number is not a duration, so it contributes
+        // nothing. On its own that leaves no sleep to report; beside a real
+        // one it leaves the seconds the command certainly waits.
+        assert_eq!(blocking_sleep_seconds("sleep m"), None);
+        assert_eq!(blocking_sleep_seconds("sleep later"), None);
+        assert_eq!(blocking_sleep_seconds("sleep $DELAY; sleep 490"), Some(490));
     }
 
     /// The shapes #3827 names, each one classified by its command word or its
@@ -737,8 +856,8 @@ mod tests {
         assert_eq!(basename("/abs/alpha.rs"), "alpha.rs");
     }
 
-    /// The expensive direction: anything doing real work beside the sleep
-    /// answers `None`, whatever the sleep is worth.
+    /// The expensive direction for the stall rung: anything doing real work
+    /// beside the sleep answers `None`, whatever the sleep is worth.
     #[test]
     fn a_sleep_beside_real_work_is_never_bare() {
         assert_eq!(
