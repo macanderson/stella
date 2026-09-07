@@ -150,14 +150,18 @@ impl DeliverDesk {
 
     /// `deliver_open` — push `branch` and open the pull request for `issue`.
     ///
+    /// The arguments are in [`DeliverForge::open`]'s order. Two functions of
+    /// the same arity and the same types, named the same and taking them in
+    /// two orders, is a swap the compiler cannot see.
+    ///
     /// # Errors
     ///
     /// [`HostCallRefusal::Unavailable`] when this session already opened one,
     /// and [`HostCallRefusal::Failed`] when the push or the forge refused.
     pub(crate) async fn open(
         &self,
-        issue: &str,
         branch: &str,
+        issue: &str,
         title: &str,
     ) -> Result<OpenReport, HostCallFailure> {
         if let Some(held) = self.peek() {

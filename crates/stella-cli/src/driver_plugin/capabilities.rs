@@ -299,7 +299,7 @@ impl HostDriverCapabilities {
             .config
             .attribution
             .title(&format!("{} (#{issue})", resolved.title));
-        self.deliver.open(&issue, &branch, &title).await
+        self.deliver.open(&branch, &issue, &title).await
     }
 }
 
