@@ -41,13 +41,24 @@ comment instead of verifying a DoD. Mechanically, close these as **not
 planned** rather than completed: only a "completed" close claims the DoD was
 met, and it is the one `dod-close-guard` verifies.
 
-A pull request that closes no issue is waived from the merge gate by the
-`no-issue` label. It exists for changes with no meaningful DoD — a typo, a
-pinned-digest bump, a revert. It is a label rather than a phrase in the
-description so that every use is enumerable (`is:pr label:no-issue`): an
-escape hatch nobody can audit becomes the default path. Reach for it when
-filing an issue would be pure ceremony, never to skip a DoD that should have
-been written.
+A pull request that closes no issue is waived by one of two labels. Which
+one is itself a claim.
+
+`no-issue` says the change is trivial: a typo, a bump, a revert. There is no
+DoD to verify.
+
+`closes-nothing` says the change is large and closes no issue by design. An
+audit that files issues rather than closing them. A refactor. A sweep.
+Without it, such a pull request had no route through the gate that was not a
+false claim. `Closes #N` would name a close that is not happening.
+`no-issue` claims a triviality that is not there.
+
+They are labels rather than phrases, so that every use is enumerable
+(`is:pr label:no-issue`, `is:pr label:closes-nothing`). An escape hatch
+nobody can audit becomes the default path. Two labels, not one, so a
+reviewer can tell a small waived change from a large one at a glance. Reach
+for either when filing an issue would be pure ceremony. Never to skip a DoD
+that should have been written.
 
 A pull request that advances an issue without finishing it links that issue
 with `Refs #N` instead of `Closes #N`. `Refs` does not close, so the merge
