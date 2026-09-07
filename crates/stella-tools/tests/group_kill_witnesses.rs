@@ -58,6 +58,19 @@ use stella_tools::registry::Tool;
 /// bytes here and a killed one by none.
 const OBSERVATION: Duration = Duration::from_millis(200);
 
+/// How long Witness 3's hook runs before its own budget ends it.
+///
+/// Witnesses 1 and 2 watch a live process and abort it once it is beating, so
+/// the writer has as long as it needs to start. Witness 3 cannot: the hook's
+/// timeout is what kills the group, so the first `printf` has to land inside
+/// this budget or it never lands at all, and the premise assert reads a file
+/// that will now stay empty forever. At 300ms that window was narrower than a
+/// cold Windows runner takes to spawn a shell, a subshell and a `printf`, and
+/// the witness failed there on the premise rather than on the property. Three
+/// seconds is wide enough for that spawn and far short of the `sleep 30` the
+/// hook then waits on, so the budget is still what ends it.
+const HOOK_BUDGET_MS: u64 = 3_000;
+
 /// Bytes written to a heartbeat file so far; `0` for one that does not exist
 /// yet.
 fn beats(path: &Path) -> u64 {
@@ -223,7 +236,7 @@ async fn a_timed_out_hook_leaves_no_surviving_grandchild() {
     let dir = tempfile::tempdir().expect("tempdir");
     let pulse = dir.path().join("hook.pulse");
     let mut hung = HookAction::new(backgrounding_command(&pulse));
-    hung.timeout_ms = Some(300);
+    hung.timeout_ms = Some(HOOK_BUDGET_MS);
 
     let err = HostHookRunner
         .run(&hung, "{}", &dir.path().display().to_string())
