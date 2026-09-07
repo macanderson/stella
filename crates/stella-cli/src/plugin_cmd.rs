@@ -217,6 +217,14 @@ pub(crate) fn session_id() -> String {
 /// driver's own telemetry, so its records and the host's can be joined
 /// afterwards.
 ///
+/// A run is not read-only. A driver that asks for `work_start` writes files in
+/// a checkout of its own, and one that asks for the `deliver` verbs pushes a
+/// branch, opens a pull request, and merges it. Every one of those runs as the
+/// plugin, held to the list a person accepted at install
+/// ([`crate::driver_plugin::capabilities`]), and a merge rests on what this
+/// host read from the forge rather than on what the driver reported
+/// ([`crate::driver_plugin::deliver`]).
+///
 /// `flags` is what a work turn inherits. A driver that asks for `work_start`
 /// spends the operator's provider budget, and `--spend-limit` is the ceiling
 /// on it — one ceiling for the whole run rather than one per session, which is
