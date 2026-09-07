@@ -48,20 +48,29 @@ silent race.
 
 The cycle ends where the decision does. A pull request waiting on CI, needing a
 fix, or needing a rebase is a later cycle's work, so this one sleeps and says
-which state it stopped in. A decision of `merge` is the one it acts on, with
+which state it stopped in.
+
+Two decisions it acts on. `deliver_open` opens a draft, so the first answer for
+a green pull request is `mark_ready` — the cycle takes it out of draft with
+`deliver_ready` and reads once more. A decision of `merge` it acts on with
 `deliver_merge`.
 
-## The merge is Stella's call
+## The mark-ready and the merge are Stella's call
 
 `deliver_next` decides over facts this program sends it, which is what makes it
 cheap: a cycle that already read the forge does not pay to read it twice.
 
-`deliver_merge` does not work that way. The ask names a pull request and
-carries no facts, and Stella reads the forge itself and runs the same machine
-over its own answer before merging. A cycle that reported a green build nobody
-saw gets a refusal naming the state Stella found. That is what makes putting a
-merge on a plugin channel safe — the branch protection your repository declares
-is read by the host, and no message this program writes reaches past it.
+`deliver_ready` and `deliver_merge` do not work that way. Each ask names a pull
+request and carries no facts, and Stella reads the forge itself and runs the
+same machine over its own answer before acting. A cycle that reported a green
+build nobody saw gets a refusal naming the state Stella found. That is what
+makes putting a merge on a plugin channel safe — the branch protection your
+repository declares is read by the host, and no message this program writes
+reaches past it.
+
+The draft is why `deliver_ready` is held to the same rule. A pull request opens
+as a draft so one that never goes green never asks a human to look at it, and
+taking it out of draft on this program's word alone would spend that.
 
 A human still approves. The channel has no way to say otherwise. An operator
 who wants their own loop merging unreviewed work says so to
@@ -92,7 +101,8 @@ driver is not deleted until its replacement is proven.
 
 What has moved onto the channel: reading the ranked defect queue, the
 cooperative claim, the worktree and the turn behind `work_start`, and the pull
-request from `deliver_open` through to `deliver_merge`. What has not: the
+request from `deliver_open` through the mark-ready to `deliver_merge`. What has
+not: the
 sweep, the benchmark, the `brew` upgrade, the `~/.zshrc` line and the daemon.
 All of those are still the shell script's, running as you, which is why the
 `[[capabilities]]` list still declares them.

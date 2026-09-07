@@ -100,6 +100,18 @@
       }
     },
     {
+      "case": "deliver_ready",
+      "message": {
+        "args": {
+          "deliver_ready": {
+            "pr": "4102"
+          }
+        },
+        "call": "deliver_ready",
+        "id": 8
+      }
+    },
+    {
       "case": "deliver_merge",
       "message": {
         "args": {
@@ -108,7 +120,7 @@
           }
         },
         "call": "deliver_merge",
-        "id": 8
+        "id": 9
       }
     }
   ],
@@ -237,10 +249,10 @@
       }
     },
     {
-      "case": "ok/merge",
+      "case": "ok/ready",
       "message": {
         "ok": {
-          "merge": {
+          "ready": {
             "pr": "4102"
           }
         },
@@ -248,30 +260,44 @@
       }
     },
     {
+      "case": "ok/merge",
+      "message": {
+        "ok": {
+          "merge": {
+            "pr": "4102"
+          }
+        },
+        "result": 13
+      }
+    },
+    {
       "case": "ok/sweep/regress",
       "message": {
         "ok": {
           "sweep": {
-            "examined": 11,
             "filed": [
               "4310"
             ],
             "fresh": 1,
             "offered": 2,
-            "skipped": [
-              {
-                "count": 4,
-                "reason": "no_change_cited"
-              },
-              {
-                "count": 1,
-                "reason": "unknown_at_close"
-              }
-            ],
+            "receipts": {
+              "checked": 11,
+              "skipped": [
+                {
+                  "count": 4,
+                  "reason": "no_change_cited"
+                },
+                {
+                  "count": 1,
+                  "reason": "unknown_at_close"
+                }
+              ],
+              "total": 16
+            },
             "supply": "regress"
           }
         },
-        "result": 13
+        "result": 14
       }
     },
     {
@@ -279,13 +305,12 @@
       "message": {
         "ok": {
           "sweep": {
-            "examined": 40,
             "fresh": 0,
             "offered": 0,
             "supply": "meta"
           }
         },
-        "result": 14
+        "result": 15
       }
     },
     {
@@ -926,6 +951,7 @@
       "deliver_open",
       "deliver_observe",
       "deliver_next",
+      "deliver_ready",
       "deliver_merge",
       "sweep_audit",
       "sweep_regress",

@@ -12,9 +12,16 @@
 //! workspace table makes `stella-protocol` its only workspace edge.
 //!
 //! So these are the wire's own names. The host maps between the two sets in
-//! `crates/stella-cli/src/self_driving_cmd/supply.rs`. That map is total, so
-//! the two vocabularies cannot drift apart. [`super::deliver`] carries the
+//! `crates/stella-cli/src/driver_plugin/capabilities.rs`. That map is total,
+//! so the two vocabularies cannot drift apart. [`super::deliver`] carries the
 //! same argument for the same reason.
+//!
+//! # The same facts the hand-run verb prints
+//!
+//! `stella self-driving sweep regress|meta` reports over the same draw, in
+//! `crates/stella-cli/src/self_driving_cmd/sweep.rs`. The counts here are its
+//! counts, so an operator reading the terminal and a driver reading the socket
+//! learn the same thing about one sweep.
 //!
 //! # Why a sweep ask reads nothing
 //!
@@ -58,26 +65,17 @@ impl std::fmt::Display for SweptSupply {
 
 /// What one draw from one supply produced.
 ///
-/// Four counts and a list of keys, because a driver decides what to do next
-/// from them. A sweep that offered nothing means the supply is dry and the
-/// loop should watch. A sweep that offered plenty and filed none means the
-/// seen set is holding it all back, which is a different state and calls for a
-/// different answer.
+/// Three counts and the keys, because a driver decides what to do next from
+/// them. A sweep that offered nothing means the supply is dry and the loop
+/// should watch. A sweep that offered plenty and filed none means the seen set
+/// is holding it all back. Those are different states and call for different
+/// answers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SweepReport {
     /// Which supply this is a report about.
     pub supply: SweptSupply,
-    /// How many records the sweep could read: closed-issue receipts for
-    /// `sweep_regress`, ledger cycles for `sweep_meta`.
-    pub examined: u64,
-    /// The records it could not read, one entry per reason.
-    ///
-    /// Always empty for `sweep_meta`: a ledger row is either there or it is
-    /// not, and a row that will not parse never reaches this crate.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub skipped: Vec<SweepSkip>,
-    /// How many findings the supply offered.
+    /// How many findings the supply offered, before the seen set was read.
     pub offered: u64,
     /// How many of those the seen set did not already hold.
     pub fresh: u64,
@@ -87,15 +85,34 @@ pub struct SweepReport {
     /// repeat. Both are ordinary answers, and neither is an error.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub filed: Vec<String>,
+    /// What the closure ledger could answer, for the supply that reads one.
+    ///
+    /// Absent for `sweep_meta`, which folds the cycle ledger and reads no
+    /// receipts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipts: Option<SweepReceipts>,
 }
 
-/// One reason records could not be re-checked, and how many carried it.
+/// How much of the closure ledger one `sweep_regress` draw could re-ask.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SweepReceipts {
+    /// Receipts on file.
+    pub total: u64,
+    /// Those whose cited change could be looked for on the base.
+    pub checked: u64,
+    /// Those that could not be, one entry per reason.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped: Vec<SweepSkip>,
+}
+
+/// One reason receipts could not be re-checked, and how many carried it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SweepSkip {
     /// Why.
     pub reason: SweepSkipReason,
-    /// How many records this reason accounts for.
+    /// How many receipts this reason accounts for.
     pub count: u64,
 }
 

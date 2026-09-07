@@ -102,6 +102,7 @@ open; nothing before Phase 3 forces it.
 | [0033](0033-free-text-is-not-evidence.md) | Free Text Is Not Evidence | Accepted |
 | [0034](0034-silence-is-not-a-grant.md) | Silence Is Not a Grant | Accepted |
 | [0035](0035-a-wrappers-verdict-lands-on-the-round-that-earned-it.md) | A Wrapper's Verdict Lands on the Round That Earned It | Accepted |
+| [0036](0036-a-driver-takes-a-pull-request-out-of-draft.md) | A Driver Takes a Pull Request Out of Draft | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible
@@ -205,6 +206,13 @@ The row now travels back to the caller through the door it already threads in,
 and `Store::append_event` writes the verdict beside the file changes it is
 about, which is what the dataset export's one-execution fold needs. The wrapper
 socket's `DrivenTurn` is untouched.
+
+ADR 0036 gives the driver channel a fifth `deliver` verb, `deliver_ready`. A
+pull request opens as a draft. The pure machine answers `MarkReady` for a green
+one, and the loop had no ask to follow that with, so a person took every pull
+request it opened out of draft by hand. The host reads the forge and runs the
+machine over its own answer before it acts, on the rule the merge already
+followed. The draft still holds back a pull request that never goes green.
 
 ## The number is a shared cell
 

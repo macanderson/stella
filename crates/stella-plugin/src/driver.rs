@@ -47,9 +47,9 @@
 //! **An argument or result table lands with the verb that reads it**, never
 //! ahead of it. The verbs in [`DriverCall`] are named by
 //! `doc:backlog-self-driving` §3.1–§3.5 and most of them are implemented by no
-//! host; writing eighteen argument tables and eighteen result tables here would
-//! be pinning a wire contract to behaviour no host code can typecheck against,
-//! and every one of them would change at the phase that implemented it.
+//! host; writing an argument table and a result table for every one of them here
+//! would be pinning a wire contract to behaviour no host code can typecheck
+//! against, and every one of them would change at the phase that implemented it.
 //!
 //! So [`DriverArgs`] and [`DriverOk`] each carry one optional member per verb
 //! that reads or reports one, and nothing for the rest. Every member is
@@ -72,14 +72,15 @@ pub mod sweep;
 pub use deliver::{
     DecideArgs, DeliverAction, DeliverCi, DeliverDecision, DeliverEscalation, DeliverMergeability,
     DeliverObservation, DeliverReview, DeliverState, MergeReport, OpenReport, PullRequestArgs,
+    ReadyReport,
 };
-pub use sweep::{SweepReport, SweepSkip, SweepSkipReason, SweptSupply};
+pub use sweep::{SweepReceipts, SweepReport, SweepSkip, SweepSkipReason, SweptSupply};
 
 /// The capabilities a **driver** may ask the host for.
 ///
 /// Closed, and [`DriverGrant::calls`] declares which of them a given driver may
-/// use. The eighteen are exactly the verbs `doc:backlog-self-driving` §3.1–§3.5
-/// tabulates, in five families:
+/// use. The entries in [`DriverCall::all`] are exactly the verbs
+/// `doc:backlog-self-driving` §3.1–§3.5 tabulates, in five families:
 ///
 /// - **`backlog`** (§3.1) — the provider-agnostic issue port that replaces
 ///   three hardcoded `gh` call sites. Every other family depends on it: `work`
@@ -88,8 +89,8 @@ pub use sweep::{SweepReport, SweepSkip, SweepSkipReason, SweptSupply};
 /// - **`work`** (§3.2) — one unit of backlog through Stella's own staged
 ///   pipeline, in `candidate_ws.rs`'s shadow worktree, with the pipeline's
 ///   verdict as the definition of done.
-/// - **`deliver`** (§3.3) — branch, PR, CI, review, merge, driven by a pure
-///   state machine that buys no model call.
+/// - **`deliver`** (§3.3) — branch, PR, CI, draft, review, merge, driven by a
+///   pure state machine that buys no model call.
 /// - **`sweep`** (§3.4) — where the next question comes from.
 /// - **`curate`** (§3.5) — proposals for tools, context records and skills,
 ///   which the loop may *propose* and never grant itself (§7).
@@ -129,6 +130,9 @@ pub enum DriverCall {
     DeliverObserve,
     /// The deterministic next action, given the observation.
     DeliverNext,
+    /// Take the pull request out of draft, when and only when `deliver_next`
+    /// says so.
+    DeliverReady,
     /// Merge, when and only when `deliver_next` says so.
     DeliverMerge,
     /// Run the open lens's tooling and emit the findings not yet seen.
@@ -162,6 +166,7 @@ impl DriverCall {
             Self::DeliverOpen => "deliver_open",
             Self::DeliverObserve => "deliver_observe",
             Self::DeliverNext => "deliver_next",
+            Self::DeliverReady => "deliver_ready",
             Self::DeliverMerge => "deliver_merge",
             Self::SweepAudit => "sweep_audit",
             Self::SweepRegress => "sweep_regress",
@@ -185,9 +190,11 @@ impl DriverCall {
             | Self::BacklogClose
             | Self::BacklogLink => DriverFamily::Backlog,
             Self::WorkStart | Self::WorkStatus | Self::WorkAbandon => DriverFamily::Work,
-            Self::DeliverOpen | Self::DeliverObserve | Self::DeliverNext | Self::DeliverMerge => {
-                DriverFamily::Deliver
-            }
+            Self::DeliverOpen
+            | Self::DeliverObserve
+            | Self::DeliverNext
+            | Self::DeliverReady
+            | Self::DeliverMerge => DriverFamily::Deliver,
             Self::SweepAudit | Self::SweepRegress | Self::SweepMeta => DriverFamily::Sweep,
             Self::CuratePropose | Self::CurateList | Self::CurateAccept => DriverFamily::Curate,
         }
@@ -214,6 +221,7 @@ impl DriverCall {
             Self::DeliverOpen,
             Self::DeliverObserve,
             Self::DeliverNext,
+            Self::DeliverReady,
             Self::DeliverMerge,
             Self::SweepAudit,
             Self::SweepRegress,
@@ -268,7 +276,10 @@ impl DriverFamily {
                 "runs Stella against an issue in an isolated worktree, spending model \
                            calls and your provider budget"
             }
-            Self::Deliver => "pushes branches, opens pull requests, reads CI, and merges",
+            Self::Deliver => {
+                "pushes branches, opens pull requests, reads CI, takes them out of draft, \
+                 and merges"
+            }
             Self::Sweep => "runs audit tooling over this workspace and files what it finds",
             Self::Curate => {
                 "proposes new tools, context records and skills, and applies the ones \
@@ -797,6 +808,10 @@ pub struct DriverArgs {
     /// What [`DriverCall::DeliverNext`] should decide over.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deliver_next: Option<DecideArgs>,
+    /// Which pull request [`DriverCall::DeliverReady`] should take out of
+    /// draft.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deliver_ready: Option<PullRequestArgs>,
     /// Which pull request [`DriverCall::DeliverMerge`] should merge.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deliver_merge: Option<PullRequestArgs>,
@@ -819,6 +834,7 @@ impl DriverArgs {
             work_abandon,
             deliver_observe,
             deliver_next,
+            deliver_ready,
             deliver_merge,
         } = self;
         let mut named = Vec::new();
@@ -836,6 +852,9 @@ impl DriverArgs {
         }
         if deliver_next.is_some() {
             named.push(DriverCall::DeliverNext);
+        }
+        if deliver_ready.is_some() {
+            named.push(DriverCall::DeliverReady);
         }
         if deliver_merge.is_some() {
             named.push(DriverCall::DeliverMerge);
@@ -916,6 +935,10 @@ pub struct DriverOk {
     /// What [`DriverCall::DeliverNext`] answered with: the one next action.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision: Option<DeliverDecision>,
+    /// What [`DriverCall::DeliverReady`] answered with: the pull request that
+    /// is now out of draft.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ready: Option<ReadyReport>,
     /// What [`DriverCall::DeliverMerge`] answered with: the pull request that
     /// landed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1332,14 +1355,17 @@ mod tests {
             DriverOk {
                 sweep: Some(SweepReport {
                     supply: SweptSupply::Regress,
-                    examined: 11,
-                    skipped: vec![SweepSkip {
-                        reason: SweepSkipReason::AbsentAtClose,
-                        count: 2,
-                    }],
                     offered: 3,
                     fresh: 1,
                     filed: vec!["4310".into()],
+                    receipts: Some(SweepReceipts {
+                        total: 13,
+                        checked: 11,
+                        skipped: vec![SweepSkip {
+                            reason: SweepSkipReason::AbsentAtClose,
+                            count: 2,
+                        }],
+                    }),
                 }),
                 ..DriverOk::default()
             },
@@ -1351,26 +1377,22 @@ mod tests {
         assert_eq!(back, answered);
     }
 
-    /// A sweep that read every record it holds drops the skip list and the
-    /// filed list, so the emptiest report is three counts.
+    /// A supply that reads no receipts drops the ledger key, and a draw that
+    /// filed nothing drops the key list. The emptiest report is two counts.
     #[test]
-    fn a_sweep_that_skipped_nothing_sends_no_skip_key() {
+    fn a_meta_report_carries_neither_receipts_nor_filed_keys() {
         let json = serde_json::to_string(&DriverOk {
             sweep: Some(SweepReport {
                 supply: SweptSupply::Meta,
-                examined: 40,
-                skipped: Vec::new(),
                 offered: 0,
                 fresh: 0,
                 filed: Vec::new(),
+                receipts: None,
             }),
             ..DriverOk::default()
         })
         .expect("a meta report serializes");
-        assert_eq!(
-            json,
-            r#"{"sweep":{"supply":"meta","examined":40,"offered":0,"fresh":0}}"#
-        );
+        assert_eq!(json, r#"{"sweep":{"supply":"meta","offered":0,"fresh":0}}"#);
     }
 
     /// A page the host never sent is `None`, not an empty one — the two are

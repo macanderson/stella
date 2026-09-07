@@ -591,6 +591,18 @@ fn the_shipped_package_names_a_program_stella_starts() {
 /// test doing the same.
 #[cfg(unix)]
 fn drive_shipped_program(grant: &str) -> (Result<DriveNext, String>, Vec<String>) {
+    drive_shipped_program_over(grant, Box::new(FixtureForge::default()))
+}
+
+/// The same session, over a forge the caller chose.
+///
+/// The pull request's state is what a `deliver` run turns on, so a test about
+/// a draft hands one in rather than reaching past the seam.
+#[cfg(unix)]
+fn drive_shipped_program_over(
+    grant: &str,
+    forge: Box<dyn crate::driver_plugin::deliver::DeliverForge>,
+) -> (Result<DriveNext, String>, Vec<String>) {
     let installed = InstalledPlugin {
         manifest: PluginManifest::from_toml_str(grant).expect("fixture must load"),
         dir: package_dir(),
@@ -609,7 +621,7 @@ fn drive_shipped_program(grant: &str) -> (Result<DriveNext, String>, Vec<String>
             LoopConfig::default(),
             workspace.path().to_path_buf(),
             WorkSlot::new(Box::new(FixtureWorker::answering(changed()))),
-            DeliverDesk::new(Box::new(FixtureForge::default())),
+            DeliverDesk::new(forge),
         )));
     let next = bound.open("drive-test");
     (next, bound.refusals())

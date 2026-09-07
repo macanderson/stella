@@ -19,6 +19,7 @@ stella self-driving aperture (--current | --advance | --reset | --list)
 stella self-driving seen (--digest TEXT… | --new DIGEST… | --add DIGEST… | --count)
 stella self-driving calibrate (--ok | --resource-fail | --show)
 stella self-driving queue [--limit N] [--format <text|json>]
+stella self-driving sweep (regress | meta) [--dry-run] [--format <text|json>]
 stella self-driving file --title TEXT [--body TEXT] [--label L…] [--format <text|json>]
 stella self-driving work --issue KEY [--spend-limit USD] [--format <text|json>]
 stella self-driving drive [--max-issues N] [--no-review] [--poll-secs N] [--backlog] [--dry-run] [--parallel N]
@@ -95,6 +96,34 @@ A run covers many cycles: one `/loop` session, or one daemon's whole lifetime. I
 ### metrics, state, queue
 
 `metrics` turns the ledger into evidence about how the loop itself is doing, flagging specific problems: `STUCK`, `STARVED`, `NOISY`, and `FRAGILE`. `state` shows the current counters and the last five cycles. `queue` ranks open problems by priority — P0, then P1, then P2, then untriaged, oldest first within each rank. Feature requests are left out, because this loop only closes defects. Ranking reads up to 1,000 open issues, which has to be more than your repository has: your tracker hands back the newest issues first, and the priority order is applied afterwards to whatever arrived. If the read stops before the end of your backlog, an old P0 never reaches the ranker at all.
+
+### sweep
+
+```bash
+stella self-driving sweep regress --dry-run
+stella self-driving sweep meta --format json
+```
+
+The ranked queue runs dry. Two other sources of work do not, and `sweep` draws
+from one of them by hand.
+
+`sweep regress` re-checks every fix the loop has closed. The loop writes down
+what each closure cited and whether that change was on the base branch at the
+time. This asks the same question again. A change that was there and is gone
+was taken back out — by a revert, a force push, or a rebase that dropped it —
+and the defect it fixed is back. That is a fact rather than a guess, so it is
+filed as a fresh defect.
+
+`sweep meta` folds the loop's own cycle ledger and reports what its signals say
+about the loop: a ceiling stuck low, a lens that keeps finding nothing, a run
+that files far more than it fixes.
+
+`--dry-run` prints what would be filed and writes nothing to your tracker. Run
+it that way first. Both sources ship switched off in `stella.toml`, and this is
+how you see what one would do before you switch it on.
+
+Neither verb reads those switches. They say what the unattended loop may draw
+from on its own; you typing the verb have already chosen.
 
 ### file
 

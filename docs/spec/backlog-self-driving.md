@@ -10,8 +10,8 @@ Status: **B0–B3 and B5 built; B4, B6 and B7 designed and unbuilt.** Phases in 
 channel §3.0 specifies exists — `stella_plugin::driver` is its wire half,
 `stella_runtime::wrapper::DriverCallGate` its host half, and
 `plugins/stella-selfdriving/plugin.toml` declares the `[driver]` grant a human
-reads at install. The `backlog` read and claim, the three `work` verbs, the
-four `deliver` verbs and the two `sweep` verbs that need no lens are served
+reads at install. The `backlog` read and claim, the `work` verbs, the
+`deliver` verbs and the two `sweep` verbs that need no lens are served
 from `stella-cli`. A sweep draws only from a supply the workspace opened in
 `[self_driving.supply]`, so granting the verb opens nothing. Every other verb
 §3.1–§3.5 names answers `unsupported` and the driver degrades, which is what
@@ -495,6 +495,7 @@ mechanism rather than new invention:
 | `deliver open` | `json` | Branch, commit, push, open the PR as a draft, with `Closes #N` in **both** the body and a commit trailer (AGENTS.md § *Closing the issue on merge*). |
 | `deliver observe` | `json` | One read of the forge: CI conclusions, review threads, mergeability, base drift. Pure read, no decisions. |
 | `deliver next` | `json` | The deterministic transition: given the observation and the PR's recorded state, the single next action. |
+| `deliver ready` | `json` | Take the PR out of draft when and only when `deliver next` says `MarkReady`. |
 | `deliver merge` | `json` | Merge when and only when `deliver next` says `Merge`. |
 
 The state machine is pure and lives in `stella-autonomy`:
@@ -521,6 +522,13 @@ already paid for:
 - **`Escalated` is terminal and reachable from everywhere.** A loop that cannot
   give up is a loop that pushes the same broken fix forever. Repeat-failure
   counting is in the pure machine; the ceiling is policy.
+- **A draft is opened so a PR that never goes green never asks a human to look
+  at it**, which puts `MarkReady` between a green build and a merge. `deliver
+  ready` is the verb for it, and it is held to the same rule as the merge: the
+  host re-reads the forge and runs the machine over its own answer, so a draft
+  a driver *called* green stays a draft. Without that verb the loop halts on a
+  decision it cannot act on, and a person takes every autonomous PR out of
+  draft by hand (ADR 0036).
 
 `deliver next` **buys no model call.** Deciding *what to do* is arithmetic over
 observed facts; only *doing* it (writing the fix for a red CI) is a `work`
@@ -982,7 +990,7 @@ its witness — a test that fails on `main` and passes with the change.
 | **B0** — **built** | **The driver channel** (§3.0). A second dispatch context for the existing host-call machinery, opened by a driver session rather than a wrapper point; a `[driver]` block with its own `calls` list and its own `permits_call`, *without* touching the `Participation` ladder; the grant rendered at install consent. `stella-plugin/src/driver.rs` is the wire half and `stella-runtime/src/wrapper/driver_call.rs` the host half. A call carries the argument table of the verb it names and no other; a result table lands with the verb that reports it, and `DriverOk::backlog` was the first. `plugins/stella-selfdriving` is a program the host runs, named by `[driver.process]`, asking over this channel. | `an_undeclared_call_is_refused_and_the_session_keeps_running` (`stella-runtime/src/wrapper/driver_call.rs`): a driver whose manifest omits a call is refused it with a `HostCallRefusal` code, is not charged for it, and **keeps running**; a declared one is served. Both directions, because either alone is half a gate. Plus `a_driver_holds_capabilities_without_a_participation_grade` (`stella-plugin/src/manifest.rs`) — the defect itself, that `participation = "none"` made every capability unreachable. | everything below |
 | **B1** — **built** | **The issue port.** `Issue` kernel in `stella-protocol`; `IssueProvider` port; GitHub as a shipped manifest under `.stella/issues/`; the `backlog` calls on the channel; the CLI's `queue` row reshaped, `HOST_SURFACE_VERSION` → 2. | The ranked queue is produced against a fixture provider with **no `gh` on `PATH`**. | "any issue provider" |
 | **B2** — **built** | **`work` + the loop step machine.** `LoopStep`/`step` pure in `stella-autonomy`; `work_start`/`work_status`/`work_abandon` served over the channel from `stella-cli`, built on the existing `child_turn` dispatcher rather than a second one; the plugin becomes a policy loop over declared calls; the eight slash commands and `scripts/self-driving.sh` retire **only after** `scripts/test-self-driving.sh` is green against the new path with every assertion intact. | One issue goes from `backlog next` to a verified diff with no Claude Code and no human. | the headline |
-| **B3** — **built** | **`deliver`.** `PrState` pure; open/observe/next/merge; `Escalated` reachable and terminal; `CiRed` vs `BaseBroken` distinguished. Served over the driver channel from `stella-cli/src/driver_plugin/deliver.rs`, where `deliver_merge` re-reads the forge itself and merges only on its own verdict. | A PR whose CI is red *on its base branch* transitions to `BaseBroken`, and the loop does not push a fix. Plus `a_merge_is_refused_on_this_hosts_own_reading` (`stella-cli/src/driver_plugin/tests/deliver.rs`): a driver holding `deliver_merge` cannot merge a red pull request. |  PR rhythm (#2374's named weakness) |
+| **B3** — **built** | **`deliver`.** `PrState` pure; open/observe/next/ready/merge; `Escalated` reachable and terminal; `CiRed` vs `BaseBroken` distinguished. Served over the driver channel from `stella-cli/src/driver_plugin/deliver.rs`, where `deliver_merge` re-reads the forge itself and merges only on its own verdict. | A PR whose CI is red *on its base branch* transitions to `BaseBroken`, and the loop does not push a fix. Plus `a_merge_is_refused_on_this_hosts_own_reading` (`stella-cli/src/driver_plugin/tests/deliver.rs`): a driver holding `deliver_merge` cannot merge a red pull request. |  PR rhythm (#2374's named weakness) |
 | **B4** | **Supply.** Ladder re-arm on baseline delta; `sweep regress` over closed-issue receipts; `sweep meta`. Per-supply switch, default queue-only. | A lens dry at `HEAD` re-opens after the declared baseline delta and yields **only** digests absent from `seen.txt`. | never runs out |
 | **B5** — **built** | **The residue gate** ([`doc:agent-native-delivery`](agent-native-delivery.md) §7), as an end-of-turn transcript check in `stella-cli` (`self_driving_cmd/residue.rs`). A fixed phrase list finds leftover-work statements — never a model call. Every hit is filed through `file_finding`, so the seen-set dedup and the convention check apply unchanged. `residue_gate = "off"` in `stella.toml` turns it off. | `two_residue_statements_file_two_issues_and_a_rerun_files_none` (`self_driving_cmd/residue.rs`): two stated leftovers file exactly two issues on a fixture provider. A re-run with those digests seen files none. | filing is a guarantee |
 | **B6** | **`curate`.** Proposals from ledger evidence; acceptance gated on declared authority; `regulated` keeps the human on context records. | A skill proposal reaching the recurrence threshold is *proposed* and, under `regulated`, **not** applied. | self-curation |

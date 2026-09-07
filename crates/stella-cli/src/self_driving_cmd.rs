@@ -46,16 +46,17 @@ mod query;
 pub(crate) mod ready;
 mod report;
 pub(crate) mod residue;
+mod runs;
 pub(crate) mod state;
 mod stats;
 mod stop;
 pub(crate) mod supply;
 mod surface;
+mod sweep;
 mod triage;
 pub(crate) mod turn_flags;
 pub(crate) mod work;
 
-use std::collections::BTreeMap;
 use std::process::Command;
 
 use clap::Subcommand;
@@ -195,6 +196,13 @@ pub(crate) enum SelfDrivingCmd {
         /// versioned query envelope (#1568).
         #[arg(long, value_enum, default_value = "text")]
         format: QueryFormat,
+    },
+
+    /// Draw from one supply that does not drain, by hand, and report what it
+    /// offers. `--dry-run` writes nothing to the tracker.
+    Sweep {
+        #[command(subcommand)]
+        cmd: sweep::SweepCmd,
     },
 
     /// File a finding as an issue, through the bound provider.
@@ -649,6 +657,7 @@ pub(crate) fn run(cmd: &SelfDrivingCmd, flags: &TurnFlags) -> Result<(), String>
             show,
         } => query::calibrate_cmd(&st, *ok, *resource_fail, *show),
         SelfDrivingCmd::Queue { limit, format } => query::queue(&st, *limit, *format),
+        SelfDrivingCmd::Sweep { cmd } => sweep::run(&st, cmd),
         SelfDrivingCmd::File {
             title,
             body,
@@ -702,14 +711,14 @@ pub(crate) fn run(cmd: &SelfDrivingCmd, flags: &TurnFlags) -> Result<(), String>
             remaining,
         }),
         SelfDrivingCmd::Run { cmd } => match cmd {
-            RunCmd::Start => run_start(&st),
-            RunCmd::End { status, reason } => run_end(&st, status, reason),
-            RunCmd::Cancel { reason } => run_end_as(
+            RunCmd::Start => runs::start(&st),
+            RunCmd::End { status, reason } => runs::end(&st, status, reason),
+            RunCmd::Cancel { reason } => runs::end(
                 &st,
                 "cancelled",
                 reason.as_deref().unwrap_or("stopped by hand"),
             ),
-            RunCmd::List => runs_report(&st),
+            RunCmd::List => runs::report(&st),
             RunCmd::StampCyclePid { pid } => {
                 st.update_run_doc(|doc| match pid {
                     Some(p) => {
@@ -723,7 +732,7 @@ pub(crate) fn run(cmd: &SelfDrivingCmd, flags: &TurnFlags) -> Result<(), String>
             }
         },
         SelfDrivingCmd::Stop { root } => stop::request(root.as_deref().unwrap_or(&st.dir)),
-        SelfDrivingCmd::Runs => runs_report(&st),
+        SelfDrivingCmd::Runs => runs::report(&st),
         SelfDrivingCmd::Phase { name } => {
             st.run_write(name, None, None);
             println!("phase: {name}");
@@ -936,7 +945,7 @@ fn cycle_begin(st: &LoopState) -> Result<(), String> {
         &st.repo_root,
         &hooks::settings_for(&st.repo_root),
         hooks::HookEvent::DriveCycleStart,
-        run_info(st).in_cycle(n),
+        runs::info(st).in_cycle(n),
         None,
     );
 
@@ -1030,7 +1039,7 @@ fn cycle_end(
     st.run_write("idle", None, Some(tier));
 
     let settings = hooks::settings_for(&st.repo_root);
-    let run = run_info(st).in_cycle(cycle);
+    let run = runs::info(st).in_cycle(cycle);
     hooks::drive(
         &st.repo_root,
         &settings,
@@ -1381,114 +1390,4 @@ fn file_finding(
     }
 
     backlog::render_not_filed(&outcome, &bound, format)
-}
-
-// ---------------------------------------------------------------------------
-// run lifecycle
-// ---------------------------------------------------------------------------
-
-fn run_start(st: &LoopState) -> Result<(), String> {
-    let rid = state::new_run_id();
-    let driver = std::env::var("SELF_DRIVING_DRIVER").unwrap_or_else(|_| "interactive".to_string());
-    let mut fields = BTreeMap::new();
-    fields.insert("run_id".to_string(), Value::String(rid.clone()));
-    fields.insert("status".to_string(), Value::String("running".to_string()));
-    fields.insert("driver".to_string(), Value::String(driver));
-    fields.insert(
-        "slug".to_string(),
-        Value::String(state::repo_slug(&st.repo_root)),
-    );
-    fields.insert(
-        "workspace_root".to_string(),
-        Value::String(st.repo_root.to_string_lossy().into_owned()),
-    );
-    fields.insert("pid".to_string(), u64::from(std::process::id()).into());
-    st.append_run_record(fields)?;
-
-    let started = rfc3339_utc_now();
-    st.update_run_doc(|doc| {
-        doc.insert("run_id".into(), rid.clone().into());
-        doc.entry("started_at".to_string())
-            .or_insert_with(|| Value::String(started));
-    });
-    // Stamp the first heartbeat through the SAME writer every other phase
-    // uses — the record must be complete from its first byte, not completed
-    // by whatever happens next.
-    st.run_write("idle", None, None);
-
-    hooks::drive(
-        &st.repo_root,
-        &hooks::settings_for(&st.repo_root),
-        hooks::HookEvent::DriveRunStart,
-        hooks::HookRunInfo::new(&rid),
-        None,
-    );
-
-    say(&format!("run {rid} started"));
-    println!("SELF_DRIVING_RUN_ID={rid}");
-    Ok(())
-}
-
-fn run_end(st: &LoopState, status: &str, reason: &str) -> Result<(), String> {
-    run_end_as(st, status, reason)
-}
-
-fn run_end_as(st: &LoopState, status: &str, reason: &str) -> Result<(), String> {
-    let rid = st
-        .current_run_id()
-        .ok_or_else(|| "run end: no run in progress".to_string())?;
-    let mut fields = BTreeMap::new();
-    fields.insert("run_id".to_string(), Value::String(rid.clone()));
-    fields.insert("status".to_string(), Value::String(status.to_string()));
-    fields.insert("reason".to_string(), Value::String(reason.to_string()));
-    st.append_run_record(fields)?;
-    st.clear_run_doc();
-    // After the record is banked and before the line is printed, so a
-    // subscriber that reads the ledger on being woken finds this run's ending
-    // already in it.
-    hooks::drive(
-        &st.repo_root,
-        &hooks::settings_for(&st.repo_root),
-        hooks::HookEvent::DriveRunEnd,
-        hooks::HookRunInfo::new(&rid),
-        Some(format!("{status}: {reason}")),
-    );
-    say(&format!("run {rid} -> {status}"));
-    Ok(())
-}
-
-/// The run a lifecycle event belongs to.
-///
-/// A run that was never opened still has events worth reporting — `cycle
-/// begin` outside `run start` is an ordinary way to drive the loop by hand —
-/// so the identifier degrades to `-` rather than the event being withheld.
-/// That is `state::LoopState`'s own convention for the same absence, which is
-/// what a `CycleRecord` written outside a run already carries.
-fn run_info(st: &LoopState) -> hooks::HookRunInfo {
-    hooks::HookRunInfo::new(st.current_run_id().unwrap_or_else(|| "-".to_string()))
-}
-
-fn runs_report(st: &LoopState) -> Result<(), String> {
-    let rows = stella_autonomy::fold_runs(
-        &st.run_records(),
-        &st.cycles().rows,
-        st.run_doc().as_ref(),
-        now_unix(),
-        state::stale_after_secs(),
-    );
-    if rows.is_empty() {
-        println!("no self-driving runs recorded yet");
-        return Ok(());
-    }
-    println!(
-        "{:<28} {:<10} {:>3} {:>5} {:>5} {:>4}  phase",
-        "run", "status", "cyc", "fixed", "filed", "new"
-    );
-    for r in rows {
-        println!(
-            "{:<28} {:<10} {:>3} {:>5} {:>5} {:>4}  {}",
-            r.run_id, r.status, r.cycles, r.fixed, r.filed, r.new_findings, r.phase
-        );
-    }
-    Ok(())
 }

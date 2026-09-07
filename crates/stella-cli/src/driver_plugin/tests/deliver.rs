@@ -24,10 +24,14 @@ use crate::self_driving_cmd::deliver::Reading;
 /// The seam is [`DeliverForge`] and nothing above it. So these tests drive the
 /// shipping desk, the shipping refusals and the shipping machine.
 pub(super) struct FixtureForge {
-    /// What one read of the forge comes back as.
-    reading: Reading,
+    /// What one read of the forge comes back as. A mark-ready rewrites it, so
+    /// the second read of a draft sees what the first ask changed — which is
+    /// the whole of what a draft-to-merge run has to observe.
+    reading: Mutex<Reading>,
     /// Every pull request a merge was asked for, in order.
     merged: Mutex<Vec<String>>,
+    /// Every pull request a mark-ready was asked for, in order.
+    readied: Mutex<Vec<String>>,
     /// Every `(branch, issue, title)` an open was asked for, in order.
     opened: Mutex<Vec<(String, String, String)>>,
 }
@@ -43,14 +47,22 @@ impl Default for FixtureForge {
 impl FixtureForge {
     fn seeing(reading: Reading) -> Self {
         Self {
-            reading,
+            reading: Mutex::new(reading),
             merged: Mutex::new(Vec::new()),
+            readied: Mutex::new(Vec::new()),
             opened: Mutex::new(Vec::new()),
         }
     }
 
     fn merges(&self) -> Vec<String> {
         self.merged
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    fn readies(&self) -> Vec<String> {
+        self.readied
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
@@ -75,7 +87,24 @@ impl DeliverForge for FixtureForge {
     }
 
     async fn observe(&self, _pr: &str) -> Result<Reading, String> {
-        Ok(self.reading.clone())
+        Ok(self
+            .reading
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone())
+    }
+
+    async fn ready(&self, pr: &str) -> Result<(), String> {
+        self.readied
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(pr.to_owned());
+        self.reading
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .observation
+            .draft = false;
+        Ok(())
     }
 
     async fn merge(&self, pr: &str) -> Result<(), String> {
@@ -104,12 +133,20 @@ fn reading(ci: CiConclusion, review: ReviewState) -> Reading {
     }
 }
 
+/// The same read, of a pull request still in draft — the state
+/// `deliver_open` leaves one in.
+fn draft_reading(ci: CiConclusion, review: ReviewState) -> Reading {
+    let mut still_a_draft = reading(ci, review);
+    still_a_draft.observation.draft = true;
+    still_a_draft
+}
+
 // ---------------------------------------------------------------------------
 // The deliver verbs
 // ---------------------------------------------------------------------------
 
-/// A manifest that grants `bash` and declares the four `deliver` verbs beside
-/// the work, which is what the shipped package declares.
+/// A manifest that grants `bash` and declares every `deliver` verb beside the
+/// work, which is what the shipped package declares.
 const GRANTS_DELIVER: &str = r#"
 name = "stella-selfdriving"
 [loop]
@@ -125,6 +162,7 @@ calls = [
   "deliver_open",
   "deliver_observe",
   "deliver_next",
+  "deliver_ready",
   "deliver_merge",
 ]
 [driver.process]
@@ -161,6 +199,10 @@ impl DeliverForge for SharedForge {
         self.0.observe(pr).await
     }
 
+    async fn ready(&self, pr: &str) -> Result<(), String> {
+        self.0.ready(pr).await
+    }
+
     async fn merge(&self, pr: &str) -> Result<(), String> {
         self.0.merge(pr).await
     }
@@ -177,6 +219,13 @@ fn observing(pr: &str) -> Option<DriverArgs> {
 fn merging(pr: &str) -> Option<DriverArgs> {
     Some(DriverArgs {
         deliver_merge: Some(PullRequestArgs { pr: pr.to_string() }),
+        ..DriverArgs::default()
+    })
+}
+
+fn readying(pr: &str) -> Option<DriverArgs> {
+    Some(DriverArgs {
+        deliver_ready: Some(PullRequestArgs { pr: pr.to_string() }),
         ..DriverArgs::default()
     })
 }
@@ -378,6 +427,89 @@ async fn a_green_build_nobody_reviewed_does_not_merge_itself() {
     assert!(forge.merges().is_empty(), "{:?}", forge.merges());
 }
 
+/// **The witness.** A green, approved **draft** goes from `deliver_observe` to
+/// a merge with no human step in between.
+///
+/// The machine answers `mark_ready` for a green draft
+/// (`stella_autonomy::deliver_next`'s green arm), and before `deliver_ready`
+/// existed nothing on the channel could act on that: the run stopped here and
+/// a person took every autonomous pull request out of draft by hand. The merge
+/// is asserted at the end because a mark-ready that did not reach the forge
+/// would leave `draft` set, and the machine then answers `mark_ready` again
+/// rather than merging.
+#[tokio::test]
+async fn a_green_draft_reaches_a_merge_with_no_human_step() {
+    let forge = Arc::new(FixtureForge::seeing(draft_reading(
+        CiConclusion::Green,
+        ReviewState::Approved,
+    )));
+    let host = capabilities_delivering(GRANTS_DELIVER, Arc::clone(&forge));
+
+    let observed = host
+        .perform(DriverCall::DeliverObserve, observing("4102"))
+        .await
+        .expect("the forge is read")
+        .observation
+        .expect("with an observation");
+    assert!(observed.draft, "the fixture opens as a draft");
+
+    let decided = host
+        .perform(
+            DriverCall::DeliverNext,
+            Some(DriverArgs {
+                deliver_next: Some(DecideArgs {
+                    observation: observed,
+                    fixes: 0,
+                    rebases: 0,
+                }),
+                ..DriverArgs::default()
+            }),
+        )
+        .await
+        .expect("the machine decides")
+        .decision
+        .expect("with a decision");
+    assert_eq!(decided.action, DeliverAction::MarkReady);
+    assert_eq!(decided.state, DeliverState::ReadyForReview);
+
+    let readied = host
+        .perform(DriverCall::DeliverReady, readying("4102"))
+        .await
+        .expect("a green draft is taken out of draft")
+        .ready
+        .expect("with a report");
+    assert_eq!(readied.pr, "4102");
+    assert_eq!(forge.readies(), ["4102"]);
+
+    let merged = host
+        .perform(DriverCall::DeliverMerge, merging("4102"))
+        .await
+        .expect("and the pull request that is out of draft merges")
+        .merge
+        .expect("with a report");
+    assert_eq!(merged.pr, "4102");
+    assert_eq!(forge.merges(), ["4102"]);
+}
+
+/// A draft whose checks have not finished stays a draft. The host re-reads the
+/// forge and runs the machine over its own answer, so `deliver_ready` is held
+/// to the same rule as `deliver_merge` — a driver cannot spend the property
+/// that a pull request which never goes green never asks a human to look at it.
+#[tokio::test]
+async fn a_draft_that_is_not_green_is_not_taken_out_of_draft() {
+    let forge = Arc::new(FixtureForge::seeing(draft_reading(
+        CiConclusion::Pending,
+        ReviewState::Approved,
+    )));
+    let refused = capabilities_delivering(GRANTS_DELIVER, Arc::clone(&forge))
+        .perform(DriverCall::DeliverReady, readying("4102"))
+        .await
+        .expect_err("a draft waiting on checks is not taken out of draft");
+    assert_eq!(refused.refusal, HostCallRefusal::Forbidden);
+    assert!(refused.detail.contains("CiPending"), "{refused}");
+    assert!(forge.readies().is_empty(), "{:?}", forge.readies());
+}
+
 /// A `deliver` ask that names no pull request is refused. The host does not
 /// point it at whatever this session holds. Those are two different pull
 /// requests, and answering about the wrong one is worse than not answering.
@@ -441,6 +573,61 @@ timeout_secs = 5
         .decision
         .expect("with a decision");
     assert_eq!(served.action, DeliverAction::Wait);
+}
+
+/// **The end-to-end witness for the mark-ready.** The shipped program carries a
+/// green draft to a merge, over the real transport, with nobody touching the
+/// forge in between.
+///
+/// `main.py` had no `deliver_ready` ask to make while the verb did not exist,
+/// so this run ended in a sleep with the pull request still a draft. It ends in
+/// a halt naming the merge now, and the fixture records both asks in order.
+#[cfg(unix)]
+#[test]
+fn the_shipped_program_carries_a_green_draft_to_a_merge() {
+    const DELIVERS_A_DRAFT: &str = r#"
+name = "stella-selfdriving"
+[loop]
+participation = "none"
+[[capabilities]]
+tool = "bash"
+risk = "destructive"
+purpose = "read the defect queue, work an issue, and deliver it"
+[driver]
+calls = [
+  "backlog_next",
+  "backlog_claim",
+  "work_start",
+  "deliver_open",
+  "deliver_observe",
+  "deliver_next",
+  "deliver_ready",
+  "deliver_merge",
+]
+[driver.process]
+argv = ["python3", "${plugin_dir}/main.py"]
+timeout_secs = 60
+env = ["PATH"]
+"#;
+
+    let forge = Arc::new(FixtureForge::seeing(draft_reading(
+        CiConclusion::Green,
+        ReviewState::Approved,
+    )));
+    let (delivered, refusals) =
+        drive_shipped_program_over(DELIVERS_A_DRAFT, Box::new(SharedForge(Arc::clone(&forge))));
+    match delivered.expect("the session ended with a next") {
+        DriveNext::Halt { reason } => assert!(reason.contains("merged"), "{reason}"),
+        DriveNext::Sleep { secs } => {
+            panic!("a green draft must not need a human to advance it: slept {secs}s")
+        }
+    }
+    assert_eq!(forge.readies(), ["4102"]);
+    assert_eq!(forge.merges(), ["4102"]);
+    assert!(
+        refusals.is_empty(),
+        "every ask this cycle makes was declared: {refusals:?}"
+    );
 }
 
 /// **The end-to-end witness.** The shipped program, through the real

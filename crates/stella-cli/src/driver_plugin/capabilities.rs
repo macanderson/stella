@@ -20,7 +20,8 @@
 //!
 //! The host serves `backlog_next` — the queue, read through [`IssueProvider`]
 //! in the order `self_driving_cmd::ready` folds — `backlog_claim`, the three
-//! `work` verbs, the four `deliver` verbs, and two of the three `sweep` verbs.
+//! `work` verbs, the `deliver` verbs, and the two `sweep` verbs that need no
+//! lens.
 //!
 //! Each other verb answers [`HostCallRefusal::Unsupported`] and names its
 //! family. That is a stated gap, not a silence. The match below covers every
@@ -63,8 +64,8 @@ use serde_json::Value;
 use stella_core::ports::{AuthzDecision, AuthzGate, Principal};
 use stella_plugin::{
     BacklogEntry, BacklogPage, ClaimReport, DriverArgs, DriverCall, DriverOk, HostCallFailure,
-    HostCallRefusal, PullRequestArgs, SweepReport, SweepSkip, SweepSkipReason, SweptSupply,
-    UnitArgs,
+    HostCallRefusal, PullRequestArgs, SweepReceipts, SweepReport, SweepSkip, SweepSkipReason,
+    SweptSupply, UnitArgs,
 };
 use stella_protocol::issue::{Issue, IssueProvider};
 use stella_runtime::wrapper::DriverCapabilities;
@@ -76,7 +77,7 @@ use crate::plugin_authz::PluginGates;
 use crate::self_driving_cmd::claim::Claim;
 use crate::self_driving_cmd::config::LoopConfig;
 use crate::self_driving_cmd::state::LoopState;
-use crate::self_driving_cmd::supply::{Drawn, Shut};
+use crate::self_driving_cmd::supply::{self, Drawn};
 
 /// How many ranked issues one `backlog_next` answer carries.
 ///
@@ -346,8 +347,23 @@ impl HostDriverCapabilities {
     /// It shells out twice. Git says whether a cited fix is still on the base,
     /// and the tracker takes what the sweep files. So it is held to the grant
     /// [`Self::backlog_next`] is held to.
+    ///
+    /// The switch under `[self_driving.supply]` is read first. Granting the
+    /// verb opens no supply: an operator's `stella.toml` is the only thing
+    /// that does, and a driver asking for a shut one is told which line to
+    /// edit. `supply::draw_regress` itself asks no switch, because
+    /// `stella self-driving sweep` is a person running one draw by hand and a
+    /// person needs no permission from a file they own.
     async fn sweep(&self, supply: SweptSupply) -> Result<DriverOk, HostCallFailure> {
+        let open = match supply {
+            SweptSupply::Regress => self.config.supply.regress,
+            SweptSupply::Meta => self.config.supply.meta,
+        };
+        if !open {
+            return Err(shut(supply));
+        }
         self.may_shell()?;
+
         let Some(state) = &self.state else {
             return Err(HostCallFailure::new(
                 HostCallRefusal::Unavailable,
@@ -356,28 +372,21 @@ impl HostDriverCapabilities {
             ));
         };
         let drawn = match supply {
-            SweptSupply::Regress => {
-                crate::self_driving_cmd::supply::draw_regress(
-                    state,
-                    self.issues.as_ref(),
-                    &self.config,
-                    &self.root,
-                )
-                .await
-            }
-            SweptSupply::Meta => {
-                crate::self_driving_cmd::supply::draw_meta(
-                    state,
-                    self.issues.as_ref(),
-                    &self.config,
-                    &self.root,
-                )
-                .await
-            }
+            SweptSupply::Regress => supply::draw_regress(state, &self.root),
+            SweptSupply::Meta => supply::draw_meta(state),
         };
-        let drawn = drawn.map_err(|Shut { switch }| shut(supply, switch))?;
+        let offered = drawn.findings.len() as u64;
+        let filed = supply::offer(
+            state,
+            self.issues.as_ref(),
+            &self.config,
+            &self.root,
+            &drawn.findings,
+        )
+        .await;
+
         Ok(DriverOk {
-            sweep: Some(report(supply, drawn)),
+            sweep: Some(report(supply, offered, drawn, filed)),
             ..DriverOk::default()
         })
     }
@@ -388,12 +397,12 @@ impl HostDriverCapabilities {
 /// It names the line an operator edits. A driver told only "no" would read a
 /// shut switch as a host that cannot sweep. Those two call for opposite
 /// answers.
-fn shut(supply: SweptSupply, switch: &str) -> HostCallFailure {
+fn shut(supply: SweptSupply) -> HostCallFailure {
     HostCallFailure::new(
         HostCallRefusal::Unavailable,
         format!(
             "this workspace has not opened the `{supply}` supply, so nothing was swept — set \
-             `[self_driving.supply] {switch} = \"on\"` in stella.toml to open it"
+             `[self_driving.supply] {supply} = \"on\"` in stella.toml to open it"
         ),
     )
 }
@@ -402,33 +411,38 @@ fn shut(supply: SweptSupply, switch: &str) -> HostCallFailure {
 ///
 /// The map from `stella_autonomy`'s skip reasons to the wire's is total. So
 /// the two sets of words cannot drift apart.
-fn report(supply: SweptSupply, drawn: Drawn) -> SweepReport {
+fn report(supply: SweptSupply, offered: u64, drawn: Drawn, filed: supply::Offered) -> SweepReport {
+    SweepReport {
+        supply,
+        offered,
+        fresh: filed.fresh as u64,
+        filed: filed.filed,
+        receipts: drawn.receipts.map(|counts| SweepReceipts {
+            total: counts.total as u64,
+            checked: counts.checked,
+            skipped: tally(&counts.skipped),
+        }),
+    }
+}
+
+/// Every skip reason the draw met, once each, with how many receipts carried
+/// it.
+fn tally(skipped: &[stella_autonomy::regress::Skip]) -> Vec<SweepSkip> {
     use stella_autonomy::regress::Skip;
 
-    let mut counted: Vec<(SweepSkipReason, u64)> = Vec::new();
-    for skip in drawn.skipped {
+    let mut counted: Vec<SweepSkip> = Vec::new();
+    for skip in skipped {
         let reason = match skip {
             Skip::NoChangeCited => SweepSkipReason::NoChangeCited,
             Skip::UnknownAtClose => SweepSkipReason::UnknownAtClose,
             Skip::AbsentAtClose => SweepSkipReason::AbsentAtClose,
         };
-        match counted.iter_mut().find(|(held, _)| *held == reason) {
-            Some((_, count)) => *count += 1,
-            None => counted.push((reason, 1)),
+        match counted.iter_mut().find(|held| held.reason == reason) {
+            Some(held) => held.count += 1,
+            None => counted.push(SweepSkip { reason, count: 1 }),
         }
     }
-
-    SweepReport {
-        supply,
-        examined: drawn.examined,
-        skipped: counted
-            .into_iter()
-            .map(|(reason, count)| SweepSkip { reason, count })
-            .collect(),
-        offered: drawn.offered,
-        fresh: drawn.fresh,
-        filed: drawn.filed,
-    }
+    counted
 }
 
 /// The pull request an ask named, or a refusal that says it named none.
@@ -622,6 +636,15 @@ impl DriverCapabilities for HostDriverCapabilities {
                 let asked = table.deliver_next.as_ref().ok_or_else(|| no_table(call))?;
                 Ok(DriverOk {
                     decision: Some(super::deliver::decide_from(asked)),
+                    ..DriverOk::default()
+                })
+            }
+            DriverCall::DeliverReady => {
+                let table = table_for(call, args.as_ref())?;
+                let named = table.deliver_ready.as_ref().ok_or_else(|| no_table(call))?;
+                self.may_shell()?;
+                Ok(DriverOk {
+                    ready: Some(self.deliver.ready(named_pr(named)?).await?),
                     ..DriverOk::default()
                 })
             }

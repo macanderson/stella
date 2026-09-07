@@ -15,8 +15,8 @@ use crate::{
     DeliverDecision, DeliverEscalation, DeliverMergeability, DeliverObservation, DeliverReview,
     DeliverState, DriveNext, DriveRequest, DriveResponse, DriverArgs, DriverCall,
     DriverCallRequest, DriverCallResponse, DriverOk, HostCallFailure, HostCallRefusal, MergeReport,
-    OpenReport, PullRequestArgs, SweepReport, SweepSkip, SweepSkipReason, SweptSupply, UnitArgs,
-    WorkReport, WorkState,
+    OpenReport, PullRequestArgs, ReadyReport, SweepReceipts, SweepReport, SweepSkip,
+    SweepSkipReason, SweptSupply, UnitArgs, WorkReport, WorkState,
 };
 
 /// The session frames: the host's opening, and the two answers that end it.
@@ -74,6 +74,7 @@ pub(super) fn calls() -> Result<Value, serde_json::Error> {
                     work_abandon: None,
                     deliver_observe: None,
                     deliver_next: None,
+                    deliver_ready: None,
                     deliver_merge: None,
                 }),
             },
@@ -91,6 +92,7 @@ pub(super) fn calls() -> Result<Value, serde_json::Error> {
                     work_abandon: None,
                     deliver_observe: None,
                     deliver_next: None,
+                    deliver_ready: None,
                     deliver_merge: None,
                 }),
             },
@@ -108,6 +110,7 @@ pub(super) fn calls() -> Result<Value, serde_json::Error> {
                     }),
                     deliver_observe: None,
                     deliver_next: None,
+                    deliver_ready: None,
                     deliver_merge: None,
                 }),
             },
@@ -123,6 +126,7 @@ pub(super) fn calls() -> Result<Value, serde_json::Error> {
                     work_abandon: None,
                     deliver_observe: Some(PullRequestArgs { pr: "4102".into() }),
                     deliver_next: None,
+                    deliver_ready: None,
                     deliver_merge: None,
                 }),
             },
@@ -145,6 +149,7 @@ pub(super) fn calls() -> Result<Value, serde_json::Error> {
                         fixes: 1,
                         rebases: 0,
                     }),
+                    deliver_ready: None,
                     deliver_merge: None,
                 }),
             },
@@ -172,6 +177,23 @@ pub(super) fn calls() -> Result<Value, serde_json::Error> {
                         fixes: 0,
                         rebases: 0,
                     }),
+                    deliver_ready: None,
+                    deliver_merge: None,
+                }),
+            },
+        )?,
+        case(
+            "deliver_ready",
+            &DriverCallRequest {
+                id: 8,
+                call: DriverCall::DeliverReady,
+                args: Some(DriverArgs {
+                    backlog_claim: None,
+                    work_start: None,
+                    work_abandon: None,
+                    deliver_observe: None,
+                    deliver_next: None,
+                    deliver_ready: Some(PullRequestArgs { pr: "4102".into() }),
                     deliver_merge: None,
                 }),
             },
@@ -179,7 +201,7 @@ pub(super) fn calls() -> Result<Value, serde_json::Error> {
         case(
             "deliver_merge",
             &DriverCallRequest {
-                id: 8,
+                id: 9,
                 call: DriverCall::DeliverMerge,
                 args: Some(DriverArgs {
                     backlog_claim: None,
@@ -187,6 +209,7 @@ pub(super) fn calls() -> Result<Value, serde_json::Error> {
                     work_abandon: None,
                     deliver_observe: None,
                     deliver_next: None,
+                    deliver_ready: None,
                     deliver_merge: Some(PullRequestArgs { pr: "4102".into() }),
                 }),
             },
@@ -235,6 +258,7 @@ pub(super) fn results() -> Result<Value, serde_json::Error> {
                     pull_request: None,
                     observation: None,
                     decision: None,
+                    ready: None,
                     merge: None,
                     sweep: None,
                 },
@@ -255,6 +279,7 @@ pub(super) fn results() -> Result<Value, serde_json::Error> {
                     pull_request: None,
                     observation: None,
                     decision: None,
+                    ready: None,
                     merge: None,
                     sweep: None,
                 },
@@ -277,6 +302,7 @@ pub(super) fn results() -> Result<Value, serde_json::Error> {
                     pull_request: None,
                     observation: None,
                     decision: None,
+                    ready: None,
                     merge: None,
                     sweep: None,
                 },
@@ -295,6 +321,7 @@ pub(super) fn results() -> Result<Value, serde_json::Error> {
                     pull_request: None,
                     observation: None,
                     decision: None,
+                    ready: None,
                     merge: None,
                     sweep: None,
                 },
@@ -315,6 +342,7 @@ pub(super) fn results() -> Result<Value, serde_json::Error> {
                     }),
                     observation: None,
                     decision: None,
+                    ready: None,
                     merge: None,
                     sweep: None,
                 },
@@ -331,6 +359,7 @@ pub(super) fn results() -> Result<Value, serde_json::Error> {
                     pull_request: None,
                     observation: Some(observation()),
                     decision: None,
+                    ready: None,
                     merge: None,
                     sweep: None,
                 },
@@ -355,6 +384,7 @@ pub(super) fn results() -> Result<Value, serde_json::Error> {
                         action: DeliverAction::Escalate,
                         escalation: Some(DeliverEscalation::ReviewNeedsHuman),
                     }),
+                    ready: None,
                     merge: None,
                     sweep: None,
                 },
@@ -376,13 +406,14 @@ pub(super) fn results() -> Result<Value, serde_json::Error> {
                         action: DeliverAction::Wait,
                         escalation: None,
                     }),
+                    ready: None,
                     merge: None,
                     sweep: None,
                 },
             ),
         )?,
         case(
-            "ok/merge",
+            "ok/ready",
             &DriverCallResponse::ok(
                 12,
                 DriverOk {
@@ -392,16 +423,14 @@ pub(super) fn results() -> Result<Value, serde_json::Error> {
                     pull_request: None,
                     observation: None,
                     decision: None,
-                    merge: Some(MergeReport { pr: "4102".into() }),
+                    ready: Some(ReadyReport { pr: "4102".into() }),
+                    merge: None,
                     sweep: None,
                 },
             ),
         )?,
-        // Both served `sweep` verbs. `regress` re-checks receipts, so it is
-        // the one that can report a record it could not read; `meta` folds a
-        // ledger and never does, which is why its skip list is dropped.
         case(
-            "ok/sweep/regress",
+            "ok/merge",
             &DriverCallResponse::ok(
                 13,
                 DriverOk {
@@ -411,29 +440,17 @@ pub(super) fn results() -> Result<Value, serde_json::Error> {
                     pull_request: None,
                     observation: None,
                     decision: None,
-                    merge: None,
-                    sweep: Some(SweepReport {
-                        supply: SweptSupply::Regress,
-                        examined: 11,
-                        skipped: vec![
-                            SweepSkip {
-                                reason: SweepSkipReason::NoChangeCited,
-                                count: 4,
-                            },
-                            SweepSkip {
-                                reason: SweepSkipReason::UnknownAtClose,
-                                count: 1,
-                            },
-                        ],
-                        offered: 2,
-                        fresh: 1,
-                        filed: vec!["4310".into()],
-                    }),
+                    ready: None,
+                    merge: Some(MergeReport { pr: "4102".into() }),
+                    sweep: None,
                 },
             ),
         )?,
+        // Both served `sweep` verbs. `regress` reads a receipt ledger and can
+        // report what it could not re-check; `meta` folds the cycle ledger and
+        // reads no receipts, which is why it drops the key.
         case(
-            "ok/sweep/meta",
+            "ok/sweep/regress",
             &DriverCallResponse::ok(
                 14,
                 DriverOk {
@@ -443,14 +460,50 @@ pub(super) fn results() -> Result<Value, serde_json::Error> {
                     pull_request: None,
                     observation: None,
                     decision: None,
+                    ready: None,
+                    merge: None,
+                    sweep: Some(SweepReport {
+                        supply: SweptSupply::Regress,
+                        offered: 2,
+                        fresh: 1,
+                        filed: vec!["4310".into()],
+                        receipts: Some(SweepReceipts {
+                            total: 16,
+                            checked: 11,
+                            skipped: vec![
+                                SweepSkip {
+                                    reason: SweepSkipReason::NoChangeCited,
+                                    count: 4,
+                                },
+                                SweepSkip {
+                                    reason: SweepSkipReason::UnknownAtClose,
+                                    count: 1,
+                                },
+                            ],
+                        }),
+                    }),
+                },
+            ),
+        )?,
+        case(
+            "ok/sweep/meta",
+            &DriverCallResponse::ok(
+                15,
+                DriverOk {
+                    backlog: None,
+                    claim: None,
+                    work: None,
+                    pull_request: None,
+                    observation: None,
+                    decision: None,
+                    ready: None,
                     merge: None,
                     sweep: Some(SweepReport {
                         supply: SweptSupply::Meta,
-                        examined: 40,
-                        skipped: Vec::new(),
                         offered: 0,
                         fresh: 0,
                         filed: Vec::new(),
+                        receipts: None,
                     }),
                 },
             ),

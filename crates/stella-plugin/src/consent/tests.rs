@@ -191,7 +191,8 @@ fn the_self_report_disclosure_appears_only_when_an_oracle_was_declared() {
 /// Every family the block spans is named with its own consent sentence,
 /// and every declared verb is printed beside its family — the rendering
 /// is by family because "pushes branches, opens pull requests, reads CI,
-/// and merges" is what a human weighs, and the verbs are what keeps that
+/// takes them out of draft, and merges" is what a human weighs, and the verbs
+/// are what keeps that
 /// summary checkable against the block.
 #[test]
 fn a_driver_grant_names_every_family_and_the_verbs_under_it() {

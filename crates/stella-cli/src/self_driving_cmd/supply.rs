@@ -263,37 +263,15 @@ fn pass_with(
     }
 
     if cfg.supply.regress {
-        let receipts = durable.receipts();
-        let report = stella_autonomy::regress::sweep(&receipts, |cite| present_on_base(root, cite));
-        audit::record(
-            durable,
-            Audit::Swept,
-            None,
-            &format!(
-                "regress: {} of {} receipt(s) re-checked, {} could not be, {} fix(es) gone",
-                report.checked,
-                receipts.len(),
-                report.skipped.len(),
-                report.findings.len()
-            ),
-        );
-        findings.extend(report.findings);
+        let drawn = draw_regress(durable, root);
+        audit::record(durable, Audit::Swept, None, &drawn.summary);
+        findings.extend(drawn.findings);
     }
 
     if cfg.supply.meta {
-        let rows = durable.cycles().rows;
-        let found = stella_autonomy::meta::sweep(&rows, &durable.calibration());
-        audit::record(
-            durable,
-            Audit::Swept,
-            None,
-            &format!(
-                "meta: {} finding(s) over {} cycle(s)",
-                found.len(),
-                rows.len()
-            ),
-        );
-        findings.extend(found);
+        let drawn = draw_meta(durable);
+        audit::record(durable, Audit::Swept, None, &drawn.summary);
+        findings.extend(drawn.findings);
     }
 
     let seen = durable.live_seen();
@@ -331,125 +309,101 @@ fn pass_with(
     filed > 0
 }
 
-/// A supply the workspace has not opened.
+/// What one supply offered when it was drawn from.
 ///
-/// Named as `stella.toml` spells it, so a refusal points at the line an
-/// operator would edit rather than at the code that read it.
-pub(crate) struct Shut {
-    /// The switch under `[self_driving.supply]`.
-    pub switch: &'static str,
-}
-
-/// What one draw from one supply produced.
-///
-/// The counts the driver channel answers with. `filed` is shorter than `fresh`
-/// when the tracker read a finding as a repeat or refused it, which is an
-/// ordinary answer rather than an error.
+/// The loop reads this to decide what to file; `sweep.rs` renders it for an
+/// operator running the same supply by hand, and
+/// `driver_plugin::capabilities` answers a driver's `sweep` ask over it. One
+/// draw, three readers, so none of them can describe a different sweep from
+/// the one the loop does.
 pub(crate) struct Drawn {
-    /// Records the supply could read.
-    pub examined: u64,
-    /// Records it could not, in the order the sweep met them.
-    pub skipped: Vec<stella_autonomy::regress::Skip>,
-    /// Findings the supply offered.
-    pub offered: u64,
-    /// Those the seen set did not already hold.
-    pub fresh: u64,
-    /// The tracker keys this draw filed.
-    pub filed: Vec<String>,
+    /// What the supply offers, before the seen set is consulted.
+    pub findings: Vec<Finding>,
+    /// One line naming what was read and what came back.
+    pub summary: String,
+    /// The receipt ledger this draw read, for the supply that reads one.
+    pub receipts: Option<Receipts>,
 }
 
-/// Re-check every closure receipt, and file the fixes that have left the base.
-///
-/// The switch is read here rather than at the caller, so no second door into
-/// this supply can open one the workspace shut.
-///
-/// # Errors
-///
-/// [`Shut`] when `[self_driving.supply] regress` is off.
-pub(crate) async fn draw_regress(
-    durable: &Durable,
-    provider: &dyn IssueProvider,
-    cfg: &LoopConfig,
-    root: &Path,
-) -> Result<Drawn, Shut> {
-    if !cfg.supply.regress {
-        return Err(Shut { switch: "regress" });
-    }
-    super::closures::reconcile_now(durable, provider).await;
+/// How much of the closure ledger one `regress` draw could re-ask.
+pub(crate) struct Receipts {
+    /// Receipts on file.
+    pub total: usize,
+    /// Those whose cited change could be looked for on the base.
+    pub checked: u64,
+    /// Those that could not be, one entry per receipt with its reason.
+    ///
+    /// The reasons rather than a count, because the driver channel reports
+    /// them and a count cannot tell *no change cited* from *absent at close*.
+    /// A caller wanting the count takes the length.
+    pub skipped: Vec<stella_autonomy::regress::Skip>,
+}
 
+/// Re-check every fix this loop has claimed, and offer the ones that are gone.
+pub(crate) fn draw_regress(durable: &Durable, root: &Path) -> Drawn {
     let receipts = durable.receipts();
     let report = stella_autonomy::regress::sweep(&receipts, |cite| present_on_base(root, cite));
-    audit::record(
-        durable,
-        Audit::Swept,
-        None,
-        &format!(
+    Drawn {
+        summary: format!(
             "regress: {} of {} receipt(s) re-checked, {} could not be, {} fix(es) gone",
             report.checked,
             receipts.len(),
             report.skipped.len(),
             report.findings.len()
         ),
-    );
-    Ok(offer(
-        durable,
-        provider,
-        cfg,
-        root,
-        report.checked,
-        report.skipped,
-        report.findings,
-    )
-    .await)
+        receipts: Some(Receipts {
+            total: receipts.len(),
+            checked: report.checked,
+            skipped: report.skipped,
+        }),
+        findings: report.findings,
+    }
 }
 
-/// Fold the loop's own ledger, and file the habits it shows.
-///
-/// # Errors
-///
-/// [`Shut`] when `[self_driving.supply] meta` is off.
-pub(crate) async fn draw_meta(
-    durable: &Durable,
-    provider: &dyn IssueProvider,
-    cfg: &LoopConfig,
-    root: &Path,
-) -> Result<Drawn, Shut> {
-    if !cfg.supply.meta {
-        return Err(Shut { switch: "meta" });
-    }
-    super::closures::reconcile_now(durable, provider).await;
-
+/// Fold the loop's own ledger and offer what its pathology signals say.
+pub(crate) fn draw_meta(durable: &Durable) -> Drawn {
     let rows = durable.cycles().rows;
-    let found = stella_autonomy::meta::sweep(&rows, &durable.calibration());
-    audit::record(
-        durable,
-        Audit::Swept,
-        None,
-        &format!(
+    let findings = stella_autonomy::meta::sweep(&rows, &durable.calibration());
+    Drawn {
+        summary: format!(
             "meta: {} finding(s) over {} cycle(s)",
-            found.len(),
+            findings.len(),
             rows.len()
         ),
-    );
-    let examined = rows.len() as u64;
-    Ok(offer(durable, provider, cfg, root, examined, Vec::new(), found).await)
+        findings,
+        receipts: None,
+    }
+}
+
+/// What one draw filed, for a caller inside a runtime.
+pub(crate) struct Offered {
+    /// Findings the seen set did not already hold.
+    pub fresh: usize,
+    /// The tracker keys it took.
+    pub filed: Vec<String>,
 }
 
 /// Drop what the seen set already holds, file the rest, and count both.
 ///
-/// The one filing door, shared by both draws above, so neither can grow a rule
-/// the other does not have.
-async fn offer(
+/// The driver channel's half of `pass_with`'s tail. It refreshes the seen set
+/// from the tracker first, the way `pass` does, so a finding whose issue has
+/// closed can be filed again. The hand-run verb reads the set as it stands
+/// instead, because a person running one sweep should not pay for a tracker
+/// read they did not ask for.
+///
+/// A filing that fails is recorded and stepped over. The rest of the draw
+/// still has findings worth filing.
+pub(crate) async fn offer(
     durable: &Durable,
     provider: &dyn IssueProvider,
     cfg: &LoopConfig,
     root: &Path,
-    examined: u64,
-    skipped: Vec<stella_autonomy::regress::Skip>,
-    findings: Vec<Finding>,
-) -> Drawn {
+    findings: &[Finding],
+) -> Offered {
+    super::closures::reconcile_now(durable, provider).await;
+
     let seen = durable.live_seen();
-    let fresh: Vec<Finding> = stella_autonomy::supply::novel(&findings, &seen)
+    let fresh: Vec<Finding> = stella_autonomy::supply::novel(findings, &seen)
         .into_iter()
         .cloned()
         .collect();
@@ -468,11 +422,8 @@ async fn offer(
         }
     }
 
-    Drawn {
-        examined,
-        skipped,
-        offered: findings.len() as u64,
-        fresh: fresh.len() as u64,
+    Offered {
+        fresh: fresh.len(),
         filed,
     }
 }
@@ -517,7 +468,7 @@ pub(super) fn record_receipt(durable: &Durable, key: &str, closure: &Closure) {
 /// A commit is asked about by sha. A pull request is looked for by the `(#N)`
 /// a squash merge leaves in the subject line. Anything else answers `false`.
 /// A document names a choice, and a choice cannot leave a branch.
-fn present_on_base(root: &Path, cite: &Citation) -> bool {
+pub(super) fn present_on_base(root: &Path, cite: &Citation) -> bool {
     match cite {
         Citation::Commit { sha } => {
             let sha = sha.trim();
@@ -595,10 +546,10 @@ fn noisy(durable: &Durable) -> bool {
 
 /// File one finding through the door every filing goes through.
 ///
-/// The runtime is built here because the cycle driver is synchronous. A caller
-/// that already has one awaits [`file_now`] instead: `Runtime::block_on` inside
-/// a runtime panics, and the driver channel serves its asks from one.
-fn file(
+/// The runtime is built here because both callers are synchronous. A caller
+/// that already has one awaits [`file_now`]: `Runtime::block_on` inside a
+/// runtime panics, and the driver channel serves its asks from one.
+pub(crate) fn file(
     durable: &Durable,
     provider: &dyn IssueProvider,
     cfg: &LoopConfig,
@@ -614,10 +565,10 @@ fn file(
 
 /// The same filing, for a caller that is already inside a runtime.
 ///
-/// `Ok(Some(key))` means the tracker took it, under that key. A repeat and a
+/// The tracker hands back a key when it takes the finding. A repeat and a
 /// refusal are both `Ok(None)`. Neither is an error, and both are counted
 /// already.
-async fn file_now(
+pub(crate) async fn file_now(
     durable: &Durable,
     provider: &dyn IssueProvider,
     cfg: &LoopConfig,
@@ -650,17 +601,10 @@ async fn file_now(
     durable.update_stats(|stats| stats.record_filing(outcome.canonical()));
 
     if let backlog::Filed::New(key) = &outcome {
-        durable.record_filing(
-            &stella_autonomy::finding_digest(&finding.title),
-            &key.to_string(),
-        )?;
-        audit::record(
-            durable,
-            Audit::IssueFiled,
-            Some(&key.to_string()),
-            &finding.title,
-        );
-        return Ok(Some(key.to_string()));
+        let key = key.to_string();
+        durable.record_filing(&stella_autonomy::finding_digest(&finding.title), &key)?;
+        audit::record(durable, Audit::IssueFiled, Some(&key), &finding.title);
+        return Ok(Some(key));
     }
 
     audit::record(

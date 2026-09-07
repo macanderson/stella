@@ -17,7 +17,7 @@ use std::path::Path;
 use stella_autonomy::Citation;
 use stella_autonomy::regress::ClosureReceipt;
 use stella_autonomy::supply::SupplyPolicy;
-use stella_plugin::{SweepSkipReason, SweptSupply};
+use stella_plugin::{SweepSkip, SweepSkipReason, SweptSupply};
 
 use super::*;
 use crate::self_driving_cmd::state::LoopState;
@@ -117,18 +117,21 @@ async fn a_regress_sweep_answers_with_what_it_re_checked_and_filed() {
         .expect("a served sweep carries its report");
 
     assert_eq!(report.supply, SweptSupply::Regress);
-    assert_eq!(report.examined, 1, "{report:?}");
+    assert_eq!(report.offered, 1);
+    assert_eq!(report.fresh, 1);
+    assert_eq!(report.filed.len(), 1, "{report:?}");
+
+    let counts = report.receipts.expect("a regress sweep reads receipts");
+    assert_eq!(counts.total, 2);
+    assert_eq!(counts.checked, 1);
     assert_eq!(
-        report.skipped,
-        vec![stella_plugin::SweepSkip {
+        counts.skipped,
+        vec![SweepSkip {
             reason: SweepSkipReason::NoChangeCited,
             count: 1,
         }],
         "the receipt citing nothing is reported as one, with its reason"
     );
-    assert_eq!(report.offered, 1);
-    assert_eq!(report.fresh, 1);
-    assert_eq!(report.filed.len(), 1, "{report:?}");
 }
 
 /// **The witness.** A supply the workspace never opened is refused, by the
@@ -171,8 +174,11 @@ async fn a_meta_sweep_answers_over_the_ledger_it_read() {
     .expect("a served sweep carries its report");
 
     assert_eq!(report.supply, SweptSupply::Meta);
-    assert_eq!(report.examined, 0, "{report:?}");
-    assert!(report.skipped.is_empty(), "a ledger fold skips nothing");
+    assert_eq!(report.offered, 0, "{report:?}");
+    assert!(
+        report.receipts.is_none(),
+        "the meta supply folds the cycle ledger and reads no receipts"
+    );
     assert!(report.filed.is_empty(), "{report:?}");
 }
 

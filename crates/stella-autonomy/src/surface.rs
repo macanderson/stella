@@ -202,6 +202,16 @@ pub const HOST_SURFACE: &[HostVerb] = &[
         summary: "the ranked defect queue this cycle draws its batch from",
     },
     HostVerb {
+        path: "sweep regress",
+        emits: Emits::QueryEnvelope,
+        summary: "re-check the fixes this loop has claimed, and file the ones that have left the base",
+    },
+    HostVerb {
+        path: "sweep meta",
+        emits: Emits::QueryEnvelope,
+        summary: "fold the loop's own ledger and file what the pathology signals say about it",
+    },
+    HostVerb {
         path: "file",
         emits: Emits::Text,
         summary: "file a finding as an issue — refused unless it matches this workspace's convention",
