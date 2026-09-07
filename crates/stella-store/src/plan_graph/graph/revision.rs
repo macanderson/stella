@@ -90,6 +90,7 @@ pub enum RevisionError {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RevisionGate {
     pending: Option<RevisionProposal>,
+    agreed: bool,
 }
 
 impl RevisionGate {
@@ -141,6 +142,32 @@ impl RevisionGate {
         self.pending.as_ref()
     }
 
+    /// Whether the person driving has said yes to the standing proposal.
+    ///
+    /// `false` while nothing stands, because a yes is cleared by the two
+    /// verbs that end a proposal — [`Self::approve`] writes it and
+    /// [`Self::dismiss`] drops it.
+    #[must_use]
+    pub fn agreed(&self) -> bool {
+        self.agreed
+    }
+
+    /// SPEC 8.1's `a approve r4`, the half a person presses: record the yes.
+    ///
+    /// The write is [`Self::approve`] and it happens elsewhere, because the
+    /// yes and the write are given in two places — the keyboard has no plan
+    /// graph, and the gate the running turn reads has no reader. Recording
+    /// the yes here is what lets the write ask whether one was given, instead
+    /// of inferring it from some other trace the person's answer left behind.
+    ///
+    /// Returns what was agreed to, so a caller can name it rather than
+    /// repeating the proposal it was holding.
+    pub fn agree(&mut self) -> Result<RevisionProposal, RevisionError> {
+        let agreed = self.pending.clone().ok_or(RevisionError::NothingPending)?;
+        self.agreed = true;
+        Ok(agreed)
+    }
+
     /// Whether work may proceed — `false` for as long as a proposal stands.
     ///
     /// SPEC 8.1's "nothing runs until approval", as one question with one
@@ -163,6 +190,9 @@ impl RevisionGate {
         }
         let pending = self.pending.as_mut().ok_or(RevisionError::NothingPending)?;
         pending.subject = subject;
+        // A yes given before the edit was a yes to the old subject, so it
+        // does not carry over: the reader is answering a different insert now.
+        self.agreed = false;
         Ok(())
     }
 
@@ -173,6 +203,7 @@ impl RevisionGate {
     /// the difference between declining a change and reverting one — and the
     /// gate admits again.
     pub fn dismiss(&mut self) -> Option<RevisionProposal> {
+        self.agreed = false;
         self.pending.take()
     }
 
@@ -205,6 +236,7 @@ impl RevisionGate {
         ));
         let revision = graph.revise(tasks, proposal.cause.clone())?;
         self.pending = None;
+        self.agreed = false;
         Ok(revision)
     }
 }

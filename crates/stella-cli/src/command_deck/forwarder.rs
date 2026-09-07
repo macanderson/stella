@@ -13,6 +13,7 @@ use crate::agent;
 use crate::cache_insight::{InsightScope, cache_insight_for};
 use crate::memory::TurnFriction;
 
+use super::task_tap::RevisionSlot;
 /// Re-exported beside [`spawn_forwarder`], the function that takes one, so a
 /// caller of the seam picks up the type from the same place.
 pub(crate) use super::task_tap::SharedRevisions;
@@ -446,9 +447,28 @@ pub(crate) async fn close_turn_stream(
 /// to await.
 pub(crate) type ForwarderSlot = std::sync::Mutex<Option<tokio::task::JoinHandle<LaneStreamEnd>>>;
 
-/// An empty slot for one lane's forwarders, reused across that lane's turns.
-pub(crate) fn forwarder_slot() -> ForwarderSlot {
-    std::sync::Mutex::new(None)
+/// What the driver loop owns for the turn it is about to run, and the turn
+/// only borrows.
+///
+/// Both cells answer the same shape of question — something outside the turn
+/// future needs to reach something built inside it — so they are handed over
+/// together rather than as two more parameters on a call whose signature is
+/// already long enough to carry an `#[expect(clippy::too_many_arguments)]`.
+pub(crate) struct TurnSlots {
+    /// The live forwarder, so the cancel that drops the turn can still drain
+    /// the stream that turn opened.
+    pub(crate) drain: ForwarderSlot,
+    /// The turn's plan-change gate, so the deck's `a` and `x` keys reach the
+    /// gate withholding that turn's tool calls (`task_tap::plan_gate`).
+    pub(crate) revisions: RevisionSlot,
+}
+
+/// Empty slots for one lane, reused across that lane's turns.
+pub(crate) fn turn_slots() -> TurnSlots {
+    TurnSlots {
+        drain: std::sync::Mutex::new(None),
+        revisions: std::sync::Mutex::new(None),
+    }
 }
 
 /// Wait out the forwarder of a turn whose future was dropped mid-flight.

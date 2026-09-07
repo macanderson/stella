@@ -106,21 +106,30 @@ fn nothing_dispatches_until_the_proposal_is_answered() {
     );
 }
 
-/// `x dismiss`: the proposal goes, the withholding goes with it, and nothing
-/// is sent — a dismissal writes no revision, so there is nothing for a driver
-/// to do about it.
+/// **The witness for `x dismiss`.** The proposal goes, the deck's own
+/// withholding goes with it, and the dismissal is *sent*.
+///
+/// It is sent because the gate that holds a running turn's tool calls is the
+/// driver's. A dismissal the deck answers alone clears the card and leaves
+/// that turn held until it ends.
 #[test]
-fn x_dismisses_the_proposal_and_sends_nothing() {
+fn x_sends_the_dismissal_so_the_driver_can_lift_the_hold() {
     let mut model = model_with(&["lead"]);
     let mut ui = ready_ui();
     proposed(&mut model, &mut ui);
 
     let action = handle_deck_key(key(KeyCode::Char('x')), &model, &mut ui);
-    assert_eq!(action, DeckAction::Handled, "x claimed the keystroke");
-    assert!(ui.pending_revisions.is_empty());
+    assert_eq!(
+        action,
+        DeckAction::Send(WorkspaceInput::DismissRevision {
+            agent: "lead".into(),
+            proposal: Box::new(proposal()),
+        }),
+        "x sends the dismissal, carrying the proposal the driver drops"
+    );
     assert!(
-        ui.notice.entries().iter().any(|n| n.contains("r2")),
-        "the dismissal says what it dropped"
+        ui.pending_revisions.is_empty(),
+        "and releases the deck's own withholding"
     );
 }
 

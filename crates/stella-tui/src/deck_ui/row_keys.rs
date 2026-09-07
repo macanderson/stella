@@ -126,16 +126,17 @@ pub(super) fn act(c: char, model: &WorkspaceModel, ui: &mut DeckUi) -> Option<De
         // `x` on a standing proposal is `x dismiss` instead (SPEC 8.1). One
         // letter, two rows, and no ambiguity: the two verbs are selected by
         // what the highlight is on, and a row is one or the other.
+        //
+        // It travels, like `a`. Clearing the card here releases the deck's own
+        // withholding and nothing else; the gate that is refusing the running
+        // turn's tool calls is the driver's, and the driver answers in words
+        // once it has lifted the hold.
         'x' => {
             if let Some((agent, proposal)) = take_selected_proposal(model, ui) {
-                let message = format!(
-                    "{} dismissed on {agent}: {}",
-                    proposal.revision, proposal.subject
-                );
-                ui.notice.push(message.clone());
-                ui.scrollback
-                    .announce(format!("{}{message}", crate::accessible::NOTICE_MARKER));
-                return Some(DeckAction::Handled);
+                return Some(DeckAction::Send(WorkspaceInput::DismissRevision {
+                    agent,
+                    proposal: Box::new(proposal),
+                }));
             }
             let (memory_id, text) = super::memory::selected_memory(model, ui)?;
             Some(DeckAction::Send(WorkspaceInput::RejectMemory {

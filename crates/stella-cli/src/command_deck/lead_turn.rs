@@ -21,7 +21,7 @@ use stella_tools::hook_runner::HostHookRunner;
 use stella_tui::{AgentStatus, Inbound};
 use tokio::sync::mpsc::{self, UnboundedSender};
 
-use super::task_tap::{PlanSetup, SharedRevisions, TaskTap};
+use super::task_tap::{PlanSetup, SharedRevisions, TaskTap, park_revisions};
 use super::{LEAD, agent, close_turn_stream, forwarder, lead_control, spawn_forwarder};
 use crate::claims::{ClaimTap, ShellWatch};
 use crate::config::Config;
@@ -62,8 +62,9 @@ pub(super) async fn run_lead_turn(
     session_memory: Option<&SessionMemory>, // #3243 Phase 3: behind the re-query
     friction: &mut TurnFriction,            // #3962: filled from the lane's own stream
     // Owned by the driver loop so a cancel — which drops this whole future —
-    // can still wait the forwarder out (#4853).
-    drain: &forwarder::ForwarderSlot,
+    // can still wait the forwarder out (#4853), and so the deck's keys can
+    // reach this turn's plan-change gate while it runs.
+    slots: &forwarder::TurnSlots,
 ) -> Result<(), crate::failure::CliFailure> {
     budget.begin_turn();
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
@@ -88,6 +89,10 @@ pub(super) async fn run_lead_turn(
     // gate below reads it, because the turn's plan graph lives there and
     // nowhere else (`task_tap::plan_gate::revision`).
     let revisions = SharedRevisions::default();
+    // ...and parked where the driver loop's `a` and `x` arms can reach it, for
+    // exactly as long as this turn runs. The guard empties the slot on both
+    // ways out, the dropped future a cancel leaves behind included.
+    let _parked = park_revisions(&slots.revisions, &revisions);
     let forwarder = spawn_forwarder(
         rx,
         execution.clone(),
@@ -100,7 +105,7 @@ pub(super) async fn run_lead_turn(
     // Park it where the driver's cancel arm can reach it, and take it back on
     // the path that ends normally — whichever of the two runs, exactly one
     // holds the handle, because the future either completes or is dropped.
-    *drain.lock().unwrap_or_else(|p| p.into_inner()) = Some(forwarder);
+    *slots.drain.lock().unwrap_or_else(|p| p.into_inner()) = Some(forwarder);
     // First events of the turn: what recall put in front of the model, and
     // the skills that rode the same block (SPEC 6.3).
     for event in recall.events {
@@ -209,7 +214,7 @@ pub(super) async fn run_lead_turn(
     // Taken out of the slot before the await, never held across it: the lock is
     // a plain `std::sync::Mutex` and a guard alive over a yield point would be
     // one held by a task the runtime may park.
-    let parked = drain.lock().unwrap_or_else(|p| p.into_inner()).take();
+    let parked = slots.drain.lock().unwrap_or_else(|p| p.into_inner()).take();
     let ended = match parked {
         Some(forwarder) => close_turn_stream(registry, tx, forwarder).await,
         // Unreachable while this function is the only writer of the slot; a
