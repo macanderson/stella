@@ -10,10 +10,9 @@
 # No network and no `gh`: every case drives the fixture seams, so the suite is
 # the same on a bare runner as on a dev box with a live tracker.
 #
-# The case that matters most is the negative control. A hold that cannot be
-# shown to *block* is a claim rather than a guard — and this one spends its
-# life passing, because main is usually green, so nothing else would ever
-# exercise the branch it exists for.
+# The negative control carries the suite. A hold that cannot be shown to
+# *block* is a claim, not a guard. This one passes nearly every day, because
+# main is usually green, so nothing else reaches the branch it exists for.
 #
 # The refreshing half has the same gap, twice over. It is built for the two
 # moments `main` changes state. Neither is reached on an ordinary day. So each
@@ -104,6 +103,31 @@ out="$("$SCRIPT" --nonsense 2>&1)"
 if [ $? -eq 2 ]; then ok "an unknown flag exits 2, not 0"; else bad "an unknown flag did not exit 2"; fi
 
 printf '\n\033[1mrefreshing — the hold keeps up with a main that moved under it\033[0m\n'
+
+# A stub `gh`, ahead of the real one on `PATH` for the rest of this file.
+# `--fixture-*` stubs the reads: open issues, open PRs, and which run belongs
+# to a head. The write past them is the `-X POST .../rerun` call the script
+# exists to make, and it reaches this stub, so a case tests the mutation for
+# real. The stub records each call in `$gh_calls_log`. When
+# `GH_STUB_FAIL_MATCH` names a substring of the call, it fails that call the
+# way a missing `actions: write` scope would.
+gh_stub_dir="$(mktemp -d)"
+trap 'rm -rf "$gh_stub_dir"' EXIT
+gh_calls_log="$gh_stub_dir/calls.log"
+: >"$gh_calls_log"
+cat >"$gh_stub_dir/gh" <<'GH_STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$GH_STUB_CALLS_LOG"
+if [ -n "${GH_STUB_FAIL_MATCH:-}" ]; then
+  case "$*" in
+  *"$GH_STUB_FAIL_MATCH"*) exit 1 ;;
+  esac
+fi
+exit 0
+GH_STUB
+chmod +x "$gh_stub_dir/gh"
+export GH_STUB_CALLS_LOG="$gh_calls_log"
+export PATH="$gh_stub_dir:$PATH"
 
 # The stale-hold state, as fixtures. Three pull requests are open, and each
 # one's hold last ran at some earlier moment. Two failed, one passed. Which of
@@ -269,6 +293,74 @@ if [ $? -eq 2 ]; then ok "sweeping: --limit given a word exits 2, not 0"; else b
 
 out="$("$REFRESH" --nonsense 2>&1)"
 if [ $? -eq 2 ]; then ok "sweeping: an unknown flag exits 2, not 0"; else bad "sweeping: an unknown flag did not exit 2"; fi
+
+printf '\n\033[1mthe write itself — the mutation, not the sweep'"'"'s account of it\033[0m\n'
+
+# Every case above drove the read paths through fixtures and asked only what
+# the sweep says it did. `$gh_calls_log` is what `gh` actually saw, so these
+# ask the mutation directly — a wrong endpoint, the wrong verb, or a POST
+# that never fires all turn this section red without changing a word the
+# sweep prints.
+: >"$gh_calls_log"
+"$REFRESH" --fixture-open-issues "" --fixture-open-prs "$held_prs" \
+  --fixture-hold-runs "$hold_runs" >/dev/null 2>&1
+calls="$(cat "$gh_calls_log")"
+want_calls="api -X POST --silent repos/{owner}/{repo}/actions/runs/33951700124/rerun
+api -X POST --silent repos/{owner}/{repo}/actions/runs/33950666389/rerun"
+if [ "$(printf '%s\n' "$calls" | sort)" = "$(printf '%s\n' "$want_calls" | sort)" ]; then
+  ok "the sweep POSTs the exact rerun endpoint for each stale run, and only those"
+else
+  bad "gh calls did not match — got [$calls] want [$want_calls]"
+fi
+
+# PR 5899's hold already passes, so the sweep has no run to re-run for it.
+# The call log above is an exact match, not a substring, so a third call
+# would have failed that case. This one gives the fact its own name.
+case "$calls" in
+*"5899"* | *"bbbbbbb"*) bad "the sweep called gh for a PR whose hold already passes: $calls" ;;
+*) ok "no POST is sent for a PR whose hold already passes" ;;
+esac
+
+# The write can fail — a job without `actions: write`, say. The sweep must
+# stay fail-open (exit 0), name the run it could not re-run rather than
+# claim it, and still credit the run that did succeed.
+: >"$gh_calls_log"
+out="$(GH_STUB_FAIL_MATCH="33951700124" "$REFRESH" \
+  --fixture-open-issues "" --fixture-open-prs "$held_prs" \
+  --fixture-hold-runs "$hold_runs" 2>&1)"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  bad "a failed POST changed the exit code — expected 0 (fail-open), got $rc: $out"
+else
+  ok "a failed POST still exits 0"
+fi
+case "$out" in
+*"run 33951700124 for"*"5903 — does this job have"*) ok "a failed POST reports which run it could not clear" ;;
+*) bad "a failed POST gave no reason: $out" ;;
+esac
+case "$out" in
+*"5903 (head aaaaaaa, run 33951700124)"*) bad "a failed POST was also reported as swept: $out" ;;
+*) ok "the failed PR is not double-counted as swept" ;;
+esac
+case "$out" in
+*"5894 (head ccccccc, run 33950666389)"*) ok "the run that did succeed is still swept" ;;
+*) bad "a failed POST for one PR swallowed the successful one: $out" ;;
+esac
+case "$out" in
+*"re-ran the stale hold on 1 of 3 open pull request"*) ok "the summary counts only what actually succeeded" ;;
+*) bad "the summary did not reflect the failed POST: $out" ;;
+esac
+
+# `--dry-run` is the one caller-facing way to suppress the write. With
+# fixtures active it must still block every call: none reaches `gh` at all.
+: >"$gh_calls_log"
+"$REFRESH" --dry-run --fixture-open-issues "" --fixture-open-prs "$held_prs" \
+  --fixture-hold-runs "$hold_runs" >/dev/null 2>&1
+if [ -s "$gh_calls_log" ]; then
+  bad "--dry-run still called gh: $(cat "$gh_calls_log")"
+else
+  ok "--dry-run suppresses the POST entirely"
+fi
 
 # A sweep nothing calls clears nothing, so the wiring is part of the fix. The
 # three cases below read the workflow files. On a tree where recovery does not

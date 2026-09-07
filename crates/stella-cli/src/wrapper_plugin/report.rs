@@ -14,7 +14,7 @@
 
 use std::sync::Arc;
 
-use stella_protocol::StampAssessment;
+use stella_protocol::{AgentEvent, StampAssessment};
 use stella_runtime::wrapper::{
     CandidateFanoutSpend, ChildTurnSpend, DispatchReport, HostCallGate, TestRunRecord, seat_token,
 };
@@ -125,6 +125,34 @@ pub(super) fn report_lines(
         lines.push(format!("  ◇ {tag}{}", report.summary()));
     }
     lines
+}
+
+/// What a finished wrapper run contributes to the run's own event stream.
+///
+/// The lines above are for a person watching stderr, and they scroll away.
+/// These are for a reader who comes back to the recorded journal and asks
+/// what the round decided and who decided it.
+///
+/// The verdict rides first because the board is a rendering of it: a reader
+/// replaying the stream meets the record before the picture drawn from it.
+/// Its evidence carries the ladder snapshot, with one stamp for every claim
+/// the completion gate collected — the arbiter's own, and one for each check
+/// that fell silent (`stella_runtime::wrapper::stamp`). Without that the
+/// evidence lived only as long as the process, and a replay could not tell
+/// an arbiter that abstained from one that was never heard from.
+///
+/// A pure function so the events, like the lines, are assertable without a
+/// session behind them.
+pub(super) fn run_events(report: &DispatchReport) -> Vec<AgentEvent> {
+    vec![
+        AgentEvent::Verdict {
+            passed: report.met(),
+            evidence: report.verdict_evidence(),
+        },
+        AgentEvent::GateBoard {
+            board: report.board.clone(),
+        },
+    ]
 }
 
 impl super::BoundWrapper {

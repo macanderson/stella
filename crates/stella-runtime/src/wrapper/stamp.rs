@@ -23,6 +23,8 @@ use stella_plugin::{
 use stella_protocol::hash::{RecordHashError, record_hash};
 use stella_protocol::{FlipOutcome, LadderRung, LadderSnapshot, StampAssessment, VerdictStamp};
 
+use super::arbitration::ArbiterClaim;
+
 /// The name a stamp carries when the host reached the answer itself.
 pub const HOST_AUTHOR: &str = "engine";
 
@@ -154,8 +156,7 @@ pub fn stamped(
     timing: StampTiming,
 ) -> Result<LadderSnapshot, RecordHashError> {
     let record = snapshot(rule, evidence, verdict);
-    let preimage = record.stamp_preimage()?;
-    let preimage_hash = record_hash(&preimage)?;
+    let preimage_hash = preimage_hash(&record)?;
     Ok(record.with_stamp(VerdictStamp {
         author: author(evidence.provenance, manifest_id).to_string(),
         // A manifest declares no version, and the one word a plugin could
@@ -170,6 +171,63 @@ pub fn stamped(
         duration_ms: timing.duration_ms,
         timed_out: timing.timed_out,
     }))
+}
+
+/// The record with one stamp for every claim that did not decide it.
+///
+/// [`stamped`] writes the arbiter's own claim. A round can collect others:
+/// a member that broke at a point, one the clock cut short, one that looked
+/// and could not tell. Those live on `DispatchReport::arbitration` for as
+/// long as the process does. Nothing carried them any further, so a stored
+/// verdict could not say whether a check answered, stood aside, or was never
+/// heard from. This is what carries them.
+///
+/// They go **ahead** of the arbiter's stamp, because they arrived first and
+/// the list is arrival order — the same order the fold's rows are in, so a
+/// reader of the record and a reader of the fold see one sequence.
+///
+/// Every stamp on one record shares a hash. The preimage drops the stamp
+/// list ([`LadderSnapshot::stamp_preimage`]), so a claim added here is made
+/// against the same evidence the arbiter's was, and adding it breaks
+/// neither.
+///
+/// A claim is still a record and not a vote. The rung is untouched, whatever
+/// these say.
+///
+/// # Errors
+///
+/// [`RecordHashError`] when the record cannot be turned into canonical
+/// bytes. A caller that meets one keeps the answer and reports the failure,
+/// as [`stamped`] does.
+pub fn stamp_claims(
+    mut record: LadderSnapshot,
+    claims: &[ArbiterClaim],
+    decided_at_ms: u64,
+) -> Result<LadderSnapshot, RecordHashError> {
+    if claims.is_empty() {
+        return Ok(record);
+    }
+    let preimage_hash = preimage_hash(&record)?;
+    let mut stamps: Vec<VerdictStamp> = claims
+        .iter()
+        .map(|claim| {
+            claim
+                .clone()
+                .into_stamp(preimage_hash.clone(), decided_at_ms)
+        })
+        .collect();
+    stamps.append(&mut record.stamps);
+    record.stamps = stamps;
+    Ok(record)
+}
+
+/// The hash every stamp on one record carries.
+///
+/// One function so no two producers can disagree about the preimage. Two
+/// that did would mint hashes reading as tampering on a record nobody
+/// touched.
+fn preimage_hash(record: &LadderSnapshot) -> Result<String, RecordHashError> {
+    record_hash(&record.stamp_preimage()?)
 }
 
 /// What this observer concluded.
@@ -351,6 +409,62 @@ mod tests {
         assert_eq!(
             author(EvidenceProvenance::HostObserved, "witness-v1"),
             "engine"
+        );
+    }
+
+    /// A check that stood aside is stamped ahead of the answer that
+    /// followed it, and its hash is the one already on the record.
+    ///
+    /// Two hashes here would read as tampering on a record nobody touched.
+    /// One preimage is what makes a second claim addable at all.
+    #[test]
+    fn a_claim_that_did_not_decide_is_stamped_ahead_of_the_one_that_did() {
+        let record = stamped(
+            &rule(),
+            &reported(FlipObservation::Achieved),
+            &met(),
+            "witness-v1",
+            Vec::new(),
+            timing(),
+        )
+        .expect("the record hashes");
+        let aside = ArbiterClaim::did_not_answer(
+            "reader-v1",
+            &super::super::error::WrapperError::EmptyArgv,
+            &stella_plugin::LoopGrant::default(),
+        );
+
+        let carried =
+            stamp_claims(record.clone(), &[aside], 1_767_225_600_001).expect("the record hashes");
+
+        assert_eq!(carried.stamps.len(), 2);
+        assert_eq!(carried.stamps[0].author, "reader-v1");
+        assert_eq!(carried.stamps[0].assessment, StampAssessment::Inconclusive);
+        assert_eq!(carried.stamps[0].decided_at_ms, 1_767_225_600_001);
+        assert_eq!(carried.stamps[1], record.stamps[0], "the answer follows it");
+        assert_eq!(
+            carried.stamps[0].preimage_hash, carried.stamps[1].preimage_hash,
+            "both claims are made against one preimage"
+        );
+        assert_eq!(carried.rung, record.rung, "a claim never moves the rung");
+    }
+
+    /// A round nothing stood aside on is byte for byte the record it was.
+    #[test]
+    fn no_claims_leaves_the_record_alone() {
+        let record = stamped(
+            &rule(),
+            &reported(FlipObservation::Achieved),
+            &met(),
+            "witness-v1",
+            Vec::new(),
+            timing(),
+        )
+        .expect("the record hashes");
+
+        assert_eq!(
+            stamp_claims(record.clone(), &[], 1).expect("the record hashes"),
+            record
         );
     }
 

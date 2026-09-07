@@ -151,10 +151,13 @@ while [ $# -gt 0 ]; do
     esac
     shift 2
     ;;
-  # Test-only seams. Any one of them stubs every lookup, and stops the re-run
-  # from being sent. So a case cannot half-reach the network, and cannot pass
-  # or fail for a reason it did not pick. Same rule as the paired fixtures in
-  # `check-main-red-hold.sh`.
+  # Test-only seams. Any one of them stubs the reads — which pull requests
+  # are open, which run belongs to each head — so a case cannot half-reach
+  # the network there. The write past that point still calls `gh`: a test
+  # puts a stub `gh` ahead of the real one on `PATH`, so the mutation is
+  # exercised for real rather than assumed from "cleared N". That holds for
+  # the drill's own re-run too. Same read-side rule as the paired fixtures
+  # in `check-main-red-hold.sh`.
   --fixture-open-issues)
     [ $# -ge 2 ] || {
       echo "refresh-main-red-holds: --fixture-open-issues needs a value" >&2
@@ -204,8 +207,6 @@ while [ $# -gt 0 ]; do
     ;;
   esac
 done
-
-[ "$use_fixture" -eq 1 ] && dry_run=1
 
 note() { printf 'refresh-main-red-holds: %s\n' "$*" >&2 || true; }
 say() {
@@ -400,6 +401,10 @@ while read -r pr head; do
     refreshed=$((refreshed + 1))
     continue
   fi
+  # `rerun`, not `rerun-failed-jobs`. The break direction re-runs a hold that
+  # *passed*, and a run with no failed job in it is exactly what
+  # `rerun-failed-jobs` declines to do — so that endpoint can only serve the
+  # recovery half, and this sweep is both halves.
   if gh api -X POST --silent \
     "repos/{owner}/{repo}/actions/runs/$run/rerun" 2>/dev/null; then
     say "re-ran the hold on PR #$pr (head $head, run $run)"

@@ -443,6 +443,7 @@ jobs:
       # the merge result, and merges the ordinary way. The admin merge stays
       # as a fallback for a repository whose protection still permits one.
       - name: Wait for the required checks, then merge the version-sync PR
+        id: merge
         if: steps.ver.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -667,8 +668,19 @@ jobs:
           # Last resort: arm auto-merge so a context that reports late still
           # lands the write-back with no human action, and say so, because a
           # step that reaches here has not merged anything.
-          gh pr merge "${BRANCH}" --squash --auto \
-            || echo "::warning::could not enable auto-merge — merge the ${BRANCH} PR manually once checks are green."
+          #
+          # `armed=true` tells the next step to wait for this merge to
+          # actually land before it asks whether the tip of main got checked
+          # (#5857): GitHub performs an armed auto-merge asynchronously,
+          # still under this run's token, so the resulting push raises no
+          # workflow-triggering event — same as the ordinary/admin merges
+          # above, except here nothing after this step would otherwise know
+          # a merge is still coming.
+          if gh pr merge "${BRANCH}" --squash --auto; then
+            echo "armed=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "::warning::could not enable auto-merge — merge the ${BRANCH} PR manually once checks are green."
+          fi
           echo "::warning::${BRANCH} did not merge in this run; auto-merge is armed. If it is still open, check that its workflow runs are not parked in action_required (#5589)."
 
       # The merge above is made with `secrets.GITHUB_TOKEN`, and GitHub raises
@@ -692,8 +704,27 @@ jobs:
       #
       # `!cancelled()` rather than `success()`: a merge step that ended in a
       # warning still merged, and that tip is exactly the one to ask about.
-      - name: Make sure the merged tip of main gets checked
+      #
+      # `steps.merge.outputs.armed == 'true'` means the merge step reached
+      # the last-resort branch: nothing merged in THIS run, but auto-merge is
+      # now armed and will land later, asynchronously, once the required
+      # checks report — still under this run's token, so that later push
+      # raises no workflow-triggering event either (#5857, the async half of
+      # the gap #5817 closed for the synchronous merge paths above).
+      # `scripts/wait-for-armed-merge.sh` waits here, bounded, for it to land
+      # before this asks: if it does, the dispatcher below reads the new tip
+      # and starts the missing runs; if it does not land within the wait,
+      # the dispatcher reads the tip this run started from — already checked
+      # — and the daily main-canary schedule stays the backstop, exactly as
+      # before this step existed.
+      - name: Wait for an armed auto-merge to land, then check the merged tip
         if: ${{ !cancelled() && steps.ver.outputs.skip != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: ./scripts/dispatch-main-verification.sh
+          ARMED: ${{ steps.merge.outputs.armed }}
+        run: |
+          set -uo pipefail
+          if [ "${ARMED:-}" = "true" ]; then
+            ./scripts/wait-for-armed-merge.sh bot/version-sync
+          fi
+          ./scripts/dispatch-main-verification.sh
