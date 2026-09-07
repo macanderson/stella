@@ -34,6 +34,9 @@ pub(crate) mod contention;
 mod convention;
 mod curate;
 pub(crate) mod deliver;
+// `stella self-driving deliver` — the one-shot pull request verbs, split out
+// of this file so it stays under the size ceiling.
+mod deliver_verb;
 mod drive;
 pub(crate) mod governor;
 mod graph_seed;
@@ -665,7 +668,7 @@ pub(crate) fn run(cmd: &SelfDrivingCmd, flags: &TurnFlags) -> Result<(), String>
             format,
         } => file_finding(&st, title, body, labels, *format),
         SelfDrivingCmd::Work { issue, format } => work_issue(&st, issue, flags, *format),
-        SelfDrivingCmd::Deliver { cmd } => deliver_cmd(cmd),
+        SelfDrivingCmd::Deliver { cmd } => deliver_verb::run(cmd),
         SelfDrivingCmd::Drive {
             max_issues,
             no_review,
@@ -1097,116 +1100,6 @@ fn advance_aperture(st: &LoopState, current: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// `stella self-driving deliver` — the pull-request rhythm.
-///
-/// Every arm that acts re-derives the decision from a fresh observation rather
-/// than trusting a verdict handed to it. `merge` in particular does **not**
-/// take "the caller already ran `next`" as evidence: the forge moves between
-/// calls, and a merge authorised by a stale read is exactly the failure the
-/// machine's `Mergeability::Unknown` arm exists to prevent one layer down.
-fn deliver_cmd(cmd: &DeliverCmd) -> Result<(), String> {
-    let root = state::repo_root();
-
-    match cmd {
-        DeliverCmd::Open {
-            issue,
-            branch,
-            title,
-        } => {
-            let attribution = config::load(&root).attribution;
-            let pr = deliver::open(&root, branch, issue, title, &attribution.pull_request)?;
-            println!("opened #{pr} for #{issue} from {branch}");
-            Ok(())
-        }
-
-        DeliverCmd::Observe { pr, format } => {
-            let obs = deliver::observe(pr, &config::load(&state::repo_root()).merge)?.observation;
-            if *format == QueryFormat::Json {
-                println!(
-                    "{}",
-                    serde_json::to_string(&obs).map_err(|e| e.to_string())?
-                );
-            } else {
-                println!(
-                    "pr #{pr}: ci={:?} base_ci={:?} mergeable={:?} review={:?} draft={}",
-                    obs.ci, obs.base_ci, obs.mergeable, obs.review, obs.draft
-                );
-            }
-            Ok(())
-        }
-
-        DeliverCmd::Next {
-            pr,
-            fixes,
-            rebases,
-            no_review,
-            format,
-        } => {
-            let transition = decide(pr, *fixes, *rebases, *no_review)?;
-            if *format == QueryFormat::Json {
-                println!(
-                    "{}",
-                    serde_json::to_string(&transition).map_err(|e| e.to_string())?
-                );
-            } else {
-                println!(
-                    "pr #{pr}: {:?} -> {:?}",
-                    transition.state, transition.action
-                );
-            }
-            Ok(())
-        }
-
-        DeliverCmd::Merge {
-            pr,
-            fixes,
-            rebases,
-            no_review,
-        } => {
-            let transition = decide(pr, *fixes, *rebases, *no_review)?;
-            if transition.action != stella_autonomy::Action::Merge {
-                // Refused, not silently skipped: a caller that asked to merge
-                // and got nothing must be able to tell "already merged" from
-                // "not allowed yet".
-                return Err(format!(
-                    "pr #{pr} is not mergeable yet — the machine says {:?} ({:?})",
-                    transition.action, transition.state
-                ));
-            }
-            deliver::merge(pr)?;
-            println!("merged #{pr}");
-            Ok(())
-        }
-    }
-}
-
-/// Observe the forge and run the pure machine over what it said.
-fn decide(
-    pr: &str,
-    fixes: u32,
-    rebases: u32,
-    no_review: bool,
-) -> Result<stella_autonomy::Transition, String> {
-    let obs = deliver::observe(pr, &config::load(&state::repo_root()).merge)?.observation;
-    let policy = stella_autonomy::DeliverPolicy {
-        require_approval: !no_review,
-        ..stella_autonomy::DeliverPolicy::default()
-    };
-    let attempts = stella_autonomy::Attempts { fixes, rebases };
-
-    // The state is re-derived from the observation each call rather than
-    // persisted: the forge is the source of truth about a pull request, and a
-    // remembered state that disagreed with it would be the stale-read defect
-    // this design is trying to avoid. `CiPending` is the neutral entry point —
-    // every arm of the machine is reachable from it.
-    Ok(stella_autonomy::deliver_next(
-        stella_autonomy::PrState::CiPending,
-        &obs,
-        attempts,
-        &policy,
-    ))
-}
-
 /// `stella self-driving work` — run one issue to a diff.
 ///
 /// The issue is resolved through the port **before** anything touches git, so
@@ -1262,7 +1155,15 @@ fn work_issue(
     // child turn's ceiling is decided and one place its cost is folded back in
     // (#4353).
     let mut budget = budget::RunBudget::new(flags.clone());
-    let outcome = work::start(&root, &issue, &mut budget, attribution, &loop_config.worker)?;
+    let forge = crate::pull_request_provider::GhPullRequests::new();
+    let outcome = work::start(
+        &forge,
+        &root,
+        &issue,
+        &mut budget,
+        attribution,
+        &loop_config.worker,
+    )?;
     let learned = learning::tally(&root).since(learned_before);
     hooks::after_issue_work(&root, &settings, &hook_issue, hook_outcome(&outcome));
 
