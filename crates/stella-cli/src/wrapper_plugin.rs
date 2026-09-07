@@ -53,7 +53,7 @@
 //! exists, though `--pipeline` itself reaches every door that takes it.
 //!
 //! `stella goal` is a second call site, not a second sequence:
-//! [`crate::agent::goal::run_goal_cmd`] binds a wrapper the same way and calls
+//! `crate::agent::goal::run_goal_cmd` binds a wrapper the same way and calls
 //! [`WrapperDispatch::run`] once, the plugin's own `again` deciding how many
 //! rounds the goal takes (`#3911`). That door refuses no grade: the built-in
 //! goal loop that was its own completion arbiter is gone, and arbiter is the

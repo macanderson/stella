@@ -544,11 +544,11 @@ fn pin_role(
 /// plan, each from its own `pipeline_<role>_model` key, each pinned into the
 /// [`RoleTable`]. Those pins were **read by nothing**: the only live
 /// `Router::resolve` call site is `SessionFallback::resolve_fallback`
-/// (`Role::Worker` alone), and [`resolve_cross_family_verifier`] does not
-/// resolve a `Role` at all — it calls `Router::resolve_cross_family`, whose
-/// router it builds with `RoleTable::new()` regardless. So an operator could
-/// set `pipeline_verifier_model` and watch it resolve, log, and steer
-/// nothing — including at the one place a second model actually runs. The
+/// (`Role::Worker` alone), and the goal loop's own cross-family verifier
+/// resolved no `Role` at all — it called `Router::resolve_cross_family`,
+/// whose router it built with `RoleTable::new()` regardless. So an operator
+/// could set `pipeline_verifier_model` and watch it resolve, log, and steer
+/// nothing — including at the one place a second model actually ran. The
 /// keys are retired (`settings::unknown`) rather than dropped in silence, and
 /// a model for a participant other than the session's own is now a
 /// plugin-declared seat ([`crate::agent::seats`]); the four now-unroutable
@@ -649,10 +649,10 @@ pub(crate) fn build_provider(cfg: &Config) -> Result<Box<dyn Provider>, String> 
 }
 
 /// The per-dialect provider factory, over already-resolved parts rather than
-/// a whole [`Config`]. Both the worker path ([`build_provider`]) and the
-/// goal loop's routed verifier ([`resolve_cross_family_verifier`]) go through this
-/// one match, so the wire-dialect selection — and the anti-phantom-slug
-/// catalog check — live in exactly one place. `effective_base_url` is the
+/// a whole [`Config`]. The worker path ([`build_provider`]) and every seat a
+/// wrapper plugin's child turn resolves both go through this one match, so
+/// the wire-dialect selection — and the anti-phantom-slug catalog check —
+/// live in exactly one place. `effective_base_url` is the
 /// base URL requests go to (override-or-default); `base_url_override` is the
 /// raw `--base-url`, which only the Vertex/Bedrock arms consume (they build
 /// region/project-scoped URLs themselves). `aux` carries whatever the provider
@@ -765,11 +765,10 @@ pub(crate) fn session_router(cfg: &Config, worker_ref: &ModelRef) -> Router {
 /// `outcomes` slot, so resolution routes around the sick provider.
 /// The replacement adapter is built from the discovered credentials on
 /// first use and owned here (set-once), so the engine can borrow it for the
-/// rest of the turn. Every miss is soft, matching
-/// [`resolve_cross_family_verifier`]: a resolve error, a resolution landing
-/// back on the failed provider, an uncredentialed target, or an adapter
-/// build failure all yield `None` — the turn then aborts exactly as it did
-/// before this seam existed.
+/// rest of the turn. Every miss is soft: a resolve error, a resolution
+/// landing back on the failed provider, an uncredentialed target, or an
+/// adapter build failure all yield `None` — the turn then aborts exactly as
+/// it did before this seam existed.
 pub(crate) struct SessionFallback<'r> {
     router: &'r Router,
     built: std::sync::OnceLock<Box<dyn Provider>>,
@@ -847,9 +846,9 @@ pub(crate) struct ReflectionRoute {
 /// comment carries why the choice was made and where it may go next. What is
 /// read now is `default_model` / `agents.default.model`.
 ///
-/// Every miss is soft, matching [`resolve_cross_family_verifier`] and
-/// `pin_role`: no engine settings, no model spec, an uncredentialed
-/// provider, or an adapter that will not build all yield `None`, and the
+/// Every miss is soft, matching [`pin_role`]: no engine settings, no model
+/// spec, an uncredentialed provider, or an adapter that will not build all
+/// yield `None`, and the
 /// caller keeps dispatching on the worker exactly as every reflection call
 /// always has. A triage spec that resolves to the session default model is
 /// the one near-miss that is still a route: [`ReflectionRoute::provider`] is

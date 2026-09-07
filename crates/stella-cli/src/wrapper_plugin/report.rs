@@ -171,7 +171,7 @@ pub(crate) fn run_events(report: &DispatchReport) -> Vec<AgentEvent> {
 }
 
 impl super::BoundWrapper {
-    /// [`super::BoundWrapper::report`]'s lines, composed but not printed.
+    /// [`report_to`]'s lines, composed but not printed.
     ///
     /// For the one door where printing is a decision rather than a default: a
     /// fleet attempt under the live dashboard must not `eprintln!` onto the

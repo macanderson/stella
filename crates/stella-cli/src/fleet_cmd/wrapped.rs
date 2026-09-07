@@ -233,7 +233,7 @@ impl AttemptWrapper {
     /// Drive this attempt's whole round loop through the plugin.
     ///
     /// A method rather than exposing `bound`, for the reason
-    /// [`crate::wrapper_plugin::BoundWrapper::report`] is one: the gate and the
+    /// `crate::wrapper_plugin::report_to` is one: the gate and the
     /// child-turn plane behind the dispatch outlive any single round, and a
     /// caller holding a second handle to them could report a different story
     /// from the one [`Self::settle`] prints.
