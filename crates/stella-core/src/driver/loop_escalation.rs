@@ -556,6 +556,15 @@ pub(crate) const STALL_STEER_PREFIX: &str = "[stuck-loop warning] this turn is s
 /// would have to carry a `command` field whose entire value is a sleep before
 /// it could contribute.
 ///
+/// `shell_text::blocking_sleep_seconds` is the wider sibling, and `bash`'s
+/// per-call advisory uses it: a long sleep beside real work blocks the call
+/// for the whole interval, and the advisory says so. This rung keeps the
+/// strict one because the threshold above was picked from a distribution
+/// measured with it, and the wider reading raises the incidental group's
+/// numbers as well as the pathological group's. Re-measuring that
+/// distribution takes a panel, and until someone runs one the rung stays
+/// blind to a sleep that shares a line.
+///
 /// Saturating, never wrapping: the seconds come from model-authored text, and
 /// `sleep 99999999999999999999` must not be an arithmetic overflow panic
 /// (AGENTS.md #5).
