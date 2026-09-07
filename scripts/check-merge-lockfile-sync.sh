@@ -21,6 +21,10 @@
 # moment it ran, and `strict` is off, so no rule makes it catch up. The sweep
 # above is what re-asks. Read its header for how a stale green is replaced.
 #
+# A pair that will not merge at all gets exit 1 too. Such a branch cannot land
+# either way, so the red costs it nothing. A green here would be an answer
+# this guard did not earn.
+#
 # The merge is undone before this exits, whatever happens. It refuses to start
 # on a dirty tree, so it can never eat your work.
 #
