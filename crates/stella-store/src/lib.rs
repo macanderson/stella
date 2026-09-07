@@ -142,6 +142,7 @@ mod ddl;
 mod dispatch;
 mod error;
 mod event_clock;
+mod event_write;
 mod git_env;
 mod migrations;
 mod private;
@@ -854,56 +855,6 @@ impl Store {
             "UPDATE executions SET session_id = ? WHERE id = ?",
             params![session_id, execution_id],
         )?;
-        Ok(())
-    }
-
-    /// Append one uniquely sequenced event to the execution stream, folding
-    /// it into the `tool_calls` projection in the same transaction.
-    ///
-    /// The two writes are atomic **on purpose**. `events` is the source of
-    /// truth and `tool_calls` is derived from it, so any window where one has
-    /// landed and the other has not is a window where the dashboard's counts
-    /// disagree with the log they claim to summarize. Committing them
-    /// together removes the window entirely: there is no interleaving, no
-    /// crash point, and no ordering of these two statements that leaves a
-    /// `tool_start` in the log without its row.
-    ///
-    /// Before v18 the projection was instead built once, at turn end, which
-    /// meant a live turn reported zero tool calls and an interrupted one
-    /// reported zero forever. See [`Store::materialize_tool_calls`], which is
-    /// now the repair path rather than the only writer, for the full account.
-    ///
-    /// The event's own `task_id` is lifted into its column in the same
-    /// transaction and for the same reason (#5039) — see
-    /// [`Store::task_events`], which is the selection it exists for.
-    pub fn record_event(&self, execution_id: i64, seq: u64, event: &AgentEvent) -> Result<()> {
-        let seq = sqlite_i64("event sequence", seq)?;
-        let payload = serde_json::to_string(event).map_err(|e| StoreError::Other(e.to_string()))?;
-        // Read the internally-tagged `type` by DESERIALIZING it, never by
-        // string-scanning for the first `"type":"` literal — the scan silently
-        // yields the wrong tag (or "unknown") if serialization is ever
-        // pretty-printed, wrapped, or reordered. Deserializing into a
-        // one-field struct rather than a full `serde_json::Value` keeps that
-        // guarantee without materializing a throwaway tree: a `tool_result`
-        // payload carries the complete tool output, and this runs once per
-        // persisted event on the streaming path.
-        #[derive(serde::Deserialize)]
-        struct EventTag {
-            #[serde(rename = "type")]
-            ty: String,
-        }
-        let event_type = serde_json::from_str::<EventTag>(&payload)
-            .map(|tag| tag.ty)
-            .unwrap_or_else(|_| "unknown".into());
-        let mut conn = self.lock();
-        let tx = conn.transaction()?;
-        let task_id = event.task_id().map(stella_protocol::TaskId::as_str);
-        tx.execute(
-            event_clock::INSERT_EVENT,
-            params![execution_id, seq, event_type, payload, task_id],
-        )?;
-        tool_calls::project_event(&tx, execution_id, seq, event)?;
-        tx.commit()?;
         Ok(())
     }
 

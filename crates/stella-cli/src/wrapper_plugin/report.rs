@@ -143,7 +143,7 @@ pub(super) fn report_lines(
 ///
 /// A pure function so the events, like the lines, are assertable without a
 /// session behind them.
-pub(super) fn run_events(report: &DispatchReport) -> Vec<AgentEvent> {
+pub(crate) fn run_events(report: &DispatchReport) -> Vec<AgentEvent> {
     vec![
         AgentEvent::Verdict {
             passed: report.met(),
