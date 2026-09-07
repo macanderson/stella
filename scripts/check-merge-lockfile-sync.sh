@@ -21,9 +21,9 @@
 # moment it ran, and `strict` is off, so no rule makes it catch up. The sweep
 # above is what re-asks. Read its header for how a stale green is replaced.
 #
-# A pair that will not merge at all gets exit 1 too. Such a branch cannot land
-# either way, so the red costs it nothing. A green here would be an answer
-# this guard did not earn.
+# A pair that will not merge at all gets exit 1 too, with git's own words in
+# the report. Such a branch cannot land either way, so the red costs it
+# nothing. A green here would be an answer this guard did not earn.
 #
 # The merge is undone before this exits, whatever happens. It refuses to start
 # on a dirty tree, so it can never eat your work.
@@ -189,10 +189,22 @@ if git merge-base --is-ancestor "$other" HEAD; then
   exit 0
 fi
 
-if ! git merge --no-commit --no-ff "$other" >/dev/null 2>&1; then
-  note "FAIL — this checkout does not merge cleanly with $short."
+# An identity of its own. No commit is made and the merge is undone, so this
+# reaches nothing that lasts. Without it a box that has none — a CI runner is
+# one — fails the merge on "Committer identity unknown", and the guard would
+# read that as a clash and fail every branch it looked at.
+merge_error=""
+if ! merge_error="$(git -c user.name="stella merged-lock guard" \
+  -c user.email="guard@localhost" \
+  merge --no-commit --no-ff "$other" 2>&1)"; then
+  note "FAIL — this checkout does not merge with $short."
   note ""
-  note "Merge it and fix the conflict, then run this again."
+  note "git said:"
+  while IFS= read -r line; do
+    note "     $line"
+  done <<<"$merge_error"
+  note ""
+  note "Merge it and settle that, then run this again."
   emit
   exit 1
 fi
