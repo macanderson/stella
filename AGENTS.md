@@ -570,6 +570,26 @@ partitioning by crate, directory or owner, ask whether anything in the set has
 to change atomically. `rg -l 'INTENTIONALLY DUPLICATED'` names today's only
 such twin.
 
+A tenth, `lock-recheck.yml`, re-asks one pre-merge question after `main`
+moves. `ci.yml` checks out `refs/pull/N/merge`, so its `Cargo.lock` step
+already reads the merge result — but the merge GitHub computed when the pull
+request last changed, and `strict` is off, so a green check outlives the tip it
+was true of. On 2026-09-06 a release sync bumped every version at 09:51, a
+branch adding the `stella-learn` crate merged at 09:59 with a lock entry at the
+old version, and every `--locked` build on `main` broke (`#5939`). Nothing was
+wrong with either tree. `scripts/recheck-lock-compositions.sh` runs on a push
+to `main` that writes the lock or a manifest, merges each open pull request
+head into the new tip, and runs `ci` again on the ones whose merged lock stops
+resolving. The new run reports under the same name on the same commit, so the
+required check goes red and the merge waits. A pull request that writes no lock
+is skipped without asking, which is what bounds the cost. It fails open at every
+unknown. `scripts/check-merge-lockfile-sync.sh` is the shared question, asked
+from all three sides now — the sweep, `ci.yml`'s pull request step, and
+`auto-tag.yml`'s own merge, which asked it of the sync branch alone until `#5943`.
+`make merge-lockfile-sync` asks by hand; `make merge-lockfile-sync-test` and
+`make recheck-lock-compositions-test` cover both, the two-branch collision
+built rather than described.
+
 **A stacked PR's evidence is the same CI run — but confirm it started.** No
 workflow's `pull_request:` trigger carries a `branches:` filter (`push:`
 triggers do, and only for the workflows above's own post-merge behavior), so a
@@ -1655,11 +1675,13 @@ seconds; `cargo test --workspace` rebuilds everything.
   the lockfile is one shared cell every version-bumping PR writes, exactly like
   `scripts/file-size-baseline.txt` above. That happened twice on 2026-08-16
   (#3311, then the 0.9.50 sync against it) and left `main` red for every
-  `--locked` build. Nothing pre-merge can see it, because neither author's tree
-  is wrong — which is why `main-canary.yml` re-asks the same question after the
-  merge and files an issue when the answer changed (#3332). The two halves are
-  deliberately separate: one stops you shipping a stale lock, the other bounds
-  how long `main` stays broken when nobody did.
+  `--locked` build. One tree cannot see it, because neither author's tree is
+  wrong. `scripts/check-merge-lockfile-sync.sh` merges the two and then asks,
+  and `lock-recheck.yml` asks again each time `main` moves (`#5943`); the answer
+  is still a snapshot, so `main-canary.yml` re-asks after the merge and files an
+  issue when it changed (#3332). The halves are separate on purpose: one stops
+  you shipping a stale lock, one stops a stale green merging, and the last
+  bounds how long `main` stays broken when both miss.
 - **A grep over cargo's output is not a build result; the exit code is.**
   Cargo colourises when it thinks it is talking to a terminal, which puts the
   escape *before* the word — a line that reads
