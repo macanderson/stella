@@ -1386,6 +1386,45 @@ fn one_invocation_opens_a_session_for_each_sleep_the_driver_asks_for() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Two sessions of one run share a second, a process id, and often the same
+/// 16 bits of nanoseconds. The id must still tell them apart.
+///
+/// Asserted against a clock held still, because that is the case that
+/// collided: run 34163526157 opened three sessions and the session log held
+/// two of them under `drive-1788818129-8a89`. A test cannot stop the real
+/// clock, so the mint takes its inputs.
+#[test]
+fn two_sessions_minted_off_one_clock_reading_get_different_ids() {
+    let frozen = std::time::Duration::new(1_788_818_129, 500_000);
+    let first = crate::plugin_cmd::mint_session_id(frozen, 4242, 0);
+    let second = crate::plugin_cmd::mint_session_id(frozen, 4242, 1);
+    assert_ne!(
+        first, second,
+        "a stopped clock and one process must still mint two ids"
+    );
+    assert!(first.starts_with("drive-1788818129-"), "{first}");
+}
+
+/// The salt still carries the process id, so two runs on one machine stay
+/// apart even when each is on its first session.
+#[test]
+fn two_processes_minting_their_first_session_get_different_ids() {
+    let frozen = std::time::Duration::new(1_788_818_129, 500_000);
+    assert_ne!(
+        crate::plugin_cmd::mint_session_id(frozen, 4242, 0),
+        crate::plugin_cmd::mint_session_id(frozen, 9999, 0)
+    );
+}
+
+/// The property the two above are about, over the real mint: a run's sessions
+/// are opened back to back, and no two of them may share an id.
+#[test]
+fn a_run_of_sessions_mints_no_duplicate_id() {
+    let minted: std::collections::BTreeSet<String> =
+        (0..512).map(|_| crate::plugin_cmd::session_id()).collect();
+    assert_eq!(minted.len(), 512, "every session id must be its own");
+}
+
 // A plugin is a package: the tools, skills and records it ships (#3380). Those
 // tests live in `contributions.rs`, split out when this file crossed the
 // 1500-line ceiling (#4440).
