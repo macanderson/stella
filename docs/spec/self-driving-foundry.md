@@ -53,7 +53,7 @@ each row is a dependency of a later section.
 
 | Primitive | Where | State |
 |---|---|---|
-| Self-driving cycle loop (plan, fix batch, audit aperture, tickets, bench, AIMD calibration) | `scripts/self-driving.sh`, `stella self-driving …`, pure core in the `stella-autonomy` crate | Shipped. No manifest, no in-flight resume, env-var configured. |
+| Self-driving cycle loop (plan, fix batch, audit aperture, tickets, bench, AIMD calibration) | `scripts/self-driving.sh`, `stella self-driving …`, pure core in `crates/stella-autonomy/src/lib.rs` and its modules | Shipped. No manifest, no in-flight resume, env-var configured. |
 | Service supervision (launchd/systemd, `RunAtLoad`, opt-in `KeepAlive`, resolver shim, `resume-all`) | `stella daemon install/uninstall/resume-all`, `crates/stella-cli/src/daemon/service.rs` | Shipped (#1587). The self-driving shell loop still carries its own macOS-only duplicate installer. |
 | Branch-pinned SUT builds, cached by commit | `sut.py`, `sut_build.py` (detached worktree + zigbuild) in the [arenabench repo](https://github.com/macanderson/arenabench), GUI branch picker | Shipped. `sut_ref` is match-level only and does not round-trip TOML (§5.2). |
 | Match configuration and artifacts (seats, attempts, `stella-events.jsonl` per trial, `result.json`, reward at `verifier_result.rewards.reward`) | `{config,model,runner,telemetry}.py` in the arenabench repo | Shipped. |
