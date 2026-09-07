@@ -17,9 +17,11 @@
 //! module's edge. The tests below hold both halves of it. What the trace
 //! contains, and that nothing fires on it.
 //!
-//! The pin is what turns a future rung into a decision. A sixth rung that
+//! The pin is what turns a future rung into a decision. A new rung that
 //! fires here reddens `no_rung_fires_at_any_step_of_the_recorded_grind`. Its
-//! author then has to say in review why firing is right.
+//! author then has to say in review why firing is right. The
+//! self-appending rung (`#5863`) is the first one added since this pin,
+//! and it stays silent on the trace.
 
 use std::collections::BTreeSet;
 

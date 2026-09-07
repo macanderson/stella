@@ -99,6 +99,7 @@ open; nothing before Phase 3 forces it.
 | [0030](0030-the-wrapper-socket-is-the-plugin-sdk.md) | The Wrapper Socket Is the Plugin SDK | Accepted |
 | [0031](0031-a-turn-has-no-step-cap-by-default.md) | A Turn Has No Step Cap by Default | Accepted |
 | [0032](0032-a-loop-rung-reads-structure.md) | A Loop Rung Reads Structure, Not Progress | Accepted |
+| [0034](0034-silence-is-not-a-grant.md) | Silence Is Not a Grant | Accepted |
 | [0035](0035-a-wrappers-verdict-lands-on-the-round-that-earned-it.md) | A Wrapper's Verdict Lands on the Round That Earned It | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
@@ -183,6 +184,12 @@ separates it from the trials that succeeded, because what is wrong with it is
 not in its calls. The recorded trace is committed with a pin that no rung
 fires on it.
 
+ADR 0034 settles what a plugin with an empty `[[capabilities]]` list may call.
+It may call nothing of the host's. Its grant is what its manifest declared and
+a person took, which also covers the tools and MCP servers the package ships.
+A worker turn the host runs for a plugin gets a caller name of its own, so one
+list is not asked to bound both the plugin's reach and the tools a candidate's
+model picks.
 ADR 0035 settles where a wrapper plugin's judged verdict is recorded. Each
 round of `stella run --pipeline` closes its own execution row and its own
 channel before the verdict is decided, so the events reached no store at all.
