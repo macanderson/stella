@@ -436,6 +436,71 @@ fn approving_a_stale_proposal_is_refused_rather_than_renumbered() {
     );
 }
 
+// ── the yes ───────────────────────────────────────────────────────
+
+/// A yes is a state on the gate. The code that writes the revision asks the
+/// gate for it. It reads no other trace.
+///
+/// Both verbs that end a proposal clear it. So does an edit: a yes to one
+/// subject is not a yes to the next one.
+#[test]
+fn a_yes_is_recorded_on_the_gate_and_cleared_by_everything_that_ends_it() {
+    let mut graph = plan();
+    let mut gate = RevisionGate::default();
+    gate.observe(
+        graph.revision().next(),
+        &graph.planned(graph.revision()),
+        &one_failure(),
+    )
+    .expect("a plain gate failure puts a proposal up");
+    assert!(
+        !gate.agreed(),
+        "a fresh proposal has been agreed to by nobody"
+    );
+
+    let agreed = gate.agree().expect("a proposal stands");
+    assert!(gate.agreed(), "the yes is on the gate");
+    assert_eq!(
+        agreed.revision,
+        gate.pending().expect("still standing").revision,
+        "agreeing names what it agreed to and changes nothing about it"
+    );
+
+    gate.edit("repair the router instead")
+        .expect("a standing proposal can be edited");
+    assert!(
+        !gate.agreed(),
+        "the reader changed the insert, so the earlier yes was to something else"
+    );
+
+    gate.agree().expect("and can be agreed to again");
+    gate.approve(&mut graph).expect("the plan has not moved");
+    assert!(!gate.agreed(), "a written revision leaves no yes standing");
+
+    gate.observe(
+        graph.revision().next(),
+        &graph.planned(graph.revision()),
+        &one_failure(),
+    )
+    .expect("the repair is planned, so the next board proposes afresh");
+    gate.agree().expect("a proposal stands");
+    gate.dismiss().expect("and can be dropped instead");
+    assert!(
+        !gate.agreed(),
+        "a dismissed proposal leaves no yes standing"
+    );
+}
+
+/// Nothing to agree to is a named error, not a silent no-op. A caller that
+/// could not tell the two apart would report a yes no gate holds.
+#[test]
+fn agreeing_with_nothing_standing_is_refused_by_name() {
+    assert_eq!(
+        RevisionGate::default().agree(),
+        Err(RevisionError::NothingPending)
+    );
+}
+
 // ── the helpers ────────────────────────────────────────────────────────────
 
 /// The insertion takes the id the board would give it, so an approved revision
