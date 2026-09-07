@@ -165,10 +165,10 @@
       "status": "implemented",
       "title": "ADR 0032: A loop rung reads structure, not progress"
     },
-    "adr/0033-a-wrappers-verdict-lands-on-the-round-that-earned-it": {
-      "path": "docs/adr/0033-a-wrappers-verdict-lands-on-the-round-that-earned-it.md",
+    "adr/0035-a-wrappers-verdict-lands-on-the-round-that-earned-it": {
+      "path": "docs/adr/0035-a-wrappers-verdict-lands-on-the-round-that-earned-it.md",
       "status": "implemented",
-      "title": "ADR 0033: A wrapper's verdict lands on the round that earned it"
+      "title": "ADR 0035: A wrapper's verdict lands on the round that earned it"
     },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",

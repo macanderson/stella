@@ -1,10 +1,10 @@
 ---
-id: adr/0033-a-wrappers-verdict-lands-on-the-round-that-earned-it
-title: "ADR 0033: A wrapper's verdict lands on the round that earned it"
+id: adr/0035-a-wrappers-verdict-lands-on-the-round-that-earned-it
+title: "ADR 0035: A wrapper's verdict lands on the round that earned it"
 status: implemented
 ---
 
-# ADR 0033: A wrapper's verdict lands on the round that earned it
+# ADR 0035: A wrapper's verdict lands on the round that earned it
 
 - Status: accepted
 - Date: 2026-09-07
