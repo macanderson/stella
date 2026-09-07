@@ -48,6 +48,8 @@ fn faulted_report() -> stella_runtime::wrapper::DispatchReport {
         outcome: stella_plugin::Outcome::Undecided {
             reason: stella_plugin::UndecidedReason::NoOracle,
         },
+        // No plugin answered, so there is nothing it wanted said (ADR 0032).
+        note: None,
         // A rule with no requirements draws no rows: nothing was declared, so
         // there is no gate to report on.
         board: stella_protocol::GateBoard::default(),
@@ -447,5 +449,53 @@ fn a_finished_run_puts_the_verdict_on_the_stream_before_the_board() {
         ladder.rung,
         Some(stella_protocol::LadderRung::Unverifiable),
         "no oracle ran, so nothing was in a position to look"
+    );
+}
+
+/// **Witness (ADR 0032).** A round that stopped on a *met* verdict still
+/// prints the wrapper's own words.
+///
+/// The correction a held-open round renders is the only reader
+/// `ObservedEvidence::detail` had. A round that passed had none, so a goal
+/// plugin could report `met` and could not say why — the one sentence
+/// `stella goal` prints on success today.
+#[test]
+fn a_met_round_prints_the_wrappers_own_account_of_it() {
+    let report = stella_runtime::wrapper::DispatchReport {
+        outcome: stella_plugin::Outcome::Met {
+            evidence: stella_plugin::EvidenceProvenance::PluginReported,
+        },
+        note: Some("Verifier feedback: a regression test now covers the fix".to_string()),
+        faults: Vec::new(),
+        ..faulted_report()
+    };
+
+    let lines = super::report_lines(None, OutputFormat::Text, &report, &[], &[], &[], &[]);
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("a regression test now covers the fix")),
+        "the wrapper's own account of a met round must reach the reader: {lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("every declared requirement is met")),
+        "and it is a second line, never a replacement for the host's own \
+         one-line summary: {lines:?}"
+    );
+}
+
+/// A wrapper with nothing to add changes nothing a reader sees.
+#[test]
+fn a_round_with_no_note_prints_exactly_what_it_always_did() {
+    let report = faulted_report();
+    assert_eq!(report.note, None);
+
+    let lines = super::report_lines(None, OutputFormat::Text, &report, &[], &[], &[], &[]);
+    assert_eq!(
+        lines.iter().filter(|line| line.starts_with("  ◇ ")).count(),
+        1,
+        "the summary, and no empty line under it: {lines:?}"
     );
 }

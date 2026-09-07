@@ -30,7 +30,7 @@
 //! `Undecided` rather than crediting or blaming an assessment nobody made.
 //!
 //! `cfg(unix)` for `wrapper_socket.rs`'s reason, tracked in the same place
-//! (#3497).
+//! (`#3497`).
 
 #![cfg(unix)]
 
@@ -301,7 +301,7 @@ async fn a_round_the_verifier_marks_unmet_holds_open_for_one_correction_round() 
             .any(|message| message.content.contains("goal-met")),
         "the correction names the requirement by its declared key: {round_two_messages:?}"
     );
-    // **The #3840 witness.** Round 1's verifier wrote a specific complaint;
+    // **The `#3840` witness.** Round 1's verifier wrote a specific complaint;
     // before `ObservedEvidence::detail` existed the only string that reached
     // round 2 was the static `[requirements]` statement, identical on every
     // goal and every round. `stella goal`'s own loop never had that problem —
@@ -402,5 +402,58 @@ async fn without_a_child_turn_plane_the_loop_ends_undecided_after_one_round() {
     assert!(
         dispatcher.specs().is_empty(),
         "the host never ran a child turn for an ask it could not resolve"
+    );
+}
+
+/// **The ADR 0032 witness.** A round the verifier passes still carries the
+/// verifier's own sentence.
+///
+/// `ObservedEvidence::detail` had exactly one reader: the correction a
+/// held-open round renders (`#3840`). A round that *stopped* had none, so
+/// `Verdict::with_detail` dropped the string and every surface downstream saw
+/// a met run with nothing said about it. The shipped plugin sends that string
+/// on a met verdict — `evidence_met` in `plugins/stella-goal/main.py` falls
+/// back to `reasoning` when the verifier wrote no `feedback`, which is what a
+/// passing verdict looks like — and it is the same sentence `stella goal`
+/// prints today (`GoalOutcome::Met`'s `verdict`).
+///
+/// It runs the same two rounds as the test above and reads the finished
+/// report rather than the next round's prelude, because on a met round there
+/// is no next round to read.
+#[tokio::test]
+async fn the_verifiers_own_words_survive_a_met_verdict() {
+    let dispatcher = VerifierDispatcher::default();
+    let dispatch = dispatch_serving(manifest(), dispatcher.clone(), true);
+    let mut driver = RecordingDriver::default();
+
+    let report = dispatch
+        .run(
+            RoundInput {
+                goal: "fix the retry loop".into(),
+                signals: signals(),
+                candidate: None,
+            },
+            &mut driver,
+        )
+        .await
+        .expect("the declared stage order resolves");
+
+    assert!(report.met(), "got {:?}", report.outcome);
+    let note = report
+        .note
+        .as_deref()
+        .expect("a met round carries the wrapper's own account of it");
+    assert!(
+        note.contains("a regression test now covers the fix"),
+        "the passing verdict's own reasoning must survive the verdict: {note}"
+    );
+
+    // And it is still not evidence. `judge` decided this round over
+    // `EvidenceSet`'s closed fields alone, so the note reaches the report
+    // without ever having been in a position to change the answer.
+    let encoded = serde_json::to_string(&report.verdict).expect("a verdict serializes");
+    assert!(
+        !encoded.contains("a regression test now covers the fix"),
+        "a met verdict carries no free text — the note travels beside it: {encoded}"
     );
 }

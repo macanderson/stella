@@ -98,6 +98,7 @@ open; nothing before Phase 3 forces it.
 | [0029](0029-branch-protection-stays-non-strict.md) | Branch Protection Stays Non-Strict | Accepted |
 | [0030](0030-the-wrapper-socket-is-the-plugin-sdk.md) | The Wrapper Socket Is the Plugin SDK | Accepted |
 | [0031](0031-a-turn-has-no-step-cap-by-default.md) | A Turn Has No Step Cap by Default | Accepted |
+| [0032](0032-free-text-is-not-evidence.md) | Free Text Is Not Evidence | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible
@@ -172,3 +173,10 @@ wandering turn is loop detection, the stall rung, the budget, the deadline and
 the goal predicate, each of which reads evidence. `max_steps` is now
 `Option<usize>`, `None` by default, and a host that means a count still sets
 one.
+
+ADR 0032 settles how a goal-mode verifier's free text reaches a wrapper
+plugin's host. It does not reach `EvidenceSet`: that type stays closed so
+`judge`'s totality is the compiler's job, `met` rides as a `0`/`1`
+measurement, and the verifier's own sentence rides as the advisory
+`ObservedEvidence::detail` that no verdict is decided from. The half the
+record adds is a reader for a passing verdict, which had none.

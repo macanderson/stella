@@ -291,6 +291,24 @@ pub struct DispatchReport {
     pub snapshot: LadderSnapshot,
     /// How the loop ended.
     pub outcome: Outcome,
+    /// The final round's advisory note, in the wrapper's own words —
+    /// [`ObservedEvidence::detail`],
+    /// carried verbatim whatever the verdict was (ADR 0032).
+    ///
+    /// **Never an input to anything.** `judge` reads [`EvidenceSet`], whose
+    /// fields are closed so that totality is the compiler's job, and this
+    /// string is dropped on the way in by
+    /// [`EvidenceSet::from_observed`].
+    /// It rejoins here, after every decision has been made.
+    ///
+    /// It is here rather than on a [`Verdict`] arm because that is what it is:
+    /// one observation about the round, not a claim about a requirement.
+    /// `Verdict::with_detail` also copies it onto each unmet clause, where
+    /// `super::again` renders it into the correction the next round is told —
+    /// so a held-open round has always had a reader. A `Met` or `Undecided`
+    /// round had none, and the string it carried was the sentence
+    /// `stella goal` prints on success (`stella_core::goal::GoalOutcome::Met`).
+    pub note: Option<String>,
     /// Every point that failed, in the order it failed. Empty in the ordinary
     /// case; each entry is a round where the wrapper abstained rather than
     /// answered.
@@ -737,7 +755,7 @@ impl WrapperDispatch {
                 },
             };
 
-            let verdict = judge(&self.rule, &evidence).with_detail(detail);
+            let verdict = judge(&self.rule, &evidence).with_detail(detail.clone());
             let decided_at_ms = self.clock.now_ms();
             let timing = StampTiming {
                 decided_at_ms,
@@ -809,6 +827,7 @@ impl WrapperDispatch {
                         board,
                         snapshot,
                         outcome,
+                        note: detail,
                         faults: std::mem::take(&mut faults.errors),
                         arbitration,
                     });
