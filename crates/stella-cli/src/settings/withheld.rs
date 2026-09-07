@@ -204,11 +204,8 @@ impl WithheldNotice {
     /// The human channel's line: the workspace, the inventory, and the
     /// remedy that works on the arm it is actually on.
     ///
-    /// The untrusted arm names two routes, standing one first. A reader
-    /// hitting this notice is hitting it on every launch in every repo, so
-    /// the env var alone answers the wrong question — it is a one-launch
-    /// remedy offered for a permanent condition, and a reader told only
-    /// about it reasonably concludes no permanent remedy exists.
+    /// The untrusted arm names the config key first, then the env var.
+    /// The env var lasts one launch. The notice comes back every launch.
     pub(crate) fn line(&self, workspace_root: &Path) -> String {
         let remedy = match self.by {
             Withholder::ProjectUntrusted => {
