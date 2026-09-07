@@ -91,9 +91,7 @@ fn audit_record_incomplete_message(detail: &AuditWriteDetail<'_>) -> String {
     }
     format!(
         "{head}\n{}",
-        crate::agent::dropped_write_report(detail.db_path, detail.dropped)
-            .trim_end()
-            .to_owned()
+        crate::agent::dropped_write_report(detail.db_path, detail.dropped).trim_end()
     )
 }
 

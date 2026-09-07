@@ -33,7 +33,7 @@ use super::state::LoopState;
 mod emergency;
 mod record;
 
-pub(super) use emergency::{EmergencyRead, open_base_breakage, open_deploy_breakage};
+pub(super) use emergency::{open_base_breakage, open_deploy_breakage};
 
 /// How many open issues cross the port to produce one cycle's batch.
 ///
@@ -777,6 +777,9 @@ mod tests {
     use stella_protocol::issue::{Issue, IssueClass, IssueError, IssueKey, IssueLabel, IssueState};
 
     use super::*;
+    // Named here rather than re-exported above: the shipping code only ever
+    // calls `filed()` on this, so a re-export would be an unused import.
+    use super::emergency::EmergencyRead;
 
     /// A tracker that is not GitHub and is not a process.
     ///
