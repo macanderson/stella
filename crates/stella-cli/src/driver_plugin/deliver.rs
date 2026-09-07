@@ -146,11 +146,14 @@ impl DeliverForge for GhDeliverForge {
 
     async fn ready(&self, pr: &str) -> Result<(), String> {
         let pr = pr.to_owned();
-        tokio::task::spawn_blocking(move || crate::self_driving_cmd::deliver::mark_ready(&pr))
-            .await
-            .map_err(|error| {
-                format!("taking the pull request out of draft did not finish: {error}")
-            })?
+        tokio::task::spawn_blocking(move || {
+            crate::self_driving_cmd::deliver::mark_ready(
+                &crate::pull_request_provider::GhPullRequests::new(),
+                &pr,
+            )
+        })
+        .await
+        .map_err(|error| format!("taking the pull request out of draft did not finish: {error}"))?
     }
 
     async fn merge(&self, pr: &str) -> Result<(), String> {
