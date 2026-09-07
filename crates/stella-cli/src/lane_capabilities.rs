@@ -5,7 +5,9 @@
 //!
 //! A lane is one place a turn runs. `stella_protocol::BuiltinLane` names them
 //! all. Built here: the deck's lead turn, a resumed turn, a deck worker lane,
-//! a fleet attempt, the shared raw turn, and a judged goal arc.
+//! a fleet attempt, and the shared raw turn. The judged goal arc left this
+//! file with `#3911` — `stella goal` binds a wrapper plugin, and every round
+//! that plugin holds open is a raw turn.
 //!
 //! Each one goes to the engine through `Engine::assemble`, the only
 //! constructor. Its `TurnCapabilities` carries the lane name. A seam set that
@@ -186,39 +188,6 @@ pub(crate) fn raw_turn<'a>(
     }
 }
 
-/// A judged multi-round goal arc — `BuiltinLane::GoalArc`.
-///
-/// Both arms of `stella goal` bind the same set, so both take this one
-/// literal: the raw arm, which drives its rounds inside `Engine::run_goal`,
-/// and the wrapped arm, which drives them itself under a plugin.
-pub(crate) fn goal_arc<'a>(
-    hooks: Option<&'a Hooks>,
-    runner: &'a dyn HookRunner,
-    calibration: &'a CalibrationMap,
-    steering: &'a dyn TurnSteering,
-) -> TurnCapabilities<'a> {
-    TurnCapabilities {
-        hooks: hooks.map(|hooks| (hooks, runner)),
-        // No approval route. A `PreToolUse` hook asking for approval gets the
-        // grant-path refusal instead of a prompt, which is what this door
-        // answers with or without the seam named here.
-        hook_approvals: None,
-        calibration: Some(calibration),
-        // Nobody can pause an arc. The whistle steers it and never stops it
-        // at a step boundary.
-        gate: None,
-        steering: Some(steering),
-        requery: None,
-        bus: None,
-        // An arc resolves its provider once and drives every round through
-        // it. There is no breaker to feed and nothing to re-resolve mid-turn.
-        outcomes: None,
-        fallback: None,
-        call_role: ModelCallRole::Worker,
-        lane: Some(TurnLane::Builtin(BuiltinLane::GoalArc)),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -336,11 +305,6 @@ mod tests {
                 )
                 .lane,
                 BuiltinLane::RawTurn,
-            ),
-            (
-                "goal_arc",
-                goal_arc(None, &runner, &calibration, &steering).lane,
-                BuiltinLane::GoalArc,
             ),
         ];
 
@@ -482,38 +446,12 @@ mod tests {
             bare.gate.is_none() && bare.steering.is_none(),
             "a caller that published neither must not grow one here",
         );
-
-        let arc = goal_arc(None, &runner, &calibration, &steering);
-        assert!(arc.calibration.is_some() && arc.steering.is_some());
-        assert!(
-            arc.gate.is_none(),
-            "an arc is steered and never paused, so a gate here would park \
-             where nothing parked before",
-        );
-        assert!(
-            arc.outcomes.is_none() && arc.fallback.is_none(),
-            "an arc resolves its provider once and drives every round on it",
-        );
-        assert_eq!(arc.call_role, ModelCallRole::Worker);
-        assert!(
-            goal_arc(Some(&hooks), &runner, &calibration, &steering)
-                .hooks
-                .is_some(),
-            "an arc must run the hooks its caller handed it",
-        );
     }
 
     /// Every call site this crate reads back, as
     /// `(crate-relative path, source)`.
-    fn door_sources() -> [(&'static str, &'static str); 3] {
-        [
-            ("agent/turn.rs", include_str!("agent/turn.rs")),
-            ("agent/goal.rs", include_str!("agent/goal.rs")),
-            (
-                "agent/goal/goal_wrapped.rs",
-                include_str!("agent/goal/goal_wrapped.rs"),
-            ),
-        ]
+    fn door_sources() -> [(&'static str, &'static str); 1] {
+        [("agent/turn.rs", include_str!("agent/turn.rs"))]
     }
 
     /// **The call-site witnesses.** Each door that is not the deck reaches
@@ -528,11 +466,7 @@ mod tests {
     fn each_door_that_is_not_the_deck_assembles_through_its_lane() {
         let blessed = format!("Engine::{}(", "assemble");
         let builder = format!("Engine::with_{}(", "sleeper");
-        let seams = [
-            ("agent/turn.rs", "lane_capabilities::raw_turn("),
-            ("agent/goal.rs", "lane_capabilities::goal_arc("),
-            ("agent/goal/goal_wrapped.rs", "lane_capabilities::goal_arc("),
-        ];
+        let seams = [("agent/turn.rs", "lane_capabilities::raw_turn(")];
 
         for (path, source) in door_sources() {
             assert!(

@@ -14,8 +14,7 @@ use colored::Colorize;
 use stella_core::ports::{Principal, ToolExecutor};
 use stella_core::router::{CircuitBreaker, ProviderProfile};
 use stella_core::{
-    BudgetGuard, CalibrationMap, Engine, EngineConfig, GoalConfig, GoalOutcome, RoleTable, Router,
-    TurnOutcome,
+    BudgetGuard, CalibrationMap, Engine, EngineConfig, RoleTable, Router, TurnOutcome,
 };
 use stella_mcp::{McpConfig, McpServerConfig, McpToolSet};
 use stella_model::credential::ApiKey;
@@ -221,7 +220,9 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     )
     .await?;
 
-    crate::subagent::install_for_session(cfg, &registry)?;
+    // Bound rather than discarded: `/goal` binds a wrapper plugin whose
+    // child-turn plane is spent by this session's own dispatcher (`#3911`).
+    let sub_agents = crate::subagent::install_for_session(cfg, &registry)?;
     let ask = human_is_present(true);
     let active_rules = crate::rules::enforce_workspace_rules(
         &registry,
@@ -482,9 +483,26 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             };
             let goal: &str = &goal_owned;
             println!();
-            // Phase 2 (#713): carried to `run_goal_turn`, which owns the
-            // event channel this turn's telemetry rides and the tool stack
-            // its skill scopes narrow.
+            // `/goal` binds the same wrapper plugin `stella goal` does
+            // (`#3911`). Resolved per invocation rather than once for the
+            // session: each `/goal` is its own arc and pins its own candidate
+            // grant before its own first round, and a session that never types
+            // `/goal` never pays for a resolve it does not use.
+            let goal_wrapper = goal::resolve_goal_wrapper(cfg, goal::DEFAULT_GOAL_WRAPPER, None)
+                .and_then(|(resolved, candidate)| {
+                    let bound = goal::bind_goal_wrapper(cfg, resolved, &sub_agents, &candidate)?;
+                    Ok((bound, candidate))
+                });
+            let (bound, candidate) = match goal_wrapper {
+                Ok(pair) => pair,
+                Err(failure) => {
+                    eprintln!("  {} {failure}\n", "Error:".red().bold());
+                    continue;
+                }
+            };
+            // Phase 2 (#713): carried to the driver, which owns the event
+            // channel this turn's telemetry rides and the tool stack its skill
+            // scopes narrow.
             let mut recall = crate::memory::OpeningRecall::default();
             if let Some(m) = &mut memory {
                 // Same schedule as the plain prompts above (#1221): one
@@ -504,26 +522,43 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             let turn_start = messages.len();
             let started_unix = crate::memory::unix_now_secs();
             presence.update_prompt(goal);
-            // One ledger per round of the arc (#3962), filled by the goal loop
-            // from the journal its renderer drained.
+            // One ledger per round the wrapper held open (#3962), folded by
+            // the driver from each round's own journal.
             let mut goal_rounds: Vec<TurnFriction> = Vec::new();
-            let result = run_goal_turn(
-                &*provider,
-                base_tools,
-                &custom_tools,
-                &registry,
-                &mut messages,
-                &mut budget,
-                &calibration,
-                cfg,
-                &store,
+            let wrapper_id = bound.wrapper_id();
+            let result = crate::wrapper_plugin::run_wrapped(
+                &bound,
                 goal,
-                Some(presence.id()),
-                recall,
-                memory.as_mut(),
-                Some(&mut goal_rounds),
+                crate::wrapper_plugin::pre_turn_signals(false, budget_limit.is_some()),
+                Some(candidate.grant.clone()),
+                false,
+                crate::wrapper_plugin::RawTurnDriver {
+                    provider: &*provider,
+                    base_tools,
+                    custom_tools: &custom_tools,
+                    registry: &registry,
+                    messages: &mut messages,
+                    budget: &mut budget,
+                    calibration: &calibration,
+                    router: &router,
+                    cfg,
+                    format: OutputFormat::Text,
+                    store: &store,
+                    prompt: goal,
+                    session: presence.id(),
+                    door: "goal",
+                    wrapper_id: wrapper_id.as_str(),
+                    recall,
+                    memory: memory.as_mut(),
+                    watch: &candidate.watch,
+                    controls: controls.clone(),
+                    results: Vec::new(),
+                    friction: &mut goal_rounds,
+                    rounds: crate::turn_row::TurnRow::new(),
+                },
             )
-            .await;
+            .await
+            .map_err(|failure| failure.to_string());
             presence.needs_input();
             record_turn_episode(
                 &memory,

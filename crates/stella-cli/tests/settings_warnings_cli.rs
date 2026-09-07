@@ -437,6 +437,73 @@ fn a_trusted_checkouts_json_summary_reports_no_withholding() {
     );
 }
 
+/// Install a minimal wrapper plugin declaring `goal-v1` into the **user**
+/// tier, so `stella goal` has a verb to resolve (`#3911`).
+///
+/// The user tier rather than the project one, and that is the whole reason
+/// this helper exists: the workspace under test is untrusted — which is what
+/// the witness is about — and a project-tier plugin would not load there. The
+/// goal run would refuse before opening a journal, and the witness below would
+/// read an absent `events` table as a missing notice.
+///
+/// Steering grade, one point, no `[requirements]`: it cannot hold a round
+/// open, so the run dispatches exactly one turn and fails at the closed port
+/// like every other door in this file.
+///
+/// Installed through the real `stella plugin install --yes`, not by writing
+/// into the tier directly: the roster refuses a plugin with no consent record
+/// whatever tier it sits in, which is the gate a hand-written directory walks
+/// straight into.
+fn install_goal_plugin(dir: &tempfile::TempDir, home: &tempfile::TempDir) {
+    let source = home.path().join("goal-notice-fixture");
+    write_goal_plugin(&source);
+    let out = Command::new(env!("CARGO_BIN_EXE_stella"))
+        .without_embedder_backend()
+        .args(["plugin", "install", "--scope", "user", "--yes"])
+        .arg(&source)
+        .current_dir(dir.path())
+        .env("HOME", home.path())
+        .env("STELLA_HOME", home.path())
+        .env("STELLA_DATA_DIR", home.path())
+        .env("NO_COLOR", "1")
+        .env("STELLA_NO_ENV_FILE", "1")
+        .env("STELLA_CATALOG_AUTO_REFRESH", "0")
+        .output()
+        .expect("run stella plugin install");
+    assert!(
+        out.status.success(),
+        "the goal verb needs an installed wrapper: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+fn write_goal_plugin(dir: &std::path::Path) {
+    std::fs::create_dir_all(dir).expect("plugin dir");
+    std::fs::write(
+        dir.join("plugin.toml"),
+        r#"
+name = "goal-notice-fixture"
+[loop]
+participation = "steering"
+points = ["before_turn"]
+[runtime]
+argv = ["/bin/sh", "${plugin_dir}/main.sh"]
+timeout_secs = 30
+env = ["PATH"]
+[wrapper]
+id = "goal-v1"
+[[wrapper.stages]]
+name = "execute"
+"#,
+    )
+    .expect("plugin.toml");
+    std::fs::write(
+        dir.join("main.sh"),
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"point\":\"before_turn\",\"body\":{\"protocol_version\":1}}'\n",
+    )
+    .expect("main.sh");
+}
+
 /// A one-shot `stella goal` in `dir`, against the same closed loopback port
 /// [`run_stream_json`] uses and for the same reason: the notice is emitted
 /// when the run's channel opens, long before a provider is asked for
@@ -447,6 +514,7 @@ fn a_trusted_checkouts_json_summary_reports_no_withholding() {
 /// renderer persists — `<workspace>/.stella/private/store.db`, the `events`
 /// table.
 fn goal_run(dir: &tempfile::TempDir, home: &tempfile::TempDir, extra_env: &[(&str, &str)]) {
+    install_goal_plugin(dir, home);
     let mut command = Command::new(env!("CARGO_BIN_EXE_stella"));
     command
         .without_embedder_backend()
@@ -505,12 +573,15 @@ fn withheld_events_in_journal(dir: &tempfile::TempDir) -> Vec<String> {
 /// **Witness (#4500).** `stella goal` is a door too: an untrusted checkout's
 /// refusal reaches its event stream, not only its stderr.
 ///
-/// The goal loop drives `Engine::run_goal` itself rather than
+/// The goal loop once drove `Engine::run_goal` itself rather than
 /// `agent::run_turn`, so it reached neither of the two openers that carry
 /// this notice — `agent::output::open_raw_turn` and the deck's boot
 /// announcement. The stderr line `Settings::load` prints was the whole of
 /// what a `stella goal` user got; the journal, `stella export` and anything
-/// reading the run's events had nothing.
+/// reading the run's events had nothing. The door drives `run_turn`
+/// (`#3911`), so the notice rides the same opener every raw door uses — a
+/// structural answer rather than a wiring one, and why this file keeps asking
+/// the question end to end.
 #[test]
 fn an_untrusted_checkouts_withheld_steering_reaches_a_goal_runs_journal() {
     let (dir, home) = steering_workspace();
@@ -632,10 +703,12 @@ fn fleet_run(dir: &tempfile::TempDir, home: &tempfile::TempDir, extra_env: &[(&s
 }
 
 /// **Witness (#4500, the fleet door).** A fleet attempt's journal records the
-/// untrusted checkout's refusal — once per attempt, because each worker is
-/// its own session in its own workspace (its own store, its own SessionStart
-/// hooks, its own system prompt), so the process-wide latch the goal door
-/// spends would let the first lane's journal vouch for every sibling's.
+/// untrusted checkout's refusal, once per attempt.
+///
+/// Once per attempt because each worker is its own session in its own
+/// workspace, with its own store, its own SessionStart hooks and its own
+/// system prompt. The process-wide latch the goal door spends would let the
+/// first lane's journal vouch for every sibling's.
 ///
 /// `stella fleet` routed through neither opener that carries the notice, so
 /// an untrusted checkout fanning out N workers had the refusal on stderr and

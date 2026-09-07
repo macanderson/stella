@@ -83,7 +83,7 @@ fn composed(selection: &str) -> BoundWrapper {
 fn a_comma_separated_selection_binds_every_member_in_the_order_given() {
     let bound = composed("ground-v1,plan-fixture-v1");
     assert_eq!(
-        bound.variant(),
+        bound.wrapper_id(),
         "ground-v1,plan-fixture-v1",
         "the composition's id names both members, in the order the selection did"
     );
@@ -95,7 +95,7 @@ fn a_comma_separated_selection_binds_every_member_in_the_order_given() {
 
     let reversed = composed("plan-fixture-v1,ground-v1");
     assert_eq!(
-        reversed.variant(),
+        reversed.wrapper_id(),
         "plan-fixture-v1,ground-v1",
         "the order is the selection's — nothing else in the system knows it"
     );

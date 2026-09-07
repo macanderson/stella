@@ -256,16 +256,30 @@ pub(crate) fn session_host(
 /// doors mint exactly one such grant, and it is what `granted` carries; a door
 /// that minted none (no `--pipeline`, no `--test-command`) installs no plane
 /// rather than one that refuses every handle.
+///
+/// **`child_turns` is the door's own funding**, and `None` is the host default
+/// ([`stella_runtime::wrapper::DEFAULT_HOST_MAX_CHILD_TURNS`]). It is the door
+/// answering, never the manifest: a plugin that could raise its own ceiling by
+/// declaring a bigger number would be setting the user's budget for them, so
+/// the clamp stays and the narrowing is announced (`#3841`). What a door may
+/// do is fund the rounds its own verb promises — `stella goal` funds
+/// `GoalConfig::default().max_rounds`, the number its predecessor ran
+/// (`#3911`).
 pub(crate) fn round_driver_host(
     recall_root: &std::path::Path,
     manifest: &stella_plugin::PluginManifest,
     dispatcher: Arc<dyn SubAgentDispatcher>,
     granted: Option<&stella_plugin::CandidateGrant>,
+    child_turns: Option<u32>,
 ) -> WrapperHost {
+    let mut plane = child_turn_plane(manifest, dispatcher);
+    if let Some(turns) = child_turns {
+        plane = plane.with_max_turns(turns);
+    }
     let host = WrapperHost::recalling(Box::new(crate::wrapper_recall::SessionRecallHost::open(
         recall_root,
     )))
-    .with_child_turns(Arc::new(child_turn_plane(manifest, dispatcher)));
+    .with_child_turns(Arc::new(plane));
     match test_run_plane(manifest, granted) {
         Some(plane) => host.with_test_runs(Arc::new(plane)),
         None => host,

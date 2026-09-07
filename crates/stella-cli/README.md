@@ -67,17 +67,17 @@ Specific changes this crate is the far end of:
   and `stella fleet`.** [`src/wrapper_plugin.rs`](src/wrapper_plugin.rs) resolves an
   installed manifest and drives `stella_runtime::WrapperDispatch` for a live
   turn when `--pipeline <variant>` names a plugin id (#3494);
-  `plugins/stella-research` is the shipped reference plugin. `stella goal`
-  binds the same wrapper once and dispatches it once per judged round
-  ([`src/agent/goal/goal_wrapped.rs`](src/agent/goal/goal_wrapped.rs)),
-  leaving the goal verifier untouched (#3695, goal half) — but only for a
-  steering/observer wrapper: an arbiter-grade wrapper is refused on this door
-  before the provider is ever built
-  ([`src/wrapper_plugin.rs`](src/wrapper_plugin.rs)'s
-  `reject_arbiter_wrapper_on_goal`, #3832), because `stella goal`'s own round
-  loop is already this door's completion arbiter and a wrapper's own hold
-  loop running inside one judged round would be a second one judging the same
-  round — `stella run --pipeline <variant>` is its designed home instead.
+  `plugins/stella-research` is the shipped reference plugin. **`stella goal`
+  is a resolver onto that same socket** since #3911
+  ([`src/agent/goal.rs`](src/agent/goal.rs)): it binds an installed wrapper —
+  `goal-v1` with no `--pipeline` named, which `plugins/stella-goal` declares —
+  and hands it the turn, so the plugin's `again` decides how many rounds the
+  goal takes and its `after_turn` spends the verifier call. With nothing
+  installed the verb refuses and names `stella plugin install`, the shape
+  `--pipeline classic` already uses. The arbiter refusal that stood on this
+  door (#3832) is gone with the built-in loop it protected: arbiter is the
+  grade the verb now wants, because it is the only one that may hold a
+  completion open past its first turn.
   `stella fleet` binds one wrapper per worker attempt, in that attempt's own
   tree, and dispatches the attempt's turn through it
   ([`src/fleet_cmd/wrapped.rs`](src/fleet_cmd/wrapped.rs), #3695 fleet half);

@@ -108,23 +108,20 @@ and calls it exactly once per process, over the one raw turn the process
 runs; `stella fleet --pipeline <variant>` (#3695, fleet half) calls it once
 **per worker attempt**, on that worker's own thread and over that attempt's
 own tree, with each internal round claiming its own `turn_instance` under the
-attempt's single execution row; `stella goal --pipeline <variant>` (#3695,
-goal half) calls it once **per judged round** — the goal loop's own round loop, not
-`WrapperDispatch`'s, decides how many rounds run, because the goal verifier
-(`stella_core::Engine::assess`) stays outside `judge`/`again` entirely. That
-per-round shape is why `stella goal` refuses an arbiter-grade wrapper before
-ever calling `WrapperDispatch::run`
-(`crates/stella-cli/src/wrapper_plugin.rs::reject_arbiter_wrapper_on_goal`,
-#3832): only an arbiter grade can make `again` hold a round open past its
-first internal turn, and holding one open *inside* an already-judged goal
-round would be a second arbiter judging the round the goal loop's own
-`Engine::assess` is already judging — a shape this door refuses outright
-rather than let `WrapperDispatch`'s hold loop and the goal loop's hold loop
-collide. An arbiter-grade wrapper's designed home is `stella run --pipeline
-<variant>` instead, where `WrapperDispatch` is the only thing holding a turn
-open — and `stella fleet`, whose attempt has no completion arbiter of its own,
-applies no such refusal. On any of the three doors, an installed wrapper plugin
-participates in a live turn and its id reaches `executions.pipeline_variant`.
+attempt's single execution row; and `stella goal` calls it **once**, with the
+bound plugin's own `again` deciding how many rounds the goal takes (#3911).
+
+That last door read the other way round until #3911. `stella goal` carried a
+round loop of its own — `stella_core::Engine::run_goal` against
+`Engine::assess` — and called `WrapperDispatch::run` once per judged round, so
+an arbiter-grade wrapper was refused there outright: only an arbiter can make
+`again` hold a round open past its first internal turn, and holding one open
+*inside* an already-judged goal round would have been a second arbiter judging
+the round the first one was already judging. The verb binds a plugin and hands
+it the turn now, so there is no first arbiter to collide with and arbiter is
+the grade the door wants. On any of the three doors, an installed wrapper
+plugin participates in a live turn and its id reaches
+`executions.pipeline_variant`.
 
 What has **not** landed: the other two drivers `doc:wrapper-socket` §6 makes an
 acceptance criterion — `stella-serve` over HTTP and a minimal embedded host

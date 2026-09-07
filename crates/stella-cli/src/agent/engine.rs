@@ -436,16 +436,19 @@ pub(crate) struct EngineWiring {
     pub(crate) notices: Vec<String>,
 }
 
-/// Resolve one role's already-computed [`crate::engine_config::ModelSpec`] into a pin: find the
-/// credentialed provider, and build its adapter unless the pin names the
-/// exact same model the primary resolver entry already serves (`base_ref` —
-/// always the literal session-default `ModelRef` the pre-built primary
-/// provider is bound to, never an already-overridden ref, so this check
-/// stays "does this need a NEW adapter instance" regardless of which role is
-/// being pinned). Every failure here is soft — a missing credential or a
-/// build error pushes a notice and leaves `role` unpinned, degrading to
-/// `fallback` in the router, never a hard error. Returns the resolved
-/// [`ModelRef`] on success.
+/// Turn one role's [`crate::engine_config::ModelSpec`] into a pin.
+///
+/// Find the credentialed provider. Build its adapter, unless the pin names
+/// the model the primary resolver entry already serves.
+///
+/// `base_ref` is that model. It is always the session-default `ModelRef` the
+/// pre-built primary provider is bound to, never an already-overridden one.
+/// So the check asks "does this need a new adapter?" whichever role is being
+/// pinned.
+///
+/// Every failure here is soft. A missing credential or a build error pushes a
+/// notice and leaves `role` unpinned, which degrades to `fallback` in the
+/// router. Returns the resolved [`ModelRef`] on success.
 ///
 /// Takes one `role`, not a slice: `Role::Worker` is the only router role
 /// this session ever pins.
@@ -541,11 +544,11 @@ fn pin_role(
 /// plan, each from its own `pipeline_<role>_model` key, each pinned into the
 /// [`RoleTable`]. Those pins were **read by nothing**: the only live
 /// `Router::resolve` call site is `SessionFallback::resolve_fallback`
-/// (`Role::Worker` alone), and [`resolve_cross_family_verifier`] does not
-/// resolve a `Role` at all — it calls `Router::resolve_cross_family`, whose
-/// router it builds with `RoleTable::new()` regardless. So an operator could
-/// set `pipeline_verifier_model` and watch it resolve, log, and steer
-/// nothing — including at the one place a second model actually runs. The
+/// (`Role::Worker` alone), and the goal loop's own cross-family verifier
+/// resolved no `Role` at all — it called `Router::resolve_cross_family`,
+/// whose router it built with `RoleTable::new()` regardless. So an operator
+/// could set `pipeline_verifier_model` and watch it resolve, log, and steer
+/// nothing — including at the one place a second model actually ran. The
 /// keys are retired (`settings::unknown`) rather than dropped in silence, and
 /// a model for a participant other than the session's own is now a
 /// plugin-declared seat ([`crate::agent::seats`]); the four now-unroutable
@@ -646,10 +649,10 @@ pub(crate) fn build_provider(cfg: &Config) -> Result<Box<dyn Provider>, String> 
 }
 
 /// The per-dialect provider factory, over already-resolved parts rather than
-/// a whole [`Config`]. Both the worker path ([`build_provider`]) and the
-/// goal loop's routed verifier ([`resolve_cross_family_verifier`]) go through this
-/// one match, so the wire-dialect selection — and the anti-phantom-slug
-/// catalog check — live in exactly one place. `effective_base_url` is the
+/// a whole [`Config`]. The worker path ([`build_provider`]) and every seat a
+/// wrapper plugin's child turn resolves both go through this one match, so
+/// the wire-dialect selection — and the anti-phantom-slug catalog check —
+/// live in exactly one place. `effective_base_url` is the
 /// base URL requests go to (override-or-default); `base_url_override` is the
 /// raw `--base-url`, which only the Vertex/Bedrock arms consume (they build
 /// region/project-scoped URLs themselves). `aux` carries whatever the provider
@@ -737,90 +740,6 @@ pub(crate) fn provider_family(provider_id: &str) -> String {
     }
 }
 
-/// A `ProviderProfile` for a discovered provider, using its `default_model`
-/// as both the worker and verifier model (the finest model this layer knows
-/// without a per-role catalog) and [`provider_family`] for cross-family
-/// grouping.
-fn profile_for(config: &crate::config::ProviderConfig) -> ProviderProfile {
-    let model = ModelRef::new(config.id, config.default_model);
-    ProviderProfile::new(config.id, model.clone(), model).with_family(provider_family(config.id))
-}
-
-/// Resolve the goal loop's verifier seat, and build the adapter that serves
-/// it — the session's whole answer to "does verification run on a model of
-/// its own?".
-///
-/// Builds a [`Router`] whose most-preferred provider is the active worker
-/// (`worker_id`/`worker_model`, so the `--model` pin is honored) followed by
-/// every OTHER configured provider, then asks it for a provider in a
-/// different family than the worker's
-/// ([`Router::resolve_cross_family`]).
-///
-/// - The router lands back on the worker's own provider → `None`, and no
-///   second adapter is built. This is the single-family case: a seat that
-///   cannot diverge says so by returning `None` rather than by building a
-///   duplicate adapter.
-/// - A distinct provider is selected → its concrete adapter and id.
-///
-/// Returns `None` on ANY failure — degradation to the worker, a resolve
-/// error, an unknown provider, or an adapter build failure — so this can
-/// never break the loop that asked for it. The caller's `None` arm is "use
-/// the worker's provider", which is what the session did before this seat
-/// existed.
-///
-/// Takes no `role` parameter: the strategy this asks for — "a provider in a
-/// different family than this one" — is fixed, not one of several roles
-/// core routes generically.
-pub(crate) fn resolve_cross_family_verifier(
-    worker_id: &str,
-    worker_model: &str,
-    configured: &[crate::config::ConfiguredProvider],
-) -> Option<(Box<dyn Provider>, String)> {
-    let worker_ref = ModelRef::new(worker_id, worker_model);
-    let worker_profile = ProviderProfile::new(worker_id, worker_ref.clone(), worker_ref)
-        .with_family(provider_family(worker_id));
-
-    let mut profiles = vec![worker_profile];
-    for entry in configured {
-        if entry.config.id == worker_id {
-            continue; // the worker is already the preferred profile
-        }
-        profiles.push(profile_for(&entry.config));
-    }
-
-    let router = Router::new(
-        RoleTable::new(),
-        profiles,
-        CircuitBreaker::new(Box::new(SystemClock::new())),
-    );
-    let decision = router.resolve_cross_family().ok()?;
-
-    // Same provider as the worker → single-family/degraded: reuse the worker
-    // provider directly, never build a duplicate.
-    if decision.model_ref.provider == worker_id {
-        return None;
-    }
-
-    // Build the concrete adapter from the discovered credential for the chosen
-    // provider. A missing entry or a build error falls back to the worker.
-    let entry = configured
-        .iter()
-        .find(|c| c.config.id == decision.model_ref.provider)?;
-    let seat = build_provider_parts(
-        &entry.config,
-        &decision.model_ref.model_id,
-        entry.api_key.clone(),
-        entry.config.base_url.to_string(),
-        None,
-        entry.aux.clone(),
-        // A routed seat's calls land in bursts within a run; the 5-minute
-        // window is the right ask regardless of surface (#1839).
-        stella_model::CacheTtl::default(),
-    )
-    .ok()?;
-    Some((seat, decision.model_ref.provider))
-}
-
 /// The session-scoped role [`Router`] for a bare (non-pipeline) loop — the
 /// same wiring the pipeline paths build per run, held for the whole session
 /// so its breaker accumulates the observed outcome of every turn's model
@@ -846,11 +765,10 @@ pub(crate) fn session_router(cfg: &Config, worker_ref: &ModelRef) -> Router {
 /// `outcomes` slot, so resolution routes around the sick provider.
 /// The replacement adapter is built from the discovered credentials on
 /// first use and owned here (set-once), so the engine can borrow it for the
-/// rest of the turn. Every miss is soft, matching
-/// [`resolve_cross_family_verifier`]: a resolve error, a resolution landing
-/// back on the failed provider, an uncredentialed target, or an adapter
-/// build failure all yield `None` — the turn then aborts exactly as it did
-/// before this seam existed.
+/// rest of the turn. Every miss is soft: a resolve error, a resolution
+/// landing back on the failed provider, an uncredentialed target, or an
+/// adapter build failure all yield `None` — the turn then aborts exactly as
+/// it did before this seam existed.
 pub(crate) struct SessionFallback<'r> {
     router: &'r Router,
     built: std::sync::OnceLock<Box<dyn Provider>>,
@@ -928,9 +846,9 @@ pub(crate) struct ReflectionRoute {
 /// comment carries why the choice was made and where it may go next. What is
 /// read now is `default_model` / `agents.default.model`.
 ///
-/// Every miss is soft, matching [`resolve_cross_family_verifier`] and
-/// `pin_role`: no engine settings, no model spec, an uncredentialed
-/// provider, or an adapter that will not build all yield `None`, and the
+/// Every miss is soft, matching [`pin_role`]: no engine settings, no model
+/// spec, an uncredentialed provider, or an adapter that will not build all
+/// yield `None`, and the
 /// caller keeps dispatching on the worker exactly as every reflection call
 /// always has. A triage spec that resolves to the session default model is
 /// the one near-miss that is still a route: [`ReflectionRoute::provider`] is

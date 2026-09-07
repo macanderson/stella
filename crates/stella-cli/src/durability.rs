@@ -803,25 +803,21 @@ mod tests {
         let mark = format!("mark_turn_{}", "end(");
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         for (file, marker, boundary) in [
-            // `stella run`'s pipeline path and the shared raw turn (the
-            // `--no-pipeline` one-shot, the plain REPL) close through
-            // `turn_close::close_turn`, which cannot settle an execution row
-            // without also marking the turn.
+            // The shared raw turn, and every door that reaches it: the
+            // `--no-pipeline` one-shot, the plain REPL, and — since `#3911` —
+            // both `stella goal` doors, which bind a wrapper plugin and drive
+            // each of its rounds through this same `run_turn`. It closes
+            // through `turn_close::close_turn`, which cannot settle an
+            // execution row without also marking the turn.
+            //
+            // `agent/goal.rs` carried its own entry while it drove a loop of
+            // its own, and the #2177 shape had already recurred there once.
+            // It owns no turn boundary now — the driver does — so a second
+            // entry would pin a call site that is meant to be absent.
             (
                 "agent/turn.rs",
                 "turn_close::close_turn(",
                 "run_pipeline_one_shot / run_turn",
-            ),
-            // `stella goal`'s three arms (raw, `--pipeline classic`, and
-            // `--pipeline <plugin>`) each close through the same
-            // `close_turn`, named `crate::agent::turn_close::close_turn` from
-            // these descendant modules (#2177 shape recurred here — see the
-            // P0 finding this closes).
-            ("agent/goal.rs", "close_turn(", "run_goal_turn"),
-            (
-                "agent/goal/goal_wrapped.rs",
-                "close_turn(",
-                "run_goal_wrapped_turn",
             ),
             // The `stella daemon resume` foreground child — the other half
             // of the same recurrence, folding both its restored-turn and

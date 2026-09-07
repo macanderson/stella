@@ -399,17 +399,10 @@ changing engine behavior, these are the places to look:
     ]}
   />
   <SpecCard
-    title="Goal — raw rounds (default)"
+    title="Goal"
     meta={[
-      { label: "Entry", value: "agent::goal::run_goal_cmd → run_goal_turn" },
-      { label: "Engine call", value: "Engine::run_goal with a verifier", mono: false },
-    ]}
-  />
-  <SpecCard
-    title="Goal — wrapped rounds (--pipeline <variant>)"
-    meta={[
-      { label: "Entry", value: "agent::goal::run_goal_cmd → run_goal_pipeline_turn" },
-      { label: "Engine call", value: "wrapped rounds + a verifier engine over ReadOnlyTools", mono: false },
+      { label: "Entry", value: "agent::goal::run_goal_cmd" },
+      { label: "Engine call", value: "one Engine::run_turn per round the bound plugin holds open", mono: false },
     ]}
   />
   <SpecCard

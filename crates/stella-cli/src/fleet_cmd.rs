@@ -771,7 +771,7 @@ async fn run_task(
     // installed plugin's own variant id (#3695).
     // Bound before the call: a composition's variant id is assembled on demand
     // (#3801), so the borrow below needs something that outlives the argument.
-    let variant = wrapped.as_ref().map(wrapped::AttemptWrapper::variant);
+    let variant = wrapped.as_ref().map(wrapped::AttemptWrapper::wrapper_id);
     let execution = agent::begin_execution(
         &store,
         "fleet",

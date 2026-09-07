@@ -326,26 +326,29 @@ agent_event_tags! {
             site: "stella-cli/src/agent/persistence.rs::persist_event_detailed",
         },
         &[Surface::Observatory];
-    // Audited out of the #2703 backlog by #3977. `Behavioral`: the reflection
-    // digest splits a goal arc's journal at each verdict and labels every
-    // segment from this event's own `round`, so deleting the consumer would
-    // make the ledger reflection mines into memory attribute round 1's failed
-    // tool to the last round — a change in what the engine does with its
-    // evidence, not in what a human sees. The engine's own halt is decided by
-    // the typed `GoalVerifierVerdict` (`stella-core/src/goal.rs`), never by
-    // this event, so `site` names the reflection consumer rather than the loop.
-    // `surfaces` stays empty and that is not a weaker claim: interactive mode renders
-    // every case by construction (see `Surface`'s doc), the offline HTML
-    // export in `stella-cli/src/export/transcript.rs` reads the recorded
-    // stream rather than selecting cases, and no `Surface` chooses this tag
-    // — the Observatory's journal query (`journal.rs`) and its
+    // Audited out of the `#2703` backlog by `#3977`, and demoted from `Behavioral`
+    // by `#3911`. The consumer it named was the reflection digest's
+    // `per_goal_round`, which split a goal arc's single journal at each verdict
+    // and labelled every segment from this event's own `round`. That fold
+    // existed because the built-in goal loop drove its rounds inside
+    // `stella-core` and left the door one undivided stream. `stella goal` binds
+    // a wrapper plugin, so every round is its own `run_turn` with its own
+    // journal, and the driver numbers each ledger as it folds it
+    // (`TurnFriction::in_round`) — from what it has already driven, never from
+    // this event.
+    //
+    // `stella-serve`'s `drive_goal` still emits one per round of a served goal
+    // run. Nothing branches on it: interactive mode renders every case by
+    // construction (see `Surface`'s doc), the offline HTML export in
+    // `stella-cli/src/export/transcript.rs` reads the recorded stream rather
+    // than selecting cases, and no `Surface` chooses this tag — the
+    // Observatory's journal query (`journal.rs`) and its
     // `TENDENCY_EVENT_TYPES` (`sessions.rs`) both name explicit `event_type`
     // lists that omit `goal_verdict`. `stella-cli/src/diag_bridge.rs` emits a
-    // diagnostic record, which is recording, not deciding.
+    // diagnostic record, which is recording, not deciding. So the posture is
+    // the one `Proof` and `Verdict` beside it carry.
     GoalVerdict => "goal_verdict",
-        ConsumerPosture::Behavioral {
-            site: "stella-cli/src/memory/reflection/digest.rs::TurnFriction::per_goal_round",
-        },
+        ConsumerPosture::RecordedOnly { issue: "#3790" },
         &[];
     // Audited out of the #2703 backlog by #3916. `Surfaced` rather than
     // `Behavioral`: the swap has already happened in
@@ -478,13 +481,14 @@ agent_event_tags! {
     // (`stella-tui/src/model.rs`) into the one-line textline verdict — still
     // rendering, still no branch, still no selecting surface. `RecordedOnly`
     // is about this crate's readers, not about whether anything writes.
-    // `stella-cli`'s `agent::goal::goal_wrapped` publishes one per judged
-    // round. It converts `stella_runtime::wrapper::DispatchReport` rather
-    // than re-deriving a verdict — a different producer than the
-    // verification plugin #3790 anticipated. The `run` and `fleet` doors
-    // publish it too. `fleet` sends it on the attempt's open channel. `run`
-    // appends it to the last round's row, whose channel has already closed
-    // by the time a verdict exists (`stella-cli/src/turn_row.rs`).
+    // `stella-cli`'s `wrapper_plugin::run_wrapped` publishes one per wrapped
+    // run, on every door that binds a plugin — `run`, `goal` and `fleet`. It
+    // converts `stella_runtime::wrapper::DispatchReport` rather than
+    // re-deriving a verdict, a different producer than the verification
+    // plugin #3790 anticipated. `fleet` sends it on the attempt's open
+    // channel; `run` and `goal` append it to the last round's row, whose
+    // channel has already closed by the time a verdict exists
+    // (`stella-cli/src/turn_row.rs`).
     Verdict => "verdict",
         ConsumerPosture::RecordedOnly { issue: "#3790" },
         &[];

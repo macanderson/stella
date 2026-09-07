@@ -235,18 +235,18 @@ const RETIRED: &[(&str, &str)] = &[
         "picked a model for the verifier role out of allowed_models, preferring \
          a family different from the worker's and ranking by catalog list \
          price; the role and its selector are gone with the rest of the role \
-         collapse above. The live second-model path is `stella goal`'s \
-         `resolve_cross_family_verifier`, which groups by family at the point \
-         of use and does not read this key",
+         collapse above. A second model now runs because an installed \
+         wrapper plugin declared a seat and asked for a child turn, which \
+         does not read this key",
     ),
     (
         "agents.auto_mode",
         "picked a model for the verifier role out of allowed_models, preferring \
          a family different from the worker's and ranking by catalog list \
          price; the role and its selector are gone with the rest of the role \
-         collapse above. The live second-model path is `stella goal`'s \
-         `resolve_cross_family_verifier`, which groups by family at the point \
-         of use and does not read this key",
+         collapse above. A second model now runs because an installed \
+         wrapper plugin declared a seat and asked for a child turn, which \
+         does not read this key",
     ),
 ];
 

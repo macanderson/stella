@@ -485,15 +485,28 @@ published-numbers decision a maintainer makes.
 
 ### Slice 7 — goal and monitor leave core (gap B, and the last one)
 
-`stella goal`'s round loop and its cross-family verifier are the last stage core
-performs, and the last multi-model path it ships. They become the reference
-plugin. Blocked on [`doc:turn-loop-wrappers`] §9.2's unsettled encoding: the goal
-verifier's **free-text feedback** — which is what steers the next round — has no
-slot in `EvidenceSet`'s flip/tamper/measurement vocabulary.
+`stella goal`'s round loop and its cross-family verifier were the last stage
+core performed on this door, and the last multi-model path it reached. They are
+`plugins/stella-goal` now. The encoding that blocked the slice —
+[`doc:turn-loop-wrappers`] §9.2 left the goal verifier's **free-text feedback**
+with no slot in `EvidenceSet`'s flip/tamper/measurement vocabulary — is settled
+by [`doc:adr/0033-free-text-is-not-evidence`]: the text is never encoded, and
+rides beside the verdict on a channel `judge`'s signature cannot reach.
 
 - **Done when:** `stella goal` resolves to an installed plugin, and
   `reject_arbiter_wrapper_on_goal` is deleted because there is no longer a
-  built-in arbiter to collide with.
+  built-in arbiter to collide with. **Both landed.** The verb binds `goal-v1`
+  with no `--pipeline` named, refuses with `stella plugin install` when nothing
+  supplies it, and funds `GoalConfig::default().max_rounds` on the hold loop and
+  the child-turn plane so the move costs the user no rounds. The refusal is
+  gone, and the door wants the grade it once rejected.
+
+**What did not move with it.** `stella-serve`'s `drive_goal` still re-expresses
+`Engine::run_goal` over its own cancellable turn driver, so `stella_core::goal`
+keeps `Engine::assess`, `GoalConfig` and the shared kickoff/feedback wording for
+that surface. Whether the engine server hosts plugin subprocesses at all, or
+the `goal` block leaves its wire, is a decision about that surface rather than
+about this door.
 
 ## 7. What this does not change
 
