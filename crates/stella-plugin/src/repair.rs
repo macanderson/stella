@@ -25,8 +25,8 @@
 //! a wrong answer becomes a timeout — so admission is bounded on three
 //! independent axes, and the *tightest* one binds:
 //!
-//! 1. **The cap.** [`REPAIR_ATTEMPT_CAP`] is the hard ceiling on attempts for
-//!    one verification arc, whatever any measurement says.
+//! 1. **The cap.** [`RepairBounds::cap`] bounds one arc's attempts whatever
+//!    any measurement says. It defaults to [`REPAIR_ATTEMPT_CAP`].
 //! 2. **The allowance.** Attempts inside the caller's configured revision
 //!    allowance are granted unconditionally — that is the behaviour every
 //!    caller already had, and this module never takes it away.
@@ -49,7 +49,10 @@
 
 use std::time::Duration;
 
-/// The hard ceiling on repair attempts within one verification arc.
+/// The ceiling on repair attempts a caller gets without choosing one.
+///
+/// A caller that wants a different ceiling sets [`RepairBounds::cap`]; this is
+/// what [`RepairBounds::new`] fills in for one that does not.
 ///
 /// Four, because the shape this exists for is a worker that was *close* —
 /// it did the work and got one criterion wrong — and the measured
@@ -63,6 +66,51 @@ use std::time::Duration;
 /// paragraph above already gives: the distribution bounds this from below and
 /// the value sits above it with room to spare.
 pub const REPAIR_ATTEMPT_CAP: u32 = 4;
+
+/// The two count-based bounds on one verification arc's repair attempts.
+///
+/// They answer different questions, and a caller needs to move them apart.
+/// The allowance is how many attempts are granted whatever the measurements
+/// say; the cap is where granting stops even when a measured axis still has
+/// room. Welded together — the shape this replaces, where the ceiling was the
+/// constant alone and the allowance was the only knob — "grant more rounds,
+/// but only while the budget says so" was inexpressible: raising the ceiling
+/// meant raising the unconditional allowance by the same amount.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RepairBounds {
+    /// Attempts granted whatever the measurements say.
+    pub allowance: u32,
+    /// Where this module stops granting on its own.
+    pub cap: u32,
+}
+
+impl RepairBounds {
+    /// `allowance` unconditional attempts under the default ceiling.
+    #[must_use]
+    pub fn new(allowance: u32) -> Self {
+        Self {
+            allowance,
+            cap: REPAIR_ATTEMPT_CAP,
+        }
+    }
+
+    /// The same allowance under a ceiling the caller chose.
+    #[must_use]
+    pub fn with_cap(self, cap: u32) -> Self {
+        Self { cap, ..self }
+    }
+
+    /// The ceiling that binds: `max(allowance, cap)`.
+    ///
+    /// A cap set below the allowance never withdraws the allowance. The cap
+    /// bounds what this module grants unasked; the allowance is what the
+    /// caller already asked for, and lowering one knob must not silently
+    /// shrink the other.
+    #[must_use]
+    pub fn effective_cap(self) -> u32 {
+        self.allowance.max(self.cap)
+    }
+}
 
 /// What one repair attempt is expected to cost, taken from the attempts
 /// already run.
@@ -139,8 +187,8 @@ impl RepairHeadroom {
 /// reportable reason — a refusal is stated, never silent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepairRefusal {
-    /// [`REPAIR_ATTEMPT_CAP`] (or the caller's larger allowance) is spent.
-    /// The evidence stopped steering the model; more rounds buy a timeout.
+    /// [`RepairBounds::effective_cap`] is spent. The evidence stopped
+    /// steering the model; more rounds buy a timeout.
     CapReached,
     /// The configured allowance is spent and nothing measures the run, so
     /// nothing can say another attempt is affordable.
@@ -190,13 +238,9 @@ impl RepairPlan {
 /// Decide whether a refuted success claim earns another repair attempt.
 ///
 /// `spent` is how many repair attempts this verification arc has already
-/// made, `allowance` the caller's configured revision allowance, and the
+/// made, `bounds` the two counts described on [`RepairBounds`], and the
 /// remaining two arguments are the measurements described on
-/// [`RepairHeadroom`] and [`RepairCost`]. The effective cap is
-/// `max(allowance, REPAIR_ATTEMPT_CAP)` — a caller that configured a *larger*
-/// allowance than the ceiling keeps it, because the ceiling exists to bound
-/// what this module grants on its own, never to withdraw what the caller
-/// already asked for.
+/// [`RepairHeadroom`] and [`RepairCost`].
 ///
 /// The order the bounds are tested in is decisive. The cap is absolute,
 /// so it comes first. Affordability comes next and applies at every level,
@@ -207,18 +251,18 @@ impl RepairPlan {
 #[must_use]
 pub fn plan_repair(
     spent: u32,
-    allowance: u32,
+    bounds: RepairBounds,
     headroom: RepairHeadroom,
     cost: RepairCost,
 ) -> RepairPlan {
-    let cap = allowance.max(REPAIR_ATTEMPT_CAP);
+    let cap = bounds.effective_cap();
     if spent >= cap {
         return RepairPlan::Stop(RepairRefusal::CapReached);
     }
     if !headroom.affords(cost) {
         return RepairPlan::Stop(RepairRefusal::NoHeadroom);
     }
-    if spent >= allowance && headroom.is_unmeasured() {
+    if spent >= bounds.allowance && headroom.is_unmeasured() {
         return RepairPlan::Stop(RepairRefusal::Unmeasured);
     }
     RepairPlan::Attempt {
@@ -254,7 +298,7 @@ mod tests {
     #[test]
     fn a_spent_allowance_with_measured_headroom_still_earns_an_attempt() {
         assert_eq!(
-            plan_repair(1, 1, funded(), cheap()),
+            plan_repair(1, RepairBounds::new(1), funded(), cheap()),
             RepairPlan::Attempt { attempt: 2, cap: 4 }
         );
     }
@@ -265,11 +309,13 @@ mod tests {
     #[test]
     fn an_unmeasured_run_stops_at_its_allowance() {
         assert_eq!(
-            plan_repair(1, 1, RepairHeadroom::default(), cheap()),
+            plan_repair(1, RepairBounds::new(1), RepairHeadroom::default(), cheap()),
             RepairPlan::Stop(RepairRefusal::Unmeasured)
         );
         // ...and inside the allowance it is unaffected.
-        assert!(plan_repair(0, 1, RepairHeadroom::default(), cheap()).is_attempt());
+        assert!(
+            plan_repair(0, RepairBounds::new(1), RepairHeadroom::default(), cheap()).is_attempt()
+        );
     }
 
     /// The cap binds however much room the measurements report.
@@ -280,7 +326,7 @@ mod tests {
             wall_clock: Some(Duration::from_secs(86_400)),
         };
         assert_eq!(
-            plan_repair(REPAIR_ATTEMPT_CAP, 1, rich, cheap()),
+            plan_repair(REPAIR_ATTEMPT_CAP, RepairBounds::new(1), rich, cheap()),
             RepairPlan::Stop(RepairRefusal::CapReached)
         );
     }
@@ -290,14 +336,72 @@ mod tests {
     /// caller asked for.
     #[test]
     fn a_larger_configured_allowance_is_never_withdrawn() {
-        let cap = REPAIR_ATTEMPT_CAP + 4;
+        let allowance = REPAIR_ATTEMPT_CAP + 4;
         assert_eq!(
-            plan_repair(REPAIR_ATTEMPT_CAP, cap, RepairHeadroom::default(), cheap()),
+            plan_repair(
+                REPAIR_ATTEMPT_CAP,
+                RepairBounds::new(allowance),
+                RepairHeadroom::default(),
+                cheap()
+            ),
             RepairPlan::Attempt {
                 attempt: REPAIR_ATTEMPT_CAP + 1,
-                cap,
+                cap: allowance,
             }
         );
+    }
+
+    /// The witness for the knob this module gained: a caller that raises only
+    /// the cap gets exactly that many attempts, and every one past its
+    /// allowance is still bought by a measured axis rather than granted.
+    #[test]
+    fn a_configured_cap_grants_exactly_that_many_measured_attempts() {
+        let bounds = RepairBounds::new(1).with_cap(7);
+        for spent in 0..7 {
+            assert_eq!(
+                plan_repair(spent, bounds, funded(), cheap()),
+                RepairPlan::Attempt {
+                    attempt: spent + 1,
+                    cap: 7,
+                },
+                "attempt {spent} should have been granted"
+            );
+        }
+        assert_eq!(
+            plan_repair(7, bounds, funded(), cheap()),
+            RepairPlan::Stop(RepairRefusal::CapReached)
+        );
+        // The allowance stayed where it was: past it, an unmeasured run still
+        // stops, so raising the cap bought rounds only for a run that can pay.
+        assert_eq!(
+            plan_repair(1, bounds, RepairHeadroom::default(), cheap()),
+            RepairPlan::Stop(RepairRefusal::Unmeasured)
+        );
+    }
+
+    /// The other half of that knob: a cap set below the allowance does not
+    /// take the allowance away, so the two can be moved independently without
+    /// one silently shrinking the other.
+    #[test]
+    fn a_cap_below_the_allowance_still_honours_the_allowance() {
+        let bounds = RepairBounds::new(6).with_cap(1);
+        assert_eq!(bounds.effective_cap(), 6);
+        assert_eq!(
+            plan_repair(5, bounds, RepairHeadroom::default(), cheap()),
+            RepairPlan::Attempt { attempt: 6, cap: 6 }
+        );
+        assert_eq!(
+            plan_repair(6, bounds, RepairHeadroom::default(), cheap()),
+            RepairPlan::Stop(RepairRefusal::CapReached)
+        );
+    }
+
+    /// A caller that names no cap keeps the behaviour it had before the cap
+    /// was a field at all.
+    #[test]
+    fn the_default_cap_is_the_constant() {
+        assert_eq!(RepairBounds::new(0).cap, REPAIR_ATTEMPT_CAP);
+        assert_eq!(RepairBounds::new(0).effective_cap(), REPAIR_ATTEMPT_CAP);
     }
 
     /// Refusing *inside* the allowance is the point of testing affordability
@@ -310,7 +414,7 @@ mod tests {
             wall_clock: None,
         };
         assert_eq!(
-            plan_repair(0, 3, broke, cheap()),
+            plan_repair(0, RepairBounds::new(3), broke, cheap()),
             RepairPlan::Stop(RepairRefusal::NoHeadroom)
         );
     }
@@ -324,7 +428,7 @@ mod tests {
             wall_clock: Some(Duration::from_millis(10)),
         };
         assert_eq!(
-            plan_repair(0, 3, out_of_time, cheap()),
+            plan_repair(0, RepairBounds::new(3), out_of_time, cheap()),
             RepairPlan::Stop(RepairRefusal::NoHeadroom)
         );
     }
@@ -338,7 +442,7 @@ mod tests {
             budget_usd: Some(cheap().usd),
             wall_clock: None,
         };
-        assert!(!plan_repair(0, 3, exact, cheap()).is_attempt());
+        assert!(!plan_repair(0, RepairBounds::new(3), exact, cheap()).is_attempt());
     }
 
     #[test]
@@ -360,21 +464,23 @@ mod tests {
         fn no_inputs_grant_an_attempt_past_the_cap(
             spent in 0u32..64,
             allowance in 0u32..16,
+            configured_cap in 0u32..24,
             budget in proptest::option::of(0.0f64..1_000.0),
             secs in proptest::option::of(0u64..10_000),
             cost_usd in 0.0f64..10.0,
             cost_secs in 0u64..600,
         ) {
+            let bounds = RepairBounds::new(allowance).with_cap(configured_cap);
             let plan = plan_repair(
                 spent,
-                allowance,
+                bounds,
                 RepairHeadroom {
                     budget_usd: budget,
                     wall_clock: secs.map(Duration::from_secs),
                 },
                 RepairCost { usd: cost_usd, wall: Duration::from_secs(cost_secs) },
             );
-            let cap = allowance.max(REPAIR_ATTEMPT_CAP);
+            let cap = allowance.max(configured_cap);
             if let RepairPlan::Attempt { attempt, cap: reported } = plan {
                 prop_assert_eq!(reported, cap);
                 prop_assert!(attempt <= cap);
@@ -386,14 +492,18 @@ mod tests {
         /// are always affordable still stops, in at most `cap` steps. This is
         /// the property that makes the re-entry safe to wire into a loop.
         #[test]
-        fn granting_every_affordable_attempt_still_terminates(allowance in 0u32..16) {
+        fn granting_every_affordable_attempt_still_terminates(
+            allowance in 0u32..16,
+            configured_cap in 0u32..24,
+        ) {
             let unlimited = RepairHeadroom {
                 budget_usd: Some(f64::MAX),
                 wall_clock: Some(Duration::MAX),
             };
-            let cap = allowance.max(REPAIR_ATTEMPT_CAP);
+            let bounds = RepairBounds::new(allowance).with_cap(configured_cap);
+            let cap = bounds.effective_cap();
             let mut spent = 0u32;
-            while plan_repair(spent, allowance, unlimited, cheap()).is_attempt() {
+            while plan_repair(spent, bounds, unlimited, cheap()).is_attempt() {
                 spent += 1;
                 prop_assert!(spent <= cap, "granted more attempts than the cap allows");
             }
