@@ -308,7 +308,8 @@ and this is what consumes the detection at the point a merge is still a
 decision. It runs on `pull_request`. Each run asks the tracker whether a
 `main-red` issue is open at that moment, and fails if one is — naming it. That
 answer is a snapshot, and the paragraph below is how it gets re-taken when
-`main` moves under a pull request that is finished and waiting. On 2026-08-19 the canary
+`main` moves under a pull request that is finished and waiting. On 2026-08-19
+the canary
 worked exactly as designed and it did not help: it filed its issue at 16:57:01,
 and four more PRs merged onto the non-compiling tree over the next 35 minutes,
 the first of them **twelve seconds later** (#3917). Once `main` is red every
