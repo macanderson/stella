@@ -100,6 +100,18 @@
       }
     },
     {
+      "case": "deliver_ready",
+      "message": {
+        "args": {
+          "deliver_ready": {
+            "pr": "4102"
+          }
+        },
+        "call": "deliver_ready",
+        "id": 8
+      }
+    },
+    {
       "case": "deliver_merge",
       "message": {
         "args": {
@@ -108,7 +120,7 @@
           }
         },
         "call": "deliver_merge",
-        "id": 8
+        "id": 9
       }
     }
   ],
@@ -237,6 +249,17 @@
       }
     },
     {
+      "case": "ok/ready",
+      "message": {
+        "ok": {
+          "ready": {
+            "pr": "4102"
+          }
+        },
+        "result": 12
+      }
+    },
+    {
       "case": "ok/merge",
       "message": {
         "ok": {
@@ -244,7 +267,7 @@
             "pr": "4102"
           }
         },
-        "result": 12
+        "result": 13
       }
     },
     {
@@ -885,6 +908,7 @@
       "deliver_open",
       "deliver_observe",
       "deliver_next",
+      "deliver_ready",
       "deliver_merge",
       "sweep_audit",
       "sweep_regress",

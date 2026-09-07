@@ -1,21 +1,30 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The pull request a driver session opens, reads, and merges.
+//! The pull request a driver session opens, reads, takes out of draft, and
+//! merges.
 //!
 //! `doc:backlog-self-driving` §3.3. [`super::work`] is the sibling that
 //! changes files. This is what happens to the branch after that.
 //!
-//! # The merge does not trust the driver
+//! # The two verbs that act do not trust the driver
 //!
 //! `deliver_next` decides over a reading the *driver* sends. That is what
 //! makes it cheap. A loop that already read the forge can ask what to do
 //! without paying for a second read.
 //!
-//! `deliver_merge` does not work that way. It reads the forge itself. It runs
-//! the same machine over what *it* saw. It merges only if that says
-//! [`Action::Merge`]. A driver that reported a green build it never saw gets a
-//! refusal naming the state the host found.
+//! `deliver_ready` and `deliver_merge` do not work that way. Each reads the
+//! forge itself. Each runs the same machine over what *it* saw, and acts only
+//! if that says [`Action::MarkReady`] or [`Action::Merge`]. A driver that
+//! reported a green build it never saw gets a refusal naming the state the
+//! host found.
+//!
+//! A pull request is opened as a draft so one that never goes green never asks
+//! a human to look at it
+//! ([`self_driving_cmd::deliver::open`](crate::self_driving_cmd::deliver::open)).
+//! Taking it out of draft on a driver's word alone would spend that property,
+//! which is why `deliver_ready` is held to the host's own reading rather than
+//! served as the one `deliver` verb that acts on a claim.
 //!
 //! That is the whole safety case for putting a merge on a plugin channel, and
 //! it holds without trusting the program. The branch protection a repository
@@ -60,7 +69,7 @@ use stella_autonomy::{
 use stella_plugin::{
     DecideArgs, DeliverAction, DeliverCi, DeliverDecision, DeliverEscalation, DeliverMergeability,
     DeliverObservation, DeliverReview, DeliverState, HostCallFailure, HostCallRefusal, MergeReport,
-    OpenReport,
+    OpenReport, ReadyReport,
 };
 
 use crate::self_driving_cmd::config::LoopConfig;
@@ -76,6 +85,9 @@ pub(crate) trait DeliverForge: Send + Sync {
 
     /// One read of the forge, plus the second read of the base it needs.
     async fn observe(&self, pr: &str) -> Result<Reading, String>;
+
+    /// Take it out of draft.
+    async fn ready(&self, pr: &str) -> Result<(), String>;
 
     /// Merge it.
     async fn merge(&self, pr: &str) -> Result<(), String>;
@@ -117,6 +129,15 @@ impl DeliverForge for GhDeliverForge {
         tokio::task::spawn_blocking(move || crate::self_driving_cmd::deliver::observe(&pr, &policy))
             .await
             .map_err(|error| format!("the forge read did not finish: {error}"))?
+    }
+
+    async fn ready(&self, pr: &str) -> Result<(), String> {
+        let pr = pr.to_owned();
+        tokio::task::spawn_blocking(move || crate::self_driving_cmd::deliver::mark_ready(&pr))
+            .await
+            .map_err(|error| {
+                format!("taking the pull request out of draft did not finish: {error}")
+            })?
     }
 
     async fn merge(&self, pr: &str) -> Result<(), String> {
@@ -209,6 +230,40 @@ impl DeliverDesk {
     pub(crate) async fn observe(&self, pr: &str) -> Result<DeliverObservation, HostCallFailure> {
         let reading = self.read(pr).await?;
         Ok(from_observation(pr, &reading))
+    }
+
+    /// `deliver_ready` — take the pull request out of draft, if this host's own
+    /// read says so.
+    ///
+    /// # Errors
+    ///
+    /// [`HostCallRefusal::Forbidden`] when the machine did not say
+    /// [`Action::MarkReady`] over what this host observed, naming the state it
+    /// found. [`HostCallRefusal::Failed`] when the forge could not be read or
+    /// the forge refused to take it out of draft.
+    pub(crate) async fn ready(&self, pr: &str) -> Result<ReadyReport, HostCallFailure> {
+        let reading = self.read(pr).await?;
+        let decision = decide(pr, &from_observation(pr, &reading), Attempts::default());
+        if decision.action != DeliverAction::MarkReady {
+            return Err(HostCallFailure::new(
+                HostCallRefusal::Forbidden,
+                format!(
+                    "this host read pull request {pr} for itself and its own verdict is \
+                     {state:?}/{action:?}, not a mark-ready — a draft is opened so a pull \
+                     request that never goes green never asks a human to look at it",
+                    state = decision.state,
+                    action = decision.action
+                ),
+            ));
+        }
+
+        self.forge.ready(pr).await.map_err(|reason| {
+            HostCallFailure::new(
+                HostCallRefusal::Failed,
+                format!("could not take pull request {pr} out of draft: {reason}"),
+            )
+        })?;
+        Ok(ReadyReport { pr: pr.to_owned() })
     }
 
     /// `deliver_merge` — merge, if this host's own read says so.

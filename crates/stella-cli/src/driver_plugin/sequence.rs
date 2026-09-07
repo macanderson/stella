@@ -191,8 +191,8 @@ impl DriveHost for PluginDriveHost<'_> {
             println!(
                 "  this build serves `backlog_next`, `backlog_claim`, `work_start`, \
                  `work_status`, `work_abandon`, `deliver_open`, `deliver_observe`, \
-                 `deliver_next` and `deliver_merge`; every other capability this run asks \
-                 for will be refused as unsupported"
+                 `deliver_next`, `deliver_ready` and `deliver_merge`; every other \
+                 capability this run asks for will be refused as unsupported"
             );
             if self
                 .budget

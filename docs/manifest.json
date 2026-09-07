@@ -180,6 +180,11 @@
       "status": "implemented",
       "title": "ADR 0035: A wrapper's verdict lands on the round that earned it"
     },
+    "adr/0036-a-driver-takes-a-pull-request-out-of-draft": {
+      "path": "docs/adr/0036-a-driver-takes-a-pull-request-out-of-draft.md",
+      "status": "implemented",
+      "title": "ADR 0036: A driver takes a pull request out of draft"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",
