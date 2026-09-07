@@ -273,6 +273,20 @@ failing run is a **verified** commit and stays the canary's business; this
 reports only the absence of an answer, and fails open at every unknown so it
 can never be the thing blocking a repair.
 
+**Both steps file, under different labels.** The first step's `--announce`
+opened an issue; the second printed its finding into the step's own log and
+exited 1, and the composition step above it can pass on the same run — so the
+finding never reached anything a person reads. That happened twice, both
+times on a `chore(release): sync versions` commit whose run concluded
+`failure` with no `main-red` issue open either day.
+`check-main-verified.sh --announce` now files on the same shape — one issue
+found by label, a comment while the condition recurs, closed on the next run
+that answers clean — under its own `main-unverified` label rather than
+`main-red`. "Nothing verified this commit" is a different state from "a check
+said no about this commit," and `main-red-hold.yml` reads only `main-red`, so
+an unverified-main issue never blocks a merge on an absence of information the
+way a known-broken `main` does.
+
 One cause of that absence is a push that raised no event, and the canary
 cannot see it from the inside: it is suppressed by the same rule.
 `auto-tag.yml` merges the release version write-back with the token GitHub
