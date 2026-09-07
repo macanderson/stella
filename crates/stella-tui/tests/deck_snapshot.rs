@@ -514,28 +514,33 @@ fn inspect_overlay_banner_lines_wrap_at_80_columns_instead_of_clipping() {
     let mut terminal = Terminal::new(TestBackend::new(80, 40)).unwrap();
     terminal.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
     let screen = buffer_text(terminal.backend().buffer());
-    let flat: String = screen.chars().filter(|c| !c.is_whitespace()).collect();
+    // Letters and digits only. A wrapped line's second row sits past the
+    // popup's own border, and other panels' rails and rules can land there
+    // too. None of that is prose. Keeping only letters and digits lets one
+    // check span the wrap point without a border symbol breaking it.
+    let flat: String = only_alnum(&screen);
 
     let unresolved_line = "3 block(s) unresolved — synthetic results, discarded speculation, \
                             or attachments";
-    let stripped_unresolved: String = unresolved_line
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect();
     assert!(
-        flat.contains(&stripped_unresolved),
+        flat.contains(&only_alnum(unresolved_line)),
         "the unresolved-blocks line lost characters at 80 columns:\n{screen}"
     );
 
     let mismatch_line = view_digest_mismatch_text(&ui);
-    let stripped_mismatch: String = mismatch_line
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect();
     assert!(
-        flat.contains(&stripped_mismatch),
+        flat.contains(&only_alnum(&mismatch_line)),
         "the digest-mismatch line lost characters at 80 columns:\n{screen}"
     );
+}
+
+/// Lowercase letters and digits only. Compares screen text to source prose
+/// across a wrap point; see the caller.
+fn only_alnum(text: &str) -> String {
+    text.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 /// The exact mismatch text the overlay draws for `ui`'s current inspect
