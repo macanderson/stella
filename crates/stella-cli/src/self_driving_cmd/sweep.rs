@@ -110,6 +110,10 @@ pub(super) fn run(st: &LoopState, cmd: &SweepCmd) -> Result<(), String> {
 ///
 /// A dry run builds no issue provider. The tracker is not reached at all,
 /// not even to be asked a question.
+///
+/// The seen set is read as it stands. `pass` refreshes it from the tracker
+/// first; this does not. A digest whose issue has closed since may still be
+/// held, so the sweep offers less rather than filing a repeat.
 fn collect(
     st: &LoopState,
     supply_name: &'static str,
