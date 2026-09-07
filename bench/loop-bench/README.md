@@ -117,15 +117,28 @@ have exited on a step cap, and treating that as a death would invent crashes.
 | `5` | the run finished and the `--json-out` report could not be written (the JSON is dumped on stdout instead) |
 | `6` | `--compare --require-winner` and no arm cleared both bars |
 | `7` | the job dir holds trials this run did not ask for, so every figure covers a task set that is not the requested one |
+| `8` | more of the requested trials raised than finished, so every figure covers a run that mostly did not happen |
 
 `1` outranks `4`: when both fire, the loop failure is the actionable one, and a
-broken loop explains the missing passes anyway. `1` outranks `6` and `7`
+broken loop explains the missing passes anyway. `1` outranks `6`, `7` and `8`
 likewise — a broken loop makes an arm's numbers untrustworthy as a comparison.
+`8` outranks `4` and `6`: a pass rate or a winner read off a run that mostly
+did not happen is not a measurement.
 
-A crash is deliberately **not** an exit code. The gate is loop health, and a
-trial the machine killed is not evidence about the loop — the same reason
-`UNREADABLE` and `BUDGET-CAP` do not gate. What it must never again be is
-silent, or dressed as `ran (unsolved)`.
+One crash is **not** an exit code. The gate is loop health, and a trial the
+machine killed is not evidence about the loop — the same reason `UNREADABLE`
+and `BUDGET-CAP` do not gate. What it must never again be is silent, or
+dressed as `ran (unsolved)`.
+
+`8` is where that reasoning runs out. Once the killed trials outnumber the
+live ones, what survives is not the task set the run asked for, and a verdict
+over it describes a night that mostly did not happen. The rule is a
+strict majority rather than a tuned count: it needs no history to set, and it
+follows `--tasks`, `--n` and `--trials` when they move the denominator. The
+29 nightly runs from 2026-08-10 to 2026-09-07 that uploaded a report each
+asked for four trials — one lost none, fourteen lost one, five lost two, nine
+lost three, none lost all four. The rule fires on those nine, eight of which
+were already red for loop health; the ninth reported green.
 
 ## Requested vs reported (#1299)
 

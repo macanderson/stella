@@ -467,6 +467,98 @@ fn a_not_run_task_still_counts_against_the_floor() {
     assert!(below_pass_floor(&reports, 2), "1/2 is below a floor of 2");
 }
 
+/// The shape of nightly run 33306583016, on 2026-08-30. Four trials were
+/// asked for. Three died on harbor's agent timeout after real work, and one
+/// solved. Every loop that ran was healthy, so the night reported green.
+#[test]
+fn a_night_where_most_trials_died_no_longer_reports_green() {
+    let job = tempfile::tempdir().expect("job dir");
+    let mut requested = vec!["solved-one".to_string()];
+    let trial = trial_dir(
+        job.path(),
+        "solved-one__t1",
+        &[
+            r#"{"type":"tool_start","call":{"name":"bash"}}"#,
+            r#"{"type":"complete"}"#,
+        ],
+    );
+    write_reward(&trial, "1.0");
+
+    for task in ["timed-out-a", "timed-out-b", "timed-out-c"] {
+        let trial = trial_dir(
+            job.path(),
+            &format!("{task}__t1"),
+            &[
+                r#"{"type":"tool_start","call":{"name":"bash"}}"#,
+                r#"{"type":"tool_start","call":{"name":"edit_file"}}"#,
+            ],
+        );
+        write_result(
+            &trial,
+            serde_json::json!({
+                "task_name": task,
+                "exception_info": exception(
+                    "AgentTimeoutError",
+                    "agent exceeded its 750 second time limit",
+                ),
+            }),
+        );
+        requested.push(task.to_string());
+    }
+
+    let analysis = analyze(job.path(), Some(one_trial_each(&requested)));
+    let counts = analysis.tally();
+    assert_eq!(counts.total, 4);
+    assert_eq!(counts.crashed, 3);
+    assert_eq!(counts.solved, 1);
+    assert_eq!(
+        counts.loop_broken, 0,
+        "every trial that ran exercised the loop, so the first gate says nothing"
+    );
+    assert!(
+        !below_pass_floor(&analysis.trials, 0),
+        "the pass floor is off by default and cannot catch this either"
+    );
+    assert!(
+        most_trials_crashed(&analysis.trials),
+        "3 of 4 requested trials never finished: the run is not a measurement"
+    );
+}
+
+/// The rule is a strict majority. Half the trials surviving is a smaller
+/// sample, not an absent one. Most nights lost one or two of four. A gate
+/// that fired there would be red most nights, and no loop fix would clear
+/// it — the trap that keeps `--min-pass` at zero.
+#[test]
+fn losing_half_the_trials_still_reports_its_figures() {
+    let healthy = |task: &str| TrialReport {
+        task: task.into(),
+        tool_calls: 4,
+        terminal_event: true,
+        ..Default::default()
+    };
+    let killed = |task: &str| TrialReport {
+        crash: Some("AgentTimeoutError: agent exceeded its time limit".into()),
+        ..healthy(task)
+    };
+
+    let none = vec![healthy("a"), healthy("b"), healthy("c"), healthy("d")];
+    assert!(!most_trials_crashed(&none), "no crash, no gate");
+
+    let two = vec![healthy("a"), healthy("b"), killed("c"), killed("d")];
+    assert_eq!(tally(&two).crashed, 2);
+    assert!(!most_trials_crashed(&two), "2 of 4 is half, not most");
+
+    let three = vec![healthy("a"), killed("b"), killed("c"), killed("d")];
+    assert!(most_trials_crashed(&three), "3 of 4 is most");
+
+    let one_of_one = vec![killed("a")];
+    assert!(
+        most_trials_crashed(&one_of_one),
+        "a single-trial run that died is a run that did not happen"
+    );
+}
+
 /// #1299, hole 1: a trial that did real work and then died reports `CRASHED`,
 /// not `ran (unsolved)`. The old wording said the agent tried the task and got
 /// it wrong; what actually happened is that the machine killed it.
