@@ -46,18 +46,29 @@ All of it is in `preregistration.json`. The short form:
 
 ## What blocks the run today
 
-1. **The bench adapter cannot pick a path.** `loop_argv` in
-   `bench/harbor_adapter/stella_harbor/loop_mode.py` emits no `--pipeline`
-   flag. Neither arm can be launched as written.
-2. **The evidence cannot say which path ran.** `extract_trial` in
-   `score_dev_baseline.py` drops `stella_loop_mode`, so `trials.jsonl` carries
-   no field that answers it. The analysis below needs that field.
-3. **The control arm has to build.** Its crate is gone from this workspace.
-   The build comes from an old checkout, with its own lock file and toolchain
-   pin. Budget real time for it.
+One thing, and it is tree-only. `#6195` has it.
 
-The first two are small and need no rig. They are tracked as `#6178` and
-`#6179`.
+**The control arm has no binary and the run scripts hold one arm.** Its crate
+is gone from this workspace, so its build comes from a checkout of
+`f4c24c12b`, with that commit's own lock file and toolchain pin.
+`build_sut.sh` refuses any difference between the working tree and the commit
+it is handed, so it has to run from that checkout rather than from `main` with
+the commit as an argument. `env.sh` then gives both arms one `STELLA_BINARY`
+path and one `$TB_ROOT`, so the second build overwrites the first. The same
+variable puts `$TB_REPO/bench/harbor_adapter` on `PYTHONPATH`, so aiming
+`TB_REPO` at the old checkout swaps in the old adapter too, and only the
+binary may differ between the arms.
+
+## Two blockers that have shipped
+
+The adapter could not pick a path: `loop_argv` in
+`bench/harbor_adapter/stella_harbor/loop_mode.py` emitted no `--pipeline` flag
+in any case (`#6178`). It emits `--pipeline <id>` now, from `STELLA_PIPELINE`.
+
+The evidence could not say which path ran: `score_dev_baseline.py` dropped
+`stella_loop_mode` off the trial manifest, so `trials.jsonl` carried no field
+that answered it (`#6179`). It writes that field as `loop_mode` now, and
+`--treatment-fired` below reads it.
 
 ## The analysis
 
@@ -73,15 +84,23 @@ python3 bench/evidence/compare_arms.py \
   bench/evidence/pipeline-ab-<date>/treatment/trials.jsonl \
   --tasks 89 \
   --cross-sut <control-sha>:<treatment-sha> \
-  --treatment-fired loop_mode=<the plugin path value> \
+  --treatment-fired loop_mode=PLUGIN:witness-v1 \
   --markdown bench/evidence/pipeline-ab-<date>/results.md \
   > bench/evidence/pipeline-ab-<date>/comparison.json
 ```
 
 Each arm must report the commit it was declared on. The two binary hashes must
-differ. Every treatment trial must show it ran the plugin path, and no control
-trial may. Any of those fails and the run is refused, with the numbers still
-printed so a reader can check the refusal.
+differ. Every treatment trial must carry `loop_mode=PLUGIN:witness-v1`, and no
+control trial may. Any of those fails and the run is refused, with the numbers
+still printed so a reader can check the refusal.
+
+The control arm's own `loop_mode` reads `PLUGIN:classic`. The adapter spells
+every `--pipeline <id>` arm `PLUGIN:<id>` and does not special-case `classic`,
+because which ids resolve to what is Stella's decision
+(`PipelineChoice::resolve`) and an adapter-side copy of it would be a second
+place to get it wrong. On the control arm's binary, `classic` is the built-in
+staged pipeline rather than a plugin. Read the string as the id the command
+line carried. The arm is the build.
 
 ## What counts as done
 

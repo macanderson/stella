@@ -854,6 +854,16 @@ came out, so the remaining risk was carrying dead, unreferenced code rather
 than losing a working feature. Extraction of the remaining four plugins is
 still real, open work — deleting the built-in path does not mark it done.
 
+**The bar is unpaid, and the plan for paying it is committed.**
+`bench/evidence/pipeline-ab/` holds the preregistration: the two arms with the
+control's SUT commit pinned to the last tree where the built-in path builds,
+the task list and denominator, the replicate count, the seed, the spend stop
+rule, and the mapping from each of the three outcomes back onto this
+paragraph. All three close the bar, the loss included. The run needs a
+benchmark host and real spend; that directory's README names the one
+tree-only thing still standing in front of it, and the issue each half is
+tracked under.
+
 ---
 
 ## 8. Vera specifically
