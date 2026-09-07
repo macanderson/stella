@@ -243,8 +243,14 @@ fn drive(workspace_root: &Path, name: &str, flags: TurnFlags) -> Result<(), Stri
             crate::driver_plugin::work::WorkSlot::new(Box::new(
                 crate::driver_plugin::work::SpawnedWorkRunner::new(
                     workspace_root.to_path_buf(),
-                    config,
+                    config.clone(),
                     budget,
+                ),
+            )),
+            crate::driver_plugin::deliver::DeliverDesk::new(Box::new(
+                crate::driver_plugin::deliver::GhDeliverForge::new(
+                    workspace_root.to_path_buf(),
+                    config,
                 ),
             )),
         ),

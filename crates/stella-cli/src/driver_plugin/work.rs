@@ -296,6 +296,20 @@ impl WorkSlot {
         self.peek().map(|held| held.report()).unwrap_or_default()
     }
 
+    /// The unit and the branch a `deliver_open` would push, when the session
+    /// holds one that left a change.
+    ///
+    /// `None` covers three states a caller must not paper over: an empty slot,
+    /// a turn that changed nothing, and a turn that did not finish. None of
+    /// them has a branch, so none of them has a pull request to open, and the
+    /// refusal that says so is [`super::deliver`]'s caller to write — this
+    /// answers the question and does not decide what to say about it.
+    pub(crate) fn deliverable(&self) -> Option<(String, String)> {
+        self.peek()
+            .filter(|held| held.state == WorkState::Changed && !held.branch.is_empty())
+            .map(|held| (held.issue, held.branch))
+    }
+
     /// `work_abandon` — give the unit back, saying why.
     ///
     /// The checkout goes. The branch stays. A turn that committed keeps its

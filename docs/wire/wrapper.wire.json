@@ -42,6 +42,74 @@
         "call": "work_abandon",
         "id": 4
       }
+    },
+    {
+      "case": "deliver_observe",
+      "message": {
+        "args": {
+          "deliver_observe": {
+            "pr": "4102"
+          }
+        },
+        "call": "deliver_observe",
+        "id": 5
+      }
+    },
+    {
+      "case": "deliver_next",
+      "message": {
+        "args": {
+          "deliver_next": {
+            "fixes": 1,
+            "observation": {
+              "base_ci": "green",
+              "ci": "red",
+              "draft": true,
+              "mergeable": "clean",
+              "pr": "4102",
+              "review": "changes_requested",
+              "settled": true
+            },
+            "rebases": 0
+          }
+        },
+        "call": "deliver_next",
+        "id": 6
+      }
+    },
+    {
+      "case": "deliver_next/minimal",
+      "message": {
+        "args": {
+          "deliver_next": {
+            "fixes": 0,
+            "observation": {
+              "base_ci": "pending",
+              "ci": "pending",
+              "draft": false,
+              "mergeable": "unknown",
+              "pr": "4102",
+              "review": "none",
+              "settled": false
+            },
+            "rebases": 0
+          }
+        },
+        "call": "deliver_next",
+        "id": 7
+      }
+    },
+    {
+      "case": "deliver_merge",
+      "message": {
+        "args": {
+          "deliver_merge": {
+            "pr": "4102"
+          }
+        },
+        "call": "deliver_merge",
+        "id": 8
+      }
     }
   ],
   "driver_results": [
@@ -109,6 +177,74 @@
           }
         },
         "result": 7
+      }
+    },
+    {
+      "case": "ok/pull_request",
+      "message": {
+        "ok": {
+          "pull_request": {
+            "branch": "stella/1234",
+            "issue": "1234",
+            "pr": "4102"
+          }
+        },
+        "result": 8
+      }
+    },
+    {
+      "case": "ok/observation",
+      "message": {
+        "ok": {
+          "observation": {
+            "base_ci": "green",
+            "ci": "red",
+            "draft": true,
+            "mergeable": "clean",
+            "pr": "4102",
+            "review": "changes_requested",
+            "settled": true
+          }
+        },
+        "result": 9
+      }
+    },
+    {
+      "case": "ok/decision",
+      "message": {
+        "ok": {
+          "decision": {
+            "action": "escalate",
+            "escalation": "review_needs_human",
+            "pr": "4102",
+            "state": "escalated"
+          }
+        },
+        "result": 10
+      }
+    },
+    {
+      "case": "ok/decision/minimal",
+      "message": {
+        "ok": {
+          "decision": {
+            "action": "wait",
+            "pr": "4102",
+            "state": "ci_pending"
+          }
+        },
+        "result": 11
+      }
+    },
+    {
+      "case": "ok/merge",
+      "message": {
+        "ok": {
+          "merge": {
+            "pr": "4102"
+          }
+        },
+        "result": 12
       }
     },
     {

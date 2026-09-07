@@ -10,6 +10,8 @@
 //! path from an installed package to one, so a test that constructed the
 //! transport itself would be testing the half that already worked.
 
+mod deliver;
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -272,7 +274,10 @@ use stella_protocol::issue::{
 };
 use stella_runtime::wrapper::{DriverCapabilities, NoDriverCapabilities};
 
+use deliver::FixtureForge;
+
 use super::capabilities::HostDriverCapabilities;
+use super::deliver::DeliverDesk;
 use super::work::{WorkRunner, WorkSlot};
 use crate::plugin_authz::PluginGates;
 use crate::self_driving_cmd::config::LoopConfig;
@@ -333,6 +338,7 @@ fn capabilities_working(manifest: &str, outcome: WorkOutcome) -> HostDriverCapab
         LoopConfig::default(),
         PathBuf::from("/tmp/stella-driver-test"),
         WorkSlot::new(Box::new(FixtureWorker::answering(outcome))),
+        DeliverDesk::new(Box::new(FixtureForge::default())),
     )
 }
 
@@ -444,6 +450,7 @@ fn capabilities_for(manifest: &str, tracker: FixtureTracker) -> HostDriverCapabi
         LoopConfig::default(),
         PathBuf::from("/tmp/stella-driver-test"),
         WorkSlot::new(Box::new(FixtureWorker::answering(changed()))),
+        DeliverDesk::new(Box::new(FixtureForge::default())),
     )
 }
 
@@ -523,11 +530,11 @@ async fn a_served_call_is_attributed_to_the_plugin_and_held_to_its_grant() {
 #[tokio::test]
 async fn an_unbuilt_verb_names_its_family() {
     let refused = capabilities_for(GRANTS_BASH, FixtureTracker { open: Vec::new() })
-        .perform(DriverCall::DeliverMerge, None)
+        .perform(DriverCall::SweepAudit, None)
         .await
-        .expect_err("nothing here serves a merge");
+        .expect_err("nothing here serves an audit");
     assert_eq!(refused.refusal, HostCallRefusal::Unsupported);
-    assert!(refused.detail.contains("deliver"), "{refused}");
+    assert!(refused.detail.contains("sweep"), "{refused}");
 }
 
 /// The shipped package names a program, and the host resolves it against the
@@ -586,6 +593,7 @@ fn drive_shipped_program(grant: &str) -> (Result<DriveNext, String>, Vec<String>
             LoopConfig::default(),
             workspace.path().to_path_buf(),
             WorkSlot::new(Box::new(FixtureWorker::answering(changed()))),
+            DeliverDesk::new(Box::new(FixtureForge::default())),
         )));
     let next = bound.open("drive-test");
     (next, bound.refusals())
@@ -932,6 +940,7 @@ async fn a_claim_is_granted_when_free_and_names_the_holder_when_it_is_not() {
             LoopConfig::default(),
             root,
             WorkSlot::new(Box::new(FixtureWorker::answering(changed()))),
+            DeliverDesk::new(Box::new(FixtureForge::default())),
         )
     };
 

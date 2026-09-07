@@ -602,7 +602,7 @@ fn gh_stdout(args: &[&str]) -> Result<String, String> {
 /// Draft on purpose: the machine takes it out of draft itself once CI is green
 /// ([`stella_autonomy::Action::MarkReady`]), so a pull request that never goes
 /// green never asks a human to look at it.
-pub(super) fn open(
+pub(crate) fn open(
     root: &std::path::Path,
     branch: &str,
     issue_key: &str,
@@ -637,7 +637,7 @@ pub(super) fn open(
 /// this flag the loop waits on it for the rest of the run. It did, on #4022,
 /// after merging it successfully.
 #[derive(Debug, Clone)]
-pub(super) struct Reading {
+pub(crate) struct Reading {
     /// What the pure machine decides over.
     pub observation: Observation,
     /// Whether the pull request has already reached a terminal state.
@@ -654,7 +654,7 @@ pub(super) struct Reading {
 
 /// One read of the forge, plus the second read of the base its
 /// [`Observation::base_ci`] needs.
-pub(super) fn observe(
+pub(crate) fn observe(
     pr: &str,
     policy: &stella_autonomy::BlockingPolicy,
 ) -> Result<Reading, String> {
@@ -914,7 +914,7 @@ pub(super) fn open_prs_for_prefix(prefix: &str) -> Result<Vec<String>, String> {
 /// Called only when the machine returned `MarkReady`, which it does once CI is
 /// green — so a pull request that never goes green never asks a human to look
 /// at it.
-pub(super) fn mark_ready(pr: &str) -> Result<(), String> {
+pub(crate) fn mark_ready(pr: &str) -> Result<(), String> {
     gh(&["pr", "ready", pr]).map(|_| ())
 }
 
@@ -923,7 +923,7 @@ pub(super) fn mark_ready(pr: &str) -> Result<(), String> {
 /// Called **only** when [`stella_autonomy::deliver_next`] returned
 /// [`stella_autonomy::Action::Merge`]; the caller enforces that, and the
 /// machine emits it from exactly one state.
-pub(super) fn merge(pr: &str) -> Result<(), String> {
+pub(crate) fn merge(pr: &str) -> Result<(), String> {
     // No `--delete-branch`. It deletes the *local* branch too, and this loop
     // works inside git worktrees that hold exactly those branches — so the
     // delete fails, `gh` exits non-zero, and a merge that already succeeded is

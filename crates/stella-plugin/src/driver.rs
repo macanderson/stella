@@ -66,6 +66,13 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::host_call::HostCallFailure;
 use crate::runtime::Runtime;
 
+pub mod deliver;
+
+pub use deliver::{
+    DecideArgs, DeliverAction, DeliverCi, DeliverDecision, DeliverEscalation, DeliverMergeability,
+    DeliverObservation, DeliverReview, DeliverState, MergeReport, OpenReport, PullRequestArgs,
+};
+
 /// The capabilities a **driver** may ask the host for.
 ///
 /// Closed, and [`DriverGrant::calls`] declares which of them a given driver may
@@ -689,7 +696,7 @@ impl<'de> Deserialize<'de> for DriverCallResponse {
     {
         let envelope = DriverResultEnvelope::deserialize(deserializer)?;
         let outcome = match (envelope.ok, envelope.err) {
-            (Some(ok), None) => DriverCallOutcome::Ok(ok),
+            (Some(ok), None) => DriverCallOutcome::Ok(Box::new(ok)),
             (None, Some(err)) => DriverCallOutcome::Err(err),
             (Some(_), Some(_)) => {
                 return Err(serde::de::Error::custom(
@@ -715,7 +722,7 @@ impl DriverCallResponse {
     pub fn ok(result: u32, ok: DriverOk) -> Self {
         Self {
             result,
-            outcome: DriverCallOutcome::Ok(ok),
+            outcome: DriverCallOutcome::Ok(Box::new(ok)),
         }
     }
 
@@ -742,7 +749,12 @@ impl DriverCallResponse {
 #[serde(rename_all = "snake_case")]
 pub enum DriverCallOutcome {
     /// The host performed the call.
-    Ok(DriverOk),
+    ///
+    /// Boxed. [`DriverOk`] carries one member per verb the host reports on, so
+    /// it grows with every family that lands while a refusal stays the width
+    /// of one code and one string. An unboxed answer would make every refusal
+    /// pay for the widest success, and the gap only widens from here.
+    Ok(Box<DriverOk>),
     /// The host refused it, or tried it and it failed. Either way the driver is
     /// told, and is expected to degrade honestly rather than die.
     Err(HostCallFailure),
@@ -761,6 +773,10 @@ pub enum DriverCallOutcome {
 /// `work_status` call is two claims about what the driver wants, and believing
 /// one of them quietly is the failure [`DriverMessage`]'s own envelope refuses
 /// one layer out.
+///
+/// `work_status` and `deliver_open` carry no member here, because they act on
+/// the unit the session already holds. A key on either could only name a
+/// different unit from the one it would report on.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DriverArgs {
@@ -773,6 +789,15 @@ pub struct DriverArgs {
     /// Why [`DriverCall::WorkAbandon`] is releasing the session's unit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub work_abandon: Option<AbandonArgs>,
+    /// Which pull request [`DriverCall::DeliverObserve`] should read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deliver_observe: Option<PullRequestArgs>,
+    /// What [`DriverCall::DeliverNext`] should decide over.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deliver_next: Option<DecideArgs>,
+    /// Which pull request [`DriverCall::DeliverMerge`] should merge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deliver_merge: Option<PullRequestArgs>,
 }
 
 impl DriverArgs {
@@ -790,6 +815,9 @@ impl DriverArgs {
             backlog_claim,
             work_start,
             work_abandon,
+            deliver_observe,
+            deliver_next,
+            deliver_merge,
         } = self;
         let mut named = Vec::new();
         if backlog_claim.is_some() {
@@ -800,6 +828,15 @@ impl DriverArgs {
         }
         if work_abandon.is_some() {
             named.push(DriverCall::WorkAbandon);
+        }
+        if deliver_observe.is_some() {
+            named.push(DriverCall::DeliverObserve);
+        }
+        if deliver_next.is_some() {
+            named.push(DriverCall::DeliverNext);
+        }
+        if deliver_merge.is_some() {
+            named.push(DriverCall::DeliverMerge);
         }
         named
     }
@@ -866,6 +903,21 @@ pub struct DriverOk {
     /// the tree holds for it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub work: Option<WorkReport>,
+    /// What [`DriverCall::DeliverOpen`] answered with: the pull request it
+    /// pushed the session's unit into.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pull_request: Option<OpenReport>,
+    /// What [`DriverCall::DeliverObserve`] answered with: one read of the
+    /// forge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation: Option<DeliverObservation>,
+    /// What [`DriverCall::DeliverNext`] answered with: the one next action.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<DeliverDecision>,
+    /// What [`DriverCall::DeliverMerge`] answered with: the pull request that
+    /// landed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge: Option<MergeReport>,
 }
 
 /// The ranked queue one [`DriverCall::BacklogNext`] read produced.

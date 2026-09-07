@@ -18,6 +18,8 @@ do it, and says what should happen next:
  -> host   {"result": 2, "ok": {"claim": {"issue": "41", "held": true}}}
  -> plugin {"call": "work_start", "id": 3, "args": {...}}
  -> host   {"result": 3, "ok": {"work": {"state": "changed", ...}}}
+ -> plugin {"call": "deliver_open", "id": 4}
+ -> host   {"result": 4, "ok": {"pull_request": {"pr": "4102", ...}}}
  -> plugin {"point": "drive", "body": {"next": {"halt": {"reason": "..."}}}}
 
 One JSON message per line, both ways. `crates/stella-plugin/src/driver.rs` is
@@ -30,23 +32,33 @@ no budget. The host does each thing it needs, when asked.
 
 The host checks each ask against the `[driver] calls` list in `plugin.toml`.
 That is the list a person read before install. An ask that is not on it comes
-back as `err` with `refusal: "undeclared"`. The right move then is to stop and
-say so. Never to go get the thing some other way.
+back as `err` with `refusal: "undeclared"`. The right move is to stop and say
+so. Never to go get the thing some other way.
 
 # What a cycle does now
 
-The host serves `backlog_next`, `backlog_claim` and the three `work` verbs. So
-a cycle reads the ranked queue, claims the top of it, and asks Stella to work
-that one issue in a checkout of its own.
+The host serves `backlog_next`, `backlog_claim`, the three `work` verbs and the
+four `deliver` verbs. So a cycle reads the ranked queue, claims the top of it,
+asks Stella to work that one issue in a checkout of its own, opens the pull
+request, reads the forge, and asks what to do next.
 
 It will not work an issue it cannot know is free. Two loops on one issue is
 what a claim is for, and going ahead without one would trade a good refusal for
 a quiet race.
 
-A cycle ends at the diff, because nothing serves `deliver_open` yet. So the
-`halt` names the branch the work is sitting on, and a person or the shell
-script takes it from there. Nothing in this file changes shape for that. Only
-the stage it reaches before it stops.
+A cycle ends when the machine says anything but "merge". Waiting on CI,
+pushing a fix and rebasing are all a later cycle's work. So this one says which
+state it stopped in, and how long to wait.
+
+# Who decides a merge
+
+`deliver_next` answers over facts this program sends it. `deliver_merge` takes
+no facts at all. That ask names a pull request and nothing else.
+
+The host reads the forge itself. It runs the same machine over its own answer.
+So a cycle that reported a build nobody saw gets a refusal. This program asks
+for the merge when the decision it was given says to. The host is what makes
+that safe, not this file.
 
 # Arguments
 
@@ -63,19 +75,24 @@ That shell script is the working driver. It holds the powers this package's
 `[[capabilities]]` list names — `bash`, `write_file`, `process_spawn` — as
 you, straight out. This program holds none of them. It asks. The shell script
 stays until this one can do what it does, which is §10's own rule. What has
-moved across so far is the queue read, the claim, and the work; the pull
-request, the merge and the sweep are still the shell script's.
+moved across so far is the queue read, the claim, the work, and the pull
+request through to the merge; the sweep, the benchmark, the release install
+and the daemon are still the shell script's.
 """
 
 import json
 import sys
 
 # The verbs a cycle asks for, in the order it needs them. Every one is on
-# `plugin.toml`'s `[driver] calls`. An ask that is not on that list would be
-# turned down, and writing one here would be a bug, not a test of the gate.
+# `plugin.toml`'s `[driver] calls`. An ask that is not on that list comes back
+# turned down. Writing one here would be a bug.
 BACKLOG_NEXT = "backlog_next"
 BACKLOG_CLAIM = "backlog_claim"
 WORK_START = "work_start"
+DELIVER_OPEN = "deliver_open"
+DELIVER_OBSERVE = "deliver_observe"
+DELIVER_NEXT = "deliver_next"
+DELIVER_MERGE = "deliver_merge"
 
 # How long to wait for the next cycle when there is nothing to do. Fifteen
 # minutes is the shell driver's own idle pause. The host clamps it either way,
@@ -181,9 +198,66 @@ def refused_halt(channel, said):
     return {"halt": {"reason": "%s: %s was refused (%s): %s" % (said, call, refusal, detail)}}
 
 
-def report_of(ok):
-    """The unit a served `work` verb answered with."""
-    return (ok or {}).get("work") or {}
+def member(ok, name):
+    """One member of a served answer, or an empty table when it is absent.
+
+    An answer with no member of that name is a host that did the call and
+    reported nothing under it. Both read as "nothing to act on" here.
+    """
+    return (ok or {}).get(name) or {}
+
+
+def deliver(channel, key, report):
+    """Take a worked branch as far as this cycle's own decision allows.
+
+    Returns the `next` the cycle ends with. Every stage stops on a refusal,
+    naming the ask, because a loop that carried on past one would be guessing
+    at a power it was not granted.
+    """
+    opened = channel.ask(DELIVER_OPEN)
+    if opened is None:
+        return refused_halt(
+            channel,
+            "%s is worked onto branch %s"
+            % (key, report.get("branch", "?")),
+        )
+    pull_request = member(opened, "pull_request")
+    number = pull_request.get("pr", "?")
+    sys.stderr.write("stella-selfdriving: opened %s for %s\n" % (number, key))
+
+    observed = channel.ask(DELIVER_OBSERVE, {"deliver_observe": {"pr": number}})
+    if observed is None:
+        return refused_halt(channel, "%s is open as %s" % (key, number))
+
+    decided = channel.ask(
+        DELIVER_NEXT, {"deliver_next": {"observation": member(observed, "observation")}}
+    )
+    if decided is None:
+        return refused_halt(channel, "%s was read on %s" % (number, key))
+    decision = member(decided, "decision")
+    action = decision.get("action")
+    state = decision.get("state", "?")
+
+    if action != "merge":
+        # Waiting, pushing a fix and rebasing are a later cycle's work. This
+        # one sleeps. Holding a session open across CI helps nobody.
+        sys.stderr.write(
+            "stella-selfdriving: %s is %s, next action %s\n"
+            % (number, state, action)
+        )
+        return {"sleep": {"secs": IDLE_SECS}}
+
+    merged = channel.ask(DELIVER_MERGE, {"deliver_merge": {"pr": number}})
+    if merged is None:
+        return refused_halt(
+            channel, "%s is %s and the machine said merge" % (number, state)
+        )
+    return {
+        "halt": {
+            "reason": "%s is merged for %s"
+            % (member(merged, "merge").get("pr", number), key)
+        }
+    }
 
 
 def cycle(channel):
@@ -219,18 +293,10 @@ def cycle(channel):
     if worked is None:
         return refused_halt(channel, "%s is claimed" % key)
 
-    report = report_of(worked)
+    report = member(worked, "work")
     state = report.get("state")
     if state == "changed":
-        return {
-            "halt": {
-                "reason": (
-                    "%s is worked: %s on branch %s. No host serves `deliver_open` "
-                    "yet, so the branch is where this cycle stops"
-                    % (key, report.get("stat", "a change"), report.get("branch", "?"))
-                )
-            }
-        }
+        return deliver(channel, key, report)
     if state == "no_change":
         return {
             "halt": {
