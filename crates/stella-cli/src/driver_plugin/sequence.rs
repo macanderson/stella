@@ -152,10 +152,11 @@ impl<'a> PluginDriveHost<'a> {
     /// The capabilities one session is served through.
     ///
     /// Built per session because [`super::work::WorkSlot`] holds the one unit
-    /// a session may carry, and a slot shared between sessions would hand the
-    /// second one the first one's checkout. The budget behind it is shared,
-    /// which is the opposite choice for the opposite reason: a ceiling that
-    /// reset per session would cap nothing.
+    /// a session may carry and [`super::deliver::DeliverDesk`] the one pull
+    /// request opened for it, and either shared between sessions would hand
+    /// the second one the first one's checkout. The budget behind them is
+    /// shared, which is the opposite choice for the opposite reason: a ceiling
+    /// that reset per session would cap nothing.
     fn capabilities(&self) -> Box<dyn stella_runtime::wrapper::DriverCapabilities> {
         Box::new(super::capabilities::HostDriverCapabilities::new(
             self.plugin,
@@ -169,6 +170,10 @@ impl<'a> PluginDriveHost<'a> {
                 self.workspace_root.to_path_buf(),
                 self.config.clone(),
                 Arc::clone(&self.budget),
+            ))),
+            super::deliver::DeliverDesk::new(Box::new(super::deliver::GhDeliverForge::new(
+                self.workspace_root.to_path_buf(),
+                self.config.clone(),
             ))),
         ))
     }
@@ -185,8 +190,9 @@ impl DriveHost for PluginDriveHost<'_> {
             self.announced = true;
             println!(
                 "  this build serves `backlog_next`, `backlog_claim`, `work_start`, \
-                 `work_status` and `work_abandon`; every other capability this run asks for \
-                 will be refused as unsupported"
+                 `work_status`, `work_abandon`, `deliver_open`, `deliver_observe`, \
+                 `deliver_next` and `deliver_merge`; every other capability this run asks \
+                 for will be refused as unsupported"
             );
             if self
                 .budget

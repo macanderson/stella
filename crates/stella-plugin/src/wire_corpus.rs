@@ -17,27 +17,27 @@
 //! [`crate::DriverCallRequest`]/[`crate::DriverCallResponse`]. Every root
 //! here is published along with everything reachable from it.
 //!
-//! # Why a corpus, beside the schema rather than instead of it
+//! # Why a corpus, beside the schema
 //!
-//! This module was written as a **declared gap**: `stella-protocol` and
-//! `stella-serve` publish JSON Schema derived by `schemars`, this published a
-//! corpus, and the reason was mechanical — a `JsonSchema` impl only exists
+//! This module began as a **declared gap**. `stella-protocol` and
+//! `stella-serve` publish JSON Schema derived by `schemars`. This published a
+//! corpus instead. The reason was mechanical: a `JsonSchema` impl only exists
 //! where the type is defined, and `crate::wire` was held by another session.
-//! The derives are on those types now and
-//! [`crate::wire_schema`] publishes `wrapper.schema.json` from them (#3532).
+//! The derives are on those types now, and [`crate::wire_schema`] publishes
+//! `wrapper.schema.json` from them (#3532).
 //!
-//! The corpus stays, because the two artifacts answer different questions. This
-//! one publishes every wire message serialized by the same `Serialize` impls
-//! the socket uses, in both its fullest and its emptiest legal form. What that
+//! The corpus stays. The two artifacts answer different questions. This one
+//! publishes every wire message, serialized by the same `Serialize` impls the
+//! socket uses, in both its fullest and its emptiest legal form. What that
 //! catches:
 //!
-//! - a renamed field — the key changes in every case that carries it;
-//! - a re-tagged case or a changed `rename_all` — the tag changes;
-//! - an added or removed field — a key appears or disappears in the full case;
-//! - an optional field made required, or a required one made optional — the
-//!   *minimal* case is what makes this visible, which is why a message with an
-//!   optional member appears twice. A message with none appears once: a second
-//!   identical case would assert an optionality that does not exist.
+//! - a renamed field. The key changes in every case that carries it.
+//! - a re-tagged case, or a changed `rename_all`. The tag changes.
+//! - an added or removed field. A key appears or drops out of the full case.
+//! - an optional field made required, or the reverse. The *minimal* case is
+//!   what shows this. So a message with an optional member appears twice. A
+//!   message with none appears once, since a second identical case would
+//!   claim an optionality that does not exist.
 //!
 //! What it does **not** catch, and what the schema does: a widened or narrowed
 //! scalar type (`u32` → `u64`), and a string field that gains a format or
@@ -71,6 +71,8 @@
 //! order. Running the exporter twice produces no diff the second time —
 //! `scripts/check-wire-schema.sh` depends on exactly that.
 
+mod driver;
+
 use std::collections::BTreeMap;
 
 use serde::Serialize;
@@ -78,18 +80,16 @@ use serde_json::{Value, json};
 use stella_protocol::candidate::CandidateHandle;
 
 use crate::{
-    AbandonArgs, AdoptCandidateArgs, AdoptCandidateResult, AfterTurnRequest, AfterTurnResponse,
-    BacklogEntry, BacklogPage, BeforeTurnRequest, BeforeTurnResponse, CandidateFanoutArgs,
-    CandidateFanoutResult, CandidateGrant, ChildTurnArgs, ChildTurnResult, ClaimReport, DriveNext,
-    DriveRequest, DriveResponse, DriverArgs, DriverCall, DriverCallRequest, DriverCallResponse,
-    DriverOk, FanoutCandidate, FlipObservation, HostCall, HostCallArgs, HostCallFailure,
-    HostCallOk, HostCallRefusal, HostCallRequest, HostCallResponse, HostStage, ObservedEvidence,
-    PROTOCOL_VERSION, PanelDenial, PanelEmphasis, PanelFrame, PanelInk, PanelLease, PanelLine,
-    PanelPaint, PanelPatch, PanelPoint, PanelRect, PanelRequest, PanelResponse, PanelSpan,
-    PanelStyle, PanelSurface, PanelText, PublishedSignal, RecallArgs, RecallFrame, RecallResult,
-    RunTestArgs, Signal, SignalKind, SignalValue, StageName, TestBaseline, TestPlan, TestRunResult,
-    TurnOutcome, UnitArgs, VolatileContext, WorkReport, WorkState, WrapperPoint, WrapperRequest,
-    WrapperResponse,
+    AdoptCandidateArgs, AdoptCandidateResult, AfterTurnRequest, AfterTurnResponse,
+    BeforeTurnRequest, BeforeTurnResponse, CandidateFanoutArgs, CandidateFanoutResult,
+    CandidateGrant, ChildTurnArgs, ChildTurnResult, DriverCall, FanoutCandidate, FlipObservation,
+    HostCall, HostCallArgs, HostCallFailure, HostCallOk, HostCallRefusal, HostCallRequest,
+    HostCallResponse, HostStage, ObservedEvidence, PROTOCOL_VERSION, PanelDenial, PanelEmphasis,
+    PanelFrame, PanelInk, PanelLease, PanelLine, PanelPaint, PanelPatch, PanelPoint, PanelRect,
+    PanelRequest, PanelResponse, PanelSpan, PanelStyle, PanelSurface, PanelText, PublishedSignal,
+    RecallArgs, RecallFrame, RecallResult, RunTestArgs, Signal, SignalKind, SignalValue, StageName,
+    TestBaseline, TestPlan, TestRunResult, TurnOutcome, VolatileContext, WrapperPoint,
+    WrapperRequest, WrapperResponse,
 };
 
 /// The committed artifact's filename.
@@ -137,9 +137,9 @@ pub fn corpus() -> Result<Value, serde_json::Error> {
         "responses": responses()?,
         "host_calls": host_calls()?,
         "host_results": host_results()?,
-        "driver_session": driver_session()?,
-        "driver_calls": driver_calls()?,
-        "driver_results": driver_results()?,
+        "driver_session": driver::session()?,
+        "driver_calls": driver::calls()?,
+        "driver_results": driver::results()?,
         "panel_leases": panel_leases()?,
         "panel_frames": panel_frames()?,
         "parts": parts()?,
@@ -148,7 +148,10 @@ pub fn corpus() -> Result<Value, serde_json::Error> {
 }
 
 /// One labelled case: the name a diff reads, and the bytes it is about.
-fn case<T: Serialize>(name: &'static str, message: &T) -> Result<Value, serde_json::Error> {
+pub(crate) fn case<T: Serialize>(
+    name: &'static str,
+    message: &T,
+) -> Result<Value, serde_json::Error> {
     Ok(json!({ "case": name, "message": serde_json::to_value(message)? }))
 }
 
@@ -274,192 +277,6 @@ fn host_results() -> Result<Value, serde_json::Error> {
         case(
             "err/minimal",
             &HostCallResponse::err(2, HostCallFailure::new(HostCallRefusal::Failed, "")),
-        )?,
-    ]))
-}
-
-/// The driver channel's session frames — the host's opening and the two
-/// answers that end it (`doc:backlog-self-driving` §3.0, #3599 B0).
-///
-/// A second dispatch context, published beside the first rather than folded
-/// into it, because the two are different consents and a reader of this corpus
-/// should be able to see that a `drive` point is not a wrapper point.
-fn driver_session() -> Result<Value, serde_json::Error> {
-    Ok(Value::Array(vec![
-        case("open", &DriveRequest::new("cycle-7"))?,
-        // Both terminal answers, because a driver that halts and a driver that
-        // sleeps are the two shapes a host must handle and neither is the
-        // other's default.
-        case(
-            "sleep",
-            &DriveResponse {
-                next: DriveNext::Sleep { secs: 900 },
-            },
-        )?,
-        case(
-            "halt",
-            &DriveResponse {
-                next: DriveNext::Halt {
-                    reason: "budget spent".into(),
-                },
-            },
-        )?,
-    ]))
-}
-
-/// A capability ask, in both of its shapes.
-///
-/// `args` is the request's one optional member, so the pair is what makes a
-/// change between required and optional a diff here: `backlog_next` reads no
-/// arguments and sends no key, and `work_start` names the unit it is about.
-/// A table for each remaining verb that reads one, because each is a separate
-/// wire contract a driver author writes against.
-fn driver_calls() -> Result<Value, serde_json::Error> {
-    Ok(Value::Array(vec![
-        case(
-            "backlog_next",
-            &DriverCallRequest {
-                id: 1,
-                call: DriverCall::BacklogNext,
-                args: None,
-            },
-        )?,
-        case(
-            "backlog_claim",
-            &DriverCallRequest {
-                id: 2,
-                call: DriverCall::BacklogClaim,
-                args: Some(DriverArgs {
-                    backlog_claim: Some(UnitArgs {
-                        issue: "1234".into(),
-                    }),
-                    work_start: None,
-                    work_abandon: None,
-                }),
-            },
-        )?,
-        case(
-            "work_start",
-            &DriverCallRequest {
-                id: 3,
-                call: DriverCall::WorkStart,
-                args: Some(DriverArgs {
-                    backlog_claim: None,
-                    work_start: Some(UnitArgs {
-                        issue: "1234".into(),
-                    }),
-                    work_abandon: None,
-                }),
-            },
-        )?,
-        case(
-            "work_abandon",
-            &DriverCallRequest {
-                id: 4,
-                call: DriverCall::WorkAbandon,
-                args: Some(DriverArgs {
-                    backlog_claim: None,
-                    work_start: None,
-                    work_abandon: Some(AbandonArgs {
-                        reason: "the base moved under it".into(),
-                    }),
-                }),
-            },
-        )?,
-    ]))
-}
-
-/// The host's answers to those asks.
-fn driver_results() -> Result<Value, serde_json::Error> {
-    Ok(Value::Array(vec![
-        // The empty `ok` table is what a verb reporting nothing answers, and
-        // it is still the bytes every driver written against B0 reads: every
-        // member of `DriverOk` is omitted when absent.
-        case("ok/empty", &DriverCallResponse::ok(1, DriverOk::default()))?,
-        // One case per verb this host reports on. A member appearing here is a
-        // wire change, which is what the corpus exists to put on the screen.
-        case(
-            "ok/backlog",
-            &DriverCallResponse::ok(
-                4,
-                DriverOk {
-                    backlog: Some(BacklogPage {
-                        issues: vec![BacklogEntry {
-                            key: "1234".into(),
-                            title: "the queue is read over a port".into(),
-                            labels: vec!["bug".into(), "P1".into()],
-                            url: "https://example.invalid/1234".into(),
-                        }],
-                    }),
-                    claim: None,
-                    work: None,
-                },
-            ),
-        )?,
-        case(
-            "ok/claim",
-            &DriverCallResponse::ok(
-                5,
-                DriverOk {
-                    backlog: None,
-                    claim: Some(ClaimReport {
-                        issue: "1234".into(),
-                        held: false,
-                        holder: "self-driving:8412".into(),
-                    }),
-                    work: None,
-                },
-            ),
-        )?,
-        case(
-            "ok/work",
-            &DriverCallResponse::ok(
-                6,
-                DriverOk {
-                    backlog: None,
-                    claim: None,
-                    work: Some(WorkReport {
-                        issue: "1234".into(),
-                        state: WorkState::Changed,
-                        branch: "stella/1234".into(),
-                        stat: " 2 files changed, 31 insertions(+)".into(),
-                        detail: String::new(),
-                    }),
-                },
-            ),
-        )?,
-        // The emptiest legal report: a slot with nothing in it. Every optional
-        // member is omitted, so `state` alone is what a driver reads.
-        case(
-            "ok/work/idle",
-            &DriverCallResponse::ok(
-                7,
-                DriverOk {
-                    backlog: None,
-                    claim: None,
-                    work: Some(WorkReport::default()),
-                },
-            ),
-        )?,
-        case(
-            "err/undeclared",
-            &DriverCallResponse::err(
-                2,
-                HostCallFailure::new(
-                    HostCallRefusal::Undeclared,
-                    "this plugin's manifest does not declare \"deliver_merge\" in [driver] calls",
-                ),
-            ),
-        )?,
-        case(
-            "err/unsupported",
-            &DriverCallResponse::err(
-                3,
-                HostCallFailure::new(
-                    HostCallRefusal::Unsupported,
-                    "this host does not perform \"work_start\" yet",
-                ),
-            ),
         )?,
     ]))
 }

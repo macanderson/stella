@@ -314,7 +314,7 @@ impl DriverSession<'_> {
         }
 
         match self.gate.capabilities.perform(call, args).await {
-            Ok(ok) => DriverCallOutcome::Ok(ok),
+            Ok(ok) => DriverCallOutcome::Ok(Box::new(ok)),
             Err(failure) => {
                 self.gate.record(call, &failure);
                 DriverCallOutcome::Err(failure)
@@ -380,7 +380,7 @@ mod tests {
         // half that makes the refusal a value rather than a death.
         assert_eq!(
             session.call(DriverCall::BacklogNext, None).await,
-            DriverCallOutcome::Ok(DriverOk::default())
+            DriverCallOutcome::Ok(Box::default())
         );
         assert_eq!(session.spent(), 1);
 

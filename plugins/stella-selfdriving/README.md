@@ -39,14 +39,33 @@ time, and a `next` that ends the session. It holds no forge token, no provider
 key and no worktree. Every capability it needs, it asks Stella for.
 
 One cycle today: read the ranked queue (`backlog_next`), claim the top of it
-(`backlog_claim`), and ask Stella to work that issue (`work_start`) in a
-checkout of its own. It will not work an issue it cannot know is unclaimed —
-two loops taking one issue is what a claim prevents, and proceeding without one
-would trade a correct refusal for a silent race.
+(`backlog_claim`), ask Stella to work that issue (`work_start`) in a checkout
+of its own, open the pull request (`deliver_open`), read the forge
+(`deliver_observe`), and ask what to do next (`deliver_next`). It will not work
+an issue it cannot know is unclaimed — two loops taking one issue is what a
+claim prevents, and proceeding without one would trade a correct refusal for a
+silent race.
 
-The cycle ends at the diff. No host serves `deliver_open` yet. So the `halt`
-names the branch the work sits on. A person, or the shell script, opens the
-pull request.
+The cycle ends where the decision does. A pull request waiting on CI, needing a
+fix, or needing a rebase is a later cycle's work, so this one sleeps and says
+which state it stopped in. A decision of `merge` is the one it acts on, with
+`deliver_merge`.
+
+## The merge is Stella's call
+
+`deliver_next` decides over facts this program sends it, which is what makes it
+cheap: a cycle that already read the forge does not pay to read it twice.
+
+`deliver_merge` does not work that way. The ask names a pull request and
+carries no facts, and Stella reads the forge itself and runs the same machine
+over its own answer before merging. A cycle that reported a green build nobody
+saw gets a refusal naming the state Stella found. That is what makes putting a
+merge on a plugin channel safe — the branch protection your repository declares
+is read by the host, and no message this program writes reaches past it.
+
+A human still approves. The channel has no way to say otherwise. An operator
+who wants their own loop merging unreviewed work says so to
+`stella self-driving drive --no-review`, by hand.
 
 ## The grant binds
 
@@ -72,10 +91,11 @@ working driver and is deliberately untouched: §10's rule is that the shell
 driver is not deleted until its replacement is proven.
 
 What has moved onto the channel: reading the ranked defect queue, the
-cooperative claim, and the worktree and the turn behind `work_start`. What has
-not: the pull request, the merge, the sweep, the benchmark, the `brew` upgrade,
-the `~/.zshrc` line and the daemon. All of those are still the shell script's,
-running as you, which is why the `[[capabilities]]` list still declares them.
+cooperative claim, the worktree and the turn behind `work_start`, and the pull
+request from `deliver_open` through to `deliver_merge`. What has not: the
+sweep, the benchmark, the `brew` upgrade, the `~/.zshrc` line and the daemon.
+All of those are still the shell script's, running as you, which is why the
+`[[capabilities]]` list still declares them.
 
 ## What keeps it honest
 
@@ -90,6 +110,11 @@ real transport twice. Once with a grant that carries the read and the claim:
 both are served, and the program gets as far as asking for the work. Once with
 a grant that omits `backlog_next`: the host refuses it, and the session still
 ends with a `next` rather than a crash.
+
+`crates/stella-cli/src/driver_plugin/tests/deliver.rs` holds the merge to its
+own rule. A forge answering red refuses the merge and nothing reaches the
+forge; a forge answering green and approved merges the number the ask named;
+and a green build nobody reviewed waits.
 
 The consent check is an enumeration, so it catches drift in a power somebody
 already thought of. A driver that grew a capability nobody listed would pass

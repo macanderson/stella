@@ -27,8 +27,9 @@
 //! # What a session does today
 //!
 //! [`capabilities::HostDriverCapabilities`] serves the tracker read, the
-//! cooperative claim and the three `work` verbs, and answers `unsupported` for
-//! the rest, so a driver's ask for an unbuilt verb degrades rather than dying.
+//! cooperative claim, the three `work` verbs and the four `deliver` verbs, and
+//! answers `unsupported` for the rest, so a driver's ask for an unbuilt verb
+//! degrades rather than dying.
 //! This module does not paper over the rest: the refusals are printed, in the
 //! driver's own vocabulary and under the plugin's own name, so an operator sees
 //! exactly which asks this build could not serve and for whom.
@@ -60,6 +61,7 @@ use crate::plugin_authz::PluginGates;
 use crate::plugin_cmd::roster::PluginRoster;
 
 pub(crate) mod capabilities;
+pub(crate) mod deliver;
 pub(crate) mod sequence;
 pub(crate) mod session_log;
 pub(crate) mod work;

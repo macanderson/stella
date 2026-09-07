@@ -19,12 +19,21 @@
 //! # What is served, and what says so
 //!
 //! The host serves `backlog_next` — the queue, read through [`IssueProvider`]
-//! in the order `self_driving_cmd::ready` folds — `backlog_claim`, and the
-//! three `work` verbs.
+//! in the order `self_driving_cmd::ready` folds — `backlog_claim`, the three
+//! `work` verbs, and the four `deliver` verbs.
 //!
 //! Each other verb answers [`HostCallRefusal::Unsupported`] and names its
 //! family. That is a stated gap, not a silence. The match below covers every
 //! verb, so a new one is a build error here.
+//!
+//! # A merge is decided on what this host read
+//!
+//! `deliver_next` decides over a reading the driver sends. That is arithmetic.
+//! A loop that already read the forge should not pay to read it twice.
+//!
+//! `deliver_merge` reads the forge itself. It runs the same machine over its
+//! own answer. So a driver cannot merge by describing a build nobody saw.
+//! [`super::deliver`] carries the case.
 //!
 //! # An ask carries its own verb's arguments and nobody else's
 //!
@@ -43,12 +52,13 @@ use serde_json::Value;
 use stella_core::ports::{AuthzDecision, AuthzGate, Principal};
 use stella_plugin::{
     BacklogEntry, BacklogPage, ClaimReport, DriverArgs, DriverCall, DriverOk, HostCallFailure,
-    HostCallRefusal, UnitArgs,
+    HostCallRefusal, PullRequestArgs, UnitArgs,
 };
 use stella_protocol::issue::{Issue, IssueProvider};
 use stella_runtime::wrapper::DriverCapabilities;
 use stella_tools::registry::Tool;
 
+use super::deliver::DeliverDesk;
 use super::work::WorkSlot;
 use crate::plugin_authz::PluginGates;
 use crate::self_driving_cmd::claim::Claim;
@@ -86,6 +96,8 @@ pub(crate) struct HostDriverCapabilities {
     root: PathBuf,
     /// The one unit of work this session may hold.
     work: WorkSlot,
+    /// The one pull request this session may open for that unit.
+    deliver: DeliverDesk,
     /// The lease this session holds while it works a unit.
     ///
     /// Held for the length of the session rather than the call, because that
@@ -104,6 +116,7 @@ impl HostDriverCapabilities {
         config: LoopConfig,
         root: PathBuf,
         work: WorkSlot,
+        deliver: DeliverDesk,
     ) -> Self {
         Self {
             principal: Principal::Plugin(plugin.to_string()),
@@ -112,6 +125,7 @@ impl HostDriverCapabilities {
             config,
             root,
             work,
+            deliver,
             lease: Mutex::new(None),
         }
     }
@@ -257,6 +271,56 @@ impl HostDriverCapabilities {
             ..DriverOk::default()
         })
     }
+
+    /// The pull request for the session's unit — `deliver_open`.
+    ///
+    /// It reads the session's own slot, not an argument. A driver delivers
+    /// what it worked. A key here could only name a branch this session does
+    /// not hold.
+    ///
+    /// The title comes back through the tracker port. So the pull request a
+    /// human reads in the list carries the issue's real title, under this
+    /// workspace's own prefix.
+    async fn deliver_open(&self) -> Result<stella_plugin::OpenReport, HostCallFailure> {
+        let Some((issue, branch)) = self.work.deliverable() else {
+            return Err(HostCallFailure::new(
+                HostCallRefusal::Unavailable,
+                "this session holds no worked unit with a change on a branch, so there is nothing                  to open a pull request for — ask for `work_start` first",
+            ));
+        };
+        self.may_shell()?;
+        let resolved = self
+            .issues
+            .get(&stella_protocol::issue::IssueKey::from(issue.as_str()))
+            .await
+            .map_err(|error| {
+                HostCallFailure::new(
+                    HostCallRefusal::Failed,
+                    format!("this host could not read issue {issue}: {error}"),
+                )
+            })?;
+        let title = self
+            .config
+            .attribution
+            .title(&format!("{} (#{issue})", resolved.title));
+        self.deliver.open(&branch, &issue, &title).await
+    }
+}
+
+/// The pull request an ask named, or a refusal that says it named none.
+///
+/// A blank number is refused rather than guessed at, on [`named_unit`]'s
+/// terms. The only guess on offer is the one this session opened. Putting that
+/// in would answer about a pull request the driver never asked about.
+fn named_pr(named: &PullRequestArgs) -> Result<&str, HostCallFailure> {
+    let pr = named.pr.trim();
+    if pr.is_empty() {
+        return Err(HostCallFailure::new(
+            HostCallRefusal::Failed,
+            "this ask names no pull request, and this host does not choose one for a driver —              send the `pr` a `deliver_open` answer gave you",
+        ));
+    }
+    Ok(pr)
 }
 
 /// The key an ask named, or a refusal that says it named none.
@@ -406,13 +470,49 @@ impl DriverCapabilities for HostDriverCapabilities {
                     ..DriverOk::default()
                 })
             }
+            DriverCall::DeliverOpen => {
+                no_args(call, args.as_ref())?;
+                Ok(DriverOk {
+                    pull_request: Some(self.deliver_open().await?),
+                    ..DriverOk::default()
+                })
+            }
+            DriverCall::DeliverObserve => {
+                let table = table_for(call, args.as_ref())?;
+                let named = table
+                    .deliver_observe
+                    .as_ref()
+                    .ok_or_else(|| no_table(call))?;
+                self.may_shell()?;
+                Ok(DriverOk {
+                    observation: Some(self.deliver.observe(named_pr(named)?).await?),
+                    ..DriverOk::default()
+                })
+            }
+            // No shell, and so no grant beyond `[driver] calls`: this reads no
+            // forge and spends no model call. It is arithmetic over facts the
+            // driver already holds, and demanding `bash` for it would ask a
+            // human to grant a power it never uses.
+            DriverCall::DeliverNext => {
+                let table = table_for(call, args.as_ref())?;
+                let asked = table.deliver_next.as_ref().ok_or_else(|| no_table(call))?;
+                Ok(DriverOk {
+                    decision: Some(super::deliver::decide_from(asked)),
+                    ..DriverOk::default()
+                })
+            }
+            DriverCall::DeliverMerge => {
+                let table = table_for(call, args.as_ref())?;
+                let named = table.deliver_merge.as_ref().ok_or_else(|| no_table(call))?;
+                self.may_shell()?;
+                Ok(DriverOk {
+                    merge: Some(self.deliver.merge(named_pr(named)?).await?),
+                    ..DriverOk::default()
+                })
+            }
             DriverCall::BacklogFile
             | DriverCall::BacklogClose
             | DriverCall::BacklogLink
-            | DriverCall::DeliverOpen
-            | DriverCall::DeliverObserve
-            | DriverCall::DeliverNext
-            | DriverCall::DeliverMerge
             | DriverCall::SweepAudit
             | DriverCall::SweepRegress
             | DriverCall::SweepMeta

@@ -33,7 +33,7 @@ pub(crate) mod config;
 pub(crate) mod contention;
 mod convention;
 mod curate;
-mod deliver;
+pub(crate) mod deliver;
 mod drive;
 pub(crate) mod governor;
 mod graph_seed;

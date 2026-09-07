@@ -27,10 +27,10 @@
 # an answer.
 #
 # WHAT THIS FILE IS NOT. It is not the whole extraction yet.
-# `scripts/self-driving.sh` is still the working driver and is deliberately
-# untouched — §10's rule is that the shell driver is not deleted until its
-# replacement is proven, and `main.py` gets as far as reading the ranked queue
-# and asking to claim the top of it. Everything after that is still the shell
+# `scripts/self-driving.sh` is still the working driver and is untouched —
+# §10's rule is that the shell driver is not deleted until its replacement is
+# proven, and `main.py` gets as far as merging one issue's pull request. The
+# sweep, the benchmark, the release install and the daemon are still the shell
 # script's, running as you.
 #
 # WHAT THE HOST NOW DOES WITH THIS LIST. Installing it builds a rule from it.
@@ -114,11 +114,13 @@ scope = [
 # in-turn influence: `participation = "none"` above stays the honest answer,
 # because this plugin still never runs inside a turn. It starts them.
 #
-# FIVE OF THESE ARE SERVED. `backlog_next` reads the tracker through the same
+# THE BACKLOG READ, THE CLAIM, THE WORK AND THE DELIVERY ARE SERVED.
+# `backlog_next` reads the tracker through the same
 # `IssueProvider` port the `stella self-driving` verbs use. `backlog_claim`
 # takes the same lease `stella self-driving drive` takes. The three `work`
 # verbs run one issue through one bounded `stella run`, in a checkout of its
-# own.
+# own. The four `deliver` verbs push that branch, read the forge, decide, and
+# merge.
 #
 # Every other verb below comes back `unsupported` until the phase that builds
 # it lands. The loop degrades; it does not die. All of them are declared now
@@ -166,8 +168,20 @@ calls = [
   # `deliver_merge` is emitted only by the pure machine in
   # `stella_autonomy::deliver_next`, and only from `Approved` — which requires
   # CI observed GREEN ON THE FORGE, a mergeability the forge has actually
-  # computed, and, unless the operator turned it off in policy, a human
-  # approval. Never on the loop's own opinion of its work.
+  # computed, and a human approval. Never on the loop's own opinion of its
+  # work.
+  #
+  # THE HOST RE-READS THE FORGE BEFORE IT MERGES. `deliver_next` answers over
+  # facts this plugin sends; `deliver_merge` names a pull request and carries
+  # no facts at all, and Stella runs the same machine over its own reading
+  # before it merges anything. So granting `deliver_merge` grants "merge what
+  # the forge says is green and approved", never "merge what the plugin says
+  # is".
+  #
+  # The channel also offers no way to waive the human approval. An operator
+  # who wants their own loop merging unreviewed work says so to
+  # `stella self-driving drive --no-review`, by hand; a plugin asking for the
+  # same thing over a socket would be the loop granting itself the consent.
   #
   # A red build that reproduces on the base branch is `BaseBroken`, not
   # `CiRed`: the loop waits rather than spending this PR's budget fixing
@@ -195,8 +209,9 @@ calls = [
 # and this block is where its process is named.
 [driver.process]
 argv = ["python3", "${plugin_dir}/main.py"]
-# A session now includes the work, because `work_start` is served. The host
-# cuts a checkout and runs one turn in it while this program waits. A turn on a
+# A session now includes the work and the pull request, because `work_start`
+# and the `deliver` verbs are served. The host cuts a checkout, runs one turn in
+# it, pushes the branch and reads the forge while this program waits. A turn on a
 # real issue takes minutes. A one-minute backstop would have killed every
 # session that got as far as doing something. It is not a work budget: `stella
 # plugin drive --spend-limit` is the number that decides what a session may

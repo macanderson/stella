@@ -270,7 +270,7 @@ before it crosses.
 - `src/wire_corpus.rs` (behind the `schema` feature) — the generated wire-vector
   corpus `bin/export_wrapper_wire.rs` prints, published under `docs/wire/` and
   gate-checked by `scripts/check-wire-schema.sh`; compiled into no default
-  build.
+  build. `src/wire_corpus/driver.rs` holds the driver channel's own frames.
 - `src/host_call.rs` — the channel that lets a plugin ask the host for
   something (recall, a bounded child turn, a test re-run, an N-wide candidate
   fan-out, the adoption of one of its candidates) and read the answer before it
@@ -286,7 +286,9 @@ before it crosses.
   disagreement in either direction.
 - `src/driver.rs` — the `[driver]` block and the drive-session wire shapes
   (`DriverGrant`, `DriverCall`, `DriveRequest`/`DriveResponse`): a plugin that
-  starts turns rather than taking part in one.
+  starts turns rather than taking part in one. `src/driver/deliver.rs` beside
+  it holds the `deliver` family's own tables — the pull request an ask names,
+  what one read of the forge said, and what the machine decided.
 - `src/panel.rs` — the `[panel]` block, the surfaces it draws on, and the panel
   channel's wire shapes
   (`PanelGrant`, `PanelDenial`, `PanelLease`, `PanelFrame`): a plugin leased a

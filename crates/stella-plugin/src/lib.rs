@@ -163,10 +163,12 @@ pub use consent::{
     Capability, PANEL_GRANT_ASK, RiskLevel, consent_text, highest_risk, panel_handshake_text,
 };
 pub use driver::{
-    AbandonArgs, BacklogEntry, BacklogPage, ClaimReport, DriveNext, DrivePoint, DriveRequest,
-    DriveResponse, DriveSession, DriverArgs, DriverCall, DriverCallOutcome, DriverCallRequest,
-    DriverCallResponse, DriverFamily, DriverGrant, DriverMessage, DriverOk, UnitArgs, WorkReport,
-    WorkState,
+    AbandonArgs, BacklogEntry, BacklogPage, ClaimReport, DecideArgs, DeliverAction, DeliverCi,
+    DeliverDecision, DeliverEscalation, DeliverMergeability, DeliverObservation, DeliverReview,
+    DeliverState, DriveNext, DrivePoint, DriveRequest, DriveResponse, DriveSession, DriverArgs,
+    DriverCall, DriverCallOutcome, DriverCallRequest, DriverCallResponse, DriverFamily,
+    DriverGrant, DriverMessage, DriverOk, MergeReport, OpenReport, PullRequestArgs, UnitArgs,
+    WorkReport, WorkState,
 };
 pub use error::ManifestError;
 pub use evidence::{CheckOutcome, MeasurementRule, OracleCheck, UnmetCheck};
