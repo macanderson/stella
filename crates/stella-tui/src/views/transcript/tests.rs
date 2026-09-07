@@ -412,10 +412,6 @@ fn every_head_glyph_is_in_the_vocabulary() {
             confidence: 87,
             audit_event_id: "prm_1".into(),
         },
-        EventKind::Gate {
-            state: "pass".into(),
-            deterministic: true,
-        },
         EventKind::Model {
             tokens_per_sec: Some(40),
         },

@@ -124,8 +124,16 @@ pub(crate) async fn mcp_snapshot(
                 kind: transport.kind_label().to_string(),
                 enabled,
                 connected: connected_now,
-                health: connected_now.then_some(health).flatten(),
-                latency_ms: connected_now.then_some(latency_ms).flatten(),
+                // NOT gated on `connected_now` (`#2802`): an auth-suppressed
+                // server is never connected but still carries a synthesized
+                // `AuthRequired` health row (`McpToolSet::health`) — the one
+                // state that matters most for a row with no live client. A
+                // genuinely unmonitored server (no client, no auth
+                // suppression, e.g. `failed`) has no row at all, so
+                // `health`/`latency_ms` are already `None` there without
+                // this gate's help.
+                health,
+                latency_ms,
                 granted: config.is_granted(name),
                 tool_count,
                 dropped_tools: dropped.get(name).copied().unwrap_or(0),

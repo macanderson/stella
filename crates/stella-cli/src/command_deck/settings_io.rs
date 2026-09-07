@@ -19,6 +19,8 @@
 //! scope chain from disk, so what the overlay shows is what the files say,
 //! reloaded or not. Only *subsequent turns* depend on the live `Config`.
 
+use stella_core::ports::ToolExecutor;
+use stella_tools::custom::CustomTool;
 use stella_tui::{AgentScope, Inbound, WorkspaceInput};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -143,11 +145,50 @@ pub(super) fn reload_command(cfg: &mut Config, in_tx: &UnboundedSender<Inbound>)
     // Refresh an open SETTINGS tab with the merged view, the same courtesy
     // `/model` pays. The deck renders the last snapshot it was sent, so a
     // hand edit picked up by `/reload` is invisible in an open overlay until
-    // one arrives. The TOOLS panel is deliberately not refreshed here: an
-    // accurate row list needs the MCP-inclusive live stack, which this
-    // function does not hold (#1990).
+    // one arrives. The TOOLS panel is refreshed separately, at the driver
+    // loop's `DeckCommand::Reloaded` arm: an accurate row list needs the
+    // MCP-inclusive live stack, which this function does not hold (`#1990`).
     let _ = in_tx.send(engine_config_inbound(cfg, None));
     "configuration reloaded — engine, tools, and authority settings re-read from disk.".to_string()
+}
+
+/// Refresh an open TOOLS panel with the current, MCP-inclusive row list,
+/// sent as a fresh [`Inbound::ToolPolicy`] (`#1990`).
+///
+/// The list is built fresh each time, not cached: MCP servers join the
+/// session later, so the panel must ask what the stack holds right now.
+/// Only the driver loop holds `mcp_slot`, `registry`, and `custom_tools`
+/// together, so it calls this once a command marks the panel stale
+/// (`DeckCommand::Reloaded`, `DeckCommand::SettingsReloaded`).
+pub(super) fn refresh_tools_panel(
+    cfg: &Config,
+    mcp_slot: &tokio::sync::OnceCell<std::sync::Arc<stella_mcp::McpToolSet>>,
+    registry: &dyn ToolExecutor,
+    custom_tools: &[CustomTool],
+    in_tx: &UnboundedSender<Inbound>,
+) {
+    let names = crate::tool_switches::session_tool_names(
+        live_tool_executor(mcp_slot, registry),
+        custom_tools,
+    );
+    let _ = in_tx.send(tool_policy_inbound(cfg, &names, None));
+}
+
+/// Which tool executor is "the live stack" right now: the connected MCP
+/// set if one exists, the bare registry if not. Split out so this function
+/// and the driver loop's own between-prompts refresh give the same answer,
+/// checked by a test that needs no `Config` at all.
+///
+/// The boot-seed snapshot does not use this: MCP has not tried to connect
+/// yet at that point, so it always means the registry.
+pub(super) fn live_tool_executor<'a>(
+    mcp_slot: &'a tokio::sync::OnceCell<std::sync::Arc<stella_mcp::McpToolSet>>,
+    registry: &'a dyn ToolExecutor,
+) -> &'a dyn ToolExecutor {
+    match mcp_slot.get() {
+        Some(set) => set.as_ref(),
+        None => registry,
+    }
 }
 
 /// Re-derive the live [`Config`] from disk after a save, reporting a failure
@@ -164,5 +205,75 @@ pub(super) fn apply_pending_reload(cfg: &mut Config, in_tx: &UnboundedSender<Inb
         let _ = in_tx.send(super::chrome_note(format!(
             "settings saved, but reloading them failed: {e} — restart to pick them up."
         )));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use async_trait::async_trait;
+    use serde_json::Value;
+    use stella_protocol::tool::{ToolOutput, ToolSchema};
+
+    use super::*;
+
+    /// A base executor standing in for "registry" — enough to tell it apart
+    /// from an MCP set by name alone.
+    struct Base(&'static str);
+
+    #[async_trait]
+    impl ToolExecutor for Base {
+        fn schemas(&self) -> Vec<ToolSchema> {
+            vec![ToolSchema {
+                name: self.0.to_string(),
+                description: String::new(),
+                input_schema: serde_json::json!({}),
+                read_only: false,
+                speculation_safe: false,
+            }]
+        }
+        async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+            ToolOutput::Ok {
+                content: String::new(),
+                data: None,
+            }
+        }
+    }
+
+    fn names_of(executor: &dyn ToolExecutor) -> Vec<String> {
+        executor.schemas().into_iter().map(|s| s.name).collect()
+    }
+
+    /// `#1990`: this and the boot-seed code must answer "what is the live
+    /// tool stack" the same way — the bare registry, or the MCP set once one
+    /// connects. Without `live_tool_executor` as its own function, this test
+    /// cannot compile, because nothing here exists yet to call.
+    #[tokio::test]
+    async fn live_tool_executor_switches_to_the_connected_mcp_set() {
+        let registry = Base("registry_only_tool");
+        let slot: tokio::sync::OnceCell<std::sync::Arc<stella_mcp::McpToolSet>> =
+            tokio::sync::OnceCell::new();
+
+        // Nothing connected yet: the registry is the whole live stack.
+        assert_eq!(
+            names_of(live_tool_executor(&slot, &registry)),
+            vec!["registry_only_tool".to_string()]
+        );
+
+        // Connected (to nothing, here — the point is the *slot*, not what a
+        // real server would advertise): the answer switches to the MCP set,
+        // which never claims the registry-only tool by name.
+        let mcp = stella_mcp::McpToolSet::connect(&[], std::time::Duration::from_secs(1)).await;
+        // `is_ok()` rather than `unwrap()`: `OnceCell::set` hands back the
+        // value it refused, and `McpToolSet` is not `Debug`, so the unwrap
+        // does not compile.
+        assert!(
+            slot.set(std::sync::Arc::new(mcp)).is_ok(),
+            "the slot was empty a line ago, so this set cannot be refused"
+        );
+        assert!(
+            !names_of(live_tool_executor(&slot, &registry))
+                .contains(&"registry_only_tool".to_string()),
+            "a connected (even empty) MCP set must replace the bare registry, not add to it"
+        );
     }
 }

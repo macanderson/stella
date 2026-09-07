@@ -552,6 +552,7 @@ fn note_color(kind: crate::model::NoteKind) -> Color {
         NoteKind::Meter | NoteKind::Other => Color::Dim,
         NoteKind::Wait | NoteKind::Verdict => Color::Amber,
         NoteKind::Handoff => Color::Cyan,
+        NoteKind::Alert => Color::Red,
     }
 }
 

@@ -168,9 +168,14 @@ impl SignatureStatus {
     }
 
     /// The short label the MCP tab renders beside the row.
+    ///
+    /// `"attributed"`, not `"signed"` (`#5176`). The registry vouches for
+    /// the publisher's *namespace*. It never checks a signature over the
+    /// package bytes. "Signed" claims that check, which this state has not
+    /// earned.
     pub fn label(self) -> &'static str {
         match self {
-            SignatureStatus::Signed => "signed",
+            SignatureStatus::Signed => "attributed",
             SignatureStatus::Unsigned => "unsigned · blocked",
             SignatureStatus::Withdrawn(_) => "withdrawn · blocked",
         }
@@ -883,6 +888,19 @@ mod tests {
         assert_ne!(
             signature_status("com.stripe/mcp", Some("deprecated")).label(),
             signature_status("com.stripe/mcp", None).label()
+        );
+    }
+
+    /// `#5176`: the label must not claim more than the namespace check
+    /// establishes. This test guards against `"signed"`, a word for a
+    /// check this code never runs.
+    #[test]
+    fn an_attributed_entry_does_not_render_as_signed() {
+        let label = signature_status("com.stripe/mcp", Some("active")).label();
+        assert_eq!(label, "attributed");
+        assert!(
+            !label.contains("signed"),
+            "the row must not claim a byte-level signature nothing verified: {label}"
         );
     }
 

@@ -466,6 +466,12 @@ fn headline(server: &McpServerInfo, selected: bool) -> Line<'static> {
     } else if server.connected {
         let label = server.health.clone().unwrap_or_else(|| "live".to_string());
         Span::styled(label, muted)
+    } else if server.health.as_deref() == Some("auth required") {
+        // A server this session suppressed pre-connect (`#2687`) has no
+        // client, so it is never `connected`. It is not simply
+        // unreachable either, and "not connected" hid the one thing that
+        // would fix it (`#2802`).
+        Span::styled("auth required", Style::new().fg(token::WARNING))
     } else {
         Span::styled("not connected", Style::new().fg(token::RED))
     };
@@ -540,13 +546,19 @@ fn headline(server: &McpServerInfo, selected: bool) -> Line<'static> {
     Line::from(spans)
 }
 
-/// The latency cell: whole milliseconds of the connect handshake's round trip,
-/// or blank.
+/// The latency cell: whole milliseconds of the connect handshake's round
+/// trip, or blank.
 ///
-/// Blank rather than a dash or a zero when the number is unknown, and blank
-/// for a server that is not connected even if one was once measured — the
-/// column answers "how far away is this server right now", and a stale figure
-/// beside `not connected` would answer a question nobody asked.
+/// **Connect-time, not live** (`#5183`). This is the `initialize` round
+/// trip measured when the current connection was made. A reconnect
+/// re-measures it, but a server that slows down without dropping keeps
+/// showing its old, healthy number. See `stella_mcp::ServerHealth::latency`
+/// for the full contract this cell reads (prose, not a link: this crate
+/// does not depend on that one).
+///
+/// Blank, not a dash or a zero, when the number is unknown, and blank for a
+/// server that is not connected even if one was once measured. A stale
+/// number beside `not connected` would claim a distance nobody measured.
 fn latency(server: &McpServerInfo) -> String {
     match server.latency_ms {
         Some(ms) if server.connected && server.enabled => format!("{ms}ms"),
@@ -885,6 +897,29 @@ mod tests {
         lines.iter().map(flat).collect()
     }
 
+    /// `#2802`: an auth-suppressed server has no client, so it is never
+    /// `connected`. Without this fix, the row reads the same "not
+    /// connected" a genuinely down server gets, with no hint that logging
+    /// in would fix it. This is the row's word; getting the health value
+    /// this far at all is `deck_mcp.rs::mcp_snapshot`'s half, tested
+    /// separately.
+    #[test]
+    fn a_row_names_auth_required_instead_of_not_connected() {
+        let suppressed = McpServerInfo {
+            name: "linear".into(),
+            kind: "http".into(),
+            endpoint: "https://mcp.linear.app".into(),
+            enabled: true,
+            connected: false,
+            health: Some("auth required".into()),
+            granted: true,
+            ..McpServerInfo::default()
+        };
+        let text = rows(&[suppressed]).join("\n");
+        assert!(text.contains("auth required"), "{text}");
+        assert!(!text.contains("not connected"), "{text}");
+    }
+
     /// The reported bug: an aliased server rendered as `mcp [http] not
     /// connected`, and the only way to learn it was Stripe was to start its
     /// OAuth flow and read the browser.
@@ -1077,7 +1112,9 @@ mod tests {
         let text = search_rows(vec![signed("com.stripe/mcp")]).join("\n");
         assert!(text.contains("vendor"), "source tier: {text}");
         assert!(text.contains("9.1k installs"), "install count: {text}");
-        assert!(text.contains("signed"), "signature: {text}");
+        // "attributed", not "signed" (`#5176`) — the registry vouches for the
+        // publisher's namespace, never for the package bytes.
+        assert!(text.contains("attributed"), "signature: {text}");
 
         let text = search_rows(vec![blocked("io.github.x/y")]).join("\n");
         assert!(text.contains("community"), "{text}");

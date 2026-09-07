@@ -252,7 +252,7 @@ Top to bottom:
    - **PR** moves to the ISSUES tab (§9.4). A pull request is a tracker-side artifact of the current work, and that tab is where tracker-side artifacts live.
    - **LANES** moves to the AGENTS tab (§9.5), onto the EXECUTIONS header beside the active/total count that ENGINE became.
 
-   No `det %` here, or anywhere — see §1. The `det` tags that remain (`$0.00 · det` on a gate, §6.3; the graph footer, §9.1) are **booleans**: this call did or did not reach a model. They need no ratio behind them and are not summed into one.
+   No `det %` here, or anywhere — see §1. The `det` tags that remain (`$0.00 · det` on a gate, §8.1; the graph footer, §9.1) are **booleans**: this call did or did not reach a model. They need no ratio behind them and are not summed into one.
 
 ## 6. Transcript
 
@@ -280,7 +280,6 @@ Rail metals: read silver-dim, edit gold, write gold, delete red, run gold, skill
 | `skill` | `✦ skill <name> · auto\|/cmd · n tok` | `injected <summary> · used n× this repo` | |
 | `memory` (log) | `◆ memory logged · mem_id` | quoted text, then `OBSERVATION ▸ RULE ▸ FACT` ladder with current class lit, `conf 0.62 · kind · decays`, footer `promotes at 0.85 · e edit · x reject` | |
 | `memory` (promote) | `◆ memory promoted OBSERVATION → RULE · conf 0.87` | `audit event <id> · now prompt-injected` | one line total |
-| `gate` | `◇ gate <name> · state` | see section 8.1 on failure | always shows `$0.00` when deterministic |
 | `model` | `◐ model <activity> · tok/s` | footer: `irreducible generation · n of m budgeted model calls this turn` | |
 | `compaction` | `↓ compacted 74k→69k · 0 evicted · 0 deduped` | none | dim single line, deliberately quiet |
 
@@ -491,7 +490,12 @@ The manifest's own name is held to the same standard: it is composed into chrome
 ## 13. Accessibility
 
 - Never color alone (section 2). All states carry glyphs; diffs carry sign columns.
-- Minimum contrast: `muted` on `bg` is the floor; nothing dimmer than `dim` may carry required information.
+- Minimum contrast: `muted` on `bg` (4.5:1) sets the floor for body text. `dim`
+  is a stated exception, held to 3.0:1 instead, even on a real word like a
+  keybinding verb or a status-bar hint. That is safe because of rule 4 above:
+  nothing here is color-only, so a reader who cannot see `dim` well still has
+  the glyph or the word under it. `dim` still may not carry a fact found
+  nowhere else on the row.
 - All overlays closable with `esc`; all lists navigable with arrows alone.
 
 ## 14. Non-goals

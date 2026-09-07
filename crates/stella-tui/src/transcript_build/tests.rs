@@ -543,3 +543,27 @@ fn note_kind_classifies_one_event_from_every_reachable_family() {
         );
     }
 }
+
+/// `#5748`: without this classification, `Error` and `SteeringWithheld`
+/// fall into the `_` wildcard and render as the same muted `NoteKind::Other`
+/// glyph a budget tick gets. Both classify as `NoteKind::Alert`, distinct
+/// from `Other` and from each other's sibling severities.
+#[test]
+fn error_and_steering_withheld_classify_louder_than_other() {
+    let error = AgentEvent::Error {
+        message: "boom".to_string(),
+        retryable: false,
+    };
+    let steering = AgentEvent::SteeringWithheld {
+        withheld_by: stella_protocol::Withholder::ProjectUntrusted,
+        memories: 0,
+        records: 0,
+        skills: 0,
+        commands: 0,
+        agents: 0,
+    };
+    assert_eq!(note_kind(&error), NoteKind::Alert);
+    assert_ne!(note_kind(&error), NoteKind::Other);
+    assert_eq!(note_kind(&steering), NoteKind::Alert);
+    assert_ne!(note_kind(&steering), NoteKind::Other);
+}

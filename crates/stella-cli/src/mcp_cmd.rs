@@ -90,12 +90,19 @@ pub fn resolve_registry_url(workspace_root: &Path) -> String {
 /// connect order pick which server answers. Reported separately from `failed`
 /// for the same reason truncation is: the claimant servers are connected and
 /// their uncontested tools route normally.
+/// `auth_required` carries the servers skipped before connect, or refused
+/// with an HTTP 401, because this session lacks their login (`#2687`). Kept
+/// apart from `failed` for the same reason as the others: these servers can
+/// be fixed, not just retried. The deck's own notice missed this case until
+/// `#2802`; text mode already had it, and both now share
+/// [`auth_required_note`].
 pub(crate) fn mcp_outcome_report(
     connected: &[&str],
     failed: &[(String, String)],
     truncated: &[(&str, usize)],
     budgeted: &[(String, usize)],
     collisions: &[stella_mcp::WireNameCollision],
+    auth_required: &[(String, String)],
 ) -> String {
     let mut lines = match connected.len() {
         0 => vec!["no MCP servers connected — continuing with native tools only".to_string()],
@@ -120,13 +127,26 @@ pub(crate) fn mcp_outcome_report(
             .map(|(name, trimmed)| budget_note(name, *trimmed)),
     );
     lines.extend(collisions.iter().map(collision_note));
+    lines.extend(
+        auth_required
+            .iter()
+            .map(|(name, _)| auth_required_note(name)),
+    );
     lines.join("\n")
+}
+
+/// One server's login hint, shared by deck and text mode (`#2802`), the
+/// same as [`truncation_note`] and [`collision_note`]. Never "unavailable"
+/// — that word is [`mcp_outcome_report`]'s `failed`, and this server can be
+/// fixed.
+pub(crate) fn auth_required_note(name: &str) -> String {
+    format!("MCP server `{name}` requires authentication — run `stella mcp login {name}`")
 }
 
 /// The whole connect outcome for a live tool set, as one notice.
 ///
-/// The deck sends this straight to the chrome; unpacking the five accessors at
-/// the call site put the join in `command_deck.rs`, where a sixth diagnostic
+/// The deck sends this straight to the chrome; unpacking the six accessors at
+/// the call site put the join in `command_deck.rs`, where a seventh diagnostic
 /// meant editing a god file to add it.
 pub(crate) fn mcp_connect_report(set: &stella_mcp::McpToolSet) -> String {
     mcp_outcome_report(
@@ -135,6 +155,7 @@ pub(crate) fn mcp_connect_report(set: &stella_mcp::McpToolSet) -> String {
         &set.over_advertising_servers(),
         &set.over_budget_servers(),
         set.wire_name_collisions(),
+        set.auth_required_servers(),
     )
 }
 
@@ -212,10 +233,7 @@ pub(crate) fn print_connect_diagnostics(set: &stella_mcp::McpToolSet) {
     // Auth-suppressed servers (#2687) are actionable, not broken — say the
     // fix, never "unavailable" (which is what `failed_servers` renders as).
     for (name, _) in set.auth_required_servers() {
-        eprintln!(
-            "  {} MCP server `{name}` requires authentication — run `stella mcp login {name}`",
-            "!".yellow()
-        );
+        eprintln!("  {} {}", "!".yellow(), auth_required_note(name));
     }
     if set.connected_count() > 0 {
         println!(
