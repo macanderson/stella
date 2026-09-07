@@ -70,7 +70,7 @@ mod warm;
 mod writeback;
 
 pub use ann::{AnnIndexPolicy, AnnIndexReport, AnnIndexState};
-pub use clock::{Clock, FixedClock, SystemClock, format_rfc3339};
+pub use clock::{Clock, FixedClock, SystemClock, format_rfc3339, parse_rfc3339};
 pub use embed::{
     EmbedError, Embedder, EmbedderFingerprint, Embedding, HashEmbedder, SimilarityPosture,
 };

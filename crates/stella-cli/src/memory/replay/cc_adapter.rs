@@ -60,6 +60,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use stella_context::parse_rfc3339;
 use stella_learn::redact::redact_secrets;
 
 use super::trace::{
@@ -304,14 +305,12 @@ fn extract(line: &Line) -> Extracted {
 /// credential. Then, if the redaction *fired*, the command is dropped rather
 /// than emitted with a `[redacted]` hole in it.
 ///
-/// Dropping rather than keeping the redacted form is the conservative choice and
-/// costs almost nothing: a command that carried a credential is a one-off by
-/// nature (an `export`, a `curl` with a bearer token), so it was never going to
-/// be a recurring shape worth minting a tool from. What it *would* have done is
-/// put a partly-redacted credential context into a file, and the redactor's
-/// prefix list is a good filter rather than a complete one — a token shape it
-/// has not seen would survive. The foundry loses nothing; the gate keeps its
-/// margin.
+/// Dropping costs almost nothing. A command that carried a credential is a
+/// one-off by nature — an `export`, a `curl` with a bearer token — so it was
+/// never a recurring shape worth minting a tool from. Keeping it would put a
+/// partly-redacted credential into a file. The redactor's prefix list is a good
+/// filter, not a complete one, and a token shape it has not seen would survive.
+/// The foundry loses nothing; the gate keeps its margin.
 fn safe_command(command: &str) -> Option<String> {
     let trimmed = command.trim();
     if trimmed.is_empty() {
@@ -322,40 +321,6 @@ fn safe_command(command: &str) -> Option<String> {
         return None;
     }
     Some(redaction.text)
-}
-
-/// Parse an RFC-3339 timestamp to Unix seconds.
-///
-/// Hand-rolled to the exact shape Claude Code writes
-/// (`YYYY-MM-DDTHH:MM:SS[.mmm]Z`) rather than pulling in a date crate for one
-/// caller. Anything else returns `None` and the turn falls back to its
-/// neighbours' clamp — a wrong timestamp is worse than a missing one, because
-/// the trace's whole timeline is derived from these.
-fn parse_rfc3339(text: &str) -> Option<i64> {
-    let bytes = text.as_bytes();
-    if bytes.len() < 19 {
-        return None;
-    }
-    let num = |from: usize, to: usize| text.get(from..to)?.parse::<i64>().ok();
-    let (year, month, day) = (num(0, 4)?, num(5, 7)?, num(8, 10)?);
-    let (hour, minute, second) = (num(11, 13)?, num(14, 16)?, num(17, 19)?);
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-        return None;
-    }
-    Some(days_from_civil(year, month, day) * 86_400 + hour * 3_600 + minute * 60 + second)
-}
-
-/// Days since 1970-01-01, by Howard Hinnant's `days_from_civil` — the exact
-/// inverse of the `civil_from_days` `stella-context`'s clock already uses, so
-/// the two agree at every boundary by construction rather than by testing.
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let year = if month <= 2 { year - 1 } else { year };
-    let era = if year >= 0 { year } else { year - 399 } / 400;
-    let yoe = year - era * 400;
-    let mp = (month + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
 }
 
 /// The environment variable that opts a local run in.

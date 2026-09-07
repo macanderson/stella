@@ -120,6 +120,46 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (year, month, day)
 }
 
+/// Parse an RFC-3339 UTC timestamp back to Unix seconds — [`format_rfc3339`]
+/// inverted.
+///
+/// Reads the shape this module writes (`YYYY-MM-DDTHH:MM:SSZ`). It also reads
+/// the `…:SS.mmmZ` form other producers write, and drops the fraction.
+///
+/// Anything else is `None`. A time with an offset such as `+02:00` is one of
+/// those. Callers sort records by this number, so a missing answer costs less
+/// than a wrong one.
+pub fn parse_rfc3339(text: &str) -> Option<i64> {
+    if !text.is_char_boundary(19) {
+        return None;
+    }
+    let num = |from: usize, to: usize| text.get(from..to)?.parse::<i64>().ok();
+    let (year, month, day) = (num(0, 4)?, num(5, 7)?, num(8, 10)?);
+    let (hour, minute, second) = (num(11, 13)?, num(14, 16)?, num(17, 19)?);
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    // A leap second renders as :60 and is a real instant to accept; anything
+    // past these is not a time.
+    if hour > 23 || minute > 59 || second > 60 {
+        return None;
+    }
+    Some(days_from_civil(year, month, day) * 86_400 + hour * 3_600 + minute * 60 + second)
+}
+
+/// Days since 1970-01-01 for a civil date — Howard Hinnant's
+/// `days_from_civil`. It is the exact inverse of [`civil_from_days`], so the
+/// two agree at every month, year and era edge.
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let yoe = year - era * 400;
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,6 +205,46 @@ mod tests {
         assert_eq!(clock.now_unix_secs(), 1_060);
         clock.set(42);
         assert_eq!(clock.now_rfc3339(), format_rfc3339(42));
+    }
+
+    #[test]
+    fn every_rendered_instant_parses_back_to_itself() {
+        for instant in [
+            0i64,
+            -1,
+            1_582_934_399,
+            1_582_934_400,
+            1_600_000_000,
+            1_783_501_200,
+        ] {
+            let rendered = format_rfc3339(instant);
+            assert_eq!(
+                parse_rfc3339(&rendered),
+                Some(instant),
+                "{rendered} did not round trip"
+            );
+        }
+    }
+
+    #[test]
+    fn a_fractional_second_parses_to_its_whole_second() {
+        assert_eq!(
+            parse_rfc3339("2020-09-13T12:26:40.123Z"),
+            Some(1_600_000_000)
+        );
+    }
+
+    #[test]
+    fn text_that_is_not_a_timestamp_is_refused_rather_than_guessed() {
+        assert_eq!(parse_rfc3339("not a timestamp"), None);
+        assert_eq!(parse_rfc3339("2026-13-01T00:00:00Z"), None);
+        assert_eq!(parse_rfc3339("2026-01-32T00:00:00Z"), None);
+        assert_eq!(parse_rfc3339("2026-01-01T24:00:00Z"), None);
+        assert_eq!(parse_rfc3339(""), None);
+        // Shorter than a time field, so the byte slice would run off the end.
+        assert_eq!(parse_rfc3339("2026-01-01T00:00:0"), None);
+        // A multi-byte character straddling the seconds field must not panic.
+        assert_eq!(parse_rfc3339("2026-01-01T00:00:é"), None);
     }
 
     #[test]
