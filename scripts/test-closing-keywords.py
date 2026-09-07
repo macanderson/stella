@@ -159,6 +159,73 @@ check(
     result.stderr,
 )
 
+# ── Rule 2: a `Refs` demotion a commit never learned (`#6347`) ──────────────
+
+result = run(
+    body=f"Refs {REF}",
+    commits=f"chore: prep work\n\nCloses {REF}",
+)
+check(
+    "a Refs body with a commit that closes the same issue fails",
+    result.returncode == 1,
+    f"exit={result.returncode} stderr={result.stderr!r}",
+)
+check(
+    "the demotion failure is labelled distinctly from the negation one",
+    "Refs/Closes mismatch" in result.stderr,
+    result.stderr,
+)
+check(
+    "the demotion failure names the PR description site",
+    "in the PR description" in result.stderr and f"Refs {REF}" in result.stderr,
+    result.stderr,
+)
+check(
+    "the demotion failure names the commit site",
+    "in a commit message" in result.stderr and f"Closes {REF}" in result.stderr,
+    result.stderr,
+)
+
+result = run(
+    body=f"Refs {REF}",
+    commits=f"chore: prep work\n\nRefs {REF}",
+)
+check(
+    "a Refs body beside a Refs-only commit passes",
+    result.returncode == 0,
+    f"exit={result.returncode} stderr={result.stderr!r}",
+)
+
+result = run(
+    body=f"Closes {REF}",
+    commits=f"chore: prep work\n\nCloses {REF}",
+)
+check(
+    "a Closes body beside a Closes commit still passes",
+    result.returncode == 0,
+    f"exit={result.returncode} stderr={result.stderr!r}",
+)
+
+result = run(
+    body=f"Refs {REF} for background. Closes {REF}.",
+    commits=f"chore: prep work\n\nCloses {REF}",
+)
+check(
+    "a body that also genuinely closes the issue is not flagged as a demotion",
+    result.returncode == 0,
+    f"exit={result.returncode} stderr={result.stderr!r}",
+)
+
+result = run(
+    body=f"Refs {REF}",
+    commits=f"chore: prep work\n\nThis does not close {REF}.",
+)
+check(
+    "a negated commit close is rule 1's failure, not also a demotion mismatch",
+    "Refs/Closes mismatch" not in result.stderr,
+    result.stderr,
+)
+
 # ── Nothing to check ──────────────────────────────────────────────────────────
 
 result = run()

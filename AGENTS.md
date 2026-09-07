@@ -1558,6 +1558,21 @@ its issue number, in one sentence. Its fix is the safe spelling: put the
 issue number in backticks, or write "advances #N" instead of a closing
 keyword.
 
+**A `Refs` demotion is not complete while a commit still says `Closes`.**
+Editing the description from `Closes #N` down to `Refs #N` — the remedy this
+section already names for a PR that advances an issue without finishing it —
+only edits half of what closes the issue. Squash reads the commits, not the
+description, so a commit anywhere in the branch's history still saying
+`Closes #N` reaches `main` and closes it regardless. `#6333` demoted its
+description to `Refs #6308` while a later commit still said `Closes #6308`;
+the issue closed on merge, and only a separate sweep that had already
+reopened its members kept that from mattering. `check-closing-keywords.py`
+checks this too: it fails when the description names an issue only with
+`Refs` while any commit message carries a genuine `Closes`/`Fixes`/`Resolves`
+for that same issue. The fix is not a history rewrite — squash-merge with a
+hand-edited commit message, or push a follow-up commit spelling that
+trailer `Refs #N` instead.
+
 ---
 
 ## Testing approach
