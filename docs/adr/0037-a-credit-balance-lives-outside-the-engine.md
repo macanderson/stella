@@ -41,8 +41,16 @@ The engine says what it did, and it can do that today. `ExecutionRollupRow` in
 outcome, the token counts, and the cost of one turn.
 `crates/stella-store/src/enterprise_telemetry.rs` folds that row into a closed
 shape with no content in it, then queues it for delivery. Its export ledger
-gives each execution one secret number, and builds the event id from it. Two
-sends of one execution carry the same id, so the sink can drop the copy.
+gives each execution one locally stored nonce, and `from_finalized_rollup`
+hashes that nonce with the enrollment, workspace and execution identifiers into
+the event id. Two sends of one execution carry the same id, so the sink can
+drop the copy.
+
+That id is a deduplication key and nothing more. The nonce sits in the local
+`enterprise_export_ledger`, the hash takes no server-held secret, and a person
+who controls the installation can read the one and recompute the other. The
+sink still has to reconcile or authenticate what arrives before it bills
+against a disputed account.
 
 A seller can bill from that. It is the evidence side of metering, and it is
 built.
