@@ -201,13 +201,17 @@ pub(crate) struct WithheldNotice {
 }
 
 impl WithheldNotice {
-    /// The human channel's line: the workspace, the inventory, and the one
+    /// The human channel's line: the workspace, the inventory, and the
     /// remedy that works on the arm it is actually on.
+    ///
+    /// The untrusted arm names the config key first, then the env var.
+    /// The env var lasts one launch. The notice comes back every launch.
     pub(crate) fn line(&self, workspace_root: &Path) -> String {
         let remedy = match self.by {
             Withholder::ProjectUntrusted => {
-                "set STELLA_TRUST_PROJECT=1 to let this repo's memories, rules, skills, commands \
-                 and agents steer this session"
+                "set run.auto_trust_project = true in ~/.stella/stella.toml to let repos' \
+                 memories, rules, skills, commands and agents steer sessions from now on, or \
+                 STELLA_TRUST_PROJECT=1 for this session alone"
             }
             Withholder::ManagedCeiling => {
                 "your org's managed settings set authority.project_prompts = \"off\", so no \

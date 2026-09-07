@@ -81,7 +81,16 @@ jobs:
       contents: read
       pull-requests: read
     steps:
+      # Two, not one (#6273). `check-prose.py`'s base-tree allowances read
+      # `HEAD^1` on a `refs/pull/N/merge` checkout the same way
+      # `check-file-size.sh`'s do — see that job's checkout in file-size.yml
+      # for the full argument. At the default depth of 1 the parent is not in
+      # the clone, `resolve_base_commit` returns "", and every allowance
+      # collapses to the strict whole-tree check: inherited drift this PR did
+      # not cause then fails it anyway, which is what happened to #6266.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 2
 
       # Each step carries `!cancelled()` so a red one reports independently
       # instead of masking the next — ci.yml's guards job explains the trade at
