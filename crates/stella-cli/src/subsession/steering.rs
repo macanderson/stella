@@ -11,8 +11,8 @@
 /// The fields lock and latch, so the tap can be held by shared reference.
 /// The turn future and the input arms both hold it that way. The lead turn
 /// takes it as a per-turn stack local. Each worker lane takes it by `Arc`.
-/// [`SubSessions::steer`] feeds a worker's tap from the driver thread, and
-/// the worker's own engine drains it.
+/// [`SubSessions::steer`](super::SubSessions::steer) feeds a worker's tap
+/// from the driver thread, and the worker's own engine drains it.
 ///
 /// `soft_stop` is latched for the lead alone. A worker's stop stays a hard
 /// cancel, sent at once (`SubSessions::stop`).
