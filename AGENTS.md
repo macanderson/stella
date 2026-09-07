@@ -462,42 +462,66 @@ It carries the same session word, and for the same reason: one login is one
 account, and the thing that has to be identified is the session. Comparing
 the login alone read a peer session's claim as this session's own and cleared
 both to work one issue (`#5875`). `scripts/lib/claim-session.sh` resolves the
-word for both scripts, so a fleet sets `STELLA_CLAIM_SESSION` once rather
-than twice, and both fail open the same way: a run with no word of its own,
-and a claim comment carrying none, fall back to the author-only rule.
+word for every claim script here, so a fleet sets `STELLA_CLAIM_SESSION` once
+rather than once per script, and they all fail open the same way: a run with
+no word of its own, and a claim comment carrying none, fall back to the
+author-only rule.
 
 Run it **before writing code and again before opening the PR**. The gap
 between those two is enough: a peer's PR can merge inside one issue's worth of
 work, and then the check that was clean at the start is stale at the end.
 
-**Neither claim check can run in the agent container, and both now say so.**
+**A pull request is the third thing two sessions take at once, and
+`scripts/pr-claim.sh` is that mechanic pointed at one.** Three sweep sessions
+read one pull request in eight minutes, each worked out the same merge
+conflict, and each posted it; a fourth stopped, because it read the comments
+first. Duplication here does not lose work, it publishes it, and the
+maintainer is left to diff three long comments to learn they say one thing
+(`#5861`).
+
+```bash
+./scripts/pr-claim.sh check 5835    # exit 0 proceed, 1 stand down
+./scripts/pr-claim.sh claim 5835    # check, then post the claim
+./scripts/pr-claim.sh post 5835 --finding conflict:5828 --body-file note.md
+```
+
+The claim half takes the rules above: a lapsing comment, a session word beside
+the login, and every unknown proceeding loudly. A merged or closed pull request
+stands a sweep down too, since neither one takes a comment.
+
+`post` is the half that would have stopped all three. It asks the claim
+question too, then asks whether the same finding already stands, and writes
+only when neither answer is yes — the finding question alone can only see what
+somebody already published, so it turns a second sweep away after it has spent
+its diagnosis rather than before. `--ignore-claim` posts over a live claim, for
+the operator who read it and said on the pull request why. The caller names the
+finding, because two sessions that find one thing write it up two ways, and a
+digest of the words would call them different. A key that has to go stale
+carries what it depends on: a finding about the head commit puts the head sha
+in the key. A read that failed says so and posts anyway, rather than reporting
+that nothing stands.
+
+Take the claim when you start to read the pull request, not when you are ready
+to write. Each of those three sessions spent twenty minutes on the conflict
+before it had anything to say, so a claim taken at the end would have saved
+none of it. `make pr-claim N=5835` asks by hand; `make pr-claim-test` covers
+both gates, the blocking branches included.
+
+**No claim check can run in the agent container, and all three now say so.**
 They need `gh` to reach the tracker and `jq` to read the claims out of the
 reply, and that container ships neither. So the check every session is told
 to run printed `ok  proceed (could not ask)` — a line a reader takes for a
 clean check — and two sessions then implemented one issue twice, four
 repaired one red `main`, and two resolved one merge conflict, each pair
-paying for a full required-CI run as well as the work (`#5934`). Both scripts
-open with a tool pre-flight now, in the `shellcheck: UNAVAILABLE` register
+paying for a full required-CI run as well as the work (`#5934`). Each script
+opens with a tool pre-flight now, in the `shellcheck: UNAVAILABLE` register
 above and for the same reason: a check that did not run must not read as a
 check that found nothing. The banner names the missing tool, says what went
-unasked, and lists the by-hand questions — the open pull requests, the
-issue's state, the claim comments. `scripts/lib/claim-tools.sh` holds it, so
-one message serves both scripts, and each suite drives it with the tool
-masked off `PATH`.
-
-**A pull request is not claimed the same way, and does not need to be.** A
-sweep hits a conflicted or red pull request and every session reaches the same
-conclusion about it at once, which is the shape both scripts above exist for.
-There is no `pr-claim.sh`, because a pull request already carries both halves
-a claim script would add: a comment thread every session can read, and a head
-that moves the moment somebody pushes. The race there also fails closed — a
-second resolution is refused non-fast-forward, so the work is duplicated and
-never dropped, which is the opposite of the issue case, where one merge kept
-one tree and silently lost the other. So a pull request takes the same two
-moves without a script: read its recent pushes and its comments before you
-start, and say on it that you are resolving it. Two sessions each paid for a
-full conflict resolution of one pull request — a rename, a renumber, four
-files and a guard run each — before that was written anywhere.
+unasked, and lists the by-hand questions. `scripts/lib/claim-tools.sh` holds
+it, so one message serves all three, and each suite drives it with the tool
+masked off `PATH`. `pr-claim.sh`'s `post` keeps its own answer there and
+exits 3: that mode owes the caller a write, and a proceed would tell a sweep
+its finding is up when nothing was sent.
 
 **The image is out of this repository's reach, so the rule is best-effort
 there.** Nothing in this tree defines the container, exactly as with
