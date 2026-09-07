@@ -875,6 +875,10 @@ fn point_moment(point: WrapperPoint) -> &'static str {
 /// reading as an enforced one.
 fn capability_grant(manifest: &PluginManifest) -> Vec<String> {
     let capabilities = &manifest.capabilities;
+    // Whether the package's own tables put anything in its grant. Read by both
+    // arms below, because both would otherwise describe a narrower grant than
+    // the host enforces (ADR 0032).
+    let ships_its_own = !manifest.tools.is_empty() || !manifest.mcp.is_empty();
     let Some(worst) = highest_risk(capabilities) else {
         // "Asks for nothing" was the whole of this arm, and read as a promise
         // about a plugin whose process is fed the user's tool inputs on the
@@ -892,7 +896,6 @@ fn capability_grant(manifest: &PluginManifest) -> Vec<String> {
         // host lets the package call them, so a flat "it may call nothing"
         // would be the reassurance the injection guard below exists to stop
         // anyone else printing.
-        let ships_its_own = !manifest.tools.is_empty() || !manifest.mcp.is_empty();
         if !manifest.loop_grant.hooks.is_empty() {
             return vec![if ships_its_own {
                 "It asks to call no tool of Stella's, so Stella will let it call only what it \
@@ -934,6 +937,13 @@ fn capability_grant(manifest: &PluginManifest) -> Vec<String> {
         for scope in &capability.scope {
             lines.push(format!("      claimed limit: {}", one_line(scope)));
         }
+    }
+    // The list above is what the package asks of Stella. Its own tools and
+    // servers are in the grant too (ADR 0032), and a reader who took the list
+    // for the whole grant would be reading a narrower document than the one
+    // the host enforces.
+    if ships_its_own {
+        lines.push("It may also call the tools it installs, listed above.".into());
     }
     if capabilities
         .iter()
