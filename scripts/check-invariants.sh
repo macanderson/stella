@@ -64,6 +64,15 @@ invariant_re='^[0-9]+\. \*\*[^*]+\*\*'
 
 home_count="$(grep -cE "$invariant_re" "$home" || true)"
 
+# The names the normative list actually defines, one per line. Asking whether
+# the bolded name appears *anywhere* in $home is a different question and the
+# wrong one: $home is mostly prose, and its prose uses bold lead-ins too. A
+# paragraph opening `**Both steps file, under different labels.**` made every
+# `N. **Both.**` in the tree read as a restatement of an invariant named
+# "Both" — and `docs/spec/pipeline-as-plugins.md` has one, as the third option
+# in a design list.
+home_names="$(sed -n 's/^[0-9]\{1,\}\. \*\*\([^*]*\)\*\*.*/\1/p' "$home")"
+
 if [ "$home_count" -eq 0 ]; then
   note "FAIL $home carries no numbered invariant list."
   note "     This guard expects the normative list to live here. If it moved,"
@@ -92,7 +101,23 @@ while IFS= read -r file; do
     [ -n "$name" ] || continue
     # Strip a trailing period so "Serde-first." matches "Serde-first".
     bare="$(printf '%s\n' "$name" | sed 's/\.$//')"
-    if grep -qF "**$bare" "$home"; then
+    # Prefix rather than equality, so a name carrying a trailing clause
+    # ("Budget aborts at safe boundaries only** — never mid-tool") still
+    # matches the entry it copies. Quoting $bare in the case pattern keeps
+    # a name's own glob characters literal.
+    restated=0
+    while IFS= read -r home_name; do
+      [ -n "$home_name" ] || continue
+      case "$home_name" in
+      "$bare"*)
+        restated=1
+        break
+        ;;
+      esac
+    done <<EOF3
+$home_names
+EOF3
+    if [ "$restated" -eq 1 ]; then
       note "FAIL $file:$line restates invariant \"$bare\", which is normative in $home."
       status=1
     fi
