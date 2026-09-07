@@ -287,6 +287,24 @@ said no about this commit," and `main-red-hold.yml` reads only `main-red`, so
 an unverified-main issue never blocks a merge on an absence of information the
 way a known-broken `main` does.
 
+A third question sat unasked between the two above: `ci.yml` runs the whole
+test suite, on every push to `main`. It reports pass/fail on the commit and
+stops there — it neither files nor blocks anything. `main` failed the same
+test three times running across two days and the `main-red` chain never fired
+once, because nothing in it had ever asked `ci.yml` what it found.
+`scripts/main-canary.sh`'s `ci-tests` row (`scripts/check-ci-tests.sh`, `make
+ci-tests`) asks it cheaply. It never runs the suite twice. The `compile` row
+already pays to ask whether the tree *builds*, and a second full test run on
+every push is the cost `main-canary.yml`'s header argues against. The row
+reads the CONCLUSION `ci.yml` already wrote for the newest commit that has a
+finished run. It answers "nothing to say" — not red — on a queued run, a
+cancelled one, a `startup_failure`, or a run it does not know. That is the
+fail-open rule `check-main-verified.sh` uses for the question above. It is a
+row of the canary's `checks` array, not a fourth workflow step, so a green
+suite closes the same `main-red` issue a red one opened, through the
+one-issue code the other four rows already share. No second actor races the
+canary to open or close it.
+
 One cause of that absence is a push that raised no event, and the canary
 cannot see it from the inside: it is suppressed by the same rule.
 `auto-tag.yml` merges the release version write-back with the token GitHub
