@@ -72,7 +72,17 @@ do, and it also decides whether your turn is finished
   - runs as a process on your machine: `python3 ${plugin_dir}/main.py` (killed after 30s)
       it inherits these environment variables and no others: PATH
 
-It asks for no tool capabilities.
+Stella hands `vera`'s own process your work, as JSON on that process's standard input. What crosses:
+  - before every tool call (`PreToolUse` hook):
+      - the absolute path of the workspace you are running in
+      - the name of every tool the turn is about to run
+      - that tool's arguments in full, before it runs — the command line for a shell call, the path and the whole new text for a write, the query for a search
+  - when a turn is about to finish (`Stop` hook):
+      - the absolute path of the workspace you are running in
+      - the model's full reply for the turn — the same text you were shown
+  Once it has been handed over, nothing in Stella bounds what that process does with it: a plugin asking for no tool capability at all can still send every line of it anywhere it can reach.
+
+It asks to call no tool of its own, and Stella will let it call none — what it receives is listed above.
 
 Every tool call `vera` makes is attributed to it, not to you: the authorization
 gate sees it as a caller of its own, and may refuse it regardless of what you

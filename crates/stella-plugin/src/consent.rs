@@ -880,12 +880,37 @@ fn capability_grant(manifest: &PluginManifest) -> Vec<String> {
         // about a plugin whose process is fed the user's tool inputs on the
         // hook channel (#4310). The data section above now names what crosses;
         // this sentence stops contradicting it.
+        //
+        // Each sentence also says what the empty list *grants*, which the host
+        // enforces as a grant of nothing of its own (ADR 0032, `stella-cli`'s
+        // `plugin_authz`). Saying only what was asked leaves a reader to guess
+        // the answer, and the answer they guess is the one that hole gave:
+        // everything.
+        //
+        // A package that ships its own tools or servers is the second sentence
+        // of each pair. Those are declared in their own tables above and the
+        // host lets the package call them, so a flat "it may call nothing"
+        // would be the reassurance the injection guard below exists to stop
+        // anyone else printing.
+        let ships_its_own = !manifest.tools.is_empty() || !manifest.mcp.is_empty();
         if !manifest.loop_grant.hooks.is_empty() {
-            return vec![
-                "It asks to call no tool of its own — what it receives is listed above.".into(),
-            ];
+            return vec![if ships_its_own {
+                "It asks to call no tool of Stella's, so Stella will let it call only what it \
+                 installs, listed above, and refuse it every other tool."
+                    .into()
+            } else {
+                "It asks to call no tool of its own, and Stella will let it call none — what it \
+                 receives is listed above."
+                    .into()
+            }];
         }
-        return vec!["It asks for no tool capabilities.".into()];
+        return vec![if ships_its_own {
+            "It asks for no tool capabilities, so Stella will let it call only what it installs, \
+             listed above, and refuse it every other tool."
+                .into()
+        } else {
+            "It asks for no tool capabilities, so Stella will refuse it every tool call.".into()
+        }];
     };
 
     let mut lines = vec![
@@ -1199,8 +1224,8 @@ fn risk_blurb(risk: RiskLevel) -> &'static str {
 ///
 /// The two things being defended against are different. Newlines let a
 /// plugin's prose forge a line of the prompt around it — a `description`
-/// ending `\n\nIt asks for no tool capabilities.` reads as Stella's own
-/// reassurance. Control characters (an ANSI escape, a carriage return) let it
+/// ending `\n\nIt asks for no tool capabilities, so Stella will refuse it
+/// every tool call.` reads as Stella's own reassurance. Control characters (an ANSI escape, a carriage return) let it
 /// repaint or erase the terminal the consent is being given in. Neither is
 /// hypothetical for text a third party wrote and a user is about to trust.
 fn one_line(text: &str) -> String {

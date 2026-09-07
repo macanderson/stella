@@ -43,6 +43,8 @@ fn gate() -> PluginGates {
                 capability("bash", RiskLevel::Destructive),
                 capability("read_file", RiskLevel::Low),
             ],
+            &[],
+            &[],
         )],
     }
 }
@@ -177,6 +179,8 @@ fn a_tool_listed_twice_takes_the_highest_grade_the_user_saw() {
                 capability("bash", RiskLevel::Low),
                 capability("bash", RiskLevel::High),
             ],
+            &[],
+            &[],
         )],
     };
     assert_eq!(
@@ -213,8 +217,18 @@ fn a_tool_listed_twice_takes_the_highest_grade_the_user_saw() {
 fn two_plugins_compose_and_the_trace_names_the_one_that_refused() {
     let gate = PluginGates {
         rules: vec![
-            PluginCapabilityGate::accepted("alpha", &[capability("bash", RiskLevel::High)]),
-            PluginCapabilityGate::accepted("beta", &[capability("read_file", RiskLevel::Low)]),
+            PluginCapabilityGate::accepted(
+                "alpha",
+                &[capability("bash", RiskLevel::High)],
+                &[],
+                &[],
+            ),
+            PluginCapabilityGate::accepted(
+                "beta",
+                &[capability("read_file", RiskLevel::Low)],
+                &[],
+                &[],
+            ),
         ],
     };
 
@@ -256,30 +270,105 @@ fn two_plugins_compose_and_the_trace_names_the_one_that_refused() {
     );
 }
 
-/// A plugin that declared nothing installs no rule, so the gate is not built
-/// from it at all — the owner call in this change, argued in the module docs.
-///
-/// `plugins/stella-candidates` is the shipped instance: it declares no
-/// `[[capabilities]]` and is the only plugin that runs a best-of-N candidate's
-/// whole worker turn as `Principal::Plugin`.
+/// A workspace with nothing installed builds no rule, so a session there keeps
+/// the `NoAuthz` it would otherwise have had.
 #[test]
-fn a_roster_of_plugins_that_declared_nothing_builds_no_gate() {
-    let empty = PluginGates { rules: Vec::new() };
+fn an_empty_roster_builds_no_gate() {
     assert!(
         PluginGates::from_roster(&crate::plugin_cmd::roster::PluginRoster::default()).is_none(),
         "an empty roster installs no rule"
     );
-    // And the shape it would have had refuses nothing, which is what keeps the
-    // `None` above from being the only thing standing between a candidate
-    // fan-out and a total denial.
+}
+
+/// One installed plugin, from its manifest text, as a roster.
+fn roster_of(manifest: &str) -> crate::plugin_cmd::roster::PluginRoster {
+    crate::plugin_cmd::roster::PluginRoster::compose(
+        vec![crate::plugin_cmd::roster::InstalledPlugin {
+            manifest: stella_plugin::PluginManifest::from_toml_str(manifest)
+                .expect("the fixture manifest parses"),
+            dir: std::path::PathBuf::from("/opt/pkgs/fixture"),
+            scope: crate::plugin_cmd::roster::PluginScope::User,
+            consent: crate::plugin_cmd::receipt::ConsentState::Receipted,
+            panel_grant: crate::plugin_cmd::panel_grant::PanelGrantState::Undecided,
+        }],
+        Vec::new(),
+        &std::collections::BTreeMap::new(),
+    )
+}
+
+/// **Witness (ADR 0032).** A plugin that declared no `[[capabilities]]` is
+/// held to a grant of nothing.
+///
+/// This is the assertion the rule before it fails: `from_roster` filtered a
+/// manifest with an empty list out of the roster, so such a plugin installed no
+/// rule and every tool call attributed to it was allowed. The rule exists now,
+/// and it refuses.
+#[test]
+fn a_plugin_that_declared_no_capabilities_is_granted_nothing() {
+    let gates = PluginGates::from_roster(&roster_of(
+        "name = \"quiet\"\ndescription = \"it declares no capabilities\"\n",
+    ))
+    .expect("a plugin that declared nothing still installs a rule");
+
+    let decision = decide(
+        &gates,
+        "read_file",
+        RiskLevel::Low,
+        &Principal::Plugin("quiet".into()),
+    );
+    let AuthzDecision::Deny { reason } = decision else {
+        panic!("silence is a grant of nothing, got {decision:?}");
+    };
+    assert!(
+        reason.contains("it may call: nothing") && reason.contains("[[capabilities]]"),
+        "the refusal says the grant is empty and names the table an author would \
+         have to write to widen it: {reason}"
+    );
+
+    // Anti-vacuity: the same call made by the operator is not the plugin's.
+    assert_eq!(
+        decide(&gates, "read_file", RiskLevel::Low, &Principal::User),
+        AuthzDecision::Allow
+    );
+}
+
+/// **Witness (ADR 0032).** A worker turn the host ran because a plugin asked
+/// for one is not the plugin calling a tool, so the plugin's empty grant does
+/// not refuse it.
+///
+/// `plugins/stella-candidates` is the shipped instance: it declares no
+/// `[[capabilities]]`, and every candidate it buys is a whole writing worker
+/// turn whose tools the session's own model picks. One spelling covered both
+/// callers before this, so the rule above could not have existed without
+/// refusing every one of those turns on its first run.
+#[test]
+fn a_worker_turn_run_for_a_plugin_is_not_bound_by_the_plugins_tool_grant() {
+    let gates = PluginGates::from_roster(&roster_of(
+        "name = \"stella-candidates\"\ndescription = \"it fans out\"\n",
+    ))
+    .expect("a rule is installed for it");
+
+    assert!(
+        matches!(
+            decide(
+                &gates,
+                "bash",
+                RiskLevel::Destructive,
+                &Principal::Plugin("stella-candidates".into())
+            ),
+            AuthzDecision::Deny { .. }
+        ),
+        "the plugin's own call is still refused"
+    );
     assert_eq!(
         decide(
-            &empty,
+            &gates,
             "bash",
             RiskLevel::Destructive,
-            &Principal::Plugin("stella-candidates".into())
+            &Principal::PluginWorker("stella-candidates".into())
         ),
-        AuthzDecision::Allow
+        AuthzDecision::Allow,
+        "and a turn run for it is a caller this rule holds no opinion about"
     );
 }
 
@@ -404,6 +493,8 @@ async fn a_plugin_is_refused_through_the_assembled_stack_and_the_user_is_not() {
         rules: vec![PluginCapabilityGate::accepted(
             "p",
             &[capability("read_file", RiskLevel::Low)],
+            &[],
+            &[],
         )],
     });
 

@@ -98,6 +98,7 @@ open; nothing before Phase 3 forces it.
 | [0029](0029-branch-protection-stays-non-strict.md) | Branch Protection Stays Non-Strict | Accepted |
 | [0030](0030-the-wrapper-socket-is-the-plugin-sdk.md) | The Wrapper Socket Is the Plugin SDK | Accepted |
 | [0031](0031-a-turn-has-no-step-cap-by-default.md) | A Turn Has No Step Cap by Default | Accepted |
+| [0032](0032-silence-is-not-a-grant.md) | Silence Is Not a Grant | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible
@@ -172,3 +173,10 @@ wandering turn is loop detection, the stall rung, the budget, the deadline and
 the goal predicate, each of which reads evidence. `max_steps` is now
 `Option<usize>`, `None` by default, and a host that means a count still sets
 one.
+
+ADR 0032 settles what a plugin with an empty `[[capabilities]]` list may call.
+It may call nothing of the host's. Its grant is what its manifest declared and
+a person took, which also covers the tools and MCP servers the package ships.
+A worker turn the host runs for a plugin gets a caller name of its own, so one
+list is not asked to bound both the plugin's reach and the tools a candidate's
+model picks.

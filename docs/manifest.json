@@ -160,6 +160,11 @@
       "status": "implemented",
       "title": "ADR 0031: A turn has no step cap by default"
     },
+    "adr/0032-silence-is-not-a-grant": {
+      "path": "docs/adr/0032-silence-is-not-a-grant.md",
+      "status": "implemented",
+      "title": "ADR 0032: Silence is not a grant"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",

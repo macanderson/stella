@@ -42,32 +42,40 @@
 //! today, which is the property #3482 asks for — "decide explicitly; do not
 //! let the wording and the enforcement drift apart."
 //!
-//! # A plugin that declared nothing installs no rule
+//! # A plugin that asked the host for nothing gets nothing from the host
 //!
-//! [`PluginGates::from_roster`] skips a manifest with an empty
-//! `[[capabilities]]` list rather than building a gate that refuses it
-//! everything, and that is the owner call this change had to make out loud.
+//! This is settled, and `doc:adr/0032-silence-is-not-a-grant` is where it was
+//! settled. [`PluginGates::from_roster`] builds a rule for every installed
+//! plugin. A plugin's grant is everything its manifest declared and a human
+//! accepted, which is the `[[capabilities]]` list plus the tools and MCP
+//! servers the package ships itself. An empty `[[capabilities]]` list asks the
+//! host for nothing, so it is granted nothing of the host's, and every such
+//! call is refused with a reason naming the table an author would write.
 //!
-//! What decides it: `Principal::Plugin` is carried by two different things. A
-//! plugin's own contributed tool is one
-//! (`stella_tools::custom::CustomTool::principal`); a **best-of-N candidate's
-//! whole worker turn** is the other (`crate::candidate_workspaces`, #3892).
-//! `plugins/stella-candidates` is the only shipped plugin that fans out, and it
-//! declares no capabilities — so a deny-by-default rule would refuse every tool
-//! its candidates call, on its first run, on a declaration written for a
-//! different question.
+//! The rule before it skipped a manifest with an empty list, so a plugin that
+//! declared nothing installed no rule and every call it made was allowed.
+//! Declaring less bought more, which makes the list a thing an author is
+//! penalised for writing.
 //!
-//! The consent prompt agrees. It renders *"It asks for no tool capabilities."*
-//! for such a manifest — a statement that the plugin made no request, not that
-//! the user granted it nothing — and turning that sentence into a total denial
-//! would enforce a decision nobody was shown.
+//! Silence could not mean denial while either of these stood:
 //!
-//! The rule is therefore *undeclared-within-a-declared-grant is denied*, not
-//! *silence is denial*. Declaring a list is a plugin opting into being bounded
-//! by it. The residual hole — a plugin that declares nothing is not narrowed
-//! here at all — is real, and #6060 is where it is being decided: closing it
-//! needs a default grant a user accepts, which is a decision, not an
-//! implementation.
+//! - The consent prompt rendered *"It asks for no tool capabilities."*, a
+//!   sentence about the request rather than the grant. It says what the plugin
+//!   may call now (`stella_plugin::consent_text`), so a human reads the
+//!   sentence this gate enforces.
+//! - `Principal::Plugin` named two callers. A plugin's own contributed tool is
+//!   one (`stella_tools::custom::CustomTool::principal`). A whole worker turn
+//!   the host ran because the plugin asked for one was the other
+//!   (`crate::candidate_workspaces`, #3892), and `plugins/stella-candidates`
+//!   declares no capabilities, so denial here would have refused every tool
+//!   its candidates call. That turn is
+//!   [`stella_core::ports::Principal::PluginWorker`],
+//!   which no rule here matches: the model picks those tools, the session's
+//!   own policy bounds them, and the plugin's authority for the fan-out is the
+//!   `candidate_fanout` host call it declared.
+//!
+//! So a plugin that wants one of the host's tools asks for it in one line a
+//! human reads, and gets nothing it did not ask for.
 //!
 //! # It answers about one plugin
 //!
@@ -115,10 +123,21 @@ pub(crate) struct PluginCapabilityGate {
     /// deterministic order — invariant 7's discipline, applied to a string a
     /// human reads when a call is refused.
     granted: BTreeMap<String, RiskLevel>,
+    /// Namespace prefixes this plugin may call anything beneath — one per MCP
+    /// server the package ships (`mcp__<server>__`).
+    ///
+    /// A prefix rather than a name because there is no name: a server
+    /// advertises its tools when it connects, long after this rule is built.
+    /// The server itself is declared and consented by name, which is what
+    /// `crate::agent::tool_stack`'s own principal map keys on for the same
+    /// reason.
+    granted_prefixes: Vec<String>,
 }
 
 impl PluginCapabilityGate {
-    /// The rule for `plugin`, from the capabilities the user accepted.
+    /// The rule for `plugin`, from everything its manifest declared and a
+    /// human accepted: the capability list, plus the tools and MCP servers the
+    /// package ships itself.
     ///
     /// A tool listed twice takes the **highest** grade of its entries. The
     /// manifest's own rule is one entry per tool (`plugins/stella-selfdriving`
@@ -127,7 +146,28 @@ impl PluginCapabilityGate {
     /// safe reading if one ever slips through validation: the union is what
     /// the user saw, and taking the *lower* grade would refuse a call they
     /// consented to.
-    pub(crate) fn accepted(plugin: impl Into<String>, capabilities: &[Capability]) -> Self {
+    ///
+    /// # A package's own contributions are already declared
+    ///
+    /// `[[capabilities]]` is what a plugin asks of **the host's** tool
+    /// surface. A script tool the package ships is not the host's to grant: it
+    /// is the package's own code, named and described in `[[tools]]`, and
+    /// rendered to a human by `stella_plugin::consent_text` before anything is
+    /// copied. Refusing it would break the tool a user just agreed to install
+    /// (ADR 0032), so the shipped names join the grant.
+    ///
+    /// They join it at no ceiling, because `ToolContribution` carries no grade
+    /// for the risk check to compare against — that check exists to catch an
+    /// author under-grading their own claim, and here there is no claim. An
+    /// author who *does* declare a capability for their own tool keeps the
+    /// grade they declared: a shipped name is only added where the capability
+    /// list is silent about it.
+    pub(crate) fn accepted(
+        plugin: impl Into<String>,
+        capabilities: &[Capability],
+        ships_tools: &[String],
+        ships_servers: &[String],
+    ) -> Self {
         let mut granted: BTreeMap<String, RiskLevel> = BTreeMap::new();
         for capability in capabilities {
             granted
@@ -139,9 +179,18 @@ impl PluginCapabilityGate {
                 })
                 .or_insert(capability.risk);
         }
+        for tool in ships_tools {
+            granted
+                .entry(tool.clone())
+                .or_insert(RiskLevel::Destructive);
+        }
         Self {
             plugin: plugin.into(),
             granted,
+            granted_prefixes: ships_servers
+                .iter()
+                .map(|server| stella_mcp::namespace_prefix(server))
+                .collect(),
         }
     }
 
@@ -165,13 +214,22 @@ impl PluginCapabilityGate {
     /// This rule's own verdict, assuming [`Self::matches`] already said yes.
     fn verdict(&self, contract: &ToolContract) -> AuthzDecision {
         let tool = contract.name();
+        // A tool under a namespace this package's own server owns: granted for
+        // the reason its script tools are, and with no name to have listed.
+        if self
+            .granted_prefixes
+            .iter()
+            .any(|prefix| tool.starts_with(prefix.as_str()))
+        {
+            return AuthzDecision::Allow;
+        }
         let Some(accepted) = self.granted.get(tool) else {
             return AuthzDecision::Deny {
                 reason: format!(
                     "plugin \"{}\" was not granted \"{tool}\" at install; it may call: {}",
                     self.plugin,
                     if self.granted.is_empty() {
-                        "nothing".to_string()
+                        "nothing — its manifest declares no `[[capabilities]]`".to_string()
                     } else {
                         self.granted_tools().join(", ")
                     }
@@ -220,18 +278,36 @@ pub(crate) struct PluginGates {
 }
 
 impl PluginGates {
-    /// The gate for everything installed in this workspace, or `None` when no
-    /// installed plugin declared a capability — in which case the session
-    /// keeps the `NoAuthz` it would otherwise have had, chosen by name.
+    /// The gate for everything installed in this workspace, or `None` when
+    /// nothing is installed — in which case the session keeps the `NoAuthz` it
+    /// would otherwise have had, chosen by name.
+    ///
+    /// Every installed plugin gets a rule, whatever its manifest asked for. A
+    /// plugin that declared nothing gets a rule granting nothing, which is the
+    /// decision ADR 0032 records and the module docs argue. Filtering those out
+    /// is what left a plugin that asked for nothing holding everything.
     pub(crate) fn from_roster(roster: &PluginRoster) -> Option<Self> {
         let rules: Vec<PluginCapabilityGate> = roster
             .plugins()
             .iter()
-            .filter(|plugin| !plugin.manifest.capabilities.is_empty())
             .map(|plugin| {
+                let ships_tools: Vec<String> = plugin
+                    .manifest
+                    .tools
+                    .iter()
+                    .map(|tool| tool.name.clone())
+                    .collect();
+                let ships_servers: Vec<String> = plugin
+                    .manifest
+                    .mcp
+                    .iter()
+                    .map(|server| server.server.clone())
+                    .collect();
                 PluginCapabilityGate::accepted(
                     plugin.manifest.name.clone(),
                     &plugin.manifest.capabilities,
+                    &ships_tools,
+                    &ships_servers,
                 )
             })
             .collect();

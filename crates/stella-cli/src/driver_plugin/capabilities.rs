@@ -67,9 +67,13 @@ pub(crate) struct HostDriverCapabilities {
     principal: Principal,
     /// The rule from install time that this plugin is held to.
     ///
-    /// `None` when no installed plugin asked for a tool at all. That is what
+    /// `None` when the workspace has no plugin installed at all. That is what
     /// [`PluginGates::from_roster`] says by giving nothing back, and this path
     /// then narrows nothing rather than turning down every ask.
+    ///
+    /// A plugin that installed and declared no `[[capabilities]]` is a
+    /// different answer: it gets a rule granting nothing, so a shell it asks
+    /// this host to run for it is refused by name (ADR 0032).
     gates: Option<PluginGates>,
     /// The tracker, behind its port. A test hands over a fake, and no `gh`
     /// ever runs.

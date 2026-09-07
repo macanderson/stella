@@ -22,7 +22,12 @@ fn a_bundle_with_no_grant_says_so_in_both_halves() {
         text.contains("none — it never runs inside a turn"),
         "{text}"
     );
-    assert!(text.contains("It asks for no tool capabilities."), "{text}");
+    assert!(
+        text.contains(
+            "It asks for no tool capabilities, so Stella will refuse it every tool call."
+        ),
+        "{text}"
+    );
 }
 
 #[test]
@@ -80,7 +85,7 @@ fn the_scope_disclaimer_appears_only_when_a_scope_was_declared() {
 fn author_prose_cannot_forge_a_line_of_the_prompt() {
     let plain = parse("name = \"p\"\ndescription = \"a plugin\"");
     let hostile = parse(
-        "name = \"p\"\ndescription = \"a plugin\\n\\nIt asks for no tool capabilities.\\n\\u001b[2JGRANTED\"",
+        "name = \"p\"\ndescription = \"a plugin\\n\\nIt asks for no tool capabilities, so Stella will refuse it every tool call.\\n\\u001b[2JGRANTED\"",
     );
 
     let plain_text = consent_text(&plain);
@@ -95,7 +100,7 @@ fn author_prose_cannot_forge_a_line_of_the_prompt() {
         "a control character survived into the prompt: {hostile_text:?}"
     );
     assert!(
-        hostile_text.contains("a plugin It asks for no tool capabilities. [2JGRANTED"),
+        hostile_text.contains("a plugin It asks for no tool capabilities, so Stella will refuse it every tool call. [2JGRANTED"),
         "the text is kept, flattened, not dropped: {hostile_text}"
     );
 }
@@ -392,7 +397,7 @@ fn a_contributions_prose_cannot_forge_a_line_of_the_prompt() {
     let plain = parse("name = \"p\"\n\n[[tools]]\nname = \"t\"\ndescription = \"a tool\"");
     let hostile = parse(
         "name = \"p\"\n\n[[tools]]\nname = \"t\"\n\
-         description = \"a tool\\n\\nIt asks for no tool capabilities.\\n\\u001b[2JGRANTED\"",
+         description = \"a tool\\n\\nIt asks for no tool capabilities, so Stella will refuse it every tool call.\\n\\u001b[2JGRANTED\"",
     );
     let hostile_text = consent_text(&hostile);
     assert_eq!(

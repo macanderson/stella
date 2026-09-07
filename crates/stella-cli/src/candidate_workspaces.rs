@@ -142,10 +142,16 @@ pub(crate) struct SessionCandidateWorkspaces {
     /// operator's tool policy, and the engine's step cap. Cloned rather than
     /// borrowed because this outlives any one turn.
     cfg: Config,
-    /// The installed plugin's manifest name: the [`Principal`] every candidate
-    /// turn's tool calls authorize as.
+    /// The installed plugin's manifest name — the plugin every candidate turn
+    /// is run for, which a gate sees as [`Principal::PluginWorker`].
     ///
-    /// [`Principal`]: stella_core::ports::Principal
+    /// Not [`Principal::Plugin`], and ADR 0032 is why: a candidate turn is the
+    /// work itself, run by the session's own model under the session's own
+    /// tool policy, so the tools it calls are nobody's asks. The plugin's
+    /// authority for it is the `candidate_fanout` host call it declared.
+    ///
+    /// [`Principal::Plugin`]: stella_core::ports::Principal::Plugin
+    /// [`Principal::PluginWorker`]: stella_core::ports::Principal::PluginWorker
     plugin: String,
     /// The session's one dispatcher. See the module docs on why a second would
     /// be a second pool over one session's money.
@@ -766,7 +772,7 @@ async fn dispatch_candidate_turn(
             spec,
             registry,
             crate::agent::session_tool_policy(cfg),
-            stella_core::ports::Principal::Plugin(plugin.to_string()),
+            stella_core::ports::Principal::PluginWorker(plugin.to_string()),
         )
         .await;
     if let SubAgentOutcome::Refused { reason } = &outcome {
