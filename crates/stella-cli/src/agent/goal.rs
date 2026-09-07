@@ -157,14 +157,23 @@ pub(crate) async fn run_raw_one_shot(
         None => None,
     };
     // Pinned *before* the turn runs, which is the whole content of the tamper
-    // claim: an identity snapshotted afterwards vouches for nothing.
+    // claim: an identity snapshotted afterwards vouches for nothing. The same
+    // call observes what the tests say before the work, which is the red half a
+    // flip needs (#1292) — and is a whole test run, so it says what it found.
     let candidate = match &resolved {
         Some(_) => Some(
             crate::wrapper_candidate::grant_shared_tree(&cfg.workspace_root, test_command)
+                .await
                 .map_err(crate::failure::CliFailure::from)?,
         ),
         None => None,
     };
+    if let Some(line) = candidate
+        .as_ref()
+        .and_then(|granted| granted.baseline_notice.as_deref())
+    {
+        eprintln!("  ! {line}");
+    }
     let provider = build_provider(cfg)?;
     // Concrete `Arc<ToolRegistry>` (not `Arc<dyn ToolExecutor>`) so the
     // registry's ledgers are reachable after the turn — the trait object
@@ -547,7 +556,13 @@ pub(crate) fn goal_plugin_missing_message(variant: &str, reason: &str) -> String
 /// worker rewrote in round 2, which is the laundering the watch exists to
 /// refuse. So the finding is sticky: once a witness has moved under the run,
 /// no later round earns a `Clean` (#3835).
-pub(crate) fn resolve_goal_wrapper(
+///
+/// The test baseline this call also observes is minted once for the same
+/// reason and a sharper one: after round 1 the tree is the worker's, so a
+/// second observation would report the work rather than what preceded it, and
+/// a suite that went green in round 1 would erase the red the flip is measured
+/// against.
+pub(crate) async fn resolve_goal_wrapper(
     cfg: &Config,
     variant: &str,
     test_command: Option<&str>,
@@ -565,7 +580,11 @@ pub(crate) fn resolve_goal_wrapper(
         crate::failure::CliFailure::error(goal_plugin_missing_message(variant, &reason))
     })?;
     let candidate = crate::wrapper_candidate::grant_shared_tree(&cfg.workspace_root, test_command)
+        .await
         .map_err(crate::failure::CliFailure::from)?;
+    if let Some(line) = candidate.baseline_notice.as_deref() {
+        eprintln!("  ! {line}");
+    }
     Ok((resolved, candidate))
 }
 
@@ -669,7 +688,7 @@ pub async fn run_goal_cmd(
         crate::enterprise_telemetry::ExecutionSurface::Goal,
     )?;
     let variant = pipeline.plugin().unwrap_or(DEFAULT_GOAL_WRAPPER);
-    let (resolved, candidate) = resolve_goal_wrapper(cfg, variant, test_command)?;
+    let (resolved, candidate) = resolve_goal_wrapper(cfg, variant, test_command).await?;
     let provider = build_provider(cfg)?;
     let registry: std::sync::Arc<ToolRegistry> =
         std::sync::Arc::new(crate::write_dirs::registry_for(cfg));

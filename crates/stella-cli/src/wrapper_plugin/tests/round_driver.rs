@@ -74,6 +74,7 @@ async fn a_round_driving_door_runs_the_tests_its_own_grant_names() {
     let tree = tree_with_a_test(0);
     let granted =
         crate::wrapper_candidate::grant_shared_tree(tree.path(), Some("sh tests/witness_flip.sh"))
+            .await
             .expect("the root resolves and the command parses");
     let roster = roster(vec![installed(
         VERIFYING_MANIFEST,
@@ -115,6 +116,7 @@ async fn a_handle_this_door_never_granted_reaches_no_tree() {
     let tree = tree_with_a_test(0);
     let granted =
         crate::wrapper_candidate::grant_shared_tree(tree.path(), Some("sh tests/witness_flip.sh"))
+            .await
             .expect("the grant mints");
     let roster = roster(vec![installed(
         VERIFYING_MANIFEST,
