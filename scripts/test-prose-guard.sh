@@ -564,6 +564,31 @@ expect_update_ok() {
   fi
 }
 
+# $1 = case name, $2 = root, $3 = path that must carry a grade entry, $4 = the
+# ceiling it may not exceed. A carry lowers a ceiling or leaves it; writing one
+# above the source's would be a raise wearing a move's clothes.
+expect_grade_at_most() {
+  line="$(grep "^$3 " "$2/scripts/prose-grade-baseline.txt" 2>/dev/null)"
+  if [ -z "$line" ]; then
+    no "$1" "the grade baseline has no entry for $3"
+  elif [ "$(printf '%s\n' "$line" | awk -v cap="$4" '{print ($2 <= cap) ? "y" : "n"}')" = y ]; then
+    ok "$1"
+  else
+    no "$1" "\"$line\" sits above the $4 it carried"
+  fi
+}
+
+# $1 = case name, $2 = root. `--absolute` -- what the post-merge canary runs --
+# must exit 0. It skips the base tree by design, so nothing but a recorded
+# entry can save a file there.
+expect_absolute_pass() {
+  if python3 "$SCRIPT" --absolute "$2" >/dev/null 2>&1; then
+    ok "$1"
+  else
+    no "$1" "--absolute exited non-zero"
+  fi
+}
+
 r="$(new_root r1)"
 doc "$r" docs/old.md <<'EOF'
 The cost is deliberate: the retention it buys is not worth the residue.
@@ -1133,6 +1158,29 @@ commit_all "$r"
 split_tail "$r" docs/big.md docs/moved.md 30
 hard_doc_varied "$r" docs/unrelated.md 40
 PROSE_BASE_REF=HEAD expect_fail "X4 an unrelated new file inherits nothing" "$r"
+
+# X5: the carry has to be written down, not only granted. X1 forgives a split's
+# prose at check time and records nothing, and those were the only two doors --
+# `--update` paired renames alone. So the entry never reached the baseline, the
+# plain check forgave the new file on every later run, and the post-merge
+# `--absolute` run, which has no base tree to pair against, held the carried
+# sentences to the new-file ceiling. That is #6408: `envelope.rs` split into
+# `envelope/inbound.rs` and `envelope/workspace_input.rs`, passed every
+# pre-merge check, and reddened `main` on prose nobody had written.
+#
+# The source needs a real ceiling here, because a carry hands on what the
+# source is allowed rather than what it happens to read. A source with no entry
+# is over the ceiling itself and has no allowance to give.
+r="$(new_root x5)"
+hard_doc_varied "$r" docs/big.md 60
+baseline "$r"
+grade_baseline "$r" docs/big.md 50.00
+commit_all "$r"
+split_tail "$r" docs/big.md docs/tail.md 30
+PROSE_BASE_REF=HEAD expect_update_ok "X5 --update accepts a split" "$r"
+expect_grade_at_most "X5 the split's entry is written, capped at its source" \
+  "$r" docs/tail.md 50.00
+expect_absolute_pass "X5 the merged tree survives the post-merge canary" "$r"
 
 # ── U1: an unmerged index counts each path once, not once per stage ─────────
 # `git ls-files --cached` prints a conflicted path once for each of stages 1,

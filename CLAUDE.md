@@ -181,10 +181,17 @@
     during the split is still new prose: it sits in neither line set, so it
     lowers the share and is judged as new past the threshold.
 
+    **`--update` writes that carry down, and has to.** Forgiving it at check
+    time alone left the entry out of the baseline, and `--absolute` skips the
+    base tree by design — so the post-merge canary held the carried sentences
+    to the new-file ceiling and reddened `main` on prose nobody wrote
+    (`#6408`). Run `make prose-update` when you split a file. A source with no
+    entry of its own passes nothing on, because it has no allowance to give.
+
     **`make prose-update` carries; `make prose-retighten` reclaims.** All
     three ratchets take that split. `--update` writes only the entries a move
-    re-based and leaves every other number where it stands, so a branch
-    cannot lower the ceiling of a file it never opened. Reclaiming the slack
+    or a split re-based and leaves every other number where it stands, so a
+    branch cannot lower the ceiling of a file it never opened. Reclaiming the slack
     a rewrite earns is a pass of its own, and a PR of its own — safe exactly
     when nothing is blocked on it. An unconditional reclaim wrote `AGENTS.md`
     a lower grade ceiling from a branch whose diff did not contain that file,
