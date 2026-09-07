@@ -68,6 +68,9 @@ WATCHED_GUARDS = (
     # runs a Makefile recipe can be started by a Makefile edit. A `paths:`
     # filter here would put this guard back in the hole it closes.
     "check-cargo-flags.py",
+    # Watched for the same reason one file over. It reads a workflow, and a
+    # diff confined to workflow files skips ci.yml's Rust-gated `check` job.
+    "check-release-wiring.py",
 )
 
 WORKFLOWS_DIR = "workflows"

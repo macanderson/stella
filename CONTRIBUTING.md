@@ -92,6 +92,7 @@ python3 ./scripts/check-adr-numbering.py
 python3 ./scripts/check-guard-trigger-coverage.py
 python3 ./scripts/check-priority-scheme.py
 python3 ./scripts/check-cargo-flags.py
+python3 ./scripts/check-release-wiring.py
 ./scripts/check-left-behind.sh
 python3 ./scripts/check-retired-model-keys.py
 ./scripts/check-stat-portability.sh
