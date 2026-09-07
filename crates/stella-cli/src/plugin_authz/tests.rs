@@ -296,7 +296,7 @@ fn roster_of(manifest: &str) -> crate::plugin_cmd::roster::PluginRoster {
     )
 }
 
-/// **Witness (ADR 0032).** A plugin that declared no `[[capabilities]]` is
+/// **Witness (ADR 0034).** A plugin that declared no `[[capabilities]]` is
 /// held to a grant of nothing.
 ///
 /// This is the assertion the rule before it fails: `from_roster` filtered a
@@ -332,7 +332,7 @@ fn a_plugin_that_declared_no_capabilities_is_granted_nothing() {
     );
 }
 
-/// **Witness (ADR 0032).** A worker turn the host ran because a plugin asked
+/// **Witness (ADR 0034).** A worker turn the host ran because a plugin asked
 /// for one is not the plugin calling a tool, so the plugin's empty grant does
 /// not refuse it.
 ///
@@ -372,7 +372,7 @@ fn a_worker_turn_run_for_a_plugin_is_not_bound_by_the_plugins_tool_grant() {
     );
 }
 
-/// **Witness (ADR 0032).** A package's own contributions are in its grant even
+/// **Witness (ADR 0034).** A package's own contributions are in its grant even
 /// where its `[[capabilities]]` list is empty, because each is declared in its
 /// own table and shown at install.
 ///

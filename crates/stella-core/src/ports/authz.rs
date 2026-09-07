@@ -106,7 +106,7 @@ pub enum Principal {
     /// one list to bound two unrelated things, and the list would have to hold
     /// every tool a turn might reach — which is every tool there is.
     ///
-    /// [`Self::Plugin`] carried both until ADR 0032. A gate
+    /// [`Self::Plugin`] carried both until ADR 0034. A gate
     /// could not tell a plugin's own `delete_file` from a `delete_file` a
     /// candidate turn chose, so it could give only one answer to two questions.
     /// Now it can give two.
@@ -704,7 +704,7 @@ mod tests {
                 .unwrap(),
             AuthzDecision::Allow,
             "and a turn the host ran for that plugin is a third caller again \
-             (ADR 0032): the model picked this tool, the plugin did not ask for it"
+             (ADR 0034): the model picked this tool, the plugin did not ask for it"
         );
     }
 

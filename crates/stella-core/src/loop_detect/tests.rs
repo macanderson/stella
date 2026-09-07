@@ -2,6 +2,7 @@ use proptest::prelude::*;
 
 use super::*;
 
+mod grind;
 mod origin;
 mod sweep;
 

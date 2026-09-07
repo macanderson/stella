@@ -877,7 +877,7 @@ fn capability_grant(manifest: &PluginManifest) -> Vec<String> {
     let capabilities = &manifest.capabilities;
     // Whether the package's own tables put anything in its grant. Read by both
     // arms below, because both would otherwise describe a narrower grant than
-    // the host enforces (ADR 0032).
+    // the host enforces (ADR 0034).
     let ships_its_own = !manifest.tools.is_empty() || !manifest.mcp.is_empty();
     let Some(worst) = highest_risk(capabilities) else {
         // "Asks for nothing" was the whole of this arm, and read as a promise
@@ -886,7 +886,7 @@ fn capability_grant(manifest: &PluginManifest) -> Vec<String> {
         // this sentence stops contradicting it.
         //
         // Each sentence also says what the empty list *grants*, which the host
-        // enforces as a grant of nothing of its own (ADR 0032, `stella-cli`'s
+        // enforces as a grant of nothing of its own (ADR 0034, `stella-cli`'s
         // `plugin_authz`). Saying only what was asked leaves a reader to guess
         // the answer, and the answer they guess is the one that hole gave:
         // everything.
@@ -939,7 +939,7 @@ fn capability_grant(manifest: &PluginManifest) -> Vec<String> {
         }
     }
     // The list above is what the package asks of Stella. Its own tools and
-    // servers are in the grant too (ADR 0032), and a reader who took the list
+    // servers are in the grant too (ADR 0034), and a reader who took the list
     // for the whole grant would be reading a narrower document than the one
     // the host enforces.
     if ships_its_own {

@@ -45,7 +45,7 @@
 //!
 //! # A plugin that asked the host for nothing gets nothing from the host
 //!
-//! This is settled, and `doc:adr/0032-silence-is-not-a-grant` is where it was
+//! This is settled, and `doc:adr/0034-silence-is-not-a-grant` is where it was
 //! settled. [`PluginGates::from_roster`] builds a rule for every installed
 //! plugin. A plugin's grant is everything its manifest declared and a human
 //! accepted, which is the `[[capabilities]]` list plus the tools and MCP
@@ -157,7 +157,7 @@ impl PluginCapabilityGate {
     /// is the package's own code, named and described in `[[tools]]`, and
     /// rendered to a human by `stella_plugin::consent_text` before anything is
     /// copied. Refusing it would break the tool a user just agreed to install
-    /// (ADR 0032), so the shipped names join the grant.
+    /// (ADR 0034), so the shipped names join the grant.
     ///
     /// They join it at no ceiling, because `ToolContribution` carries no grade
     /// for the risk check to compare against — that check exists to catch an
@@ -301,7 +301,7 @@ impl PluginGates {
     ///
     /// Every installed plugin gets a rule, whatever its manifest asked for. A
     /// plugin that declared nothing gets a rule granting nothing, which is the
-    /// decision ADR 0032 records and the module docs argue. Filtering those out
+    /// decision ADR 0034 records and the module docs argue. Filtering those out
     /// is what left a plugin that asked for nothing holding everything.
     pub(crate) fn from_roster(roster: &PluginRoster) -> Option<Self> {
         let rules: Vec<PluginCapabilityGate> = roster

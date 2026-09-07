@@ -94,20 +94,66 @@ permissions:
 jobs:
   tag:
     runs-on: ubuntu-latest
-    # Only cut a release for a *successful* CI run triggered by a push to main.
-    # Guarding on the job (not just inside the step) keeps a red build from ever
-    # reaching the tag push.
+    # Only cut a release for a *successful* CI run that this repository's own
+    # main produced from a push. Guarding on the job (not just inside the step)
+    # keeps a red build from ever reaching the tag push, and the repository
+    # clause keeps a workflow_run delivered for some other repository's run
+    # from reaching a job that holds `contents: write` on this one.
     if: >-
+      github.event.workflow_run.repository.full_name == github.repository &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.event == 'push'
     steps:
+      # NO `ref:` HERE, AND IT MUST STAY THAT WAY (#6367, CodeQL alert 129,
+      # `actions/untrusted-checkout`). A workflow_run job runs with this
+      # repository's token and secrets no matter what produced the triggering
+      # run, so `ref: ${{ github.event.workflow_run.head_sha }}` would hand a
+      # ref the trigger does not vouch for to a job holding `contents: write`
+      # on main — the shape that lets a checked-out build script push a tag.
+      # The default ref for a workflow_run event is this repository's default
+      # branch, which is protected, so this clone is trusted before any of it
+      # runs. The step below is what moves the tree to the validated commit,
+      # after proving that commit is already on main.
+      #
+      # `scripts/check-untrusted-checkout.sh` holds this rule for every
+      # workflow_run workflow here, so a later edit reddens the gate rather
+      # than the security tab.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          # Tag the exact commit CI validated, not whatever main is now.
-          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
           fetch-tags: true
+
+      # The tag must point at the exact commit CI validated, not at whatever
+      # main is now — so the tree moves to that commit, but only once this
+      # step has shown the commit is reachable from main. Reachable from main
+      # means it passed branch protection and is the same trusted content the
+      # clone above already holds; a sha that is not on main fails the job
+      # instead of being checked out, which forgoes a release rather than
+      # running a ref nobody merged.
+      - name: Pin the tree to the CI-validated commit on main
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          case "${HEAD_SHA}" in
+            *[!0-9a-f]* | "")
+              echo "::error::workflow_run head_sha is not a hex commit id."
+              exit 1
+              ;;
+          esac
+          if [ "${#HEAD_SHA}" -ne 40 ]; then
+            echo "::error::workflow_run head_sha is not a full 40-character commit id."
+            exit 1
+          fi
+
+          git fetch --no-tags origin main
+          if ! git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null ||
+            ! git merge-base --is-ancestor "${HEAD_SHA}" FETCH_HEAD; then
+            echo "::error::${HEAD_SHA} is not reachable from main — refusing to check it out."
+            exit 1
+          fi
+          git checkout --detach "${HEAD_SHA}"
 
       - name: Compute next version
         id: ver

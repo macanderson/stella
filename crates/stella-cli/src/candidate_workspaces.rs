@@ -145,7 +145,7 @@ pub(crate) struct SessionCandidateWorkspaces {
     /// The installed plugin's manifest name — the plugin every candidate turn
     /// is run for, which a gate sees as [`Principal::PluginWorker`].
     ///
-    /// Not [`Principal::Plugin`], and ADR 0032 is why: a candidate turn is the
+    /// Not [`Principal::Plugin`], and ADR 0034 is why: a candidate turn is the
     /// work itself, run by the session's own model under the session's own
     /// tool policy, so the tools it calls are nobody's asks. The plugin's
     /// authority for it is the `candidate_fanout` host call it declared.

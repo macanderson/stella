@@ -1,10 +1,10 @@
 ---
-id: adr/0032-silence-is-not-a-grant
-title: "ADR 0032: Silence is not a grant"
+id: adr/0034-silence-is-not-a-grant
+title: "ADR 0034: Silence is not a grant"
 status: implemented
 ---
 
-# ADR 0032: Silence is not a grant
+# ADR 0034: Silence is not a grant
 
 - Status: accepted
 - Date: 2026-09-07

@@ -390,7 +390,7 @@ fn the_contribution_counts_agree_in_number() {
     assert!(text.contains("2 tools the model may call"), "{text}");
 }
 
-/// **Witness (ADR 0032).** Each arm of the grant half says that a package's own
+/// **Witness (ADR 0034).** Each arm of the grant half says that a package's own
 /// tools are in the grant.
 ///
 /// The host grants a package its own tools and MCP namespaces. It grants those

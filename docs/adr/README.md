@@ -98,7 +98,8 @@ open; nothing before Phase 3 forces it.
 | [0029](0029-branch-protection-stays-non-strict.md) | Branch Protection Stays Non-Strict | Accepted |
 | [0030](0030-the-wrapper-socket-is-the-plugin-sdk.md) | The Wrapper Socket Is the Plugin SDK | Accepted |
 | [0031](0031-a-turn-has-no-step-cap-by-default.md) | A Turn Has No Step Cap by Default | Accepted |
-| [0032](0032-silence-is-not-a-grant.md) | Silence Is Not a Grant | Accepted |
+| [0032](0032-a-loop-rung-reads-structure.md) | A Loop Rung Reads Structure, Not Progress | Accepted |
+| [0034](0034-silence-is-not-a-grant.md) | Silence Is Not a Grant | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible
@@ -174,7 +175,15 @@ the goal predicate, each of which reads evidence. `max_steps` is now
 `Option<usize>`, `None` by default, and a host that means a count still sets
 one.
 
-ADR 0032 settles what a plugin with an empty `[[capabilities]]` list may call.
+ADR 0032 draws the edge of loop detection. A rung reads structure — a repeat,
+a cycle, a constant answer, a wrapped sweep — and never asks whether the turn
+is getting closer to the goal. Three candidate signals for the turn `#3292`
+names were each measured against 497 recorded trials and none of them
+separates it from the trials that succeeded, because what is wrong with it is
+not in its calls. The recorded trace is committed with a pin that no rung
+fires on it.
+
+ADR 0034 settles what a plugin with an empty `[[capabilities]]` list may call.
 It may call nothing of the host's. Its grant is what its manifest declared and
 a person took, which also covers the tools and MCP servers the package ships.
 A worker turn the host runs for a plugin gets a caller name of its own, so one

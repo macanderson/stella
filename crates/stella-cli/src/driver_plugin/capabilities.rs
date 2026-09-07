@@ -73,7 +73,7 @@ pub(crate) struct HostDriverCapabilities {
     ///
     /// A plugin that installed and declared no `[[capabilities]]` is a
     /// different answer: it gets a rule granting nothing, so a shell it asks
-    /// this host to run for it is refused by name (ADR 0032).
+    /// this host to run for it is refused by name (ADR 0034).
     gates: Option<PluginGates>,
     /// The tracker, behind its port. A test hands over a fake, and no `gh`
     /// ever runs.
