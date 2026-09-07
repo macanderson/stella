@@ -902,6 +902,16 @@ breaks both AGPL redistribution and the commercial track. **If `cargo deny`
 rejects a new dependency, drop the dependency — do not widen the allow-list in
 `deny.toml` without a licensing decision.**
 
+**CodeQL reads the code, and it stays advisory.** `.github/workflows/codeql.yml`
+runs it over rust, python, javascript-typescript and the workflow files. Its
+header carries the two things a later session needs: why it is not a required
+check, and the three shapes `rust/cleartext-logging` gets wrong here — a
+correlation id read as a session token, a guard read as a leak, and a keyboard
+key read as a cryptographic one. Every alert that rule had open was read
+against the code and dismissed with its own written reason, in `#6388`. Read
+that header before you dismiss a new alert, and before you assume a new one is
+noise.
+
 ---
 
 ## Architecture: ports, not direct dependencies
