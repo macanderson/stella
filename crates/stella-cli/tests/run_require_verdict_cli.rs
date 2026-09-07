@@ -595,3 +595,151 @@ fn goal_refuses_require_verdict_without_a_wrapper() {
         "the refusal is the gate's, not the parser's: {stderr}"
     );
 }
+
+/// What one execution row of a wrapped run holds, for the two witnesses below.
+#[derive(Default)]
+struct RowFold {
+    verdicts: usize,
+    boards: usize,
+    /// The raw turn's own terminator, emitted at its boundary
+    /// (`turn_files::close_turn_boundary`). Its presence is what says "this row
+    /// is a round's turn", which no other row of a wrapped run carries.
+    turn_terminators: usize,
+}
+
+/// Every `store.db` under `dir`, in directory order.
+///
+/// A fleet attempt journals into a store rooted in its own worktree
+/// (`crate::fleet_cmd`'s `run_task`, so parallel workers never contend on one
+/// SQLite writer), and `stella run` journals into the workspace's own. Walking
+/// for them lets both witnesses ask the same question of whatever the door
+/// wrote.
+fn stores_under(dir: &Path, found: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            stores_under(&path, found);
+        } else if path.file_name().is_some_and(|name| name == "store.db") {
+            found.push(path);
+        }
+    }
+}
+
+/// Fold every finished execution this run recorded, wherever it recorded it.
+fn rows_of(workspace: &Path) -> Vec<RowFold> {
+    let mut databases = Vec::new();
+    stores_under(workspace, &mut databases);
+    assert!(
+        !databases.is_empty(),
+        "the run left no store under {}",
+        workspace.display()
+    );
+    let mut rows = Vec::new();
+    for database in &databases {
+        let root = database
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .expect("a store sits at <root>/.stella/private/store.db");
+        let store = stella_store::Store::open(root).expect("open a store the run left");
+        for execution in store
+            .finished_executions_after(0, 50)
+            .expect("read finished executions")
+        {
+            let journal = store
+                .execution_events(execution.execution_id)
+                .expect("read an execution's journal");
+            let mut fold = RowFold::default();
+            for record in &journal.events {
+                match &record.event {
+                    AgentEvent::Verdict { .. } => fold.verdicts += 1,
+                    AgentEvent::GateBoard { .. } => fold.boards += 1,
+                    AgentEvent::RunComplete { .. } => fold.turn_terminators += 1,
+                    _ => {}
+                }
+            }
+            rows.push(fold);
+        }
+    }
+    assert!(!rows.is_empty(), "the run left no finished execution");
+    rows
+}
+
+/// **The witness (the `run` door).** A wrapped `stella run` records the
+/// wrapper's judged verdict and its board, on the execution row the round's own
+/// turn journalled against.
+///
+/// Without the append this witness is for, every row holds zero verdicts. Each
+/// round is a `crate::agent::run_turn`, which closes its event channel before
+/// it returns, so a send through the registry after the dispatch reaches an
+/// empty slot and does nothing at all.
+///
+/// The row is asserted, not just the count: `crate::dataset_cmd` folds ONE
+/// execution's journal, so a verdict on the plugin-side row — which shares only
+/// the session id — would still be invisible to the fold that also needs the
+/// turn's mutating file changes.
+#[tokio::test]
+async fn run_wrapped_records_the_verdict_on_the_rounds_own_execution_row() {
+    let server = mock_worker().await;
+    let ws = workspace();
+    let (code, stderr) = run(ws.path(), &server.uri(), &["--pipeline", VARIANT]);
+    assert_eq!(
+        code,
+        Some(0),
+        "an unmet verdict is not fatal here: {stderr}"
+    );
+
+    let rows = rows_of(ws.path());
+    let verdicts: usize = rows.iter().map(|row| row.verdicts).sum();
+    let boards: usize = rows.iter().map(|row| row.boards).sum();
+    assert_eq!(
+        verdicts, 1,
+        "the fixture's single dispatch judges one verdict, and it must reach the store"
+    );
+    assert_eq!(
+        boards, 1,
+        "the board is the same verdict rendered per requirement"
+    );
+    assert!(
+        rows.iter()
+            .all(|row| row.verdicts == 0 || row.turn_terminators > 0),
+        "the verdict belongs on a round's own row — the one carrying that turn's terminator — \
+         because `stella dataset export` folds one execution's journal at a time"
+    );
+}
+
+/// **The witness (the `fleet` door).** The same fixture as one fleet attempt.
+///
+/// This door's channel and execution row both outlive the dispatch, so nothing
+/// here is dropped: without the send this witness is for, the two events are
+/// simply never produced, and the store holds zero verdicts.
+#[tokio::test]
+async fn a_fleet_attempt_records_the_verdict_on_its_own_execution_row() {
+    let server = mock_worker().await;
+    let ws = fleet_workspace();
+    let (code, stdout, stderr) = stella(
+        ws.path(),
+        &server.uri(),
+        &["fleet", "--pipeline", VARIANT, "do the thing, then stop"],
+    );
+    assert_eq!(
+        code,
+        Some(0),
+        "an unmet verdict is not fatal here either: {stdout}\n{stderr}"
+    );
+
+    let rows = rows_of(ws.path());
+    assert_eq!(
+        rows.iter().map(|row| row.verdicts).sum::<usize>(),
+        1,
+        "the one attempt's judged verdict reaches the store"
+    );
+    assert_eq!(
+        rows.iter().map(|row| row.boards).sum::<usize>(),
+        1,
+        "and so does the board beside it"
+    );
+}

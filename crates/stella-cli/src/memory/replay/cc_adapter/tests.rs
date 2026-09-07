@@ -233,8 +233,8 @@ fn a_backwards_timestamp_is_clamped_so_the_trace_still_loads() {
     );
 }
 
-/// The date arithmetic is the exact inverse of the one `stella-context`'s clock
-/// uses, so the two agree at every boundary by construction.
+/// The adapter reads a timestamp with the inverse of the formatter that wrote
+/// it. Both live in `stella-context`, so the two cannot drift apart.
 #[test]
 fn timestamps_round_trip_through_the_clocks_own_formatter() {
     for instant in [0i64, 1_600_000_000, 1_783_501_200, 1_582_934_400] {
