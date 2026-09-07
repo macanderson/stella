@@ -174,18 +174,29 @@ pub enum Readiness {
 /// The only semantic distinctions the delivery policy (§6) can key on.
 pub enum IssueClass {
     /// Something is broken. Implies a regression obligation (§6.2).
-    Defect,
-    /// New behavior.
+    Bug,
+    /// Something should exist that does not.
     Feature,
-    /// A group of features carrying shared intent — the spec anchor (§5).
-    Epic,
-    /// Mapped to none of the above. Workable only if policy says so.
+    /// Work that is neither — a migration, a cleanup, a chore.
+    Task,
+    /// The provider's vocabulary had no mapping for this one. Workable only
+    /// if policy says so.
     Other,
 }
 ```
 
 That is the whole model. Four states, four classes, a title, a description,
 comments, and a parent edge.
+
+**These are the shipped names**, copied from
+`crates/stella-protocol/src/issue.rs`. An earlier draft of this section spelled
+them `Defect`, `Feature`, `Epic`, `Other`, and GitHub's shipped manifest
+(`crates/stella-cli/src/issue_provider/github.toml`) keys the kernel's names
+instead — so a manifest written from the draft classed every issue as `Other`,
+silently. The draft's `Epic` is not a class here: a container issue is one
+carrying a container label, which
+`stella_autonomy::ready::DEFAULT_CONTAINER_LABELS` spells `epic`, and §5 works
+it that way rather than through the type.
 
 **What is absent, and why:** priority (a human steering signal
 Stella reads but never acts on unilaterally — it enters ordering via the
@@ -225,11 +236,19 @@ user_email_env = "JIRA_USER_EMAIL"
 api_key_env    = "JIRA_API_TOKEN"   # the NAME of an env var, never a secret
 
 # ── The whole point: customer vocabulary → Stella's four classes (§3) ──
+# The keys are the kernel's own class names, lowercased. A key the loader does
+# not read is skipped, so a misspelled one costs the whole mapping.
 [classes]
-defect  = ["Bug", "Defect", "Incident", "Production Issue"]
-feature = ["Story", "Task", "Improvement", "Spike"]
-epic    = ["Epic", "Initiative"]
-# Unlisted types → IssueClass::Other. Policy decides whether Other is workable.
+bug     = ["Bug", "Defect", "Incident", "Production Issue"]
+feature = ["Story", "Improvement", "Spike"]
+task    = ["Task", "Chore", "Migration"]
+# A type in none of the lists reads as `IssueClass::Other`, never as `Task`.
+# `Other` says "not mapped" out loud; a wrong class hides. Policy decides
+# whether `Other` may be worked.
+#
+# A container issue is not a class. It is an issue carrying a container label
+# (`stella_autonomy::ready::DEFAULT_CONTAINER_LABELS` ships `epic`), and §5
+# works it through that label.
 
 # ── Every reachable status maps to exactly one of three buckets ──
 [states]

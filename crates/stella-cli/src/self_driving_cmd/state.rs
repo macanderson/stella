@@ -303,6 +303,10 @@ impl LoopState {
     /// `rank` is the rung label an issue carries (`P0`, `P1`, …) or
     /// `untriaged` for one nobody has placed — the same split the loop
     /// claims by, spelled so a reader needs no ladder to interpret it.
+    ///
+    /// `open_total` is what one read returned, and the read is one page. The
+    /// document says so beside it, so a reader can tell a backlog of exactly
+    /// the page size from a backlog the page could not hold.
     pub fn write_queue_snapshot(
         &self,
         queue: &stella_autonomy::priority::Queue,
@@ -340,6 +344,12 @@ impl LoopState {
         let doc = json!({
             "at": crate::timefmt::rfc3339_utc_now(),
             "open_total": open_total,
+            // `open_total` is the size of one read, and the read is one page.
+            // When the page filled, the count is a floor: the tracker held at
+            // least that many and the loop cannot say how many more. A reader
+            // that draws the number as the backlog's size needs this to know
+            // when it is drawing a ceiling instead.
+            "open_total_is_a_full_page": super::backlog::read_filled_the_page(open_total),
             "ranked": queue.ranked.len(),
             "untriaged": queue.unassessed.len(),
             "items": items,
@@ -1175,6 +1185,10 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(tmp.path().join("queue.json")).unwrap())
                 .unwrap();
         assert_eq!(doc["open_total"], 3);
+        assert_eq!(
+            doc["open_total_is_a_full_page"], false,
+            "three issues left the page room, so the count is the backlog"
+        );
         assert_eq!(doc["ranked"], 2);
         assert_eq!(doc["untriaged"], 1);
         let items = doc["items"].as_array().unwrap();

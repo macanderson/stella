@@ -320,12 +320,62 @@ pub(crate) fn load_workspace_rules_unfiltered(workspace_root: &Path) -> Vec<Rule
         return Vec::new();
     }
     load_rules(
-        &FsRuleSource,
+        &StatementRuleSource,
         &LoadRulesOptions {
             cwd: workspace_root.display().to_string(),
             user_rules_dir: String::new(),
         },
     )
+}
+
+/// [`FsRuleSource`], with every TOML context record replaced by what it says.
+///
+/// The rule parser reads markdown. Without this, a `.toml` record loads with
+/// `Rule::text` set to the whole file: keys, quotes, hashes. The miner's
+/// dedup check compares shared words. A one-line claim shares few words with
+/// the file that holds it. So a rule already published is mined again on
+/// every pass.
+///
+/// Only this source projects. The record registry reads the same files as
+/// records and needs the file intact.
+struct StatementRuleSource;
+
+impl RuleSource for StatementRuleSource {
+    fn read_rule_files(&self, dirs: &[String]) -> Vec<RuleFile> {
+        FsRuleSource
+            .read_rule_files(dirs)
+            .into_iter()
+            .map(as_statements)
+            .collect()
+    }
+}
+
+/// A context record file as the statements it publishes, one per line.
+///
+/// A file may carry several records. The miner compares text, not structure,
+/// so every statement in the file counts. A file that will not load as a
+/// record is left as it was. The record registry reports a bad policy file,
+/// and one report is enough.
+fn as_statements(file: RuleFile) -> RuleFile {
+    if !file.path.ends_with(".toml") {
+        return file;
+    }
+    let Ok(records) = stella_records::records::load_context_file(&file.path, &file.contents) else {
+        return file;
+    };
+    let statements = records
+        .iter()
+        .map(|loaded| loaded.record.statement.trim())
+        .filter(|statement| !statement.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if statements.is_empty() {
+        return file;
+    }
+    RuleFile {
+        contents: statements,
+        ..file
+    }
 }
 
 /// [`load_workspace_rules`] over an explicit user rules directory — the seam

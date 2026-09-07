@@ -861,11 +861,13 @@ pub(crate) fn spawn(
         });
         // A panic unwound past the worker's own closeout, so its claims are
         // still held — release them here or they block rivals until the
-        // age-based sweep.
-        if matches!(&end, WorkerEnd::Failed(reason) if reason.starts_with(PANIC_FAILURE_PREFIX))
-            && let Some(store) = agent::open_store(&cfg.workspace_root)
-        {
-            let _ = store.release_file_locks_for_holder(&format!("{session_id}/{lane}"));
+        // age-based sweep. The lane's terminal frame is skipped the same way,
+        // so it is written here too.
+        if matches!(&end, WorkerEnd::Failed(reason) if reason.starts_with(PANIC_FAILURE_PREFIX)) {
+            if let Some(store) = agent::open_store(&cfg.workspace_root) {
+                let _ = store.release_file_locks_for_holder(&format!("{session_id}/{lane}"));
+            }
+            terminal_frame::settle_panicked_lane(&cfg.workspace_root, &session_id, &lane, &end);
         }
 
         // Terminal lane status. On failure the Error event (already on the

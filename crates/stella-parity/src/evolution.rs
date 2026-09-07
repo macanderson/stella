@@ -397,8 +397,8 @@ evolution_surfaces! {
         "`stella tools --rollback <name> [--to <version>]` restores a prior version's exact \
          bytes from the append-only history and re-digests them; `--disable <name>` stops \
          offering a tool while keeping its proof on file; `foundry.autonomy = \"off\"` is \
-         the kill switch; `forget_foundry_tool` removes an adoption and its approval \
-         outright";
+         the kill switch. Outright removal of an adoption and its approval is a store \
+         call with no verb behind it, so it is not a rollback an operator can reach";
 
     /// How Stella configures its own runs.
     Workflow => "workflow",

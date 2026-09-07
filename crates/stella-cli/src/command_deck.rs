@@ -243,15 +243,19 @@ fn system_notice(text: String) -> Inbound {
 }
 
 /// Where this workspace keeps the command palette's `recent` section
-/// (SPEC 10). It sits under `.stella/private/` with the rest of the generated
-/// local state, so it is gitignored and never travels: the last five commands
-/// a person ran are theirs, and a clone that inherited someone else's would be
-/// wrong as well as private (AGENTS.md § the `.stella/` directory).
-fn palette_recent_path(workspace_root: &std::path::Path) -> PathBuf {
-    workspace_root
-        .join(".stella")
-        .join("private")
-        .join("palette-recent.json")
+/// (SPEC 10), through the owner-only tier that already holds
+/// `reflections.jsonl` and `mcp_oauth.json`.
+///
+/// A hand-joined path buys none of what the tier gives. The directory is made
+/// `0700` and checked for symlinks. The ignore file is written beside it. And
+/// `STELLA_WORKSPACE_STATE_ROOT` moves it. The move is what a worktree
+/// session needs. Agents here run under `.claude/worktrees/`. A list written
+/// there goes when the worktree does.
+///
+/// `None` on any failure, like the debug log beside it: a lost recents list
+/// never gates a session.
+fn palette_recent_path(workspace_root: &std::path::Path) -> Option<PathBuf> {
+    stella_store::workspace_private_state_path(workspace_root, "palette-recent.json").ok()
 }
 
 /// `STELLA_DEBUG=1` → the structured deck log path (L-T8), mirroring the
@@ -807,7 +811,7 @@ pub async fn run_deck_session(
         // Seeded below, once the deck is up: reading the graph is SQLite, and
         // reading it here delayed the first frame by however long it took.
         initial_graph: None,
-        recent_path: Some(palette_recent_path(&cfg.workspace_root)),
+        recent_path: palette_recent_path(&cfg.workspace_root),
         no_anim,
         accessible,
         mouse_capture: mouse,

@@ -151,6 +151,14 @@ pub fn to_toml(cmd: &CommandDef) -> Result<String, String> {
             cmd.name
         ));
     }
+    if let Some(found) = forbidden_control(&cmd.body) {
+        return Err(format!(
+            "{}: the prompt body contains the control character U+{:04X}, which a TOML \
+             multi-line literal string cannot carry — strip it from the body. A literal \
+             string has no escapes, so there is nothing to write it as.",
+            cmd.name, found as u32
+        ));
+    }
     let mut out = String::new();
     out.push_str(&format!("name = {}\n", quote(&cmd.name)));
     out.push_str(&format!("description = {}\n", quote(&cmd.description)));
@@ -173,14 +181,64 @@ pub fn to_toml(cmd: &CommandDef) -> Result<String, String> {
     Ok(out)
 }
 
+/// The first character a TOML multi-line literal string cannot carry, if the
+/// text has one.
+///
+/// A literal string has no escapes. So a control character in one has no
+/// spelling at all. TOML's `ml-literal-char` takes a tab and printed text. A
+/// line break comes in as `LF` or `CRLF`. A lone carriage return is out.
+///
+/// The failure this stops is silent. Paste the body in unchecked and
+/// `stella commands convert` says it worked. The file it wrote will not
+/// parse.
+fn forbidden_control(body: &str) -> Option<char> {
+    let mut chars = body.chars().peekable();
+    while let Some(found) = chars.next() {
+        match found {
+            '\t' | '\n' => {}
+            '\r' if chars.peek() == Some(&'\n') => {}
+            other if toml_forbids_raw(other) => return Some(other),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether TOML refuses this character unescaped in any string.
+///
+/// The C0 range, plus delete. Not `char::is_control`. That also covers
+/// U+0080 to U+009F, which TOML takes raw. Refusing those would refuse a body
+/// TOML accepts.
+fn toml_forbids_raw(found: char) -> bool {
+    found < ' ' || found == '\u{7f}'
+}
+
 /// A TOML basic string. Backslashes first, or the escapes added after would
 /// themselves be escaped.
+///
+/// Every control character is written as an escape. A basic string bars them
+/// raw. So a description with a tab in it would else write a file nothing can
+/// parse.
 fn quote(value: &str) -> String {
-    let escaped = value
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n");
-    format!("\"{escaped}\"")
+    let mut escaped = String::with_capacity(value.len() + 2);
+    escaped.push('"');
+    for found in value.chars() {
+        match found {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            '\u{8}' => escaped.push_str("\\b"),
+            '\u{c}' => escaped.push_str("\\f"),
+            other if toml_forbids_raw(other) => {
+                escaped.push_str(&format!("\\u{:04X}", other as u32));
+            }
+            other => escaped.push(other),
+        }
+    }
+    escaped.push('"');
+    escaped
 }
 
 /// One conversion the run would perform or did.
@@ -397,6 +455,55 @@ mod tests {
         let cmd = command_from_file("/ws/.stella/commands/quote.md", "before '''after").unwrap();
         let err = to_toml(&cmd).unwrap_err();
         assert!(err.contains("'''"), "{err}");
+    }
+
+    /// **The control-character witness.** A body carrying one is reported,
+    /// not written into a file that will not parse.
+    ///
+    /// Paste the body into a literal string unchecked and this fails by
+    /// construction. `to_toml` returns `Ok`. The TOML it writes will not
+    /// parse. The converter reports a success that lost the command.
+    #[test]
+    fn a_body_containing_a_control_character_is_rejected() {
+        for (label, raw) in [
+            ("a bell", "before \u{7}after"),
+            ("a vertical tab", "before \u{b}after"),
+            ("a lone carriage return", "before \rafter"),
+            ("delete", "before \u{7f}after"),
+        ] {
+            let cmd = command_from_file("/ws/.stella/commands/ctl.md", raw).unwrap();
+            let err = to_toml(&cmd)
+                .err()
+                .unwrap_or_else(|| panic!("{label} must be refused"));
+            assert!(err.contains("control character"), "{label}: {err}");
+        }
+    }
+
+    /// Tab, newline and CRLF are the three TOML admits in a literal string,
+    /// so a body carrying them still converts.
+    #[test]
+    fn tabs_and_newlines_still_convert() {
+        let body = "one\ttab\nand a line\r\nand a crlf";
+        let cmd = command_from_file("/ws/.stella/commands/ws.md", body).unwrap();
+        let toml_src = to_toml(&cmd).expect("tab and newline are allowed");
+        let round_tripped = command_from_toml("/ws/.stella/commands/ws.toml", &toml_src).unwrap();
+        assert!(round_tripped.body.contains('\t'), "{toml_src}");
+    }
+
+    /// A control character in a basic-string field is escaped, not pasted
+    /// raw. TOML bars it raw. A description with one would else write a file
+    /// nothing can read.
+    #[test]
+    fn a_description_carrying_a_control_character_is_escaped() {
+        let mut cmd = command_from_file("/ws/.stella/commands/odd.md", "Body.").unwrap();
+        cmd.description = "a\ttab and a \u{7} bell".to_owned();
+        let toml_src = to_toml(&cmd).expect("a basic string can escape it");
+        assert!(
+            !toml_src.contains('\t'),
+            "the tab must be escaped, not raw: {toml_src:?}"
+        );
+        command_from_toml("/ws/.stella/commands/odd.toml", &toml_src)
+            .expect("the emitted document parses");
     }
 
     #[test]

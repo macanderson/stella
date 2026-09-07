@@ -297,6 +297,23 @@ fn finish_adoption(
     Ok(record)
 }
 
+/// What `stella tools --enable` says when there is no terminal to ask at.
+///
+/// Not "the one approval a machine never grants for itself": ADR 0023 makes
+/// that false, because with `foundry.autonomy = "auto"` the foundry adopts
+/// and enables a tool by itself, inside the sandbox that path requires.
+/// `--enable` is the draft-only path — the one taken when autonomy is off, or
+/// when the sandbox is not available — and the message says so.
+fn no_terminal_to_ask(name: &str) -> String {
+    format!(
+        "nothing here can ask you to approve `{name}` — no terminal is attached. \
+         This is the draft-only path, which `stella tools --enable` takes when \
+         `foundry.autonomy` is off or the sandbox the automatic path needs is \
+         missing, so the approval has to come from you; re-run with --yes if you \
+         have read the declaration above and accept it."
+    )
+}
+
 /// The consent gate and the ledger write. The testable core of
 /// [`run_tools_enable`]: no cwd, no reporting.
 ///
@@ -324,12 +341,7 @@ pub(crate) fn run_tools_enable_in(
         // `true` for the first input: this is a plain text command, so the only
         // questions are whether stdio is a terminal.
         if !crate::interactive::human_is_present(true) {
-            return Err(format!(
-                "nothing here can ask you to approve `{name}` — no terminal is attached. \
-                 Enabling a self-authored tool is the one approval in this protocol a machine \
-                 never grants itself; re-run with --yes if you have read the declaration above \
-                 and accept it."
-            ));
+            return Err(no_terminal_to_ask(name));
         }
         if !confirm_enable(name)? {
             return Ok(false);

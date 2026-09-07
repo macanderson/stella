@@ -17,6 +17,45 @@ use super::{WorkerEnd, lane_journal_key};
 use crate::durability::SessionDurability;
 use crate::lane_frame::{LaneEnd, TerminalFrame, report_line};
 
+/// Write the terminal frame a panicked lane owes its lead.
+///
+/// `run_worker` settles its own recorder on every path it returns through.
+/// An unwind is not one of them. The lane's last step is still on disk with
+/// nothing to turn it into a frame, so the lead's report says nothing about
+/// the loudest way a lane can die.
+///
+/// This binds its own handle to the same lane key. The worker's went with the
+/// frame that unwound. A lane that reached no end of a turn is framed from
+/// the checkpoint standing at its tip, which is what a panic leaves, so a
+/// second handle over the same key reads the same state.
+///
+/// A bind warning is dropped, for the reason `run_worker` drops its own: the
+/// worker is dead and the lane has already said so.
+pub(super) fn settle_panicked_lane(
+    workspace_root: &std::path::Path,
+    session_id: &str,
+    lane: &str,
+    end: &WorkerEnd,
+) {
+    let durability = SessionDurability::default();
+    let _ = crate::durability::bind_session(
+        &durability,
+        workspace_root,
+        &lane_journal_key(session_id, lane),
+    );
+    settle_bound_lane(&durability, lane, end);
+}
+
+/// [`settle_panicked_lane`] over a handle the caller has already bound.
+///
+/// The split is the one `durability::bind_session_in` argues for. The global
+/// form finds its store through `data_dir()`, which reads `STELLA_HOME`. A
+/// test that used it would write into the developer's own store.
+pub(super) fn settle_bound_lane(durability: &SessionDurability, lane: &str, end: &WorkerEnd) {
+    crate::lane_frame::LaneRecorder::new(durability, lane)
+        .settle(&crate::lane_frame::LaneEnd::from(end));
+}
+
 impl From<&WorkerEnd> for LaneEnd {
     fn from(end: &WorkerEnd) -> Self {
         match end {

@@ -867,3 +867,40 @@ fn every_command_a_relevance_rule_can_name_is_a_real_one() {
         );
     }
 }
+
+/// **The redirect witness.** A worktree session's palette recents land in the
+/// repository the state root names, not in the worktree.
+///
+/// Join `.stella/private/palette-recent.json` onto the workspace root and
+/// this fails by construction: the path lands inside the worktree, and the
+/// list goes when the worktree does. Agents in this repository run under
+/// `.claude/worktrees/`, so that is where the list would be least kept.
+///
+/// The env var is process-wide, so this runs under the same serial lock every
+/// other test that sets it takes.
+#[test]
+fn palette_recents_follow_the_workspace_state_root() {
+    let anchor = tempfile::tempdir().expect("tempdir");
+    let worktree = tempfile::tempdir().expect("tempdir");
+
+    let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&[stella_home::WORKSPACE_STATE_ROOT_ENV]);
+    // SAFETY: `test_env::lock` is held for the whole window, and `_restore`
+    // puts the variable back even if an assertion below unwinds.
+    unsafe {
+        std::env::set_var(stella_home::WORKSPACE_STATE_ROOT_ENV, anchor.path());
+    }
+
+    let resolved = super::palette_recent_path(worktree.path()).expect("the private tier resolves");
+    assert!(
+        resolved.starts_with(anchor.path()),
+        "recents must follow the state root, got {}",
+        resolved.display()
+    );
+    assert!(
+        !resolved.starts_with(worktree.path()),
+        "recents must not stay in the worktree, got {}",
+        resolved.display()
+    );
+    assert!(resolved.ends_with("palette-recent.json"), "{resolved:?}");
+}

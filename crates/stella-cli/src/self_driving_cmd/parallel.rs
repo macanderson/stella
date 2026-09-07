@@ -67,6 +67,14 @@ fn refuse_unsupported_worker(
              issues one at a time with the worker you chose, or set worker.kind = \
              \"stella\" for the wave."
             .to_owned()),
+        // A wave under an unreadable worker would run stella across every
+        // issue at once, which is the swap this function exists to stop —
+        // and at width, not one issue at a time.
+        WorkerKind::Unreadable => Err("stella.toml declares [self_driving.worker] and could not \
+                                       be read, so which agent you asked for is unknown. Fix the \
+                                       document — the parse error is on stderr above — and run \
+                                       again."
+            .to_owned()),
     }
 }
 
