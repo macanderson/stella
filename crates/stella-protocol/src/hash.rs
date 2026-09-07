@@ -10,9 +10,15 @@
 //!    complements the `#[serde(skip_serializing_if = "Option::is_none")]`
 //!    absent-option omission on the record types);
 //! 4. **RFC 8785 JCS** — sort keys, minimal whitespace, canonical numbers, via
-//!    `serde_json_canonicalizer` (the same crate + version CGP uses, so the
-//!    preimage bytes are byte-identical to CGP's for export interop);
+//!    `serde_json_canonicalizer`, the crate and version CGP's own `record-hash`
+//!    feature pins;
 //! 5. sha256, lowercase hex, `sha256:` prefix.
+//!
+//! Step 3 has no counterpart in CGP, whose `record_hash_preimage` drops
+//! `record_hash` and canonicalizes. So the two preimages are byte-identical for
+//! a record carrying no explicit `null` and differ for one that does, and an
+//! export-interop claim holds only under that condition.
+//! `strip_nulls_is_the_only_divergence_from_cgps_preimage` pins both halves.
 //!
 //! It lives here because two crates hash against it: `stella-records` seals a
 //! record, and `stella-core::receipts` derives a frame's `frame_hash`. Beside
@@ -149,6 +155,49 @@ mod tests {
         let absent = record_hash(&json!({"a": 1})).unwrap();
         let explicit_null = record_hash(&json!({"a": 1, "b": null})).unwrap();
         assert_eq!(absent, explicit_null);
+    }
+
+    /// The boundary of the export-interop claim in this module's header.
+    ///
+    /// CGP's `contextgraph_types::record_hash_preimage` drops the top-level
+    /// `record_hash` member and canonicalizes, and normalizes no nulls. Its
+    /// rule is reimplemented here rather than imported: this crate takes no
+    /// `contextgraph-types` dependency, and acquiring one so a test can quote
+    /// a rule this short would invert the crate's position in the graph.
+    #[test]
+    fn strip_nulls_is_the_only_divergence_from_cgps_preimage() {
+        // CGP profile LH1: JCS over the record with its `record_hash` removed.
+        fn cgp_preimage(record: &Value) -> String {
+            let mut value = record.clone();
+            value
+                .as_object_mut()
+                .expect("an object")
+                .remove("record_hash");
+            serde_json_canonicalizer::to_string(&value).expect("canonicalizes")
+        }
+
+        let null_free = json!({
+            "b": 2,
+            "a": 1,
+            "record_hash": "sha256:deadbeef"
+        });
+        assert_eq!(
+            canonical_preimage(&null_free).unwrap(),
+            cgp_preimage(&null_free),
+            "a record with no explicit null hashes the same bytes on both sides"
+        );
+
+        let with_null = json!({
+            "a": 1,
+            "b": null
+        });
+        assert_ne!(
+            canonical_preimage(&with_null).unwrap(),
+            cgp_preimage(&with_null),
+            "step 3 drops the null here and CGP keeps it, so the bytes differ"
+        );
+        assert_eq!(canonical_preimage(&with_null).unwrap(), r#"{"a":1}"#);
+        assert_eq!(cgp_preimage(&with_null), r#"{"a":1,"b":null}"#);
     }
 
     #[test]
