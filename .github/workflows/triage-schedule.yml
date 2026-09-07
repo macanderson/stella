@@ -92,7 +92,10 @@ jobs:
           sized=0
           for n in $queue; do
             title=$(gh issue view "$n" --repo "$REPO" --json title --jq .title)
-            body=$(gh issue view "$n" --repo "$REPO" --json body --jq .body | head -c 6000)
+            # Truncated by jq rather than by `| head -c`: `head` closes the
+            # pipe at its limit, `gh` takes the SIGPIPE, and `pipefail` turns
+            # a long issue body into a failed sweep that blames the API.
+            body=$(gh issue view "$n" --repo "$REPO" --json body --jq '.body[0:6000]')
 
             jq -n \
               --arg model "$MODEL" \
@@ -150,10 +153,12 @@ jobs:
             # A name the model invented is dropped here rather than failing the
             # `gh` call halfway through a partial edit.
             valid=""
+            : > /tmp/valid.txt
             while IFS= read -r label; do
               [ -z "$label" ] && continue
               if grep -qxF "$label" /tmp/labels.txt; then
                 valid="${valid:+$valid,}$label"
+                printf '%s\n' "$label" >> /tmp/valid.txt
               else
                 echo "issue $n: dropping unknown label '$label'" >&2
               fi
@@ -168,6 +173,23 @@ jobs:
               || ! echo "$scheme" | grep -qF "\`$priority\`" \
               || ! echo ",$valid," | grep -qF ",$priority,"; then
               echo "issue $n: no priority the scheme recognises — skipping, queue label kept" >&2
+              continue
+            fi
+
+            # A sizing is four axes, and the taxonomy names all four: the
+            # priority above, at least one `area:`, exactly one `use-model:`,
+            # at least one `pain:`. Gating on the priority alone let a reply
+            # that lost its other three to validation still pass, and the
+            # write that follows is the one unrecoverable step here — `triage`
+            # comes off, the issue leaves the queue, and no later sweep
+            # reconsiders it, so a half-sized issue is as unfindable as the
+            # unsized one this workflow exists to rescue.
+            n_area=$(grep -c '^area:' /tmp/valid.txt || true)
+            n_model=$(grep -c '^use-model:' /tmp/valid.txt || true)
+            n_pain=$(grep -c '^pain:' /tmp/valid.txt || true)
+            if [ "$n_area" -lt 1 ] || [ "$n_model" -ne 1 ] || [ "$n_pain" -lt 1 ]; then
+              echo "issue $n: sized $n_area area / $n_model use-model / $n_pain pain," \
+                "which is not a complete sizing — skipping, queue label kept" >&2
               continue
             fi
 
