@@ -63,6 +63,7 @@ use std::path::{Path, PathBuf};
 use crate::self_driving_cmd::turn_flags::TurnFlags;
 use crate::settings::{Settings, Toggle};
 
+pub(crate) mod composition;
 pub(crate) mod configure;
 pub(crate) mod doctor;
 pub(crate) mod package;
@@ -826,6 +827,7 @@ fn list(workspace_root: &Path, settings: &Settings) -> Result<(), String> {
     if roster.plugins().is_empty() {
         println!("no plugins installed — add one with `stella plugin install <dir>`");
     }
+    let seat_models = composition::seat_assignments(settings);
     for (plugin, inventory) in package::inventories(&roster) {
         let grant = &plugin.manifest.loop_grant;
         println!(
@@ -858,6 +860,14 @@ fn list(workspace_root: &Path, settings: &Settings) -> Result<(), String> {
         // `stella.toml` that signs their commits in someone else's name has no
         // way to learn from stella that a package put it there.
         for line in configure_lines(workspace_root, plugin) {
+            println!("{line}");
+        }
+        // What it adds to every turn: the stages, their bands, and the seat
+        // each declared role spends under. The `ships …` lines answer what a
+        // package brought with it, and this answers what it does with a turn —
+        // which nothing here rendered while a manifest's stages already
+        // decided a turn's composition (`doc:roleless-core` §6).
+        for line in composition::composition_lines(plugin, &seat_models) {
             println!("{line}");
         }
         match &plugin.manifest.runtime {

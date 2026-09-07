@@ -123,6 +123,12 @@ vera                     project  arbiter
   Holds a turn open until the tests pass.
   /ws/.stella/plugins/vera
   runs: python3 ${plugin_dir}/main.py (30s, env: PATH)
+  composes: pipeline `vera-v1`
+    early  triage-lite (this package's own stage) — on every turn
+    late   verify — when: tests_ran
+  roles:
+    verifier — tier `pro`, seat `vera/verifier` -> anthropic/claude-opus-5
+    triage — tier `cheap`, seat `vera/triage` -> your session's model (no `[seats]` line)
   panel: ! `vera` declares a panel and is not drawing one — nobody has been asked yet. Run `stella plugin panel vera` to read the handshake and decide.
 
 hook dispatches:
@@ -131,6 +137,10 @@ hook dispatches:
 ```
 
 The output has two parts, and they answer different questions. The first part shows what each plugin asked for. The second part, "hook dispatches," shows what stella will actually run. If a plugin lists a hook but has no `[runtime]` block, it shows up in the first part but not the second. That's why a plugin can declare `Stop` and still never run anything.
+
+The `composes:` lines say what the plugin puts in your turn. Each line names a stage, the band it runs in, and when it runs. Bands run in one order across every plugin you switched on: every `early` stage, then every `normal` one, then every `late` one. A stage marked as the package's own is a name the plugin invented rather than one stella ships.
+
+The `roles:` lines say what each stage costs. A role names a tier, and the seat key you write in `[seats]` to give it a model of its own. A seat with no `[seats]` line runs on your session's model, and the list says so rather than leaving the role out. The install screen shows the same stages and roles before you say yes.
 
 If a plugin asks for an environment variable that stella recognizes as a model API key, stella blocks it and tells you here, in the list output. You won't have to discover a missing variable later when the plugin runs. A plugin never gets the API key that pays for model usage directly. Instead, a plugin that needs model access should use a `[roles]` block, so stella makes the model call itself and tracks the cost properly.
 

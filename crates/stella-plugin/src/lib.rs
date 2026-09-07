@@ -102,6 +102,7 @@
 //! would answer or ask for one.
 
 mod candidate_grant;
+mod composition;
 mod configure;
 mod consent;
 mod drawable;
@@ -152,6 +153,10 @@ pub use candidate_grant::{
     ArtifactIdentity, ArtifactKind, CmdKind, CmdOutcome, HOST_TREE_HANDLE, TestInvocation,
     TestInvocationError, canonical_root, fence_lexical, host_tree_grant, parse_test_invocation,
     test_plan, witness_identity_matches,
+};
+pub use composition::{
+    BAND_ORDER_SENTENCE, RoleDisclosure, StageDisclosure, TIER_IS_AN_ASK_SENTENCE, TurnComposition,
+    UNASSIGNED_SEAT_SENTENCE,
 };
 pub use configure::{ConfigureEntry, REFUSED_SECTIONS};
 pub use consent::{

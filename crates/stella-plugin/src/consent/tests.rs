@@ -684,3 +684,91 @@ fn the_handshake_is_deterministic() {
         panel_handshake_text(&manifest, "sha256:c0ffee")
     );
 }
+
+/// **The witness for `doc:roleless-core` §6's consent gap.** A manifest's
+/// `[[wrapper.stages]]` entries decide a turn's composition — which stages
+/// exist, and through `band`, when each runs against every other active
+/// plugin's stages. The prompt listed the names and nothing else, so two
+/// manifests composing two different turns rendered the same sentence and a
+/// reader agreed to an order they were never shown.
+///
+/// Anti-vacuity is the second half, on
+/// [`the_scope_disclaimer_appears_only_when_a_scope_was_declared`]'s
+/// reasoning: a manifest with no `[wrapper]` renders none of it.
+#[test]
+fn the_consent_prompt_names_each_stages_band() {
+    let text = consent_text(&parse(
+        "name = \"p\"\n[loop]\nparticipation = \"steering\"\n\n\
+         [wrapper]\nid = \"v\"\n\
+         [[wrapper.stages]]\nname = \"triage-lite\"\nband = \"early\"\n\
+         [[wrapper.stages]]\nname = \"plan\"\n",
+    ));
+    assert!(
+        text.contains("wraps every turn as pipeline `v`, adding these stages to it:"),
+        "{text}"
+    );
+    assert!(
+        text.contains("triage-lite (this plugin's own stage) — band: early, on every turn"),
+        "a contributed stage renders its band and that it is the plugin's own: {text}"
+    );
+    assert!(
+        text.contains("plan — band: normal, on every turn"),
+        "a stage that names no band renders the one it gets: {text}"
+    );
+    assert!(
+        text.contains("every `early` stage, then every `normal` one"),
+        "{text}"
+    );
+
+    let wrapperless = consent_text(&parse(
+        "name = \"p\"\n[loop]\nparticipation = \"steering\"\n",
+    ));
+    assert!(
+        !wrapperless.contains("adding these stages to it"),
+        "a manifest with no [wrapper] renders no stage block: {wrapperless}"
+    );
+}
+
+/// The same manifest gaining one stage changes the document a person reads,
+/// which is what makes the disclosure worth reading at all.
+#[test]
+fn adding_a_stage_changes_the_rendered_consent_text() {
+    let one = consent_text(&parse(
+        "name = \"p\"\n[loop]\nparticipation = \"steering\"\n\n\
+         [wrapper]\nid = \"v\"\n\
+         [[wrapper.stages]]\nname = \"plan\"\n",
+    ));
+    let two = consent_text(&parse(
+        "name = \"p\"\n[loop]\nparticipation = \"steering\"\n\n\
+         [wrapper]\nid = \"v\"\n\
+         [[wrapper.stages]]\nname = \"plan\"\n\
+         [[wrapper.stages]]\nname = \"review\"\nband = \"late\"\n",
+    ));
+    assert_ne!(one, two);
+    assert!(!one.contains("review"), "{one}");
+    assert!(
+        two.contains("review (this plugin's own stage) — band: late"),
+        "{two}"
+    );
+}
+
+/// A role with no `[seats]` line spends on the session model, and the prompt
+/// named the tier without ever naming the seat a person would write to change
+/// that — so the key they need was recoverable only by
+/// knowing that the host, not the plugin, writes the `<plugin>/<role>` prefix.
+#[test]
+fn the_consent_prompt_names_the_seat_and_what_an_unassigned_one_costs() {
+    let text = consent_text(&parse(
+        "name = \"acme\"\n[loop]\nparticipation = \"steering\"\n\n\
+         [subloop]\nstages = [\"triage\"]\n\n\
+         [roles.triage]\ntier = \"premium\"\n",
+    ));
+    assert!(
+        text.contains("triage: the `premium` tier, assigned through the seat `acme/triage`"),
+        "{text}"
+    );
+    assert!(
+        text.contains("A seat with no `[seats]` line runs on your session's own model"),
+        "an unassigned seat is disclosed rather than omitted: {text}"
+    );
+}
