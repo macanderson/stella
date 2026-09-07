@@ -170,6 +170,11 @@
       "status": "implemented",
       "title": "ADR 0033: Free text is not evidence"
     },
+    "adr/0034-silence-is-not-a-grant": {
+      "path": "docs/adr/0034-silence-is-not-a-grant.md",
+      "status": "implemented",
+      "title": "ADR 0034: Silence is not a grant"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",

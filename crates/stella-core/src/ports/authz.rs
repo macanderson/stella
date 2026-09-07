@@ -92,6 +92,25 @@ pub enum Principal {
     /// plugin's manifest and shown to a human before install by
     /// `stella_plugin::consent_text`; the engine sees only the principal.
     Plugin(String),
+    /// A worker turn the host ran because an installed plugin asked for one,
+    /// named by that plugin's manifest `name`.
+    ///
+    /// **Separate from [`Self::Plugin`], and the separation is what makes a
+    /// capability grant mean anything.** A plugin's own tool call is the
+    /// plugin's code reaching for the host's authority, and the
+    /// `[[capabilities]]` list a human accepted is the bound on it. A turn the
+    /// host runs at the plugin's request is the user's own work: the model
+    /// picks the tools, the session's tool policy is the one in force, and the
+    /// plugin's authority for it was the host call it declared and the user
+    /// accepted. Judging that turn against the plugin's tool grant would ask
+    /// one list to bound two unrelated things, and the list would have to hold
+    /// every tool a turn might reach — which is every tool there is.
+    ///
+    /// [`Self::Plugin`] carried both until ADR 0034. A gate
+    /// could not tell a plugin's own `delete_file` from a `delete_file` a
+    /// candidate turn chose, so it could give only one answer to two questions.
+    /// Now it can give two.
+    PluginWorker(String),
 }
 
 impl Principal {
@@ -110,6 +129,7 @@ impl Principal {
             Self::SubAgent(id) => format!("subagent:{id}"),
             Self::Host(id) => format!("host:{id}"),
             Self::Plugin(name) => format!("plugin:{name}"),
+            Self::PluginWorker(name) => format!("plugin-worker:{name}"),
         }
     }
 }
@@ -639,7 +659,10 @@ mod tests {
                             contract.name()
                         ),
                     }),
-                    Principal::User
+                    // A worker turn the host ran for a plugin is a caller of
+                    // its own, and this rule is about the plugin's own reach.
+                    Principal::PluginWorker(_)
+                    | Principal::User
                     | Principal::Role(_)
                     | Principal::SubAgent(_)
                     | Principal::Host(_) => Ok(AuthzDecision::Allow),
@@ -669,6 +692,19 @@ mod tests {
                 .unwrap(),
             AuthzDecision::Allow,
             "the host that installed it is not the plugin"
+        );
+
+        assert_eq!(
+            PluginsGetNothing
+                .check(
+                    &contract("bash", RiskLevel::High),
+                    &Principal::PluginWorker("vera".into()),
+                    &serde_json::json!({}),
+                )
+                .unwrap(),
+            AuthzDecision::Allow,
+            "and a turn the host ran for that plugin is a third caller again \
+             (ADR 0034): the model picked this tool, the plugin did not ask for it"
         );
     }
 

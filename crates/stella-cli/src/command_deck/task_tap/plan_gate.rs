@@ -78,7 +78,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 mod revision;
 
-pub(crate) use revision::SharedRevisions;
+pub(crate) use revision::{RevisionSlot, SharedRevisions, park_revisions, parked_revisions};
 
 /// The label whose selection means "run this plan". Matched by exact string
 /// against [`stella_protocol::Answer::chosen`], so it is named once here
@@ -269,7 +269,7 @@ impl PlanGate {
         // A waiting plan change is settled first. The plan changed under a
         // turn that is already running, and SPEC 8.1 item 3 says nothing runs
         // until somebody answers that (see the `revision` submodule).
-        if let Some(held) = self.settle_revision(board) {
+        if let Some(held) = self.settle_revision() {
             return Some(held);
         }
         let steps = plan_steps(board);

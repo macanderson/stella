@@ -344,6 +344,12 @@ pub(super) fn check_loop_detection(
         LoopVerdict::MonotonicSweep { tool, wraps, .. } => {
             ("monotonic_sweep", vec![tool.clone()], *wraps)
         }
+        // `repeats` carries the run length. That is all this rung has. One
+        // call that extends the last one is a model at work. The count is
+        // what tells that from a grind (`#5863`).
+        LoopVerdict::SelfAppending { tool, calls, .. } => {
+            ("self_appending", vec![tool.clone()], *calls)
+        }
     };
     let evidence = verdict
         .evidence()
@@ -425,8 +431,9 @@ pub(super) fn check_loop_detection(
 /// A monotonic sweep is excluded for the reason cycles are, arrived at from
 /// the other side: nothing about it is a status check, its arguments change on
 /// every call by construction, and "make one blocking wait" is advice for a
-/// turn that is waiting. [`LoopVerdict::evidence`] already carries the
-/// prescription that shape needs.
+/// turn that is waiting. A self-appending grind is left out on the same
+/// reading. Its command grows on each call, so it is no status check either.
+/// [`LoopVerdict::evidence`] already says what both shapes need to hear.
 fn polling_tool(verdict: &LoopVerdict, tools: &dyn ToolExecutor) -> Option<String> {
     let tool = match verdict {
         LoopVerdict::ExactRepeat { tool, .. }
@@ -434,7 +441,8 @@ fn polling_tool(verdict: &LoopVerdict, tools: &dyn ToolExecutor) -> Option<Strin
         | LoopVerdict::InterleavedRepeat { tool, .. } => tool,
         LoopVerdict::NoLoop
         | LoopVerdict::ShortCycle { .. }
-        | LoopVerdict::MonotonicSweep { .. } => return None,
+        | LoopVerdict::MonotonicSweep { .. }
+        | LoopVerdict::SelfAppending { .. } => return None,
     };
     tools
         .schemas()

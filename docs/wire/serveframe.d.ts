@@ -134,22 +134,24 @@ export type AgentEvent = {
   evidence: string;
   /**
    * `"exact_repeat"` | `"short_cycle"` | `"stagnation"` |
-   * `"interleaved_repeat"` | `"monotonic_sweep"` — mirrors
-   * `stella-core::loop_detect::LoopVerdict` (kept as a string here so
-   * `stella-protocol` never depends on `stella-core`).
+   * `"interleaved_repeat"` | `"monotonic_sweep"` | `"self_appending"`
+   * — mirrors `stella-core::loop_detect::LoopVerdict` (kept as a string
+   * here so `stella-protocol` never depends on `stella-core`).
    */
   kind: string;
   /**
    * Tool names of the repeated signature, in cycle order (one entry
-   * for an exact repeat, a stagnating tool, an interleaved repeat, or
-   * a monotonic sweep).
+   * for an exact repeat, a stagnating tool, an interleaved repeat, a
+   * monotonic sweep, or a self-appending run).
    */
   pattern: string[];
   /**
-   * Consecutive identical calls (exact repeat), full cycles (short
-   * cycle), consecutive no-progress calls (stagnation), occurrences
-   * anywhere in the window (interleaved repeat), or times the sweep
-   * wrapped back to its start (monotonic sweep) observed.
+   * What the `kind` counted. Identical calls in a row for an exact
+   * repeat. Full cycles for a short cycle. Calls in a row that taught
+   * nothing, for stagnation. Times the call turned up anywhere in the
+   * window, for an interleaved repeat. Times the sweep went back to
+   * its start, for a monotonic sweep. Calls in the growing run, for a
+   * self-appending one.
    */
   repeats: number;
   turn_instance: number;

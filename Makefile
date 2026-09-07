@@ -987,15 +987,16 @@ main-red-hold: ## Ask whether an open `main-red` issue should hold a PR (reads t
 	@./scripts/check-main-red-hold.sh
 
 .PHONY: main-red-hold-test
-main-red-hold-test: ## Test the red-main hold and its clean-up (hermetic; not part of `gate`)
+main-red-hold-test: ## Test the red-main hold and both refresh directions (hermetic; not part of `gate`)
 	./scripts/test-main-red-hold.sh
 
-# What the hold leaves behind once main recovers: a failed check run that is
-# still the last word on every blocked PR's head (#5913). CI re-runs those
-# holds; this prints what it would re-run, and changes nothing.
-.PHONY: clear-main-red-holds
-clear-main-red-holds: ## List the stale `main is not known-broken` failures a recovery left behind
-	@./scripts/clear-main-red-holds.sh --dry-run
+# What either transition leaves behind: a check run that is still the last
+# word on every open PR's head, answering the question main was asking then
+# (#5913 for a stale failure, #5949 for a stale pass). CI re-runs those holds;
+# this prints what it would re-run, and changes nothing.
+.PHONY: refresh-main-red-holds
+refresh-main-red-holds: ## List the `main is not known-broken` runs that no longer match the tracker
+	@./scripts/refresh-main-red-holds.sh --dry-run
 
 # The third signal in the red-main chain: the canary detects, the hold stops
 # a merge, and this stops a second session writing the same patch (#4680).
@@ -1028,6 +1029,14 @@ issue-claim: ## Ask whether somebody is already implementing an issue: make issu
 .PHONY: issue-claim-test
 issue-claim-test: ## Test the issue-claim pre-flight, standing-down branch included (hermetic; not part of `gate`)
 	./scripts/test-issue-claim.sh
+
+.PHONY: pr-claim
+pr-claim: ## Ask whether somebody is already sweeping a pull request: make pr-claim N=5835
+	@./scripts/pr-claim.sh check $(N)
+
+.PHONY: pr-claim-test
+pr-claim-test: ## Test the pull-request claim and the duplicate-finding gate (hermetic; not part of `gate`)
+	./scripts/test-pr-claim.sh
 
 # Not a GATE_STEPS member -- one file, one narrow shape (#3459). The real
 # enforcement is its self-test's own live-tree case (F in

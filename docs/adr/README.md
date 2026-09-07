@@ -100,6 +100,7 @@ open; nothing before Phase 3 forces it.
 | [0031](0031-a-turn-has-no-step-cap-by-default.md) | A Turn Has No Step Cap by Default | Accepted |
 | [0032](0032-a-loop-rung-reads-structure.md) | A Loop Rung Reads Structure, Not Progress | Accepted |
 | [0033](0033-free-text-is-not-evidence.md) | Free Text Is Not Evidence | Accepted |
+| [0034](0034-silence-is-not-a-grant.md) | Silence Is Not a Grant | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible
@@ -189,3 +190,9 @@ plugin's host. It does not reach `EvidenceSet`: that type stays closed so
 measurement, and the verifier's own sentence rides as the advisory
 `ObservedEvidence::detail` that no verdict is decided from. The half the
 record adds is a reader for a passing verdict, which had none.
+ADR 0034 settles what a plugin with an empty `[[capabilities]]` list may call.
+It may call nothing of the host's. Its grant is what its manifest declared and
+a person took, which also covers the tools and MCP servers the package ships.
+A worker turn the host runs for a plugin gets a caller name of its own, so one
+list is not asked to bound both the plugin's reach and the tools a candidate's
+model picks.

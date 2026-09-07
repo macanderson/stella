@@ -1193,11 +1193,15 @@ fn driving_manifest_text(name: &str) -> String {
 }
 
 /// A driver plugin that can actually run. `stella plugin drive` starts
-/// `drive.sh`, which reads the request and answers with a fixed `sleep`.
+/// `drive.sh`, which reads the request and answers with a `sleep` of
+/// `sleep_secs`.
 /// A plain shell script, not the `stella-runtime` fixture binary: that one
 /// belongs to another crate, so its `CARGO_BIN_EXE_*` is not visible here.
+///
+/// `sleep_secs` is a parameter because a run of sessions waits between them:
+/// a test that opens several passes zero, so it costs no wall clock.
 #[cfg(unix)]
-fn driving_package(dir: &Path, name: &str) -> PathBuf {
+fn driving_package(dir: &Path, name: &str, sleep_secs: u32) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
 
     let source = dir.join(format!("src-{name}"));
@@ -1210,9 +1214,11 @@ fn driving_package(dir: &Path, name: &str) -> PathBuf {
     let script = source.join("drive.sh");
     std::fs::write(
         &script,
-        "#!/bin/sh\n\
-         read -r _line\n\
-         printf '{\"point\":\"drive\",\"body\":{\"next\":{\"sleep\":{\"secs\":9}}}}\\n'\n",
+        format!(
+            "#!/bin/sh\n\
+             read -r _line\n\
+             printf '{{\"point\":\"drive\",\"body\":{{\"next\":{{\"sleep\":{{\"secs\":{sleep_secs}}}}}}}}}\\n'\n"
+        ),
     )
     .expect("fixture driver script");
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
@@ -1236,7 +1242,7 @@ fn a_driver_session_leaves_a_durable_record_of_what_it_asked_and_how_it_ended() 
     unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
 
     let root = temp_root("drive-record");
-    let source = driving_package(&root, "watcher");
+    let source = driving_package(&root, "watcher", 9);
     let settings = Settings::default();
     install(&root, &source, PluginScope::Project, true, &settings).expect("install must succeed");
 
@@ -1245,9 +1251,12 @@ fn a_driver_session_leaves_a_durable_record_of_what_it_asked_and_how_it_ended() 
         "nothing recorded before any session ran"
     );
 
-    // No ceiling and no routing: this fixture asks for no capability, so it
-    // spends nothing and there is nothing for a ceiling to bound.
-    drive(&root, "watcher", TurnFlags::default()).expect("a session that sleeps is not an error");
+    // One session, because this fixture never halts and the run would
+    // otherwise re-open it for as long as the test ran. No spend ceiling and
+    // no routing: it asks for no capability, so it spends nothing and there is
+    // nothing for a ceiling to bound.
+    drive(&root, "watcher", Some(1), TurnFlags::default())
+        .expect("a session that sleeps is not an error");
 
     let sessions = crate::driver_plugin::session_log::read_sessions(&root);
     assert_eq!(sessions.len(), 1, "{sessions:?}");
@@ -1263,6 +1272,50 @@ fn a_driver_session_leaves_a_durable_record_of_what_it_asked_and_how_it_ended() 
         entry.outcome,
         crate::driver_plugin::session_log::DriverSessionOutcome::Sleep { secs: 9 }
     );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// **The witness.** A driver that answers `sleep` is asking to be woken
+/// again, and `stella plugin drive` is what wakes it: one call opens a session
+/// per sleep until something stops the run.
+///
+/// One `drive` call against a real installed package, through the real
+/// transport, with a driver that only ever asks to sleep. Three records on
+/// disk is three sessions from one invocation, and each carries a session id
+/// of its own — which is what says three processes ran rather than one record
+/// being written three times.
+#[cfg(unix)]
+#[test]
+fn one_invocation_opens_a_session_for_each_sleep_the_driver_asks_for() {
+    let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT"]);
+    // SAFETY: the env lock above is held for the whole mutate-read-restore
+    // window, and `EnvRestore` puts the prior value back on drop.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+
+    let root = temp_root("drive-sequence");
+    // Zero seconds, so the run's waits cost the test nothing.
+    let source = driving_package(&root, "sleeper", 0);
+    let settings = Settings::default();
+    install(&root, &source, PluginScope::Project, true, &settings).expect("install must succeed");
+
+    drive(&root, "sleeper", Some(3), TurnFlags::default())
+        .expect("a run that reaches its session ceiling is not an error");
+
+    let sessions = crate::driver_plugin::session_log::read_sessions(&root);
+    assert_eq!(sessions.len(), 3, "{sessions:?}");
+    for entry in &sessions {
+        assert_eq!(
+            entry.outcome,
+            crate::driver_plugin::session_log::DriverSessionOutcome::Sleep { secs: 0 }
+        );
+    }
+    let ids: std::collections::BTreeSet<&str> = sessions
+        .iter()
+        .map(|entry| entry.session_id.as_str())
+        .collect();
+    assert_eq!(ids.len(), 3, "each session was opened under its own id");
 
     let _ = std::fs::remove_dir_all(&root);
 }
