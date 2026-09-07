@@ -462,13 +462,50 @@ It carries the same session word, and for the same reason: one login is one
 account, and the thing that has to be identified is the session. Comparing
 the login alone read a peer session's claim as this session's own and cleared
 both to work one issue (`#5875`). `scripts/lib/claim-session.sh` resolves the
-word for both scripts, so a fleet sets `STELLA_CLAIM_SESSION` once rather
-than twice, and both fail open the same way: a run with no word of its own,
-and a claim comment carrying none, fall back to the author-only rule.
+word for every claim script here, so a fleet sets `STELLA_CLAIM_SESSION` once
+rather than once per script, and they all fail open the same way: a run with
+no word of its own, and a claim comment carrying none, fall back to the
+author-only rule.
 
 Run it **before writing code and again before opening the PR**. The gap
 between those two is enough: a peer's PR can merge inside one issue's worth of
 work, and then the check that was clean at the start is stale at the end.
+
+**A pull request is the third thing two sessions take at once, and
+`scripts/pr-claim.sh` is that mechanic pointed at one.** Three sweep sessions
+read one pull request in eight minutes, each worked out the same merge
+conflict, and each posted it; a fourth stopped, because it read the comments
+first. Duplication here does not lose work, it publishes it, and the
+maintainer is left to diff three long comments to learn they say one thing
+(`#5861`).
+
+```bash
+./scripts/pr-claim.sh check 5835    # exit 0 proceed, 1 stand down
+./scripts/pr-claim.sh claim 5835    # check, then post the claim
+./scripts/pr-claim.sh post 5835 --finding conflict:5828 --body-file note.md
+```
+
+The claim half takes the rules above: a lapsing comment, a session word beside
+the login, and every unknown proceeding loudly. A merged or closed pull request
+stands a sweep down too, since neither one takes a comment.
+
+`post` is the half that would have stopped all three. It asks the claim
+question too, then asks whether the same finding already stands, and writes
+only when neither answer is yes — the finding question alone can only see what
+somebody already published, so it turns a second sweep away after it has spent
+its diagnosis rather than before. `--ignore-claim` posts over a live claim, for
+the operator who read it and said on the pull request why. The caller names the
+finding, because two sessions that find one thing write it up two ways, and a
+digest of the words would call them different. A key that has to go stale
+carries what it depends on: a finding about the head commit puts the head sha
+in the key. A read that failed says so and posts anyway, rather than reporting
+that nothing stands.
+
+Take the claim when you start to read the pull request, not when you are ready
+to write. Each of those three sessions spent twenty minutes on the conflict
+before it had anything to say, so a claim taken at the end would have saved
+none of it. `make pr-claim N=5835` asks by hand; `make pr-claim-test` covers
+both gates, the blocking branches included.
 
 An eighth, `windows-check.yml`, is the only compiler in this project that
 looks at a `#[cfg(windows)]` arm: `ci.yml` runs on `ubuntu-latest` and
