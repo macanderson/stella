@@ -53,10 +53,27 @@ fn bounded(text: &str) -> String {
 }
 
 /// Append an observation for one failed tool call.
+///
+/// `occurrence` is the failure's place among the failures of one execution.
+/// It makes the `source_ref` name *this* call rather than the tool, which is
+/// the shape [`ObservationRecord::source_ref`] documents.
+///
+/// The miner reads that field to find the observations behind a candidate
+/// ([`super::rules_mining::induce_rule_proposals`]). One reference per tool
+/// pointed all five of a tool's failures at one observation, so five tasks
+/// scored as one and the proposal never cleared the three-task floor.
+///
+/// Clustering does not read this field. Both miners cluster on the observation
+/// *text*, so repeated failures of one tool still land in one candidate.
+///
+/// The ordinal is stable: the failures of a finished execution come back in
+/// `seq` order. Replay needs that, because the record id is derived from the
+/// content this field is part of.
 pub(super) fn tool_outcome_observation(
     store: &ContextStore,
     tool: &str,
     error: &str,
+    occurrence: usize,
     task_id: &str,
     observed_at: &str,
 ) -> Option<AppendOutcome> {
@@ -64,12 +81,10 @@ pub(super) fn tool_outcome_observation(
         return None;
     }
     let text = format!("tool {tool} failed: {}", error.trim());
-    // Keyed on the tool, so repeated failures of the same tool cluster into one
-    // candidate rather than each becoming its own singleton.
     append(
         store,
         ObservationSource::ToolOutcome,
-        format!("tool:{tool}"),
+        format!("tool:{tool}#{occurrence}"),
         task_id,
         &text,
         observed_at,
@@ -80,7 +95,7 @@ pub(super) fn tool_outcome_observation(
 fn append(
     store: &ContextStore,
     source: ObservationSource,
-    candidate_id: String,
+    source_ref: String,
     task_id: &str,
     text: &str,
     observed_at: &str,
@@ -94,7 +109,7 @@ fn append(
     let redaction = redact_secrets(&bounded(text));
     let record = ObservationRecord::new(
         source,
-        candidate_id,
+        source_ref,
         task_id.to_string(),
         redaction.text,
         Vec::new(),

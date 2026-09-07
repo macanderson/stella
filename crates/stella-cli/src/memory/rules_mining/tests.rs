@@ -64,12 +64,12 @@ fn published_path(root: &Path, candidate: &RuleCandidate) -> std::path::PathBuf 
 
 /// A mined rule is prompt-only, whatever the miner inferred.
 ///
-/// The guard is stripped unconditionally rather than relying on the fact that
-/// reflection observations carry no files today: `infer_guard` only fires for
-/// `memory_kind == "gotcha"` with file evidence, so it currently returns `None`
-/// by accident of the input. A future observation source with files would start
-/// arming guards silently, which is why this asserts the *stripping*, by
-/// handing `without_inferred_guard` a candidate that definitely has one.
+/// The guard is stripped every time. Today it would be `None` anyway:
+/// `infer_guard` fires only for `memory_kind == "gotcha"` with file evidence,
+/// and reflection observations carry no files. That is an accident of the
+/// input. A later source with files would start arming guards in silence. So
+/// this asserts the *stripping*, by handing `without_inferred_guard` a
+/// candidate that definitely has one.
 #[test]
 fn an_inferred_rule_is_never_blocking() {
     let with_guard = RuleCandidate {
@@ -332,8 +332,8 @@ fn mined_rules_land_where_the_loader_reads() {
     published_path(dir.path(), &candidate);
 
     // The unfiltered loader keys raw files by filename, and a record file's
-    // name is its lineage — assert the lesson landed under it, which is the
-    // visibility the miner's own no-clobber dedup depends on.
+    // name is its lineage. Assert the lesson landed under it. That visibility
+    // is what the miner's own no-clobber dedup depends on.
     let loaded = crate::rules::load_workspace_rules_unfiltered(dir.path());
     assert!(
         loaded
@@ -495,5 +495,161 @@ fn a_rule_with_no_grade_at_all_is_refused_as_absent() {
     assert!(
         crate::rules::load_workspace_rules_unfiltered(dir.path()).is_empty(),
         "an ungraded rule reached the loader anyway"
+    );
+}
+
+// ---- GATE: measured evidence can actually reach the writer ----
+
+/// Seed one tool's failures across `tasks`, through the real constructor, and
+/// read back what the ledger holds.
+///
+/// The constructor rather than a hand-built record. The defect these tests
+/// cover is in the `source_ref` it writes, so a literal record would assert
+/// the fix against a fixture that already had it.
+fn tool_failures_across(store: &ContextStore, tasks: &[u64]) -> Vec<ObservationRecord> {
+    for task in tasks {
+        crate::memory::evidence::tool_outcome_observation(
+            store,
+            "run_tests",
+            "linker `cc` not found",
+            0,
+            &format!("task:{task}"),
+            &stella_context::format_rfc3339(*task as i64),
+        );
+    }
+    store
+        .records_of_kind(
+            stella_records::context_record::ContextRecordKind::Observation.as_str(),
+            100,
+        )
+        .expect("read the ledger")
+        .into_iter()
+        .filter_map(|row| serde_json::from_str(&row.body).ok())
+        .collect()
+}
+
+/// **The witness.** Five failures of one tool in five tasks are five tasks.
+///
+/// Induction finds a candidate's evidence through `source_ref`. Give every
+/// failure of one tool the same reference and all five entries match the first
+/// observation. Then `distinct_tasks` is 1, `is_eligible` refuses the proposal
+/// against the three-task floor, and the one grade that pays for a directive
+/// can never publish one.
+#[test]
+fn five_tool_failures_in_five_tasks_score_five_distinct_tasks() {
+    let (_dir, store) = store();
+    let observations = tool_failures_across(&store, &[100, 200, 300, 400, 500]);
+    assert_eq!(observations.len(), 5, "five occurrences reached the ledger");
+
+    let induced = induce_rule_proposals(&store, &observations, &[], &MineConfig::default());
+    assert_eq!(induced.len(), 1, "one tool, one candidate");
+    let proposal = &induced[0].proposal;
+
+    assert_eq!(
+        proposal.score.distinct_tasks, 5,
+        "five tasks scored as {}: {:?}",
+        proposal.score.distinct_tasks, proposal.score
+    );
+    assert_eq!(proposal.score.occurrences, 5);
+    assert!(proposal.is_eligible(3, 3), "{:?}", proposal.score);
+    assert_eq!(
+        proposal.supporting_observations.len(),
+        5,
+        "the pool is five records, not five copies of one"
+    );
+    assert_eq!(
+        proposal.provenance,
+        Some(ProvenanceGrade::EnvironmentObservation),
+        "a pool of tool outcomes folds to the grade a directive costs"
+    );
+}
+
+/// The evidence lines carry the instants the failures happened.
+///
+/// `occurred_at_of` read the numeric tail of `source_ref`, and
+/// `tool:<name>#<n>` has no timestamp in it, so every tool-outcome proposal was
+/// stamped at the Unix epoch.
+#[test]
+fn a_tool_outcome_proposal_is_stamped_at_the_instant_it_happened() {
+    let (_dir, store) = store();
+    let observations = tool_failures_across(&store, &[100, 200, 300, 400, 500]);
+    let induced = induce_rule_proposals(&store, &observations, &[], &MineConfig::default());
+
+    assert_eq!(
+        induced[0].proposal.observed_at,
+        stella_context::format_rfc3339(500),
+        "the newest occurrence is what stamps the proposal"
+    );
+    assert_eq!(
+        induced[0]
+            .candidate
+            .evidence
+            .iter()
+            .map(|e| e.occurred_at)
+            .collect::<std::collections::BTreeSet<_>>(),
+        [100, 200, 300, 400, 500].into_iter().collect(),
+        "every evidence line carries its own instant"
+    );
+}
+
+/// The door the evidence gate leaves open, opened: measured evidence publishes
+/// a rule where reflection prose is refused, both through the real induction.
+#[test]
+fn a_measured_proposal_publishes_a_rule_a_reflection_mined_one_cannot() {
+    let (_dir, store) = store();
+    let root = tempfile::tempdir().expect("workspace");
+
+    let observations = tool_failures_across(&store, &[100, 200, 300, 400, 500]);
+    let induced = induce_rule_proposals(&store, &observations, &[], &MineConfig::default());
+    let measured = &induced[0];
+    // The loop only offers an eligible proposal to the writer
+    // (`memory::learning`'s `induce_rules`), so a collapsed task count stops
+    // this path before the gate ever sees it.
+    assert!(
+        measured.proposal.is_eligible(3, 3),
+        "{:?}",
+        measured.proposal.score
+    );
+    assert!(matches!(
+        write_rule(
+            root.path(),
+            &measured.candidate,
+            measured.proposal.provenance,
+            PublicationAuthority::Agent,
+        )
+        .expect("publishable"),
+        RulePublication::Written(_)
+    ));
+
+    // The same five-task shape, mined from reflection prose. Spanning five
+    // tasks lifts the pool to `TrajectoryAbstraction`, and the lift caps
+    // there — so however often a lesson recurs it still cannot pay for a
+    // directive.
+    let prose = across_turns(LESSON, &[100, 200, 300, 400, 500]);
+    let induced = induce_rule_proposals(&store, &prose, &[], &MineConfig::default());
+    let critiqued = &induced[0];
+    assert_eq!(
+        critiqued.proposal.provenance,
+        Some(ProvenanceGrade::TrajectoryAbstraction)
+    );
+    assert_eq!(
+        write_rule(
+            root.path(),
+            &critiqued.candidate,
+            critiqued.proposal.provenance,
+            PublicationAuthority::Agent,
+        )
+        .expect("a refusal is an answer, not a failure"),
+        RulePublication::Refused(PromotionRefusal::EvidenceTooWeak {
+            impact: stella_protocol::provenance::ImpactClass::SteeringDirective,
+            required: ProvenanceGrade::EnvironmentObservation,
+            actual: ProvenanceGrade::TrajectoryAbstraction,
+        })
+    );
+
+    assert_eq!(
+        crate::rules::load_workspace_rules_unfiltered(root.path()).len(),
+        1,
+        "exactly the measured rule reached the loader"
     );
 }
