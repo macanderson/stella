@@ -79,12 +79,15 @@
 #
 # ── What `rust/cleartext-logging` gets wrong here (#6388) ────────────────────
 #
-# That rule had 52 open alerts, all high severity, none dismissed — a signal
-# firing often enough that nobody read it, so the next real one would land in
-# the pile and look the same. #6388 read every site against the code. Fifty
-# were still open by then and every one was wrong, in three shapes. They are
-# written down here so the next author dismisses by citing this and does not
-# read the same fifty sites again.
+# That rule had 52 open alerts when #6388 was filed, all high severity, none
+# dismissed — a signal firing often enough that nobody read it, so the next
+# real one would land in the pile and look the same. Fifty were open by the
+# time the sweep ran, because the set moves: three had been answered on
+# #6384, a few had closed themselves when the code they pointed at moved, and
+# a moved line mints a new alert. Every one of the fifty was read against the
+# code, and every one was wrong, in three shapes. They are written down here
+# so the next author dismisses by citing this and does not read the same
+# fifty sites again.
 #
 # The rule keys on the NAME of the taint source, not on what the value is, so
 # it is wrong three ways:
@@ -92,8 +95,10 @@
 #   1. A correlation id read as a session token. `ZaiProvider::session_id`,
 #      `lane_journal_key`, the self-driving loop's `sd-<secs>-<pid>` and the
 #      driver's `drive-<secs>-<hex>` all read as credentials. None grants
-#      access. z.ai's is on the wire in every request body on purpose, so
-#      hiding it from a log protects nothing.
+#      access. `ZaiProvider`'s goes on the wire in the request body under the
+#      `openrouter` identity, where it is the sticky-routing key
+#      (`build_body`'s `self.serves_openrouter().then_some(...)`), so hiding
+#      it from a log protects nothing.
 #   2. A guard read as a leak. `validate_project_secrets`,
 #      `refuse_unless_trusted`, `no_api_key_error` and `api_key_refusal` are
 #      the functions that turn a credential DOWN. What they return is a
