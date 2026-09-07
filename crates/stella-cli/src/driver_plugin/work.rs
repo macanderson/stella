@@ -137,6 +137,7 @@ impl WorkRunner for SpawnedWorkRunner {
 
         let (outcome, budget) = tokio::task::spawn_blocking(move || {
             let outcome = crate::self_driving_cmd::work::start(
+                &crate::pull_request_provider::GhPullRequests::new(),
                 &root,
                 &issue,
                 &mut budget,

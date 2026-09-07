@@ -61,12 +61,15 @@
 use std::collections::HashMap;
 
 use stella_autonomy::{
-    Action, Attempts, CarriedPr, CiConclusion, Contention, ContentionPolicy, ContentionVerdict,
-    DeliverPolicy, IssueRef, LoopObservation, LoopState, LoopStep, PrDisposition, PrRef, PrState,
-    UnblockAttempt, contention_verdict, deliver_next, step,
+    CarriedPr, Contention, ContentionPolicy, ContentionVerdict, IssueRef, LoopObservation,
+    LoopState, LoopStep, PrDisposition, PrRef, PrState, UnblockAttempt, contention_verdict, step,
 };
 use stella_fleet::issue_claim_key;
+use stella_protocol::pull_request::PullRequestProvider;
 
+// One deterministic step for one pull request, split out of this file so it
+// stays under the size ceiling.
+mod advance;
 mod deploy;
 mod ending;
 mod notify;
@@ -125,6 +128,9 @@ pub(super) fn drive(
     let settings = super::hooks::settings_for(&root);
     let doctrine = cfg.doctrine;
     let provider = crate::issue_provider::GhIssueProvider::from_manifest(&cfg.manifest);
+    // The forge, behind its port. Built once for the run and handed to every
+    // step that reads or drives a pull request, so nothing below spells `gh`.
+    let forge = crate::pull_request_provider::GhPullRequests::new();
 
     // Answered before the session record, the label installs and the
     // claims. Checking the loop's aim must not move its hand.
@@ -362,7 +368,7 @@ pub(super) fn drive(
     let mut triaged: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut tally = Tally::default();
 
-    resume(durable, &cfg, &mut state);
+    resume(&forge, durable, &cfg, &mut state);
 
     // Armed once the run is committed to looping, so a signal during the
     // set-up above still takes the default disposition and kills the process
@@ -403,6 +409,7 @@ pub(super) fn drive(
         }
 
         let obs = observe(
+            &forge,
             &root,
             durable,
             &provider,
@@ -546,7 +553,7 @@ pub(super) fn drive(
                     ranked,
                     |k| state.claimed.iter().any(|c| c.0 == k) || spent.contains_key(k),
                     doctrine.contention,
-                    |k| super::contention::for_issue(&root, k),
+                    |k| super::contention::for_issue(&forge, &root, k),
                     |k| super::claim::acquire(&root, k),
                     |k, evidence| {
                         deferrals += 1;
@@ -682,6 +689,7 @@ pub(super) fn drive(
                 // loop's: a single leftover branch must not halt a run that has
                 // other issues to get on with.
                 let outcome = match super::work::start(
+                    &forge,
                     &root,
                     &resolved,
                     &mut budget,
@@ -776,6 +784,7 @@ pub(super) fn drive(
                             .attribution
                             .title(&format!("{} (#{})", resolved.title, issue.0));
                         let pr = match super::deliver::open(
+                            &forge,
                             &root,
                             &branch,
                             &issue.0,
@@ -804,7 +813,7 @@ pub(super) fn drive(
                             // On the pull request, not in this process, so it
                             // survives a restart and a human can see which
                             // merges rested on local evidence.
-                            if let Err(error) = super::deliver::mark_verified_locally(&pr) {
+                            if let Err(error) = super::deliver::mark_verified_locally(&forge, &pr) {
                                 audit::record(
                                     durable,
                                     Audit::Transient,
@@ -862,8 +871,17 @@ pub(super) fn drive(
             }
 
             LoopStep::Deliver { pr } => {
-                let settled = match advance(
-                    &cfg.merge, &pr.0, &mut spent, no_review, &mut tally, durable, &settings,
+                let settled = match advance::advance(
+                    &advance::Pass {
+                        forge: &forge,
+                        policy_blocking: &cfg.merge,
+                        no_review,
+                        durable,
+                        settings: &settings,
+                    },
+                    &pr.0,
+                    &mut spent,
+                    &mut tally,
                 ) {
                     Ok(settled) => settled,
                     Err(error) => {
@@ -1028,8 +1046,13 @@ pub(super) fn drive(
 ///
 /// Not fatal if the forge cannot be read: that is the same transient condition
 /// the loop is built to wait through, and a later pass picks them up.
-fn resume(durable: &Durable, cfg: &super::config::LoopConfig, state: &mut LoopState) {
-    match super::deliver::open_prs_for_prefix(cfg.attribution.branch_prefix()) {
+fn resume(
+    forge: &dyn PullRequestProvider,
+    durable: &Durable,
+    cfg: &super::config::LoopConfig,
+    state: &mut LoopState,
+) {
+    match super::deliver::open_prs_for_prefix(forge, cfg.attribution.branch_prefix()) {
         Ok(carried) if !carried.is_empty() => {
             audit::record(
                 durable,
@@ -1058,216 +1081,6 @@ fn resume(durable: &Durable, cfg: &super::config::LoopConfig, state: &mut LoopSt
             None,
             &format!("could not read open pull requests to resume ({error}); continuing"),
         ),
-    }
-}
-
-/// Advance one pull request by exactly one deterministic transition.
-fn advance(
-    policy_blocking: &stella_autonomy::BlockingPolicy,
-    pr: &str,
-    spent: &mut HashMap<String, Spent>,
-    no_review: bool,
-    tally: &mut Tally,
-    durable: &Durable,
-    settings: &crate::settings::Settings,
-) -> Result<Settlement, String> {
-    let entry = spent.entry(pr.to_owned()).or_default();
-    let reading = super::deliver::observe(pr, policy_blocking)?;
-    if reading.settled {
-        // Nothing left to decide. Reached either because the merge below
-        // succeeded and the cleanup after it did not, or because a human got
-        // there first — both are this pull request being done.
-        audit::record(
-            durable,
-            Audit::PrMerged,
-            Some(pr),
-            "already settled on the forge — carrying it no further",
-        );
-        // Deliberately not `Merged`: this arm is reached both when a human
-        // merged it first and when the merge below succeeded but the pass
-        // after it did not, and only one of those is this loop's merge to
-        // report. Closing on it would credit the loop with a closure it did
-        // not make, and the human who merged is the one who knows whether the
-        // issue is finished.
-        return Ok(Settlement::Otherwise);
-    }
-    // Said out loud every time. A loop that merges past a check the repository
-    // marks required, without naming which one and on what grounds, is
-    // indistinguishable from one that is simply broken.
-    if !reading.waived.is_empty() {
-        audit::record(
-            durable,
-            Audit::Waived,
-            Some(pr),
-            &format!(
-                "not blocking on {} — {}{}",
-                reading.waived.len(),
-                reading.waived.join("; "),
-                if reading.verified_locally {
-                    ". This change was proved here instead"
-                } else {
-                    ". This change has no local proof either"
-                }
-            ),
-        );
-    }
-
-    let obs = reading.observation;
-    let policy = DeliverPolicy {
-        require_approval: !no_review,
-        ..DeliverPolicy::default()
-    };
-
-    let transition = deliver_next(
-        PrState::CiPending,
-        &obs,
-        Attempts {
-            fixes: entry.fixes,
-            rebases: entry.rebases,
-        },
-        &policy,
-    );
-
-    audit::record(
-        durable,
-        Audit::PrObserved,
-        Some(pr),
-        &format!(
-            "ci={:?} base={:?} mergeable={:?} review={:?} -> {:?}",
-            obs.ci, obs.base_ci, obs.mergeable, obs.review, transition.action
-        ),
-    );
-
-    // Counted whether or not it changes the action: waiting on somebody else's
-    // broken base is time this loop spent, and a high count is a fact about the
-    // repository rather than about the loop.
-    if obs.base_ci == CiConclusion::Red {
-        durable.update_stats(|s| s.base_broken_waits += 1);
-    }
-
-    notify::observed(&durable.repo_root, settings, entry, transition.state, pr);
-
-    match transition.action {
-        Action::Merge => {
-            super::deliver::merge(pr)?;
-            tally.merged += 1;
-            durable.update_stats(|s| s.prs_merged += 1);
-            audit::record(durable, Audit::PrMerged, Some(pr), "merged");
-            // After the merge, so the event means it landed. The
-            // already-settled arm above fires none: a human merged that one.
-            notify::performed(
-                &durable.repo_root,
-                settings,
-                super::hooks::HookEvent::PullRequestMerged,
-                pr,
-                None,
-            );
-            Ok(Settlement::Merged)
-        }
-        Action::Escalate { reason } => {
-            tally.escalated += 1;
-            durable.update_stats(|s| s.prs_escalated += 1);
-            audit::record(
-                durable,
-                Audit::PrEscalated,
-                Some(pr),
-                &format!("handed to a human: {reason:?}"),
-            );
-            Ok(Settlement::Otherwise)
-        }
-        Action::MarkReady => {
-            super::deliver::mark_ready(pr)?;
-            audit::record(
-                durable,
-                Audit::PrObserved,
-                Some(pr),
-                "ci is green — taken out of draft",
-            );
-            notify::performed(
-                &durable.repo_root,
-                settings,
-                super::hooks::HookEvent::PullRequestReadyForReview,
-                pr,
-                None,
-            );
-            Ok(Settlement::Pending)
-        }
-        Action::PushFix => {
-            // A red that the base already explains is not this pull request's
-            // to fix, and `base_conclusion` cannot see it: it compares what is
-            // failing *now*, and a check that ran against a base which has
-            // since been repaired keeps its old verdict forever. The pull
-            // request looks guilty of a failure that no longer exists
-            // anywhere.
-            //
-            // Asking the forge to run it again is the cheapest way to find
-            // out, and costs nothing but CI minutes when the answer is "still
-            // red" — at which point the fix path below runs on the next poll
-            // with the re-run already spent. One per pull request: a loop that
-            // re-ran on every red would never reach the fix, and would spin on
-            // a genuine failure for as long as the operator left it up.
-            if !entry.rerun {
-                entry.rerun = true;
-                match super::deliver::refresh_against_base(pr) {
-                    Ok(()) => {
-                        audit::record(
-                            durable,
-                            Audit::PrObserved,
-                            Some(pr),
-                            "red against a base that has since gone green — merged the base in for a \
-                             fresh verdict before treating it as ours",
-                        );
-                        return Ok(Settlement::Pending);
-                    }
-                    Err(error) => audit::record(
-                        durable,
-                        Audit::Transient,
-                        Some(pr),
-                        &format!("could not ask for a re-run ({error}); treating the red as ours"),
-                    ),
-                }
-            }
-
-            // Counted even though this slice does not author the fix: the
-            // ceiling is what stops a loop pushing the same broken change
-            // forever, and a counter that only moved on success would never
-            // reach it.
-            entry.fixes += 1;
-            // Both counters move, because two things are true and a reader of
-            // either number alone would be misled. A fix was owed — that is
-            // `fixes_pushed`, and it is what the attempt ceiling reads. And
-            // the pull request was handed to a human — that is
-            // `prs_escalated`, and it is what a dashboard reads as "needs
-            // someone".
-            //
-            // Counting only the first left the audit log recording
-            // `pr_escalated` twice while `prs_escalated` stayed at zero: two
-            // records of one event that disagreed about what it was.
-            durable.update_stats(|s| {
-                s.fixes_pushed += 1;
-                s.prs_escalated += 1;
-            });
-            tally.escalated += 1;
-            audit::record(
-                durable,
-                Audit::PrEscalated,
-                Some(pr),
-                "needs a fix, which this build does not author — leaving it for a human",
-            );
-            Ok(Settlement::Otherwise)
-        }
-        Action::Rebase => {
-            entry.rebases += 1;
-            durable.update_stats(|s| s.rebases += 1);
-            audit::record(
-                durable,
-                Audit::PrEscalated,
-                Some(pr),
-                "needs a rebase, which this build does not perform — leaving it",
-            );
-            Ok(Settlement::Otherwise)
-        }
-        Action::Wait => Ok(Settlement::Pending),
     }
 }
 
@@ -1394,6 +1207,7 @@ fn next_claimable(
 /// how to handle, and a second way to stop would be a second definition of
 /// stopping.
 fn observe(
+    forge: &dyn PullRequestProvider,
     root: &std::path::Path,
     durable: &Durable,
     provider: &crate::issue_provider::GhIssueProvider,
@@ -1422,7 +1236,7 @@ fn observe(
     // The base is read on every poll rather than cached, because "somebody
     // repaired main" is exactly the event this loop must notice without being
     // told. A latch here would be the thing that stops it self-resuming.
-    let base_broken = super::deliver::base_is_broken(base);
+    let base_broken = super::deliver::base_is_broken(forge, base);
 
     // Nothing else is worth asking while the base is fine, and each of these
     // is a network call.
@@ -1442,7 +1256,7 @@ fn observe(
     let filed = super::backlog::open_base_breakage(provider).filed();
     let contention = filed
         .as_ref()
-        .map(|key| super::contention::for_base_fix(root, key))
+        .map(|key| super::contention::for_base_fix(forge, root, key))
         .unwrap_or_default();
 
     // `grant_valid` and `budget_exhausted` are declarations, not observations,

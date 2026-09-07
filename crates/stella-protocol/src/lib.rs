@@ -80,6 +80,7 @@ pub mod plan_graph;
 pub mod proof;
 pub mod provenance;
 pub mod provider;
+pub mod pull_request;
 pub mod question;
 pub mod recall;
 pub mod receipt;

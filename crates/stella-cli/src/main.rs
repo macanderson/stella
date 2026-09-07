@@ -113,6 +113,9 @@ mod promotion_gate;
 // Phase 3 (#714): the adaptive-context proposal review surface.
 mod prompt_source;
 mod proposals_cmd;
+// The GitHub adapter behind `stella_protocol::pull_request::PullRequestProvider`
+// — the delivery loop's sibling of `issue_provider`.
+mod pull_request_provider;
 mod query_format;
 mod question;
 mod resume_frame;

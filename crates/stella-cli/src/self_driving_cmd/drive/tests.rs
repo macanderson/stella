@@ -225,14 +225,16 @@ fn scratch_loop_state(dir: &std::path::Path) -> Durable {
 /// `step`'s own tests, so the machine's stop branches were correct and
 /// unreachable: nothing the host could observe would ever return them.
 ///
-/// The whole assertion runs offline. A parked observation is taken before any
-/// forge read precisely so a stopped loop spends nothing, which is what lets
-/// this drive the real `observe` rather than a stand-in for it.
+/// Neither half touches a network. A parked read is taken before any forge
+/// read, so a stopped loop spends nothing. The unparked read goes to a fixture
+/// forge that knows nothing about `main`. That is the unread base, and
+/// `base_is_broken` calls it healthy.
 #[test]
 fn a_stop_flag_parks_the_machine_and_dropping_it_returns_work() {
     let dir = tempfile::tempdir().expect("state dir");
     let durable = scratch_loop_state(dir.path());
     let provider = crate::issue_provider::GhIssueProvider::default();
+    let forge = super::super::deliver::fixture::FixtureForge::new();
     let state = LoopState {
         planned: true,
         batch: 3,
@@ -241,7 +243,7 @@ fn a_stop_flag_parks_the_machine_and_dropping_it_returns_work() {
     let doctrine = stella_autonomy::Doctrine::default();
 
     std::fs::write(super::super::stop::stop_file(&durable.dir), "").expect("write the stop flag");
-    let parked = observe(dir.path(), &durable, &provider, "main", 3, 0);
+    let parked = observe(&forge, dir.path(), &durable, &provider, "main", 3, 0);
     assert!(parked.stop_requested, "the flag must reach the observation");
     assert!(
         matches!(
@@ -258,7 +260,7 @@ fn a_stop_flag_parks_the_machine_and_dropping_it_returns_work() {
     // The other half, and the one the design turns on: nothing latched, so the
     // block stops being returned on the next poll with no resume input at all.
     std::fs::remove_file(super::super::stop::stop_file(&durable.dir)).expect("drop the flag");
-    let resumed = observe(dir.path(), &durable, &provider, "main", 3, 0);
+    let resumed = observe(&forge, dir.path(), &durable, &provider, "main", 3, 0);
     assert!(
         !resumed.stop_requested,
         "dropping the flag must clear the stop with no resume signal"

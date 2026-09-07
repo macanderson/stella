@@ -117,7 +117,14 @@ impl DeliverForge for GhDeliverForge {
         let signature = self.config.attribution.pull_request.clone();
         let (branch, issue, title) = (branch.to_owned(), issue.to_owned(), title.to_owned());
         tokio::task::spawn_blocking(move || {
-            crate::self_driving_cmd::deliver::open(&root, &branch, &issue, &title, &signature)
+            crate::self_driving_cmd::deliver::open(
+                &crate::pull_request_provider::GhPullRequests::new(),
+                &root,
+                &branch,
+                &issue,
+                &title,
+                &signature,
+            )
         })
         .await
         .map_err(|error| format!("the pull request did not finish opening: {error}"))?
@@ -126,25 +133,39 @@ impl DeliverForge for GhDeliverForge {
     async fn observe(&self, pr: &str) -> Result<Reading, String> {
         let policy = self.config.merge.clone();
         let pr = pr.to_owned();
-        tokio::task::spawn_blocking(move || crate::self_driving_cmd::deliver::observe(&pr, &policy))
-            .await
-            .map_err(|error| format!("the forge read did not finish: {error}"))?
+        tokio::task::spawn_blocking(move || {
+            crate::self_driving_cmd::deliver::observe(
+                &crate::pull_request_provider::GhPullRequests::new(),
+                &pr,
+                &policy,
+            )
+        })
+        .await
+        .map_err(|error| format!("the forge read did not finish: {error}"))?
     }
 
     async fn ready(&self, pr: &str) -> Result<(), String> {
         let pr = pr.to_owned();
-        tokio::task::spawn_blocking(move || crate::self_driving_cmd::deliver::mark_ready(&pr))
-            .await
-            .map_err(|error| {
-                format!("taking the pull request out of draft did not finish: {error}")
-            })?
+        tokio::task::spawn_blocking(move || {
+            crate::self_driving_cmd::deliver::mark_ready(
+                &crate::pull_request_provider::GhPullRequests::new(),
+                &pr,
+            )
+        })
+        .await
+        .map_err(|error| format!("taking the pull request out of draft did not finish: {error}"))?
     }
 
     async fn merge(&self, pr: &str) -> Result<(), String> {
         let pr = pr.to_owned();
-        tokio::task::spawn_blocking(move || crate::self_driving_cmd::deliver::merge(&pr))
-            .await
-            .map_err(|error| format!("the merge did not finish: {error}"))?
+        tokio::task::spawn_blocking(move || {
+            crate::self_driving_cmd::deliver::merge(
+                &crate::pull_request_provider::GhPullRequests::new(),
+                &pr,
+            )
+        })
+        .await
+        .map_err(|error| format!("the merge did not finish: {error}"))?
     }
 }
 

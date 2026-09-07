@@ -392,7 +392,34 @@ provider = "jira-prod"
 
 One binding per workspace by default. A monorepo that files OSS bugs to GitHub
 and internal work to Jira is a real case and is **deferred, not denied** —
-see §12.
+see §12. The forge binding is not expressible at all yet: see §4.7.
+
+### 4.7 Pull requests are a second port on the same plane
+
+§4.1 through §4.5 describe the **issue** provider. The forge is a separate
+question — opening a pull request, reading its checks, merging it — and it was
+not a question anything in the tree could express: the delivery loop shelled
+out to `gh pr view`, `gh pr merge` and two GitHub REST endpoints from inside
+its own reader.
+
+It is now a port of its own, `stella_protocol::pull_request::PullRequestProvider`,
+beside `IssueProvider`. Its model carries facts and no verdicts: a pull
+request's state, its base branch, its checks as a name and an outcome, what
+review concluded. Which of those checks may block a merge, and whether a red
+base excuses a red pull request, stay above the port in `stella-cli`'s
+`deliver` module.
+
+It differs from the issue port twice over:
+
+- **It is synchronous.** Every caller is a synchronous verb of the delivery
+  loop, and the shipped adapter runs a subprocess. A provider that speaks HTTP
+  holds its own runtime, the way `backlog`'s `ranked` already does for the
+  issue port.
+- **It has no manifest layer yet.** GitHub ships as the one adapter,
+  `stella-cli`'s `pull_request_provider`, chosen in code rather than by a
+  `.stella/issues/<name>.toml` sibling. §4.5's argument applies here too — a
+  second real forge is what would prove the format — and the port is what
+  makes that a change to one file rather than to the loop.
 
 ---
 

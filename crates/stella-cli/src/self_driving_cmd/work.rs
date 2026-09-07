@@ -721,6 +721,7 @@ pub(super) struct Worktree {
 /// real `stella run` inside it with the issue quoted as data, then read the
 /// tree.
 pub(crate) fn start(
+    forge: &dyn stella_protocol::pull_request::PullRequestProvider,
     root: &Path,
     issue: &Issue,
     budget: &mut RunBudget,
@@ -760,7 +761,7 @@ pub(crate) fn start(
             // for days — so "nothing here will discard it for you" was a rule
             // that quietly retired an issue on every crash.
             let text = error.to_string();
-            if !discard_undelivered_attempt(root, issue.key.as_str(), &text) {
+            if !discard_undelivered_attempt(forge, root, issue.key.as_str(), &text) {
                 return Err(stale_attempt_hint(root, issue.key.as_str(), &text));
             }
             runtime
@@ -859,17 +860,22 @@ pub(crate) fn start(
 /// that died before it produced anything — or produced something nobody can
 /// see, which is the same thing from here.
 ///
-/// An open pull request stops this cold. So does an unreadable forge: `gh`
-/// failing is not evidence that nothing was delivered, and discarding on a
+/// An open pull request stops this cold. So does an unreadable forge: a read
+/// that failed is not evidence that nothing was delivered, and discarding on a
 /// network blip would throw away real work.
-fn discard_undelivered_attempt(root: &Path, key: &str, error: &str) -> bool {
+fn discard_undelivered_attempt(
+    forge: &dyn stella_protocol::pull_request::PullRequestProvider,
+    root: &Path,
+    key: &str,
+    error: &str,
+) -> bool {
     if !error.contains("already exists") {
         return false;
     }
 
     // Ask the forge before touching anything. An error here is a refusal, not
     // a licence.
-    let Ok(open) = super::deliver::open_prs_for_issue(key) else {
+    let Ok(open) = super::deliver::open_prs_for_issue(forge, key) else {
         return false;
     };
     if !open.is_empty() {
