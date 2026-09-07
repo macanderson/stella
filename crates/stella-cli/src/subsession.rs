@@ -41,6 +41,7 @@ use stella_core::Engine;
 use stella_core::tasks::SpawnRequest;
 use stella_fleet::SystemGitCli;
 use stella_protocol::{AgentEvent, CompletionMessage};
+use stella_tools::hook_runner::HostHookRunner;
 use stella_tui::{AgentMeta, AgentStatus, Inbound};
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::{oneshot, watch};
@@ -1170,7 +1171,9 @@ async fn run_worker(
         // Assembled rather than built up by optional builders: this lane is
         // the `SubSession` lane and says so, and
         // `lane_capabilities::sub_session` answers every seam — calibration,
-        // gate, steering — rather than only the ones a chain attached.
+        // gate, steering and hooks — rather than only the ones a chain
+        // attached.
+        let hook_runner = HostHookRunner;
         let engine = Engine::assemble(
             &*provider,
             &permitted,
@@ -1180,7 +1183,13 @@ async fn run_worker(
             // `subsession_engine_config_for`.
             recorder.wrap(agent::subsession_engine_config_for(cfg, &lane_durability)),
             &TokioSleeper,
-            crate::lane_capabilities::sub_session(&calibration, gate.as_ref(), tap.as_ref()),
+            crate::lane_capabilities::sub_session(
+                cfg.hooks.as_ref(),
+                &hook_runner,
+                &calibration,
+                gate.as_ref(),
+                tap.as_ref(),
+            ),
         );
         // The run-terminal `Complete` this lane's deck row settles on is
         // synthesized by its forwarder when the stream closes (#3379), so this
