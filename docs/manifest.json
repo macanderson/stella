@@ -185,6 +185,11 @@
       "status": "implemented",
       "title": "ADR 0036: A driver takes a pull request out of draft"
     },
+    "adr/0038-a-live-smoke-provider-is-armed-or-declared-unarmed": {
+      "path": "docs/adr/0038-a-live-smoke-provider-is-armed-or-declared-unarmed.md",
+      "status": "implemented",
+      "title": "ADR 0038: A live smoke provider is armed or declared unarmed"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",

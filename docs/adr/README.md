@@ -103,6 +103,7 @@ open; nothing before Phase 3 forces it.
 | [0034](0034-silence-is-not-a-grant.md) | Silence Is Not a Grant | Accepted |
 | [0035](0035-a-wrappers-verdict-lands-on-the-round-that-earned-it.md) | A Wrapper's Verdict Lands on the Round That Earned It | Accepted |
 | [0036](0036-a-driver-takes-a-pull-request-out-of-draft.md) | A Driver Takes a Pull Request Out of Draft | Accepted |
+| [0038](0038-a-live-smoke-provider-is-armed-or-declared-unarmed.md) | A Live Smoke Provider Is Armed or Declared Unarmed | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible
@@ -213,6 +214,14 @@ one, and the loop had no ask to follow that with, so a person took every pull
 request it opened out of draft by hand. The host reads the forge and runs the
 machine over its own answer before it acts, on the rule the merge already
 followed. The draft still holds back a pull request that never goes green.
+
+ADR 0038 settles what the live provider smoke suite says while it cannot reach
+eight of its nine endpoints. A provider is armed, or a row names what is
+missing, when that was checked, and the issue that owns it. The reason is
+re-asked on every run, so a row goes red the moment it stops being true — a
+credential that appears, one that vanishes, or an empty account that gets
+funded. A provider declared unfunded still calls its endpoint, because an empty
+account is refused for free and only a refusal naming the balance passes.
 
 ## The number is a shared cell
 

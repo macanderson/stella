@@ -19,6 +19,21 @@
 # says which credential it wanted. To exercise a subset deliberately, name
 # it: `-- --ignored anthropic_smoke`.
 #
+# A secret this repository does not hold is DECLARED rather than absent.
+# `crates/stella-model/tests/live_smoke/arming.rs` carries the list: one row
+# per provider that cannot run, naming what is missing, the run that
+# established it, and the issue that owns it (ADR 0038, #5595). Today eight
+# of the nine sit there — six with no credential in the repository secrets,
+# and Anthropic and Z.ai with a working key and an empty account. A green run
+# means one live call plus eight declared rows, and the log prints each one.
+#
+# The rows are checked against this job's environment, so they cannot go
+# stale in silence. Add one of the secrets below and the run goes RED, naming
+# the row to delete; that is how a provider gets re-armed. The two unfunded
+# providers still call their endpoints — an empty account is refused before
+# anything is billed — and pass only on a refusal that names the balance, so
+# a wire-shape regression on Anthropic still fails this job.
+#
 # A red run on a configured provider needs a human read of the failure, not
 # an assumption: this suite deliberately does NOT auto-classify a failure
 # into "wire-shape regression" vs. "account/auth/quota/billing problem" (a
