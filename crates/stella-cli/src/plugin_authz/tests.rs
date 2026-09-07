@@ -372,6 +372,49 @@ fn a_worker_turn_run_for_a_plugin_is_not_bound_by_the_plugins_tool_grant() {
     );
 }
 
+/// **Witness (ADR 0032).** A package's own contributions are in its grant even
+/// where its `[[capabilities]]` list is empty, because each is declared in its
+/// own table and shown at install.
+///
+/// A script tool joins by name. An MCP server joins as the namespace its tools
+/// arrive under, which is the only thing knowable before the server connects.
+/// The host's own tools stay refused, and the refusal names both halves of the
+/// grant so an author reading it is not told less than they hold.
+#[test]
+fn a_packages_own_tool_and_server_are_in_its_grant_and_nothing_of_the_hosts_is() {
+    let gates = PluginGates::from_roster(&roster_of(
+        "name = \"ships\"\ndescription = \"it contributes\"\n\n\
+         [[tools]]\nname = \"ships_review\"\ndescription = \"reviews a diff\"\n\n\
+         [[mcp]]\nserver = \"vendor\"\ndescription = \"the vendor's own server\"\n",
+    ))
+    .expect("a rule is installed for it");
+
+    let principal = Principal::Plugin("ships".into());
+    assert_eq!(
+        decide(&gates, "ships_review", RiskLevel::Destructive, &principal),
+        AuthzDecision::Allow,
+        "its own script tool runs — refusing it would break the tool a user just installed"
+    );
+    assert_eq!(
+        decide(
+            &gates,
+            "mcp__vendor__deploy",
+            RiskLevel::Destructive,
+            &principal
+        ),
+        AuthzDecision::Allow,
+        "and a tool under its own server's namespace, whose name nobody could have listed"
+    );
+
+    let AuthzDecision::Deny { reason } = decide(&gates, "bash", RiskLevel::Low, &principal) else {
+        panic!("a host tool it never asked for must still be refused");
+    };
+    assert!(
+        reason.contains("ships_review") && reason.contains("anything under `mcp__vendor__`"),
+        "the refusal names the whole grant, namespaces included: {reason}"
+    );
+}
+
 /// The gate names itself, which every `AuthzGate` owes an audit line.
 #[test]
 fn the_gate_names_itself() {

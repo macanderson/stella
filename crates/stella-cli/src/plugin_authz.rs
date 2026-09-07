@@ -206,6 +206,24 @@ impl PluginCapabilityGate {
         self.granted.keys().map(String::as_str).collect()
     }
 
+    /// What a refused caller is told it *may* call, in one clause.
+    ///
+    /// The namespaces ride along with the names. A grant that listed only the
+    /// names would under-report itself to the one reader who has to act on it,
+    /// which is the shape this whole module is about.
+    fn may_call(&self) -> String {
+        let mut parts: Vec<String> = self.granted_tools().iter().map(|s| (*s).into()).collect();
+        parts.extend(
+            self.granted_prefixes
+                .iter()
+                .map(|prefix| format!("anything under `{prefix}`")),
+        );
+        if parts.is_empty() {
+            return "nothing — its manifest declares no `[[capabilities]]`".into();
+        }
+        parts.join(", ")
+    }
+
     /// Whether this rule is even about `principal`.
     fn matches(&self, principal: &Principal) -> bool {
         matches!(principal, Principal::Plugin(name) if name == &self.plugin)
@@ -228,11 +246,7 @@ impl PluginCapabilityGate {
                 reason: format!(
                     "plugin \"{}\" was not granted \"{tool}\" at install; it may call: {}",
                     self.plugin,
-                    if self.granted.is_empty() {
-                        "nothing — its manifest declares no `[[capabilities]]`".to_string()
-                    } else {
-                        self.granted_tools().join(", ")
-                    }
+                    self.may_call()
                 ),
             };
         };
