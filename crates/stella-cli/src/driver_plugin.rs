@@ -33,11 +33,13 @@
 //! driver's own vocabulary and under the plugin's own name, so an operator sees
 //! exactly which asks this build could not serve and for whom.
 //!
-//! Scheduling is absent. One invocation opens one session and
-//! reports what the driver said to do next; who re-opens it after a
-//! [`DriveNext::Sleep`] is #3599's B2 `LoopStep` machine, and inventing a
-//! sleeper here would be inventing the loop this channel exists to be driven
-//! by.
+//! # What re-opens a session
+//!
+//! A driver that answers [`DriveNext::Sleep`] is asking to be woken again.
+//! [`sequence`] is what wakes it: it opens sessions one after another until
+//! the driver halts, a session fails, or the run meets a ceiling. The decision
+//! itself is `stella_autonomy::drive::next_session`, so this crate schedules
+//! and decides nothing.
 //!
 //! # Where a session goes once it ends
 //!
@@ -58,6 +60,7 @@ use crate::plugin_authz::PluginGates;
 use crate::plugin_cmd::roster::PluginRoster;
 
 pub(crate) mod capabilities;
+pub(crate) mod sequence;
 pub(crate) mod session_log;
 pub(crate) mod work;
 
@@ -65,7 +68,12 @@ pub(crate) mod work;
 ///
 /// `Debug` is safe to print: [`SubprocessDriver`]'s own is hand-written to
 /// name the environment variables it carries and never their values.
-#[derive(Debug)]
+///
+/// `Clone` because [`ResolvedDriver::serving`] consumes the value and one
+/// invocation now opens a sequence of sessions, each needing a gate of its
+/// own — a shared gate would give the second session the first one's spent
+/// call ceiling and the first one's refusals.
+#[derive(Debug, Clone)]
 pub(crate) struct ResolvedDriver {
     /// The manifest that declared it — the grant the gate is built from.
     manifest: PluginManifest,
