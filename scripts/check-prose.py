@@ -795,27 +795,32 @@ def split_sources(root: Path, commit: str) -> dict[str, str]:
             if line.strip()
         }
 
+    def working_set(path: str) -> set[str]:
+        try:
+            return prose_set(path, (root / path).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            return set()
+
+    # The added files are read first so a change that adds no prose-bearing
+    # file pays for no `git show` at all -- which is most of them.
+    candidates = {path: working_set(path) for path in added}
+    candidates = {
+        path: lines for path, lines in candidates.items() if len(lines) >= SPLIT_FLOOR
+    }
+    if not candidates:
+        return {}
+
     shed: dict[str, set[str]] = {}
     for path in modified:
         was = prose_set(path, _git(root, ["show", f"{commit}:{path}"]))
         if not was:
             continue
-        try:
-            now = prose_set(path, (root / path).read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError):
-            continue
-        gone = was - now
+        gone = was - working_set(path)
         if gone:
             shed[path] = gone
 
     out: dict[str, str] = {}
-    for path in added:
-        try:
-            lines = prose_set(path, (root / path).read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError):
-            continue
-        if len(lines) < SPLIT_FLOOR:
-            continue
+    for path, lines in candidates.items():
         best, share = "", 0.0
         for source, gone in shed.items():
             hit = len(lines & gone) / len(lines)
