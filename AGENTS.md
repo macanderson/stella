@@ -485,6 +485,20 @@ issue's state, the claim comments. `scripts/lib/claim-tools.sh` holds it, so
 one message serves both scripts, and each suite drives it with the tool
 masked off `PATH`.
 
+**A pull request is not claimed the same way, and does not need to be.** A
+sweep hits a conflicted or red pull request and every session reaches the same
+conclusion about it at once, which is the shape both scripts above exist for.
+There is no `pr-claim.sh`, because a pull request already carries both halves
+a claim script would add: a comment thread every session can read, and a head
+that moves the moment somebody pushes. The race there also fails closed — a
+second resolution is refused non-fast-forward, so the work is duplicated and
+never dropped, which is the opposite of the issue case, where one merge kept
+one tree and silently lost the other. So a pull request takes the same two
+moves without a script: read its recent pushes and its comments before you
+start, and say on it that you are resolving it. Two sessions each paid for a
+full conflict resolution of one pull request — a rename, a renumber, four
+files and a guard run each — before that was written anywhere.
+
 **The image is out of this repository's reach, so the rule is best-effort
 there.** Nothing in this tree defines the container, exactly as with
 `shellcheck` above (`#3830`) — the two wants are the same want and are
