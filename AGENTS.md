@@ -507,21 +507,27 @@ before it had anything to say, so a claim taken at the end would have saved
 none of it. `make pr-claim N=5835` asks by hand; `make pr-claim-test` covers
 both gates, the blocking branches included.
 
-**No claim check can run in the agent container, and all three now say so.**
-They need `gh` to reach the tracker and `jq` to read the claims out of the
-reply, and that container ships neither. So the check every session is told
-to run printed `ok  proceed (could not ask)` — a line a reader takes for a
-clean check — and two sessions then implemented one issue twice, four
-repaired one red `main`, and two resolved one merge conflict, each pair
+**None of the three claim checks can run in the agent container, and all
+three now say so.** They need `gh` to reach the tracker and `jq` to read the
+claims out of the reply, and that container ships neither. So the check every
+session is told to run printed `ok  proceed (could not ask)` — a line a reader
+takes for a clean check — and two sessions then implemented one issue twice,
+four repaired one red `main`, and two resolved one merge conflict, each pair
 paying for a full required-CI run as well as the work (`#5934`). Each script
 opens with a tool pre-flight now, in the `shellcheck: UNAVAILABLE` register
 above and for the same reason: a check that did not run must not read as a
 check that found nothing. The banner names the missing tool, says what went
-unasked, and lists the by-hand questions. `scripts/lib/claim-tools.sh` holds
-it, so one message serves all three, and each suite drives it with the tool
-masked off `PATH`. `pr-claim.sh`'s `post` keeps its own answer there and
-exits 3: that mode owes the caller a write, and a proceed would tell a sweep
-its finding is up when nothing was sent.
+unasked, and lists the by-hand questions — the open pull requests, the
+issue's state, the claim comments. `scripts/lib/claim-tools.sh` holds it, so
+one message serves all three scripts, and each suite drives it with the tool
+masked off `PATH`.
+
+`pr-claim.sh` arrived (`#6377`) pre-flighting `gh` alone while its own claim
+reader ran a real `jq` filter, which is the half-checked state
+`claim-tools.sh` exists for: with `gh` there and `jq` gone, the script blamed
+the comments for a missing tool. It takes the shared pre-flight on the same
+terms as its two siblings, and `post` keeps its own answer — a mode that owes
+the caller a write exits non-zero rather than reporting a claim it never sent.
 
 **The image is out of this repository's reach, so the rule is best-effort
 there.** Nothing in this tree defines the container, exactly as with

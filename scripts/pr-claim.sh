@@ -356,6 +356,7 @@ if [ -n "$missing_tools" ]; then
          holds while it is under ${window_minutes}m old
        - the findings already published there, so yours is not a second
          copy of one
+       - whether #$pr is merged or closed, which stands a sweep down
      Then say on #$pr that you are reading it, so the next sweep reads a
      claim rather than a collision."
   proceed "ok  proceed (UNAVAILABLE: $missing_tools — nothing was asked)"
