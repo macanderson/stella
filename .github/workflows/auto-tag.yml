@@ -94,6 +94,16 @@ permissions:
 jobs:
   tag:
     runs-on: ubuntu-latest
+    # The version write-back branch, written once. Four steps need it: the
+    # one that pushes it, the one that approves its parked runs, the one
+    # that merges it, and the wait for an armed auto-merge to land. That
+    # last one is why one spelling now matters more than tidiness: a wait
+    # aimed at a branch with no pull request reads UNKNOWN and returns at
+    # once, so the dispatcher behind it asks about the tip from before the
+    # merge, finds a run there, and stops. The sync commit is then back
+    # where #5857 found it, with only the daily canary to ask.
+    env:
+      SYNC_BRANCH: bot/version-sync
     # Only cut a release for a *successful* CI run that this repository's own
     # main produced from a push. Guarding on the job (not just inside the step)
     # keeps a red build from ever reaching the tag push, and the repository
@@ -315,7 +325,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${TAG#v}"
-          branch="bot/version-sync"
+          branch="${SYNC_BRANCH}"
 
           # Base on the current tip of main, not head_sha: if another merge
           # already landed, the bump must apply cleanly on top of it. Rapid
@@ -423,7 +433,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ADMIN_TOKEN: ${{ secrets.RELEASE_ADMIN_TOKEN }}
-          BRANCH: bot/version-sync
+          BRANCH: ${{ env.SYNC_BRANCH }}
         run: |
           set -euo pipefail
 
@@ -494,8 +504,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ADMIN_MERGE_TOKEN: ${{ secrets.RELEASE_ADMIN_TOKEN }}
-          # Fixed by convention — see "Open the version-sync PR" above.
-          BRANCH: bot/version-sync
+          BRANCH: ${{ env.SYNC_BRANCH }}
           VERSION: ${{ steps.ver.outputs.tag }}
         run: |
           set -euo pipefail
@@ -771,6 +780,6 @@ jobs:
         run: |
           set -uo pipefail
           if [ "${ARMED:-}" = "true" ]; then
-            ./scripts/wait-for-armed-merge.sh bot/version-sync
+            ./scripts/wait-for-armed-merge.sh "${SYNC_BRANCH}"
           fi
           ./scripts/dispatch-main-verification.sh

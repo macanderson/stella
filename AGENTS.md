@@ -118,6 +118,8 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #     if: can skip)
                          #   + cargo-flags (no Makefile recipe hands cargo a
                          #     flag pair cargo refuses; #5992)
+                         #   + release-wiring (auto-tag.yml still asks
+                         #     for a run on the commit it merges; #5857)
                          #   + priority-scheme (the issue priority scheme is
                          #     stated once, in SCR-005, and the triage guard's
                          #     regex covers exactly the levels it names)

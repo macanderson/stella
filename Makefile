@@ -41,7 +41,8 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     adr-numbering \
                     command-docs website-inputs brand-case file-size god-files gate-parity \
                     schema-tier-parity \
-                    guard-trigger-coverage priority-scheme cargo-flags left-behind \
+                    guard-trigger-coverage priority-scheme cargo-flags \
+                    release-wiring left-behind \
                     retired-model-keys \
                     stat-portability module-reachability core-reachability \
                     typed-errors \
@@ -854,6 +855,21 @@ cargo-flags: ## Assert no recipe hands cargo a flag pair cargo refuses (#5992)
 .PHONY: cargo-flags-test
 cargo-flags-test: ## Test the cargo-flags guard's failure directions (hermetic; not part of `gate`)
 	@python3 ./scripts/test-cargo-flags.py
+
+# The release job merges the version write-back with the token the run
+# holds, and a push made with that token starts no workflow. Two scripts
+# cover that: the dispatcher asks for the missing run (#5817), and the
+# wait holds the job open while an armed auto-merge lands, so the
+# dispatcher reads the merged tip rather than the one before it (#5857).
+# Four lines of `auto-tag.yml` wire them, and dropping any of them leaves
+# a green release with no run on the commit it landed.
+.PHONY: release-wiring
+release-wiring: ## Assert auto-tag.yml still asks for a run on the commit it merges (#5857)
+	@python3 ./scripts/check-release-wiring.py
+
+.PHONY: release-wiring-test
+release-wiring-test: ## Test the release-wiring guard's failure directions (hermetic; not part of `gate`)
+	@python3 ./scripts/test-release-wiring.py
 
 .PHONY: priority-scheme
 priority-scheme: ## Assert the issue priority scheme is stated once, in SCR-005 (#5216)

@@ -141,6 +141,14 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 ./scripts/check-cargo-flags.py
 
+      # Here for the same reason: it reads `.github/workflows/auto-tag.yml`,
+      # and a diff confined to a workflow file answers `rust=false`, which
+      # skips ci.yml's `check` job. The lines it holds open are the release
+      # job's only ask for a run on the commit it merges (#5817, #5857).
+      - name: the release job still asks for a run on the commit it merges
+        if: ${{ !cancelled() }}
+        run: python3 ./scripts/check-release-wiring.py
+
       # The steps above run here because this trigger carries no `paths:`
       # filter at all -- that is what lets them fire on a scripts-only pull
       # request. Nothing enforced that absence except a comment, so this reads
@@ -274,6 +282,10 @@ jobs:
       - name: cargo-flags guard failure directions, variable expansion included
         if: ${{ !cancelled() }}
         run: python3 ./scripts/test-cargo-flags.py
+
+      - name: release-wiring guard failure directions
+        if: ${{ !cancelled() }}
+        run: python3 ./scripts/test-release-wiring.py
 
       - name: gate-parity guard failure directions
         if: ${{ !cancelled() }}
