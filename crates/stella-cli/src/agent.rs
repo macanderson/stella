@@ -489,6 +489,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             // grant before its own first round, and a session that never types
             // `/goal` never pays for a resolve it does not use.
             let goal_wrapper = goal::resolve_goal_wrapper(cfg, goal::DEFAULT_GOAL_WRAPPER, None)
+                .await
                 .and_then(|(resolved, candidate)| {
                     let bound = goal::bind_goal_wrapper(cfg, resolved, &sub_agents, &candidate)?;
                     Ok((bound, candidate))

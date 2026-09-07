@@ -694,13 +694,16 @@ async fn run_task(
     // actually runs in — see `wrapped`'s module doc for why those two roots
     // differ and which one each half needs.
     let resolved_wrapper = match wrapper_variant {
-        Some(variant) => Some(wrapped::resolve_for_attempt(
-            &cfg.workspace_root,
-            root,
-            variant,
-            &task.id,
-            task.test_command.as_deref(),
-        )?),
+        Some(variant) => Some(
+            wrapped::resolve_for_attempt(
+                &cfg.workspace_root,
+                root,
+                variant,
+                &task.id,
+                task.test_command.as_deref(),
+            )
+            .await?,
+        ),
         None => None,
     };
 
