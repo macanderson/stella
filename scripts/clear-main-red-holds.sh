@@ -59,9 +59,27 @@
 # required check, and the pull request stays unmergeable. The sweep counts those
 # and names them, so a reader knows which branches still need a push.
 #
+# ## The drill (`#6051`)
+#
+# The lookup half of a sweep runs constantly — every recovery exercises it.
+# The re-run call itself only fires while a hold has actually failed, which
+# needs a real outage. So the one step that clears the block was the one step
+# with no live evidence: if the token lacked a scope, or the endpoint refused
+# a run of that age, nothing would say so until the next outage, the worst
+# moment to find out.
+#
+# `--drill <pr>` rehearses that exact call on one named pull request's latest
+# hold run, whatever its conclusion. It never asks whether `main` is known
+# broken and never looks at any other pull request, so it is safe to run any
+# day: re-running a run that already passed still passes. A failure here —
+# a missing scope, a stale run id the API refuses — exits non-zero, on
+# purpose, unlike the rest of this script: the drill exists to surface that
+# failure now, not to fail open through it.
+#
 # Usage:
 #   scripts/clear-main-red-holds.sh
 #   scripts/clear-main-red-holds.sh --dry-run
+#   scripts/clear-main-red-holds.sh --drill <pr-number>
 #
 # Needs `gh` and a POSIX shell, so it runs on a bare CI runner.
 set -uo pipefail
@@ -72,9 +90,11 @@ workflow="main-red-hold.yml"
 # told when it cuts the list short.
 limit=0
 dry_run=0
+drill_pr=""
 fixture_open_issues=""
 fixture_open_prs=""
 fixture_stale_runs=""
+fixture_drill_run=""
 use_fixture=0
 
 while [ $# -gt 0 ]; do
@@ -91,6 +111,19 @@ while [ $# -gt 0 ]; do
     limit="$2"
     case "$limit" in '' | *[!0-9]*)
       echo "clear-main-red-holds: --limit takes a whole number" >&2
+      exit 2
+      ;;
+    esac
+    shift 2
+    ;;
+  --drill)
+    [ $# -ge 2 ] || {
+      echo "clear-main-red-holds: --drill needs a pull request number" >&2
+      exit 2
+    }
+    drill_pr="$2"
+    case "$drill_pr" in '' | *[!0-9]*)
+      echo "clear-main-red-holds: --drill takes a pull request number" >&2
       exit 2
       ;;
     esac
@@ -127,6 +160,15 @@ while [ $# -gt 0 ]; do
     use_fixture=1
     shift 2
     ;;
+  --fixture-drill-run)
+    [ $# -ge 2 ] || {
+      echo "clear-main-red-holds: --fixture-drill-run needs a value" >&2
+      exit 2
+    }
+    fixture_drill_run="$2"
+    use_fixture=1
+    shift 2
+    ;;
   -h | --help)
     # The whole block after the shebang, cut off at its first line of code.
     # A line number here goes stale the first time the header grows. Same
@@ -155,6 +197,61 @@ if [ "$use_fixture" -eq 0 ] && ! command -v gh >/dev/null 2>&1; then
   note "gh is not installed, so no hold could be cleared. A push to each"
   note "branch still clears its own hold."
   exit 0
+fi
+
+# ── The drill: rehearse the call on one named pull request (`#6051`) ────────
+#
+# Skips the "is main known-broken" question entirely — that question is what
+# makes the ordinary re-run untestable most days, and the drill exists to
+# rehearse the call without waiting for it to answer "yes". Never looks past
+# the one pull request it is given.
+
+if [ -n "$drill_pr" ]; then
+  drill_head=""
+  if [ "$use_fixture" -eq 1 ]; then
+    drill_head="$(printf '%s\n' "$fixture_open_prs" |
+      awk -v pr="$drill_pr" '$1 == pr { print $2; exit }')"
+  elif ! drill_head="$(gh pr view "$drill_pr" --json headRefOid \
+    --jq '.headRefOid' 2>/dev/null)" || [ -z "$drill_head" ]; then
+    drill_head=""
+  fi
+  if [ -z "$drill_head" ]; then
+    note "could not find pull request #$drill_pr, so there is nothing to drill."
+    exit 1
+  fi
+
+  drill_run=""
+  if [ "$use_fixture" -eq 1 ]; then
+    drill_run="$fixture_drill_run"
+  elif ! drill_run="$(gh api \
+    "repos/{owner}/{repo}/actions/workflows/$workflow/runs?head_sha=$drill_head&per_page=1" \
+    --jq '.workflow_runs[0].id // "none"' 2>/dev/null)"; then
+    drill_run=""
+  fi
+
+  if [ -z "$drill_run" ] || [ "$drill_run" = "none" ]; then
+    note "no $workflow run exists on the head of #$drill_pr — there is nothing"
+    note "to drill. Push a commit to that pull request first."
+    exit 1
+  fi
+
+  if [ "$dry_run" -eq 1 ]; then
+    say "would re-run the hold on PR #$drill_pr (head $drill_head, run $drill_run)"
+    exit 0
+  fi
+
+  if gh api -X POST --silent \
+    "repos/{owner}/{repo}/actions/runs/$drill_run/rerun" 2>/dev/null; then
+    say "re-ran the hold on PR #$drill_pr (head $drill_head, run $drill_run)"
+    repo_slug="${GITHUB_REPOSITORY:-$(gh repo view --json nameWithOwner \
+      --jq '.nameWithOwner' 2>/dev/null)}"
+    [ -n "$repo_slug" ] &&
+      say "https://github.com/$repo_slug/actions/runs/$drill_run"
+    exit 0
+  fi
+  note "could not re-run run $drill_run for PR #$drill_pr — does this job have"
+  note "\`actions: write\`? That is exactly the gap this drill exists to find."
+  exit 1
 fi
 
 # ── Is main still known-broken? ──────────────────────────────────────────────
