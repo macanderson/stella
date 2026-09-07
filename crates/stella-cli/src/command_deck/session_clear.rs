@@ -42,7 +42,7 @@
 //!
 //! Three things follow, and they are one decision, not three:
 //!
-//! 1. **The live board is emptied** ([`stella_core::tasks::TaskBoard::clear`]).
+//! 1. **The live board is emptied** ([`stella_tools::tasks::TaskBoard::clear`]).
 //!    It is registry-level shared state, so blanking the deck pane alone left
 //!    the real board intact behind an empty-looking Tasks tab, waiting for the
 //!    next snapshot to repaint every row.

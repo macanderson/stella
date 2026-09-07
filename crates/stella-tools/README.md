@@ -27,7 +27,8 @@ keep; the rest are coordination state that dies with the session:
   which spawns read-only child turns through a host-attached dispatcher.
 - **The session task board** — `task_create` / `task_list` / `task_start` /
   `task_complete` / `task_cancel` / `task_assign`
-  ([`src/tasks.rs`](src/tasks.rs)); `task_assign` additionally queues a
+  ([`src/tasks.rs`](src/tasks.rs), over the board in
+  [`src/tasks/board.rs`](src/tasks/board.rs)); `task_assign` additionally queues a
   sub-agent spawn request the session driver drains.
 - **Session scratch state** — `save_state` / `get_state` / `list_state` /
   `delete_state` ([`src/scratch.rs`](src/scratch.rs)), backed by a
@@ -200,6 +201,7 @@ old path still works.
 | [`src/search.rs`](src/search.rs), [`src/search/`](src/search) | The `search` tool and its strategy rungs, including the semantic rung whose embedding write-through is why the tool is read-only without being speculation-safe. [`src/search/budget.rs`](src/search/budget.rs) is the depth ladder and the character budget behind it — pure sums, no I/O; it came down from `stella-core`, where the engine never called it. |
 | [`src/subagent.rs`](src/subagent.rs) | The `delegate` tool: sub-agent delegation over a host-attached dispatcher (#922), with turn controls and a spend ledger the engine drains at step boundaries. |
 | [`src/tasks.rs`](src/tasks.rs) | The six `task_*` tools over the session board, plus `task_assign`'s spawn queue. |
+| [`src/tasks/board.rs`](src/tasks/board.rs) | `TaskBoard` — the transition rules those six tools enforce; records `SpawnRequest`s rather than spawning. It left `stella-core` because the engine names the board through a closure and never the type. |
 | [`src/scratch.rs`](src/scratch.rs) | The scratch state plane: `ScratchDir` and the four state tools. |
 | [`src/environment.rs`](src/environment.rs) | `get_environment` and the shared environment-identity probes the CLI prompt renders from (#2697). |
 | [`policy`](../stella-tool-facts/src/policy.rs) | `ToolPolicy` — the operator's `"tools"` switches, resolved exact-name-first, then group, then wildcard; scope composition by union of denials. |

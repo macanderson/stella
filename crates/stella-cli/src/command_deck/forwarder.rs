@@ -107,7 +107,7 @@ fn audit_record_incomplete_message(detail: &AuditWriteDetail<'_>) -> String {
 ///
 /// `plan_board` is the lane's task board (`ToolRegistry::task_board`). When a
 /// `ScopeReview` goes past, the approved plan's steps are seeded onto it —
-/// see [`stella_core::tasks::TaskBoard::seed_from_plan`] for why the two used
+/// see [`stella_tools::tasks::TaskBoard::seed_from_plan`] for why the two used
 /// to be unconnected, and what that cost. `None` for lanes with no board of
 /// their own.
 ///

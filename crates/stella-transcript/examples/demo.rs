@@ -248,7 +248,7 @@ fn fixture() -> Run {
                 summary: "recalled 5 frames · 408 tok · 126ms · 5 episode".to_string(),
                 detail: vec![
                     "symbol  fn find — stella-cli/src/config_wiring.rs · 34 tok".to_string(),
-                    "symbol  fn find — stella-core/src/tasks.rs · 118 tok".to_string(),
+                    "symbol  fn find — stella-tools/src/tasks/board.rs · 118 tok".to_string(),
                 ],
                 before_step: 0,
                 inspect: None,

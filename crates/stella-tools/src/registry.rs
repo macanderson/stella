@@ -754,7 +754,7 @@ impl ToolRegistry {
     /// last drain — the session driver calls this exactly once per
     /// execution and dispatches each request through the fleet seam, so no
     /// request is ever handled twice.
-    pub fn take_spawn_requests(&self) -> Vec<stella_core::tasks::SpawnRequest> {
+    pub fn take_spawn_requests(&self) -> Vec<crate::tasks::SpawnRequest> {
         std::mem::take(&mut *self.spawn_queue.lock().unwrap_or_else(|p| p.into_inner()))
     }
 

@@ -10,7 +10,7 @@
 //! `Store::task_cost` reports `$0.00` for work that ran and was paid for.
 //!
 //! A `task_assign` lane works one board task, and
-//! [`stella_core::tasks::SpawnRequest`]'s `task_id` names it at spawn time.
+//! [`stella_tools::tasks::SpawnRequest`]'s `task_id` names it at spawn time.
 //! So the tag here is a **constant**.
 //!
 //! A constant is also the safe answer. Board ids are per-session ordinals, so

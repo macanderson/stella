@@ -39,10 +39,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use stella_core::Engine;
-use stella_core::tasks::SpawnRequest;
 use stella_fleet::SystemGitCli;
 use stella_protocol::{AgentEvent, CompletionMessage};
 use stella_tools::hook_runner::HostHookRunner;
+use stella_tools::tasks::SpawnRequest;
 use stella_tui::{AgentMeta, AgentStatus, Inbound};
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::{oneshot, watch};

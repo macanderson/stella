@@ -9,7 +9,7 @@
 //! ## Why `/clear` deletes a session's rows (#1692)
 //!
 //! `/clear` is a session destroy-and-reset: it empties the live board
-//! (`stella_core::tasks::TaskBoard::clear`), and board ids restart at "1".
+//! (`stella_tools::tasks::TaskBoard::clear`), and board ids restart at "1".
 //! Leaving the mirror alone would be wrong in both directions — a post-clear
 //! task "1" silently upserts over an unrelated pre-clear task's row, and
 //! every pre-clear id ABOVE the new board's length survives as a row this

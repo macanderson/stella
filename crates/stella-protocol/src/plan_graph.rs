@@ -360,7 +360,7 @@ pub struct Divergence {
 /// # Why the subject and not a task id
 ///
 /// The proposal names the work in words. Board ids belong to the task board
-/// (`stella_core::tasks::TaskBoard::create` never reuses one), so a proposal
+/// (`stella_tools::tasks::TaskBoard::create` never reuses one), so a proposal
 /// that minted its own would open a second id space beside it. The id is the
 /// board's to assign when the insertion is actually made.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

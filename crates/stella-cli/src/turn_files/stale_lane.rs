@@ -103,7 +103,7 @@ pub(super) fn note_stale_lane(
 /// pending cards too, because a plan the agent stopped walking is exactly
 /// the shape worth reporting, even from a one-card board.
 fn stale_lane_open_tasks(
-    board: &stella_core::tasks::TaskBoard,
+    board: &stella_tools::tasks::TaskBoard,
     files_changed: usize,
 ) -> Option<usize> {
     if files_changed < STALE_LANE_FILES {
@@ -121,9 +121,9 @@ fn stale_lane_open_tasks(
 
 #[cfg(test)]
 mod tests {
-    use stella_core::tasks::TaskBoard;
     use stella_diag::FieldValue::Uint;
     use stella_protocol::event::TaskStatus;
+    use stella_tools::tasks::TaskBoard;
 
     use super::*;
 

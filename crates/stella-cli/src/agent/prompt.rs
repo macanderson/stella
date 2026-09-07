@@ -209,7 +209,7 @@ macro_rules! faithful_reporting {
 /// error handling, or premature abstraction in the persona interactive users
 /// actually get (#2690). The task-board sentence makes the sizing auditable
 /// rather than aspirational: the board (`task_*` tools,
-/// `stella_core::tasks::TaskBoard`) is the ledger of what was asked, so
+/// `stella_tools::tasks::TaskBoard`) is the ledger of what was asked, so
 /// "beyond the request" has a concrete test — work with no step on the board
 /// (#2690). The diagnose-before-switching half complements the
 /// engine's loop machinery from the prompt side: `driver/loop_escalation.rs`
