@@ -26,7 +26,7 @@
 crates/stella-autonomy 38.25
 crates/stella-cli 23.45
 crates/stella-context 18.11
-crates/stella-core 29.97
+crates/stella-core 28.26
 crates/stella-diag 25.12
 crates/stella-diff 27.80
 crates/stella-embed 18.00
@@ -46,7 +46,7 @@ crates/stella-runtime 35.64
 crates/stella-serve 25.96
 crates/stella-store 24.08
 crates/stella-tool-facts 33.40
-crates/stella-tools 34.59
+crates/stella-tools 34.00
 crates/stella-transcript 24.62
 crates/stella-tty 21.00
 crates/stella-tui 19.87

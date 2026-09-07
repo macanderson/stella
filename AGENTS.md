@@ -1757,10 +1757,10 @@ trailer `Refs #N` instead.
 
 ## Testing approach
 
-- **Property tests** for pure engine logic (`proptest`): loop detection,
-  retry history, skill selection, and the task board (`stella-core`), plus
-  retrieval fusion (`stella-context`), fleet planning (`stella-fleet`), and
-  render/scroll (`stella-tui`). These run on every `cargo test`. Compaction,
+- **Property tests** for pure decision logic (`proptest`): loop detection and
+  retry history (`stella-core`), skill selection (`stella-learn`), the task
+  board (`stella-tools`), retrieval fusion (`stella-context`), fleet planning
+  (`stella-fleet`), and render/scroll (`stella-tui`). These run on every `cargo test`. Compaction,
   eviction, and budget arithmetic are covered by unit tests, not properties —
   a property test for them is a welcome contribution. Witness-verification
   property tests (`flip_requires_a_prior_failing_observation` and its

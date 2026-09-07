@@ -105,7 +105,7 @@ persists. An agent that writes a perfect diff and a lazy issue has destroyed
 most of the value of the run, because the next run starts from the issue.
 
 This is why the answer is not "give Stella a native work store." Stella
-already has a task board (`stella-core::tasks`) and a fleet plan DAG
+already has a task board (`stella-tools::tasks::board`) and a fleet plan DAG
 (`stella-fleet::plan`), and both are correctly scoped to a *single run*. A
 run-scoped board cannot hold residue, because residue is by definition what
 outlives the run.

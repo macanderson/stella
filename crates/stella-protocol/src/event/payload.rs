@@ -358,9 +358,9 @@ pub struct TaskItem {
     /// which is the self-report [`TaskContract`] exists to end.
     ///
     /// Optional because the board predates contracts and a session may still
-    /// create a task without one; `stella_core::tasks` refuses the *close*, not
-    /// the creation, so an undeclared task is visible on the board rather than
-    /// rejected at the door.
+    /// create a task without one; `stella_tools::tasks::board` refuses the
+    /// *close*, not the creation, so an undeclared task is visible on the
+    /// board rather than rejected at the door.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contract: Option<crate::task_contract::TaskContract>,
 }

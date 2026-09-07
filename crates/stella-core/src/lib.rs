@@ -28,6 +28,7 @@ pub mod receipts;
 pub mod restore;
 pub mod retry;
 pub mod router;
+pub mod running_task;
 pub mod shell_text;
 pub mod skill_invocation;
 pub(crate) mod speculation;
@@ -36,7 +37,6 @@ pub mod steering;
 pub mod step;
 pub mod subagent;
 mod summarize;
-pub mod tasks;
 pub mod waiting;
 
 pub use budget::{BudgetGuard, BudgetOutcome};
@@ -59,6 +59,7 @@ pub use loop_detect::{
 pub use ports::{Clock, LiveService, ToolExecutor};
 pub use retry::{RetryOutcome, RetryPolicy, retry_with_backoff};
 pub use router::{RoleTable, Router};
+pub use running_task::RunningTask;
 pub use step::{
     AbortKind, BudgetSnapshot, CANCELLED_REASON, CHECKPOINT_VERSION, CancelToken, Checkpoint,
     CheckpointError, StepOutcome, TurnState,
@@ -68,5 +69,4 @@ pub use subagent::{
     SubAgentOutcome, SubAgentReport, SubAgentSpec, SubAgentSpendLedger, drain_sub_agent_spend,
     forwards_to_parent, push_sub_agent_spend,
 };
-pub use tasks::{RunningTask, SpawnRequest, TaskBoard, TaskBoardError};
 pub use waiting::{WaitCall, WaitRequest};

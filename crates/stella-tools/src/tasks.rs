@@ -1,11 +1,11 @@
 //! The `task_*` tools — the model's handle on the session task board
-//! (`stella_core::tasks::TaskBoard`).
+//! ([`board::TaskBoard`], which moved here from `stella-core`).
 //!
 //! Six tools share one board: `task_create` / `task_list` / `task_start` /
 //! `task_complete` / `task_cancel` mutate or read it, and `task_assign`
 //! additionally queues a [`SpawnRequest`] for the session driver to turn
 //! into a real sub-agent spawn (spawning is I/O and never happens here —
-//! see the module docs on `stella_core::tasks`). The board and the queue
+//! see [`board`]'s module docs). The board and the queue
 //! are `Arc<Mutex<…>>` handles shared between the tool instances and the
 //! [`crate::ToolRegistry`] that exposes/drains them.
 
@@ -14,7 +14,6 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::Value;
-use stella_core::tasks::{SpawnRequest, TaskBoard};
 use stella_protocol::tool::{ToolOutput, ToolSchema};
 use stella_protocol::{
     Check, CheckMechanism, DefinitionOfDone, Judge, TaskContract, TaskItem, TaskStatus,
@@ -22,6 +21,9 @@ use stella_protocol::{
 
 use crate::registry::Tool;
 
+pub mod board;
+
+pub use board::{SpawnRequest, TaskBoard, TaskBoardError};
 pub use stella_tool_facts::catalog::TASK_START as START;
 
 /// The six tools that read or move the session board.
@@ -83,16 +85,12 @@ fn require_str<'a>(input: &'a Value, field: &str) -> Result<&'a str, ToolOutput>
 /// (#3167): an unknown id is the model naming a task that is not on the board
 /// at all, while every other variant is the model attempting a transition the
 /// board's current state does not allow.
-fn board_error_class(e: &stella_core::tasks::TaskBoardError) -> stella_protocol::ErrorClass {
+fn board_error_class(e: &TaskBoardError) -> stella_protocol::ErrorClass {
     match e {
-        stella_core::tasks::TaskBoardError::UnknownTask { .. } => {
-            stella_protocol::ErrorClass::NotFound
-        }
-        stella_core::tasks::TaskBoardError::Terminal { .. }
-        | stella_core::tasks::TaskBoardError::AnotherTaskInProgress { .. }
-        | stella_core::tasks::TaskBoardError::ContractUnsatisfied { .. } => {
-            stella_protocol::ErrorClass::InvalidInput
-        }
+        TaskBoardError::UnknownTask { .. } => stella_protocol::ErrorClass::NotFound,
+        TaskBoardError::Terminal { .. }
+        | TaskBoardError::AnotherTaskInProgress { .. }
+        | TaskBoardError::ContractUnsatisfied { .. } => stella_protocol::ErrorClass::InvalidInput,
     }
 }
 

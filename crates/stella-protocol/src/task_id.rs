@@ -76,7 +76,7 @@ impl TaskId {
     /// total — a board id is already exactly this.
     ///
     /// Total, and unvalidated: what may be a board id is
-    /// `stella_core::tasks::TaskBoard`'s decision (it mints them), and
+    /// `stella_tools::tasks::TaskBoard`'s decision (it mints them), and
     /// `stella-protocol` carries no logic by rule — a second validator here
     /// would be one rule in two places.
     #[must_use]

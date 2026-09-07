@@ -11,7 +11,7 @@
 //! closed task deserved to close.
 //!
 //! Nothing about the live guarantee changes, and that is worth being precise
-//! about rather than overclaiming: `stella_core::tasks::TaskBoard` holds the
+//! about rather than overclaiming: `stella_tools::tasks::TaskBoard` holds the
 //! session's real board in memory and never rehydrates from SQLite, so
 //! `set_status`'s refusal has always read the real contract. This is the audit
 //! record catching up with the type.

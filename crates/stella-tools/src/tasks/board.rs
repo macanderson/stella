@@ -1,20 +1,27 @@
-//! The session task board — pure decision logic for the `task_*` tools
-//! (`task_create` / `task_list` / `task_complete` / `task_cancel` /
-//! `task_assign`).
+//! The session task board — the transition rules behind the `task_*` tools
+//! (`task_create` / `task_list` / `task_start` / `task_complete` /
+//! `task_cancel` / `task_assign`).
 //!
-//! The board is owned data with no I/O: the tools crate mutates it through
-//! these methods, the CLI tap snapshots it into `AgentEvent::TaskUpdate`
-//! events (the sole render path — the TUI folds snapshots, never reads this
-//! struct), and the store mirrors snapshots for cross-session findability.
-//! Keeping the transition rules here makes them property-testable without a
-//! registry or a runtime.
+//! The board is owned data with no I/O: [`super`]'s six tools mutate it
+//! through these methods, the CLI tap snapshots it into
+//! `AgentEvent::TaskUpdate` events (the sole render path — the TUI folds
+//! snapshots, never reads this struct), and the store mirrors snapshots for
+//! cross-session findability. Keeping the transition rules in one place makes
+//! them property-testable without a registry or a runtime.
 //!
 //! `task_assign` does not spawn anything itself — spawning is I/O. It
 //! validates the transition and records a [`SpawnRequest`]; the session
-//! driver drains them (`stella-tools`' `ToolRegistry::take_spawn_requests`)
-//! and runs each on its own deck sub-session lane.
-
-use std::sync::Arc;
+//! driver drains them ([`crate::ToolRegistry::take_spawn_requests`]) and runs
+//! each on its own deck sub-session lane.
+//!
+//! # Why it lives beside the tools rather than in the engine
+//!
+//! It was in `stella-core`, and nothing in the engine ever named it:
+//! `driver`, `step` and `ports` reach the board only through
+//! `stella_core::RunningTask`, a closure the host installs on the event
+//! sender. Pure logic earns a place in the engine's crate by being engine
+//! logic, not by being pure (AGENTS.md rule 12) — and the six tools that do
+//! name it are here.
 
 use stella_protocol::{Closure, TaskContract, TaskId, TaskItem, TaskStatus};
 
@@ -67,63 +74,6 @@ pub struct SpawnRequest {
     /// the sub-agent's prompt verbatim (the "communication" of
     /// `task_assign`).
     pub briefing: String,
-}
-
-/// A live read of [`TaskBoard::running`], for a producer that must stamp an
-/// event without owning the board.
-///
-/// A closure over the board rather than a copy of its answer, and that is the
-/// whole design. A cached `Option<TaskId>` would be a second place the running
-/// task is written down, updated by whoever remembered to — and the board is
-/// mutated by six tools, a plan seeding, a `/clear` and every sub-agent
-/// assignment, so the copy would go stale on the path nobody thought about.
-/// Reading through means there is one authority and no refresh to forget.
-///
-/// The cost is a board lock per stamped event. It is paid only for the events
-/// that can carry a tag and have not already been stamped (see
-/// `EventSender::send`), which is a small fraction of a turn's stream and none
-/// of its per-token traffic.
-///
-/// # What a lane's source answers for its delegates
-///
-/// An in-process delegate ([`crate::subagent`]) forwards its events to the
-/// lane that dispatched it, so they are stamped with **that lane's** running
-/// task. That is the intended reading rather than a leak: work the lead
-/// delegated in service of task 4 is task 4's evidence and task 4's cost, and
-/// a ledger that dropped it would under-report every task that fanned out.
-///
-/// A `task_assign` worker is the other shape — its own session, its own board,
-/// and that board is empty, so a read of it answers `None`. Its host attaches
-/// a **constant** source instead, naming the one task the lane was spawned to
-/// work (`stella-cli`'s `subsession::lane_events`). Constant rather
-/// than a read for the same reason the lead's is a read: each names the
-/// authority that actually knows, and the worker's own board is not it — board
-/// ids are per-session ordinals, so its `"1"` is a different task from the
-/// lead's `"1"`.
-#[derive(Clone)]
-pub struct RunningTask(Arc<dyn Fn() -> Option<TaskId> + Send + Sync>);
-
-impl RunningTask {
-    /// Build a source from anything that can answer the question — in
-    /// practice a closure over the host's shared board handle.
-    #[must_use]
-    pub fn from_fn(read: impl Fn() -> Option<TaskId> + Send + Sync + 'static) -> Self {
-        Self(Arc::new(read))
-    }
-
-    /// Which task is running at this instant, if any.
-    #[must_use]
-    pub fn current(&self) -> Option<TaskId> {
-        (self.0)()
-    }
-}
-
-impl std::fmt::Debug for RunningTask {
-    /// The closure has no useful representation, so this reports what a reader
-    /// of a log line actually wants: the answer it gives right now.
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("RunningTask").field(&self.current()).finish()
-    }
 }
 
 /// The task board: an insertion-ordered list of [`TaskItem`]s with ordinal
@@ -807,5 +757,94 @@ mod tests {
         board
             .set_status("1", TaskStatus::Cancelled)
             .expect("cancel is not a claim that the work was done");
+    }
+}
+
+/// The board answering `stella_core::RunningTask` for real, rather than a
+/// closure standing in for it.
+///
+/// `stella-core`'s `event_sender::task_tag_tests` covers the sender's own
+/// half with plain closures. What it cannot cover from there is this: the
+/// authority the tag reads is a *board*, and the board lives in this crate,
+/// which the engine's crate must not depend on.
+#[cfg(test)]
+mod event_tag_tests {
+    use std::sync::{Arc, Mutex};
+
+    use stella_core::{EventSender, RunningTask};
+    use stella_protocol::{AgentEvent, TaskStatus};
+
+    use super::TaskBoard;
+
+    fn tool_start(call_id: &str) -> AgentEvent {
+        AgentEvent::ToolStart {
+            call: stella_protocol::ToolCall {
+                call_id: call_id.to_string(),
+                name: "edit_file".to_string(),
+                input: serde_json::json!({ "path": "src/auth.rs" }),
+            },
+            sub_agent_id: None,
+            task_id: None,
+        }
+    }
+
+    fn drain(rx: &mut tokio::sync::mpsc::UnboundedReceiver<AgentEvent>) -> Vec<AgentEvent> {
+        let mut out = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            out.push(event);
+        }
+        out
+    }
+
+    /// A sender with a board attached tags the work it carries with whichever
+    /// task the board says is running **at the moment of the send** — and
+    /// re-reads it, so moving to the next task moves the tag with it.
+    ///
+    /// The second half is the one a cached copy would get wrong, and it is
+    /// the whole reason `RunningTask` is a closure over the board.
+    #[test]
+    fn the_board_answers_the_event_senders_running_task() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let events = EventSender::new(tx);
+        let board = Arc::new(Mutex::new(TaskBoard::new()));
+        {
+            let mut guard = board.lock().expect("fresh board");
+            guard.seed_from_plan(&["read the layout", "fold the rail"]);
+        }
+        let source = Arc::clone(&board);
+        events.attach_running_task(RunningTask::from_fn(move || {
+            source.lock().expect("board").running()
+        }));
+
+        // Before any task starts, work is in no task's ledger.
+        events.send(tool_start("c0")).expect("receiver alive");
+
+        board
+            .lock()
+            .expect("board")
+            .set_status("1", TaskStatus::InProgress)
+            .expect("start task 1");
+        events.send(tool_start("c1")).expect("receiver alive");
+
+        {
+            let mut guard = board.lock().expect("board");
+            guard
+                .set_status("1", TaskStatus::Completed)
+                .expect("close task 1");
+            guard
+                .set_status("2", TaskStatus::InProgress)
+                .expect("start task 2");
+        }
+        events.send(tool_start("c2")).expect("receiver alive");
+
+        let tags: Vec<Option<String>> = drain(&mut rx)
+            .iter()
+            .map(|event| event.task_id().map(|id| id.as_str().to_string()))
+            .collect();
+        assert_eq!(
+            tags,
+            vec![None, Some("1".to_string()), Some("2".to_string())],
+            "each send reads the board as it stood at that instant"
+        );
     }
 }

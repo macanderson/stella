@@ -701,7 +701,6 @@ crates/stella-core/src/subagent/tests/seams.rs 8.66
 crates/stella-core/src/subagent/tests/spend_and_cancellation.rs 9.70
 crates/stella-core/src/subagent/tests/witness.rs 11.32
 crates/stella-core/src/summarize.rs 11.36
-crates/stella-core/src/tasks.rs 9.93
 crates/stella-core/src/waiting.rs 9.64
 crates/stella-core/tests/engine_emits_no_stage.rs 12.23
 crates/stella-core/tests/hard_drop_write_back.rs 10.73
@@ -1383,6 +1382,7 @@ crates/stella-tools/src/staleness.rs 11.72
 crates/stella-tools/src/subagent.rs 10.56
 crates/stella-tools/src/subagent/tests.rs 10.37
 crates/stella-tools/src/tasks.rs 8.39
+crates/stella-tools/src/tasks/board.rs 9.79
 crates/stella-tools/src/temp_roots.rs 11.87
 crates/stella-tools/src/validate.rs 10.34
 crates/stella-tools/src/workspace_scope.rs 9.92

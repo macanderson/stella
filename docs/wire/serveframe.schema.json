@@ -4236,7 +4236,7 @@
               "type": "null"
             }
           ],
-          "description": "What this task means by done (SPEC 7.1).\n\n`None` is *nobody has said yet*, and is not the same fact\nas [`TaskContract::ReadOnly`], which is *somebody looked and there is\nnothing to prove*. A board that collapsed the two would let an\nundeclared task close on the same terms as one declared harmless —\nwhich is the self-report [`TaskContract`] exists to end.\n\nOptional because the board predates contracts and a session may still\ncreate a task without one; `stella_core::tasks` refuses the *close*, not\nthe creation, so an undeclared task is visible on the board rather than\nrejected at the door."
+          "description": "What this task means by done (SPEC 7.1).\n\n`None` is *nobody has said yet*, and is not the same fact\nas [`TaskContract::ReadOnly`], which is *somebody looked and there is\nnothing to prove*. A board that collapsed the two would let an\nundeclared task close on the same terms as one declared harmless —\nwhich is the self-report [`TaskContract`] exists to end.\n\nOptional because the board predates contracts and a session may still\ncreate a task without one; `stella_tools::tasks::board` refuses the\n*close*, not the creation, so an undeclared task is visible on the\nboard rather than rejected at the door."
         },
         "description": {
           "description": "What needs to be done, if the creator elaborated beyond the subject.",

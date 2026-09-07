@@ -3,10 +3,9 @@
 The step-driver. `Engine::run_turn` takes a message history, a budget guard and
 an event channel, and runs the model/tool loop to an answer: one model call per
 step, retry+backoff, context compaction, tool-output eviction, loop detection,
-USD metering. Alongside it live the workspace's other decision engines —
-routing, the task board — which the CLI drives directly rather than through a
-turn. The goal loop still lives here too, and is the one resident that is
-leaving (see "Direction" below).
+USD metering. Routing lives alongside it, driven by the CLI rather than
+through a turn. The goal loop still lives here too, and is the one resident
+that is leaving (see "Direction" below).
 
 **No I/O.** This crate never imports a provider SDK, never touches the
 filesystem, never spawns a process, never opens a socket. Anything needing the
@@ -169,7 +168,7 @@ lib.rs), never as a planning assumption.
 | [`src/subagent.rs`](src/subagent.rs) | `Engine::run_sub_agent` — a bounded child turn with its own carved budget and its own (discarded) transcript, returning only a capped summary. `goal.rs`'s verifier is one. |
 | [`src/goal.rs`](src/goal.rs) | The goal loop: worker turn → verifier verdict → feedback, bounded by round cap, budget and turn abort. The verifier runs as a sub-agent. **A wrapper living inside the engine crate** — slated to leave for the wrapper contract (#3380); do not grow it. |
 | [`src/router.rs`](src/router.rs) | Role → model resolution over a caller-supplied `ProviderProfile`, plus the per-provider circuit breaker. |
-| [`src/tasks.rs`](src/tasks.rs) | `TaskBoard` — the transition rules behind the `task_*` tools; records `SpawnRequest`s rather than spawning. |
+| [`src/running_task.rs`](src/running_task.rs) | `RunningTask` — the closure a host installs so an emitted event can be stamped with the board task running at that instant. The board itself is `stella_tools::tasks::board`. |
 
 ## Key concepts
 
@@ -321,8 +320,8 @@ which is why the engine's own suite is split across
 [`src/driver/tests/`](src/driver/tests) (`audit_fixes.rs` holds the 2026-07
 turn-driver audit witnesses; also `budget_boundaries.rs`,
 `usage_completeness.rs`). `proptest!` blocks live in
-[`src/retry.rs`](src/retry.rs), [`src/loop_detect.rs`](src/loop_detect.rs),
-[`src/tasks.rs`](src/tasks.rs); a failing case writes its seed to
+[`src/retry.rs`](src/retry.rs) and
+[`src/loop_detect.rs`](src/loop_detect.rs); a failing case writes its seed to
 `proptest-regressions/`, and that seed is committed. No feature flag, no env var, no
 fixture server and no network — driver tests wire scripted `Provider`s, counting
 `ToolExecutor`s and no-op `Sleeper`s, so the suite runs in seconds. Keep it that

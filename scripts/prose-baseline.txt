@@ -1858,10 +1858,6 @@ crates/stella-core/src/subagent/tests/spend_and_cancellation.rs historical-refer
 crates/stella-core/src/subagent/tests/spend_and_cancellation.rs issue-reference 5
 crates/stella-core/src/subagent/tests/witness.rs issue-reference 1
 crates/stella-core/src/summarize.rs issue-reference 2
-crates/stella-core/src/tasks.rs filler-adverb 3
-crates/stella-core/src/tasks.rs honesty-declaration 4
-crates/stella-core/src/tasks.rs interface-jargon 1
-crates/stella-core/src/tasks.rs issue-reference 5
 crates/stella-core/src/waiting.rs historical-reference 1
 crates/stella-core/src/waiting.rs issue-reference 3
 crates/stella-core/tests/engine_emits_no_stage.rs historical-reference 1
@@ -3217,6 +3213,10 @@ crates/stella-tools/src/tasks.rs honesty-declaration 2
 crates/stella-tools/src/tasks.rs issue-reference 3
 crates/stella-tools/src/tasks.rs meta-writing 1
 crates/stella-tools/src/tasks.rs rust-jargon 1
+crates/stella-tools/src/tasks/board.rs filler-adverb 3
+crates/stella-tools/src/tasks/board.rs honesty-declaration 4
+crates/stella-tools/src/tasks/board.rs interface-jargon 1
+crates/stella-tools/src/tasks/board.rs issue-reference 5
 crates/stella-tools/src/temp_roots.rs filler-adverb 2
 crates/stella-tools/src/validate.rs filler-adverb 1
 crates/stella-tools/src/validate.rs issue-reference 1
