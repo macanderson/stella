@@ -75,10 +75,22 @@
 
 set -uo pipefail
 
+# This script's own directory, without spending a `dirname` on it. A run with
+# a thin `PATH` is the run the tool pre-flight below is for, and a source line
+# that needs a program on `PATH` is the wrong thing to hang that check on.
+script_dir="${0%/*}"
+[ "$script_dir" = "$0" ] && script_dir="."
+
 # `plain_word` and `resolve_session` — the same word the other two claim
 # scripts use, so they cannot disagree about which session this is.
 # shellcheck source=scripts/lib/claim-session.sh
-. "$(dirname "$0")/lib/claim-session.sh"
+. "$script_dir/lib/claim-session.sh"
+
+# `missing_claim_tools` and `report_claim_tools_unavailable` — the pre-flight
+# every claim script runs, so a session with no `gh` reads one message
+# wherever it asks.
+# shellcheck source=scripts/lib/claim-tools.sh
+. "$script_dir/lib/claim-tools.sh"
 
 # A decided verdict must survive a reader that closes the pipe early.
 trap '' PIPE
@@ -315,17 +327,39 @@ if [ "$mode" = "post" ]; then
   fi
 fi
 
-if [ "$use_fixture" -eq 0 ] && ! command -v gh >/dev/null 2>&1; then
+# ── The tools, before anything is asked ──────────────────────────────────────
+#
+# The agent container ships neither `gh` nor `jq`, so this is the branch most
+# sessions take. It says the check did not run, in the register the gate uses
+# for a `shellcheck` it cannot find, and it says how to ask by hand. A session
+# told to run a pre-flight, which then reads a line as "all clear", is worse
+# off than one told plainly that nothing was asked.
+missing_tools=""
+if [ "$use_fixture" -eq 0 ]; then
+  missing_tools="$(missing_claim_tools)"
+fi
+if [ -n "$missing_tools" ]; then
   # `post` is the one mode that owes the caller a write. Reporting "proceed"
   # there would tell a sweep its finding is up when nothing was sent.
   if [ "$mode" = "post" ]; then
-    echo "pr-claim: gh is not installed, so nothing was posted on #$pr." >&2
+    echo "$missing_tools: UNAVAILABLE — NOTHING WAS POSTED on #$pr." >&2
+    echo "" >&2
+    echo "     Post the finding by hand, or from a machine that has the" >&2
+    echo "     tools. Read the comments first: a peer sweep may have" >&2
+    echo "     published this finding already." >&2
     exit 3
   fi
-  echo "note: gh is not installed, so this run could not ask whether #$pr is" >&2
-  echo "      already being swept. Proceeding: a check that can block a sweep" >&2
-  echo "      is worse than the duplication it stops." >&2
-  proceed "ok  proceed (could not ask)"
+  report_claim_tools_unavailable "$missing_tools" \
+    "Nothing asked whether #$pr is already being swept." \
+    "     Ask by hand, from a machine that has these tools or in a browser:
+       - the claim comments on #$pr: they open with \`$marker\`, and one
+         holds while it is under ${window_minutes}m old
+       - the findings already published there, so yours is not a second
+         copy of one
+       - whether #$pr is merged or closed, which stands a sweep down
+     Then say on #$pr that you are reading it, so the next sweep reads a
+     claim rather than a collision."
+  proceed "ok  proceed (UNAVAILABLE: $missing_tools — nothing was asked)"
 fi
 
 # One read of the comments, shared by both gates. `comments_ok` is whether the

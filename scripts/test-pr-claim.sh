@@ -328,40 +328,94 @@ want "--body-file is read" \
   post 5835 --finding conflict:5828 --body-file "$tmp_body" \
   --fixture-login ada --fixture-findings ""
 
-# ── No `gh` at all ──────────────────────────────────────────────────────────
+# ── No `gh`, and no `jq` ────────────────────────────────────────────────────
 #
-# A `check` with no `gh` proceeds, like every other unknown. A `post` cannot:
-# it owes the caller a write, and reporting "proceed" would tell a sweep its
-# finding is up when nothing was sent. The runs below use a PATH holding one
-# pair of symlinks, so `gh` is absent for real rather than stubbed.
+# The branch an agent container takes: it ships neither tool.
+#
+# A fixture cannot pin this one. Supplying a fixture is what skips the lookup.
+# An empty `PATH` is not the way either. That breaks the shebang and exits
+# 127, which is a broken test, not a missing tool. So: a `PATH` with every
+# program this script uses, minus the one under test.
+#
+# `check` proceeds, like every other unknown. `post` cannot: it owes the
+# caller a write, and reporting "proceed" would tell a sweep its finding is up
+# when nothing was sent. Each case reads the banner, not just the exit code —
+# proceeding is what a check does at every unknown, so an exit of 0 alone
+# cannot tell a check that ran from a check that never ran.
+tools_dir() { # tools_dir <dir> <tool>...
+  local dir="$1"
+  shift
+  mkdir -p "$dir"
+  local tool tool_path
+  for tool in "$@"; do
+    tool_path="$(command -v "$tool")"
+    if [ -z "$tool_path" ]; then
+      bad "the suite needs $tool on PATH to build its fixture"
+      continue
+    fi
+    ln -s "$tool_path" "$dir/$tool"
+  done
+}
 
-bare_bin="$(mktemp -d)"
-trap 'rm -f "$tmp_body"; rm -rf "$bare_bin"' EXIT
-ln -s "$(command -v bash)" "$bare_bin/bash"
-ln -s "$(command -v dirname)" "$bare_bin/dirname"
+sandbox="$(mktemp -d)"
+trap 'rm -f "$tmp_body"; rm -rf "$sandbox"' EXIT
 
-out="$(PATH="$bare_bin" "$SCRIPT" check 5835 2>&1)"
+tools_dir "$sandbox/gh-less" bash awk tr mktemp date jq
+out="$(PATH="$sandbox/gh-less" "$SCRIPT" check 5835 2>&1)"
 rc=$?
 case "$rc,$out" in
-0,*"could not ask"*)
-  ok "a check with no gh proceeds and says it could not ask"
+0,*"gh: UNAVAILABLE — THIS CHECK DID NOT RUN"*)
+  ok "a check with no gh proceeds, and says the check did not run"
+  ;;
+0,*)
+  bad "a check with no gh proceeded without saying so: $out"
   ;;
 *)
-  bad "expected exit 0 and 'could not ask', got exit $rc: $out"
+  bad "a check with no gh must proceed, got exit $rc: $out"
   ;;
 esac
 
-out="$(PATH="$bare_bin" "$SCRIPT" post 5835 --finding conflict:5828 --body x 2>&1)"
+out="$(PATH="$sandbox/gh-less" "$SCRIPT" post 5835 --finding conflict:5828 --body x 2>&1)"
 rc=$?
 case "$rc,$out" in
 0,*)
   bad "a post with no gh reported success while posting nothing: $out"
   ;;
-*,*"nothing was posted"*)
+3,*"NOTHING WAS POSTED"*)
   ok "a post with no gh fails and says nothing was posted"
   ;;
 *)
-  bad "expected a non-zero exit naming 'nothing was posted', got exit $rc: $out"
+  bad "expected exit 3 naming 'NOTHING WAS POSTED', got exit $rc: $out"
+  ;;
+esac
+
+# `jq` is the other half. `gh --jq` carries its own copy, so the tracker call
+# needs `gh` alone. A missing `jq` then reaches the comment read, and reads
+# there as unreadable comments — the tracker blamed for a missing tool.
+#
+# The stub `gh` here fails loudly if it is called. So this case also shows
+# that the pre-flight runs first, before anything is asked.
+tools_dir "$sandbox/jq-less" bash awk tr mktemp date
+cat >"$sandbox/jq-less/gh" <<'STUB'
+#!/usr/bin/env bash
+echo "gh stub: the tool pre-flight should have run before any gh call" >&2
+exit 1
+STUB
+chmod +x "$sandbox/jq-less/gh"
+out="$(PATH="$sandbox/jq-less" "$SCRIPT" check 5835 2>&1)"
+rc=$?
+case "$rc,$out" in
+0,*"gh stub"*)
+  bad "the tool pre-flight must run before any gh call: $out"
+  ;;
+0,*"jq: UNAVAILABLE — THIS CHECK DID NOT RUN"*)
+  ok "a missing jq names jq, rather than blaming the comments"
+  ;;
+0,*)
+  bad "a missing jq proceeded without saying the check did not run: $out"
+  ;;
+*)
+  bad "a missing jq must proceed, got exit $rc: $out"
   ;;
 esac
 
