@@ -120,3 +120,98 @@ fn a_context_db_older_than_v8_degrades_to_empty_ledger_sections() {
         assert_eq!(v[key], serde_json::json!([]), "{key} must be empty: {v}");
     }
 }
+
+/// The context-records routes against a **real-migration** `context.db`: a
+/// memory written through `ContextStore::upsert` — which mints the `nod_…`
+/// mirror node, the `memory` row it points at, and its domain rows — then a
+/// `context_use` naming that node, exactly as `stella`'s own extractor
+/// writes one. The routes must find the node by the ledger's id and read its
+/// words, its memory row and its domains back.
+///
+/// This is the half `tests/context_records.rs`'s hand-written DDL cannot
+/// prove: that `node`, `memory`, `domain` and `node_domains` still have the
+/// columns this crate's SQL names. A rename in `stella-context` fails here,
+/// at `cargo test`, rather than as an empty panel on a user's dashboard —
+/// which is what `is_missing_schema`'s degradation would otherwise turn it
+/// into.
+#[test]
+fn context_records_join_a_real_memory_node() {
+    let (workspace, _, _) = real_context_workspace();
+    let store = ContextStore::open(workspace.path().join(".stella/private/context.db"))
+        .expect("reopen through the real migrations");
+    let receipt = tokio::runtime::Runtime::new()
+        .expect("runtime")
+        .block_on(async {
+            store
+                .upsert(
+                    ContextDelta::new().with_memory(
+                        MemoryInput::new(
+                            MemoryKind::Reflection,
+                            "Run the cheap control before any bisect. One trial settles it.",
+                        )
+                        .with_domains(["agent-engine"]),
+                    ),
+                )
+                .await
+                .expect("memory upsert")
+        });
+    let node_id = receipt.memory_node_ids[0].clone();
+    assert!(node_id.starts_with("nod_"), "{node_id}");
+
+    let use_body = serde_json::json!({
+        "use_kind": "rendered",
+        "context_record_id": node_id,
+        "use_trace_id": "ut_1",
+        "task_id": "session:ses-1",
+        "influence_stage": "none",
+        "observed_at": "2026-09-01T10:00:00Z",
+    })
+    .to_string();
+    append_lifecycle(
+        &store,
+        "context_use",
+        "cu_1",
+        "cu_1",
+        "sha256:cu_1",
+        "1.0-draft",
+        &use_body,
+        "2026-09-01T10:00:00Z",
+    );
+
+    let body = respond(workspace.path(), "/api/context-records").body;
+    let v: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert!(v.get("error").is_none(), "{v}");
+    let row = v["records"]
+        .as_array()
+        .expect("records")
+        .iter()
+        .find(|r| r["id"] == node_id.as_str())
+        .unwrap_or_else(|| panic!("the used node is listed: {v}"));
+    assert_eq!(row["plane"], "recall", "{row}");
+    assert_eq!(row["kind"], "memory", "{row}");
+    assert_eq!(
+        row["title"], "Run the cheap control before any bisect",
+        "{row}"
+    );
+    assert_eq!(row["health"]["uses"], 1, "{row}");
+    assert_eq!(row["standing"], "unassessed", "{row}");
+
+    let body = respond(
+        workspace.path(),
+        &format!("/api/context-record?id={node_id}"),
+    )
+    .body;
+    let d: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(d["found"], true, "{d}");
+    assert_eq!(
+        d["record"]["domains"],
+        serde_json::json!(["agent-engine"]),
+        "domains come from node_domains ⋈ domain: {d}"
+    );
+    assert_eq!(d["source"]["kind"], "recall", "{d}");
+    assert_eq!(
+        d["source"]["memory"]["kind"], "reflection",
+        "the memory row behind the mirror node: {d}"
+    );
+    assert_eq!(d["uses"][0]["task_id"], "session:ses-1", "{d}");
+}
