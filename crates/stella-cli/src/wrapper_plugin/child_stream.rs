@@ -30,6 +30,13 @@
 //! this door opens, and it joins to the rounds beside it through
 //! `executions.session_id`.
 //!
+//! **The verdict is the other way round, and lands elsewhere.** A plugin's
+//! child calls belong to no round, so they get this row. The wrapper's own
+//! verdict belongs to the last round, so it goes there instead — see
+//! `crate::turn_row`, which is how `run_wrapped` reaches a row whose channel
+//! has already closed. A verdict here would share only the session id with the
+//! file changes it is about, and `crate::dataset_cmd` folds one row at a time.
+//!
 //! **Who owns the channel: this type, for the span of the dispatch.** It is
 //! opened before the first point can run and closed after the last one has,
 //! with [`RepublishingDriver`] re-publishing it after every round — because a
