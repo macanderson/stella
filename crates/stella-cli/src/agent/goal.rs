@@ -373,6 +373,7 @@ pub(crate) async fn run_raw_one_shot(
                     controls: controls.clone(),
                     results: Vec::new(),
                     friction: &mut friction,
+                    rounds: crate::turn_row::TurnRow::new(),
                 },
             )
             .await

@@ -10,7 +10,12 @@
 //! events, the run terminator — while this is a plain value threaded **into**
 //! a turn, carrying no store and touching no telemetry.
 
+use std::sync::Arc;
+
+use stella_store::Store;
+
 use crate::turn_facts::TurnFacts;
+use crate::turn_row::TurnRow;
 
 /// Which door a turn came in by, and which wrapper — if any — ran over it.
 ///
@@ -36,6 +41,14 @@ pub(crate) struct TurnDoor<'a> {
     /// is already threaded costs that file no lines (AGENTS.md
     /// § "God files").
     pub(crate) facts: Option<TurnFacts>,
+    /// Where the turn reports the execution row it opens, for a caller with
+    /// something to add to that row once the turn is over. `None` — every
+    /// door but the wrapper driver's — records nothing.
+    ///
+    /// It rides on the door for `facts`' reason above, and it is the other
+    /// half of the same seam: `facts` is what the turn's events say, and this
+    /// is where they were written.
+    pub(crate) row: Option<TurnRow>,
 }
 
 impl<'a> TurnDoor<'a> {
@@ -45,6 +58,7 @@ impl<'a> TurnDoor<'a> {
             kind,
             variant: None,
             facts: None,
+            row: None,
         }
     }
 
@@ -65,6 +79,29 @@ impl<'a> TurnDoor<'a> {
         Self {
             facts: Some(facts),
             ..self
+        }
+    }
+
+    /// The same door, reporting the execution row the turn opens into `row`.
+    ///
+    /// `stella run --pipeline <variant>` is the caller: its wrapper decides a
+    /// verdict after the last round's turn has closed its own channel, so the
+    /// row is the only way left to reach the journal that verdict belongs in
+    /// (`crate::turn_row`).
+    pub(crate) fn recording_to(self, row: TurnRow) -> Self {
+        Self {
+            row: Some(row),
+            ..self
+        }
+    }
+
+    /// Tell whoever asked for this turn which execution row it opened.
+    ///
+    /// Nothing to do for a door that asked for nothing, which is every door
+    /// but the one above.
+    pub(crate) fn opened(&self, execution: Option<&(Arc<Store>, i64)>) {
+        if let Some(row) = &self.row {
+            row.opened(execution);
         }
     }
 

@@ -287,6 +287,19 @@ impl AttemptWrapper {
     ) -> Result<TurnOutcome, String> {
         let report = report
             .map_err(|error| format!("wrapper \"{}\" cannot be driven: {error}", self.variant()))?;
+        // What the wrapper decided, onto this attempt's own channel. The
+        // journal then holds the verdict and the board, not just the prose
+        // the lines below print.
+        //
+        // That channel is the one this attempt's rounds already wrote to.
+        // `crate::fleet_cmd` opens ONE row per attempt and holds the channel
+        // open for the whole dispatch. So the verdict lands beside the file
+        // changes it is about, which is what `crate::dataset_cmd`'s one-row
+        // fold needs. Sent before the report is drawn, and before any refusal
+        // below returns: an unmet verdict is the one a reader comes back for.
+        for event in crate::wrapper_plugin::run_events(&report) {
+            let _ = driver.events.send(event);
+        }
         // Every fault, every host refusal and every child-turn spend, on
         // stderr — stdout carries the fleet's own machine-readable contract.
         // Text rather than the run's `--output-format` because these lines are
