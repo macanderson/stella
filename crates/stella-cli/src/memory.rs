@@ -769,7 +769,8 @@ impl SessionMemory {
             self.include_workspace_skills,
         )
         .skills;
-        let demoted = appraisals::demoted_skills(&self.store);
+        let demoted =
+            appraisals::demoted_skills(&self.store, stella_learn::ledger::ArtifactKind::Skill);
         if !demoted.is_empty() {
             skills.retain(|s| !demoted.contains(&s.name));
         }

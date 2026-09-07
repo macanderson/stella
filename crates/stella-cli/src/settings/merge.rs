@@ -702,8 +702,9 @@ impl Settings {
 
         if announce && !trust.code_execution_trusted() && project.hooks.is_some() {
             eprintln!(
-                "  ! project hooks in {} were NOT loaded — set STELLA_PROJECT_HOOKS=1 \
-                 (or STELLA_TRUST_PROJECT=1) to trust this repo's hooks",
+                "  ! project hooks in {} were NOT loaded — set run.auto_trust_project = true \
+                 in ~/.stella/stella.toml to trust repos' hooks from now on, or \
+                 STELLA_PROJECT_HOOKS=1 (or STELLA_TRUST_PROJECT=1) for this launch alone",
                 project_path.display()
             );
         }
@@ -711,9 +712,10 @@ impl Settings {
         if announce && !trust.code_execution_trusted() && !project.context_providers.is_empty() {
             eprintln!(
                 "  ! project context providers in {} were NOT loaded — set \
-                 STELLA_TRUST_PROJECT=1 to let this repo run its context sources \
-                 (a stdio source runs a command on your machine; an http one can \
-                 send workspace content off it)",
+                 run.auto_trust_project = true in ~/.stella/stella.toml to let repos run \
+                 their context sources from now on, or STELLA_TRUST_PROJECT=1 for this \
+                 launch alone (a stdio source runs a command on your machine; an http one \
+                 can send workspace content off it)",
                 project_path.display()
             );
         }

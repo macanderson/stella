@@ -439,6 +439,8 @@ fn empty_workspace_degrades_to_empty_payloads_not_errors() {
         // `execution_reflection.parse_error`, a column that arrives in schema
         // v23 — so an unmigrated store must blank that section, not 500.
         "/api/context-lifecycle",
+        "/api/context-records",
+        "/api/context-record?id=nod_missing",
     ] {
         let response = respond(ws.path(), route);
         assert_eq!(response.status, "200 OK", "route {route}");
@@ -455,7 +457,7 @@ fn empty_workspace_degrades_to_empty_payloads_not_errors() {
 /// consumed route dead.
 #[test]
 fn every_served_route_is_fetched_by_the_embedded_page() {
-    let page = format!("{INDEX_HTML}\n{SELF_DRIVING_JS}");
+    let page = format!("{INDEX_HTML}\n{SELF_DRIVING_JS}\n{RECORDS_JS}");
     // Route-table arms are `"/api/<name>" => …`; the same literal
     // appearing as a call argument (tests, 404 fixtures) has no `=>`.
     let routes: Vec<&str> = include_str!("lib.rs")

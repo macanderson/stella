@@ -72,6 +72,12 @@ fn the_remedy_names_the_authority_that_can_actually_lift_it() {
         untrusted.contains("STELLA_TRUST_PROJECT=1"),
         "an untrusted checkout is the user's to trust: {untrusted}"
     );
+    assert!(
+        untrusted.contains("auto_trust_project"),
+        "and trusts it for good, not for one launch: this row recurs on every \
+         launch of every untrusted repo, so a remedy that expires when the \
+         process does is the wrong shape of answer: {untrusted}"
+    );
 
     let managed = rows(Withholder::ManagedCeiling);
     assert!(

@@ -19,11 +19,30 @@ name: main-red-clear
 # canary closes with `GITHUB_TOKEN`, and GitHub starts no workflow from an
 # event raised by that token. Both callers run the same script, and running it
 # twice re-runs nothing the first pass already cleared.
+#
+# ── The drill (#6051) ─────────────────────────────────────────────────────
+#
+# The re-run call above only ever fires while a hold has actually failed,
+# which needs a real outage — so it is the one step here with no live
+# evidence, and a broken scope or a refused run id would surface only mid
+# outage. A `drill` input rehearses that exact call against one named pull
+# request's latest hold run, whatever its conclusion, and touches no other
+# pull request. Re-running a run that already passed still passes, so it is
+# safe to dispatch any day.
 
 on:
   issues:
     types: [closed, unlabeled]
   workflow_dispatch:
+    inputs:
+      drill:
+        description: >-
+          Pull request number to drill (e.g. 6051). Rehearses the re-run
+          call against that PR's latest main-red-hold run, whatever its
+          conclusion, and touches no other pull request. Leave empty for
+          the ordinary sweep.
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -54,7 +73,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Re-run the hold on every open pull request
+      - name: Re-run the hold (drill on one PR, or sweep every open one)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./scripts/clear-main-red-holds.sh
+          DRILL_PR: ${{ inputs.drill }}
+        run: |
+          if [ -n "$DRILL_PR" ]; then
+            ./scripts/clear-main-red-holds.sh --drill "$DRILL_PR"
+          else
+            ./scripts/clear-main-red-holds.sh
+          fi
