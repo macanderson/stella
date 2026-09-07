@@ -323,8 +323,11 @@ it, the case where the tip already has a run included.
 
 A seventh, `main-red-hold.yml`, is the canary's other half: the canary *detects*,
 and this is what consumes the detection at the point a merge is still a
-decision. It runs on `pull_request`, asks the tracker whether a `main-red`
-issue is open, and fails if one is — naming it. On 2026-08-19 the canary
+decision. It runs on `pull_request`. Each run asks the tracker whether a
+`main-red` issue is open at that moment, and fails if one is — naming it. That
+answer is a snapshot, and the paragraph below is how it gets re-taken when
+`main` moves under a pull request that is finished and waiting.
+On 2026-08-19 the canary
 worked exactly as designed and it did not help: it filed its issue at 16:57:01,
 and four more PRs merged onto the non-compiling tree over the next 35 minutes,
 the first of them **twelve seconds later** (#3917). Once `main` is red every
@@ -340,24 +343,35 @@ required status checks: a throwaway PR went red and unmergeable while a
 hand-filed, `main-red`-labelled issue stood, and green again once
 `unblocks-main` landed on it.
 
-**A hold outlives the outage unless something clears it.** Branch protection
-reads the last check run for that name on that commit, and the hold fires on
-`pull_request` — so a pull request that is finished and waiting has no event
-left to correct it. On 2026-09-05 `main` broke, a repair landed, the canary
-closed the issue, and ten open pull requests stayed unmergeable on a check
-whose own question now answered the other way. A push to each branch clears
-it; the two moves a session reaches for first, an empty commit and
-close-and-reopen, are the two this repository forbids.
-`scripts/clear-main-red-holds.sh` is what clears them: it asks whether any
-`main-red` issue is still open, and if none is, re-runs the failed hold on
-every open pull request, which reports under the same name on the same commit.
-It has two callers because neither sees every recovery — `main-canary.yml`, on
-the run that closes the issue, since GitHub starts no workflow from an event
+**A hold goes stale in both directions unless something re-asks it.** Branch
+protection reads the last check run for that name on that commit, and the hold
+fires on `pull_request` — so a pull request that is finished and waiting has no
+event left to correct it, while `main` breaks and gets fixed underneath.
+
+The stale failure blocks work that should land. On 2026-09-05 `main` broke, a
+repair landed, the canary closed the issue, and ten open pull requests stayed
+unmergeable on a check whose own question now answered the other way. The stale
+pass is the dangerous one: `#5928`'s hold ran at 09:41, the `main-red` issue
+for that outage was filed at 10:07, and it merged onto the broken tree during
+the red window with that 26-minute-old green as its required check. Both are
+one bug — the hold is a point-in-time answer that branch protection reads as a
+standing one. A push to the branch fixes either; the two moves a session
+reaches for first, an empty commit and close-and-reopen, are the two this
+repository forbids.
+
+`scripts/refresh-main-red-holds.sh` re-asks for them. One tracker query decides
+what every hold should be saying — failing while a `main-red` issue is open,
+passing while none is — and it re-runs the hold on each open pull request whose
+last run says the other thing, which reports under the same name on the same
+commit. One sweep rather than two, because it is one question: a second script
+for the break direction is a second copy to drift. It has two callers because
+neither sees every transition — `main-canary.yml`, on the push run that files
+or closes the issue, since GitHub starts no workflow from an event
 `GITHUB_TOKEN` raised; and `main-red-clear.yml`, when a person closes the issue
 or takes the label off it. Both fail open, and running it twice re-runs nothing
-the first pass cleared. `make clear-main-red-holds` prints what a sweep would
-re-run without re-running it; `make main-red-hold-test` covers the clearing
-half beside the blocking one.
+the first pass already moved. `make refresh-main-red-holds` prints what a sweep
+would re-run without re-running it; `make main-red-hold-test` covers both
+directions beside the blocking one.
 
 **The same staleness reaches `dod-check`, one gate over.** That check reads the
 linked issue's checklist and fires on pull request events, so the object it
