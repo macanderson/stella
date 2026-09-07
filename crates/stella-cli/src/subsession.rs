@@ -16,10 +16,10 @@
 //! notification when it finishes (the `/inbox` flow), and — for task workers —
 //! the board task auto-completing on success.
 //!
-//! Scope (v1, documented rather than implied): workers run the raw engine
-//! step-loop with native tools only (no MCP set, no custom tools — an
-//! autonomous worker runs on the built-in surface alone), recall is skipped
-//! in favor of latency, and delegation is not recursive — a worker's own
+//! Scope (v1, written down rather than implied): workers run the raw engine
+//! step-loop with native tools only. There is no MCP set and there are no
+//! custom tools, so a worker runs on the built-in surface alone. Recall is
+//! skipped, to keep latency down. Delegation does not nest: a worker's own
 //! `task_assign` requests are reported on its lane instead of spawning.
 //!
 //! Skipping recall settles the mid-turn re-query here too: a worker that was
@@ -780,15 +780,16 @@ pub(crate) fn spawn(
 /// The work-journal key a lane's durability binds under.
 ///
 /// NOT the `{session}/{lane}` shape [`agent::tool_stack::policy_stack`]'s
-/// claim principal uses below — `WorkJournal::open`'s own contract is that
-/// `session` "must be filesystem- and ref-safe", and a `/` is exactly the one
-/// character that is ref-safe (nested ref paths are ordinary git) but NOT
-/// filesystem-safe: `index_file_path` builds the index path as
-/// `store_root.join(format!("{workspace_id}.{session}.index"))`, and a `/`
-/// embedded in `session` there is parsed as a path separator into a
-/// subdirectory nothing creates — so `record_checkpoint` fails, and
-/// `JournalCheckpointSink::persist`'s best-effort contract swallows that
-/// error silently.
+/// claim principal uses below. `WorkJournal::open`'s own contract is that
+/// `session` "must be filesystem- and ref-safe". A `/` is the one character
+/// that is ref-safe but not filesystem-safe. It is ref-safe because nested
+/// ref paths are ordinary git. It is not filesystem-safe because
+/// `index_file_path` builds the index path as
+/// `store_root.join(format!("{workspace_id}.{session}.index"))`. A `/` in
+/// `session` there reads as a path separator, into a subdirectory nothing
+/// creates. So `record_checkpoint` fails, and
+/// `JournalCheckpointSink::persist`'s best-effort contract eats that error
+/// with no word.
 ///
 /// The shape itself is [`stella_store::work_journal::lane`]'s, not this
 /// file's: retention has to know which keys a session owns before it can drop
