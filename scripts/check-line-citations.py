@@ -79,6 +79,13 @@ HEADER = """\
 
 
 def tracked_files(root: Path) -> list[str]:
+    """Every scanned path, each named once.
+
+    Deduplicated for the reason `check-prose.py`'s twin gives: a conflicted
+    path is listed once per stage while a merge is unresolved in the index,
+    so a count over it triples and this ratchet reports a number nobody can
+    act on.
+    """
     out = subprocess.run(
         ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
         cwd=root,
@@ -86,7 +93,7 @@ def tracked_files(root: Path) -> list[str]:
         text=True,
         check=True,
     ).stdout.split("\n")
-    keep = []
+    seen: dict[str, None] = {}
     for path in out:
         if not path or not path.endswith(SCANNED):
             continue
@@ -96,8 +103,8 @@ def tracked_files(root: Path) -> list[str]:
             continue
         if any(s in path for s in EXCLUDED_SUBSTRINGS):
             continue
-        keep.append(path)
-    return keep
+        seen[path] = None
+    return list(seen)
 
 
 def scan(root: Path, path: str) -> list[tuple[int, str]]:

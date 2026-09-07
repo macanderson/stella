@@ -259,9 +259,10 @@ confined to `website/**` is exactly a deck edit (#3573).
 
 A sixth, `main-canary.yml`, is the only one that runs **after** the merge, and
 it exists because some guards cannot be settled before one. A guard enforced
-against a *shared cell* — one file every PR of a shape must write, like
-`Cargo.lock` or `scripts/file-size-baseline.txt` — can be satisfied correctly by
-two branches that still compose into a broken tree once both land. No pre-merge
+against a *shared cell* — one thing every PR of a shape must write, like
+`Cargo.lock`, `scripts/file-size-baseline.txt` or the next free **ADR
+number** — can be satisfied correctly by two branches that still compose into
+a broken tree once both land. No pre-merge
 run can catch that: neither author's tree is wrong. So the canary re-asks the
 composition questions on `main` itself (push, plus a daily backstop for the
 breakage no commit caused, such as a yanked dependency), and reports by opening
@@ -270,6 +271,20 @@ that only ever files gets muted and is then worse than none (#1464 is what
 silent failure costs here). `make main-canary` runs the same check locally
 without filing anything; `scripts/main-canary.sh`'s header carries the full
 argument, including why it deliberately does not open a fix PR (#3332).
+
+The ADR number is the newest row there, and the only shared cell with no file
+to conflict on. `adr-numbering` is a gate step and a pull request's checkout is
+the merged tree, so it does ask the composed question — once. Nothing re-runs a
+green check when `main` moves, so the second branch to merge carries a verdict
+taken while the number was still free. 0027 was claimed by two open pull
+requests at once and 0030 by two more; 0030 showed up only as a git conflict in
+`docs/adr/README.md`, which two numbers sorting apart would not produce. The
+canary runs `adr-numbering` after the merge for that reason, and the guard's
+failure now names the next free number and every file writing the old one in
+prose — `check-doc-links` and `make line-citations` both read past a bare
+number, so 0031's renumber hunted seven of those by hand (`#5930`).
+`docs/adr/README.md` § "The number is a shared cell" carries the rest,
+including why id citations for ADRs are a stated non-goal today.
 
 It answers "is `main` **known broken**". A second step in the same workflow —
 `scripts/check-main-verified.sh` (`make main-verified`) — answers the question

@@ -75,6 +75,26 @@ TOML
   (cd "$dir" && git init -q && cargo generate-lockfile --offline >/dev/null 2>&1)
 }
 
+# ADR records under $1, one per `NNNN:slug` argument after it, each with the
+# index row `check-adr-numbering.py` requires. The canary's `adr-numbering`
+# row reads `<manifest-dir>/docs/adr`, and a fixture with no such directory
+# passes that row without evaluating anything -- so both the collision case
+# and its green control build one.
+make_adr_records() {
+  local dir="$1"
+  shift
+  local pair number slug
+  mkdir -p "$dir/docs/adr"
+  printf '# ADRs\n\n' >"$dir/docs/adr/README.md"
+  for pair in "$@"; do
+    number="${pair%%:*}"
+    slug="${pair#*:}"
+    printf '# ADR %s: %s\n' "$number" "$slug" >"$dir/docs/adr/$number-$slug.md"
+    printf '| [%s](%s-%s.md) | %s |\n' "$number" "$number" "$slug" "$slug" \
+      >>"$dir/docs/adr/README.md"
+  done
+}
+
 expect() {
   local name="$1" want_code="$2" needle="$3"
   shift 3
