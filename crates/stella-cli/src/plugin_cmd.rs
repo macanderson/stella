@@ -199,13 +199,32 @@ pub(crate) fn run_plugin(cmd: &PluginCmd, globals: &crate::cli::GlobalArgs) -> R
 ///
 /// Minted the way `self_driving_cmd::state::new_run_id` mints a run id — a
 /// timestamp plus a salt off the clock's sub-second remainder and the process
-/// id — so two sessions started in the same second are still distinguishable.
+/// id — plus a counter, which is what actually makes two sessions of one run
+/// distinct.
+///
+/// The clock cannot carry that on its own, and reading the salt as though it
+/// could is what broke: `SystemTime`'s resolution is the platform's rather
+/// than the nanosecond its type suggests, so two sessions opened back to back
+/// can sample the same `subsec_nanos`, and the mask keeps 16 bits, which
+/// repeat every 65536ns even where the clock is fine. One invocation opens
+/// sessions in a loop, so it draws from that space over and over — and
+/// `one_invocation_opens_a_session_for_each_sleep_the_driver_asks_for` failed
+/// on a run whose three sessions carried two ids.
+///
+/// So the counter holds uniqueness within the process and the clock is left
+/// the jobs it can do: `secs` to date the id, the pid-mixed salt to separate
+/// two processes that start inside one second.
 pub(crate) fn session_id() -> String {
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static OPENED: AtomicU32 = AtomicU32::new(0);
+
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     let salt = (now.subsec_nanos() ^ std::process::id()) & 0xffff;
-    format!("drive-{}-{salt:04x}", now.as_secs())
+    let opened = OPENED.fetch_add(1, Ordering::Relaxed);
+    format!("drive-{}-{salt:04x}-{opened:04x}", now.as_secs())
 }
 
 /// `stella plugin drive <name>` — drive an installed plugin until it stops.

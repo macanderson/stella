@@ -1386,6 +1386,26 @@ fn one_invocation_opens_a_session_for_each_sleep_the_driver_asks_for() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// The id above has to be unique without the clock's help.
+///
+/// `one_invocation_opens_a_session_for_each_sleep_the_driver_asks_for` asks
+/// the same question through a whole driver run, which makes it a costly place
+/// to learn the answer: it opens three sessions, so it only fails when a
+/// collision lands among three draws, and it did — three sessions, two ids, on
+/// a run that was measuring something else.
+///
+/// This asks it directly, and over enough draws that the old salt cannot pass.
+/// 4096 ids from a 16-bit space collide with probability that rounds to one,
+/// and every draw inside a second shares the `secs` field, so nothing else in
+/// the id separates them.
+#[test]
+fn every_session_id_a_process_mints_is_distinct() {
+    let minted: std::collections::BTreeSet<String> =
+        (0..4096).map(|_| crate::plugin_cmd::session_id()).collect();
+
+    assert_eq!(minted.len(), 4096, "a process must not mint one id twice");
+}
+
 // A plugin is a package: the tools, skills and records it ships (#3380). Those
 // tests live in `contributions.rs`, split out when this file crossed the
 // 1500-line ceiling (#4440).
