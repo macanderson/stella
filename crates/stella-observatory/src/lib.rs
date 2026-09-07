@@ -46,6 +46,7 @@ mod accept;
 mod codegraph;
 mod context_db;
 mod context_diff;
+mod context_records;
 mod db;
 mod fsview;
 mod global;
@@ -88,6 +89,10 @@ const WORDMARK_LIGHT_SVG: &str = include_str!("assets/wordmark-light.svg");
 /// are reviewable apart from the page, loaded by `index.html` from `/assets/`
 /// (same origin, which `script-src 'self'` already permits).
 const SELF_DRIVING_JS: &str = include_str!("assets/self_driving.js");
+/// The context-records drill-down (list, record page, source view) — its own
+/// script for the reason `self_driving.js` is one: three views are a page of
+/// their own, and `index.html` is already the largest file in the crate.
+const RECORDS_JS: &str = include_str!("assets/records.js");
 
 /// How long a peer has to deliver a complete request head.
 ///
@@ -328,6 +333,13 @@ pub fn respond_with(
                 status: "200 OK",
                 content_type: "text/javascript; charset=utf-8",
                 body: SELF_DRIVING_JS.as_bytes().to_vec(),
+            };
+        }
+        "/assets/records.js" => {
+            return Response {
+                status: "200 OK",
+                content_type: "text/javascript; charset=utf-8",
+                body: RECORDS_JS.as_bytes().to_vec(),
             };
         }
         // The rendered transcript's stylesheet, exactly as `stella-transcript`
@@ -581,6 +593,20 @@ pub fn respond_with(
         // straight out of `.stella/private/context.db` — the one store the
         // dashboard never looked at.
         "/api/context-lifecycle" => context_db::self_improvement(root),
+        // The context-records drill-down: what that lifecycle's selection
+        // health is *about*. Every record that steers the workspace with its
+        // standing, and one record in full — uses, verdicts, the turns it was
+        // rendered into, and its source. Read-only like everything else: the
+        // source view names the command that changes a record, and runs
+        // nothing.
+        "/api/context-records" => context_records::list(root, plugins),
+        "/api/context-record" => match query_param(query, "id") {
+            Some(id) if context_records::valid_id(&id) => {
+                context_records::detail(root, plugins, &id)
+            }
+            Some(_) => return Response::error("400 Bad Request", "malformed ?id=<record id>"),
+            None => return Response::error("400 Bad Request", "missing ?id=<record id>"),
+        },
         // self-driving is machine-scoped, not workspace-scoped: the list answers
         // "what is my agent doing anywhere", and the workspace root only marks
         // which loop belongs to the project this tab is pointed at.

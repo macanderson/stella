@@ -80,6 +80,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use stella_protocol::issue::Issue;
 
@@ -419,6 +420,40 @@ pub(super) fn verify_locally(dir: &Path, command: &str, timeout_secs: u64) -> Re
     }
 }
 
+/// The wall-clock bound a self-driving turn gets when nobody named one.
+///
+/// The manifest at `plugins/stella-selfdriving/plugin.toml` bounds one whole
+/// driver session at 3600s. Before this constant, that was the only bound a
+/// stuck turn ever met: `run_turn` waited on its child with no bound of its
+/// own. A driver session's own timeout can fire while the turn is still
+/// running, and it kills only the driver's process
+/// (`SubprocessDriver`'s `GroupKillGuard` in
+/// `crates/stella-runtime/src/wrapper/driver_subprocess.rs`). It cannot
+/// reach the child `stella run`, or the worktree that child is writing to.
+/// So the worktree stayed behind, and the next attempt at the same issue hit
+/// it.
+///
+/// This constant closes that gap. It sits under 3600s, with 300s left for
+/// the rest of one driver session: cutting the worktree, seeding the code
+/// graph, reading the tree diff, and starting and stopping the process.
+/// `the_manifests_session_ceiling_leaves_this_bound_a_real_margin` checks
+/// both numbers against each other, so a change to either one that eats the
+/// margin fails the gate.
+pub(super) const DEFAULT_WORK_TURN_TIMEOUT_SECS: u64 = 3300;
+
+/// `flags`, with [`DEFAULT_WORK_TURN_TIMEOUT_SECS`] armed when the operator
+/// named no `--turn-timeout` of their own.
+///
+/// An operator's own bound is never widened or narrowed — only an absent one
+/// is filled in, the same "only what was not already set" rule
+/// [`TurnFlags::push_onto`] applies to every other flag.
+fn bounded(mut flags: TurnFlags) -> TurnFlags {
+    if flags.turn_timeout.is_none() {
+        flags.turn_timeout = Some(Duration::from_secs(DEFAULT_WORK_TURN_TIMEOUT_SECS));
+    }
+    flags
+}
+
 /// Spawn `stella run` in `dir` with `prompt` on stdin.
 ///
 /// Inherits stderr so a human watching a foreground cycle sees the turn, and
@@ -432,14 +467,17 @@ pub(super) fn verify_locally(dir: &Path, command: &str, timeout_secs: u64) -> Re
 /// child's ceiling to what is left and folding what it spent back in are two
 /// halves of one fact (#4353). Every child turn this loop runs — triage, work,
 /// retry — is spawned here, so this is the one place both halves can be paid,
-/// and a caller cannot pay one without the other.
+/// and a caller cannot pay one without the other. [`bounded`] is applied here
+/// rather than inside [`RunBudget`], so a `--turn-timeout` a human typed by
+/// hand for an ordinary `stella run` is never touched — only this loop's own
+/// spawned turns get a default they did not ask for.
 pub(super) fn run_turn(
     dir: &Path,
     state_root: &Path,
     prompt: &str,
     budget: &mut RunBudget,
 ) -> Result<String, String> {
-    let flags = budget.next_turn_flags().map_err(|out| out.to_string())?;
+    let flags = bounded(budget.next_turn_flags().map_err(|out| out.to_string())?);
     let exe = std::env::current_exe()
         .map_err(|error| format!("cannot resolve this binary to run the turn: {error}"))?;
 
@@ -1122,6 +1160,69 @@ mod tests {
             args,
             vec!["run", "--output-format", "json"],
             "an untouched invocation must spawn exactly the turn it always did"
+        );
+    }
+
+    /// **Witness.** Before this fix, a turn with no `--turn-timeout` had no
+    /// wall-clock bound at all — the same gap
+    /// [`an_unset_session_flag_is_not_forwarded`] just proved for every other
+    /// flag. `run_turn` waited on its child with no bound of its own, so a
+    /// stuck turn could outlive the driver session's own 3600s bound, and
+    /// its checkout stayed behind. [`bounded`] closes the gap: a turn this
+    /// loop starts always carries a bound, even when the operator set none.
+    #[test]
+    fn a_turn_with_no_operator_bound_still_gets_one_before_it_is_spawned() {
+        let args = turn_args(&bounded(TurnFlags::default()));
+
+        assert!(
+            args.windows(2).any(|pair| pair[0] == "--turn-timeout"
+                && pair[1] == DEFAULT_WORK_TURN_TIMEOUT_SECS.to_string()),
+            "an unbounded turn can wedge the whole driver session and orphan \
+             its checkout: {args:?}"
+        );
+    }
+
+    /// [`bounded`] fills a gap; it does not override a choice. An operator's
+    /// own `--turn-timeout` — however short or long — reaches the turn
+    /// exactly as typed.
+    #[test]
+    fn an_operators_own_turn_timeout_is_never_overridden() {
+        let chosen = Duration::from_secs(120);
+        let flags = bounded(TurnFlags {
+            turn_timeout: Some(chosen),
+            ..TurnFlags::default()
+        });
+        assert_eq!(flags.turn_timeout, Some(chosen));
+    }
+
+    /// **The margin, held to the manifest.** `bounded`'s doc comment claims
+    /// this constant leaves `plugins/stella-selfdriving/plugin.toml`'s
+    /// `[driver.process] timeout_secs` a real 300s margin for the rest of one
+    /// driver session — the worktree cut, the code-graph seed, the tree diff,
+    /// process start/stop. Read the shipped manifest rather than repeating its
+    /// number here, so the two cannot drift apart silently: a manifest edit
+    /// that erases the margin, in either direction, fails this rather than a
+    /// production session discovering it.
+    #[test]
+    fn the_manifests_session_ceiling_leaves_this_bound_a_real_margin() {
+        const MANIFEST: &str = include_str!("../../../../plugins/stella-selfdriving/plugin.toml");
+        const SESSION_OVERHEAD_MARGIN_SECS: u64 = 300;
+
+        let manifest = stella_plugin::PluginManifest::from_toml_str(MANIFEST)
+            .expect("the shipped self-driving manifest must parse");
+        let session_timeout_secs = manifest
+            .driver
+            .as_ref()
+            .and_then(|grant| grant.process.as_ref())
+            .expect("the shipped manifest declares a [driver.process] block")
+            .timeout_secs;
+
+        assert_eq!(
+            session_timeout_secs,
+            DEFAULT_WORK_TURN_TIMEOUT_SECS + SESSION_OVERHEAD_MARGIN_SECS,
+            "the manifest's session ceiling must be exactly this loop's own \
+             turn bound plus the stated overhead margin, so `timeout_secs` \
+             stays a derived number rather than an independent guess"
         );
     }
 

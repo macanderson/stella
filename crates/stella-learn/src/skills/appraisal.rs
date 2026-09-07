@@ -51,6 +51,15 @@
 //! recommends is removal from *selection*, with the file and a tombstone left
 //! behind, so restore works. The caller owns both halves; nothing here does
 //! I/O.
+//!
+//! # The kind rides along, the names do not — yet
+//!
+//! [`SkillAppraisal`] now carries [`ArtifactKind`] beside the id, the same
+//! key [`crate::ledger::ArtifactTrial`] uses. A memory and a skill sharing an
+//! id appraise as two rows, not one. The types keep their old names for now.
+//! Renaming `SkillAppraisal` and its siblings is a second, mechanical pass
+//! across `stella-learn` and `stella-cli`. Doing the re-key first lets a
+//! reviewer read that change on its own.
 
 use serde::{Deserialize, Serialize};
 
@@ -59,6 +68,7 @@ use crate::comparison::{
     ArmTrials, ComparisonConfig, ComparisonReport, ComparisonVerdict, FeatureCounts, Guard,
     LiftEvidence, Metric, TrialRecord, compare,
 };
+use crate::ledger::{ArtifactKind, skill_kind};
 use crate::self_tuning::{KeepReason, RewardWeights, SelectionConfig, TaskOutcome};
 
 /// The arm holding turns where the skill was injected.
@@ -172,7 +182,16 @@ impl SkillVerdict {
 /// One skill's appraisal: the verdict, and the evidence behind it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SkillAppraisal {
-    /// The skill's name, as it appears in the frontmatter and the filename.
+    /// Which surface [`Self::skill`] names.
+    ///
+    /// An appraisal with no kind reads as [`ArtifactKind::Skill`]. A build
+    /// that recorded no kind recorded only skills, the same default
+    /// [`crate::ledger::ArtifactTrial::kind`] reads an old row under. So a
+    /// workspace's old appraisal history still reads correctly.
+    #[serde(default = "skill_kind")]
+    pub kind: ArtifactKind,
+    /// The artifact's stable id: a skill's name, a memory id, a record
+    /// handle. See the module docs on why the field keeps the name it has.
     pub skill: String,
     /// What the evidence says.
     pub verdict: SkillVerdict,
@@ -187,17 +206,26 @@ pub struct SkillAppraisal {
     pub harm: Option<LiftEvidence>,
 }
 
-/// Appraise one skill from its trials.
+/// Appraise one artifact from its trials.
 ///
 /// Runs the comparison twice with the baseline swapped. That is not
 /// redundancy: [`crate::self_tuning::select_winner`] answers "did the leading
 /// arm confidently beat the named baseline", which is a one-directional
 /// question, and both directions are findings here. The forward run asks
-/// whether the skill helps; the reverse asks whether removing it does.
+/// whether the artifact helps; the reverse asks whether removing it does.
+///
+/// `kind` names which surface `skill` is an id on — it rides straight onto
+/// the returned [`SkillAppraisal`], so a memory and a skill sharing an id
+/// appraise as two rows.
 ///
 /// Total: no trials, one-sided trials, and non-finite outcomes all resolve to
 /// a stated [`SkillVerdict::Insufficient`] rather than a panic.
-pub fn appraise(skill: &str, trials: &[SkillTrial], config: &AppraisalConfig) -> SkillAppraisal {
+pub fn appraise(
+    kind: ArtifactKind,
+    skill: &str,
+    trials: &[SkillTrial],
+    config: &AppraisalConfig,
+) -> SkillAppraisal {
     let arms = arms_from(trials);
     let report = compare(&arms, &forward_config(config));
 
@@ -209,17 +237,18 @@ pub fn appraise(skill: &str, trials: &[SkillTrial], config: &AppraisalConfig) ->
             lift: evidence.promotion.lift,
         },
         ComparisonVerdict::NoWinner { reason } => {
-            // The skill did not confidently help. Ask the other question
+            // The artifact did not confidently help. Ask the other question
             // before concluding anything: not-helping and actively-harming are
             // different findings with different consequences.
             let reverse = compare(&arms, &reverse_config(config));
             return match reverse.verdict {
                 // Guards are not applied in reverse. A guard exists to refuse a
-                // *promotion* whose price is too high; a skill that is making
-                // turns worse does not get to keep its place because removing
-                // it would also cost tokens.
+                // *promotion* whose price is too high; an artifact that is
+                // making turns worse does not get to keep its place because
+                // removing it would also cost tokens.
                 ComparisonVerdict::Winner(evidence) | ComparisonVerdict::GuardBlocked(evidence) => {
                     SkillAppraisal {
+                        kind,
                         skill: skill.to_string(),
                         verdict: SkillVerdict::Harms {
                             lift: evidence.promotion.lift,
@@ -229,6 +258,7 @@ pub fn appraise(skill: &str, trials: &[SkillTrial], config: &AppraisalConfig) ->
                     }
                 }
                 ComparisonVerdict::NoWinner { .. } => SkillAppraisal {
+                    kind,
                     skill: skill.to_string(),
                     verdict: inert_or_insufficient(&report, reason.clone(), config),
                     report,
@@ -239,6 +269,7 @@ pub fn appraise(skill: &str, trials: &[SkillTrial], config: &AppraisalConfig) ->
     };
 
     SkillAppraisal {
+        kind,
         skill: skill.to_string(),
         verdict,
         report,

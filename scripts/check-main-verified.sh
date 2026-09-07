@@ -3,6 +3,7 @@
 # Has every recent commit on `main` actually been verified? (#5027)
 #
 #   scripts/check-main-verified.sh [--limit N] [--stuck-minutes M]
+#   scripts/check-main-verified.sh --announce   # ...and open/refresh/close an issue
 #
 # ── The gap this closes ──────────────────────────────────────────────────────
 #
@@ -44,6 +45,26 @@
 # is a monitor, and a monitor that can itself block a merge is worse than the
 # gap it watches — the same argument `main-red-claim.sh`'s header makes about
 # a claim check. Every unknown is loud, never silent.
+#
+# ── `--announce` reaches a person, on codeql-canary.sh's shape ───────────────
+#
+# Before this, `main-canary.yml` ran this script and let it print into a
+# workflow log and exit 1. The step above it, `main-canary.sh --announce`,
+# opens a tracking issue on the same run. This one printed and stopped. Twice
+# observed on a `chore(release): sync versions` commit, with `gh issue list
+# --label main-red --state open` empty both days: the finding never reached
+# anyone.
+#
+# `--announce` is the same shape `codeql-canary.sh` already uses: one open
+# issue found by label, a comment while the condition recurs, closed on the
+# next run that answers clean. Its label is its own (`main-unverified`, not
+# `main-red`). "Nothing verified this commit" is a different state from "a
+# check said no about this commit." The header above already draws that line
+# for the console output, and the label carries the same line.
+# `main-red-hold.yml` reads only `main-red`, so an unverified-main issue never
+# arms it; blocking every open PR on an absence of information would fight the
+# fail-open discipline this whole file argues for. AGENTS.md's canary section
+# names which of `main-canary.yml`'s two steps files under which label.
 
 set -uo pipefail
 
@@ -55,6 +76,10 @@ stuck_minutes=45
 fixture_runs=""
 fixture_commits=""
 use_fixture=0
+announce=0
+dry_run=0
+label="main-unverified"
+fixture_open_issue=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -64,6 +89,34 @@ while [ $# -gt 0 ]; do
     ;;
   --stuck-minutes)
     stuck_minutes="${2:-}"
+    shift 2
+    ;;
+  --announce)
+    announce=1
+    shift
+    ;;
+  --dry-run)
+    dry_run=1
+    shift
+    ;;
+  --label)
+    [ $# -ge 2 ] || {
+      echo "check-main-verified: --label needs a value" >&2
+      exit 2
+    }
+    label="$2"
+    shift 2
+    ;;
+  # Test-only: stand in for the `gh issue list` lookup below.
+  # main-canary.sh and codeql-canary.sh use the same seam. The recovery
+  # branch only runs when an issue is already open. Without this seam it
+  # could never be tested offline.
+  --fixture-open-issue)
+    [ $# -ge 2 ] || {
+      echo "check-main-verified: --fixture-open-issue needs a number" >&2
+      exit 2
+    }
+    fixture_open_issue="$2"
     shift 2
     ;;
   # Test-only, and paired: a fixture that supplied runs but took real commits
@@ -102,6 +155,13 @@ esac
 
 if [ "$use_fixture" -eq 1 ] && { [ -z "$fixture_runs" ] && [ -z "$fixture_commits" ]; }; then
   echo "check-main-verified: --fixture-runs and --fixture-commits go together" >&2
+  exit 2
+fi
+
+# `--dry-run` without `--announce` would be a no-op that still reads as a
+# configured monitor — the same rule main-canary.sh and codeql-canary.sh hold.
+if [ "$dry_run" -eq 1 ] && [ "$announce" -eq 0 ]; then
+  echo "check-main-verified: --dry-run only means something with --announce" >&2
   exit 2
 fi
 
@@ -215,7 +275,124 @@ done <<EOF
 $commits
 EOF
 
-if [ -z "$unverified" ]; then
+green=1
+[ -n "$unverified" ] && green=0
+
+# ── Announcing ───────────────────────────────────────────────────────────────
+#
+# Same shape as main-canary.sh and codeql-canary.sh: one open issue found by
+# label, a comment on every run that still cannot answer, closed on the next
+# run that can. See the header for why this is its own label rather than
+# `main-red`.
+
+gh_run() {
+  if [ "$dry_run" -eq 1 ]; then
+    printf 'check-main-verified: [dry-run] gh %s\n' "$*" || true
+    return 0
+  fi
+  # Best-effort. The verdict is already decided above. A gh outage while
+  # announcing must not turn it into a script failure — the same rule
+  # main-canary.sh's `gh_run` follows.
+  if ! gh "$@"; then
+    printf 'check-main-verified: WARN — "gh %s" failed; the verdict is unaffected\n' "$*" >&2 || true
+  fi
+}
+
+open_issue=""
+if [ -n "$fixture_open_issue" ]; then
+  open_issue="$fixture_open_issue"
+elif [ "$announce" -eq 1 ] && [ "$dry_run" -eq 0 ] && command -v gh >/dev/null 2>&1; then
+  open_issue="$(gh issue list --label "$label" --state open --limit 1 \
+    --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+fi
+
+if [ "$announce" -eq 1 ]; then
+  if [ "$green" -eq 1 ]; then
+    if [ -n "$open_issue" ]; then
+      body="Every commit checked on this run has a completed \`ci\` run again.
+Closing automatically — reopen if you disagree.
+
+**Definition of done**
+
+- [x] Every recent commit on \`main\` has a completed \`ci\` run.
+
+<!-- main-verified -->"
+      gh_run issue comment "$open_issue" --body "$body"
+      gh_run issue close "$open_issue" \
+        --reason completed \
+        --comment "Closed by check-main-verified.sh — every recent commit is verified again."
+      printf 'check-main-verified: recovered — closed #%s\n' "$open_issue" || true
+    else
+      printf 'check-main-verified: green, nothing open to close\n' || true
+    fi
+  else
+    body="\`main-canary.yml\`'s \`check-main-verified.sh\` step found commit(s) on
+\`main\` that **nothing has verified** — as distinct from a commit a check said
+no about, which \`main-canary.sh\`'s own issue already owns.
+
+\`\`\`
+${unverified}\`\`\`
+
+This is NOT \"main is red\". A failing run is a verified commit and the canary
+owns that. These commits have no answer at all, which every other mechanism
+here reads as green: the canary files only when its job runs and fails, the
+red-main hold passes when no issue is open, and \`gh run list\` shows no row
+for a run that was never created.
+
+### How to fix
+
+Re-dispatch the missing runs and let them finish before merging onto this
+tree:
+
+\`\`\`sh
+gh workflow run ci.yml --ref main
+\`\`\`
+
+An Actions incident is one cause. There the runs start on their own once
+capacity returns, and nothing was checking, which is the part this exists to
+fix. A push made with the token a workflow run holds is the other cause, and
+the release version write-back is one of those: that push raised no event at
+all, so no run was ever created and none is coming. Nothing will start on its
+own. Ask for it:
+
+\`\`\`sh
+./scripts/dispatch-main-verification.sh
+\`\`\`
+
+### Definition of done
+
+- [ ] Every recent commit on \`main\` has a completed \`ci\` run.
+
+This script closes the issue itself on its next run that can answer clean, so
+a box nobody ticks costs the issue nothing.
+
+<!-- main-verified -->"
+
+    if [ -n "$open_issue" ]; then
+      gh_run issue comment "$open_issue" --body "Still unanswered on this run:
+
+\`\`\`
+${unverified}\`\`\`"
+      printf 'check-main-verified: still unverified — commented on #%s\n' "$open_issue" || true
+    else
+      # `gh issue create --label` fails outright on a label that does not
+      # exist, which would break this at the exact moment it has something to
+      # say. `--force` makes this idempotent, so it is a no-op on every run
+      # after the first.
+      gh_run label create "$label" \
+        --color B60205 \
+        --description "main carries a commit nothing verified — filed by check-main-verified.sh" \
+        --force
+      gh_run issue create \
+        --title "main carries a commit nothing verified" \
+        --label "$label" \
+        --body "$body"
+      printf 'check-main-verified: opened an issue\n' || true
+    fi
+  fi
+fi
+
+if [ "$green" -eq 1 ]; then
   echo "check-main-verified: OK — each of the last $count commit(s) on main has a completed ci run."
   exit 0
 fi
