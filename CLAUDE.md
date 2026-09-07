@@ -181,10 +181,18 @@
     during the split is still new prose: it sits in neither line set, so it
     lowers the share and is judged as new past the threshold.
 
+    **`--update` writes that carry down, and has to.** Forgiving it at check
+    time alone left the entry out of the baseline, and `--absolute` skips the
+    base tree by design — so the post-merge canary held the carried sentences
+    to the new-file ceiling and reddened `main` on prose nobody wrote
+    (`#6408`). Run `make prose-update` when you split a file. A source with no
+    entry of its own passes nothing on, because it has no allowance to give.
+
     **`make prose-update` carries; `make prose-retighten` reclaims.** All
     three ratchets take that split. `--update` writes only the entries a move
-    re-based and leaves every other number where it stands, so a branch
-    cannot lower the ceiling of a file it never opened. Reclaiming the slack
+    re-based — or, for the count and grade, a file split — and leaves every
+    other number where it stands, so a
+    branch cannot lower the ceiling of a file it never opened. Reclaiming the slack
     a rewrite earns is a pass of its own, and a PR of its own — safe exactly
     when nothing is blocked on it. An unconditional reclaim wrote `AGENTS.md`
     a lower grade ceiling from a branch whose diff did not contain that file,
@@ -200,7 +208,11 @@
     mean lines, so a new one cannot arrive carrying essays. A move is the
     one exception. When a file changes crates, `--update` re-bases both
     units on the old lengths of the files they hold now, and writes those
-    entries. Both means shift, and no one wrote a word. The plain check reads
+    entries. Both means shift, and no one wrote a word. A **file split needs
+    no exception here**, unlike the count and grade: the mean is header lines
+    over file count, so a split that moves header text lowers it. It rises
+    only when a split adds lines, and a header written during a split is new
+    prose. The plain check reads
     the same way, over the files a crate holds now, so a move out of a crate
     sitting at its ceiling costs the next author nothing.
 - **AGENTS.md is the orientation document.** Commands, architectural

@@ -1505,6 +1505,7 @@ crates/stella-tui/src/deck_ui/voice_inbound.rs 8.92
 crates/stella-tui/src/diff.rs 10.92
 crates/stella-tui/src/envelope.rs 8.73
 crates/stella-tui/src/envelope/engine_config.rs 10.20
+crates/stella-tui/src/envelope/inbound.rs 8.64
 crates/stella-tui/src/envelope/inspect.rs 10.57
 crates/stella-tui/src/envelope/issues.rs 7.08
 crates/stella-tui/src/envelope/mcp.rs 8.82
@@ -1512,6 +1513,7 @@ crates/stella-tui/src/envelope/roles.rs 11.52
 crates/stella-tui/src/envelope/skills.rs 7.89
 crates/stella-tui/src/envelope/steering.rs 11.88
 crates/stella-tui/src/envelope/tool_policy.rs 9.03
+crates/stella-tui/src/envelope/workspace_input.rs 8.55
 crates/stella-tui/src/fleet_dashboard.rs 7.68
 crates/stella-tui/src/graph.rs 8.45
 crates/stella-tui/src/input.rs 8.33

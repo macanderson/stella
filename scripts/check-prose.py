@@ -42,6 +42,13 @@ it, splitting a module means rewording prose nobody was editing — #5420 hit
 this and had to hand-edit the baseline, which is the one thing this file is
 supposed to make unnecessary.
 
+A split is the move git cannot name, and `--update` carries it too, through
+the `split_sources` pairing the plain check uses. Carrying it at check time
+alone was not enough: the entry never reached the baseline, so the post-merge
+`--absolute` run — which skips the base tree by design — charged the carried
+sentences to the new-file ceiling and reddened `main` (#6408). A source with
+no entry hands on nothing, having no allowance of its own to give.
+
 Adding a pattern is the one case a count legitimately goes up, and
 `--adopt=<name>` is the only door: it records that pattern's pre-existing
 hits and refuses to touch any other pattern's numbers, or to run twice for
@@ -73,10 +80,11 @@ and compose into a red `main`. Two doors close that, mirroring
   reading would forgive the thing it exists to catch. A file the base tree
   does not have inherits nothing, so a first-time offender still fails.
 - `--update` alone leaves every count, grade and unit ceiling where it
-  stands, except for an entry a file move re-based: a moved file's count and
-  grade follow it to its new path, and a unit a move took a header out of or
-  into is re-based against the same files' lengths, because a move changes a
-  number with nobody having written a word. Only `--update --retighten`
+  stands, except for an entry a file move or a split re-based: a moved file's
+  count and grade follow it to its new path, a split's new file takes the
+  ceiling of the file it came out of, and a unit a move took a header out of
+  or into is re-based against the same files' lengths, because a move changes
+  a number with nobody having written a word. Only `--update --retighten`
   lowers every ceiling to its current value, as a deliberate,
   separately-landed pass. Retightening on every `--update` run is what put
   every unit at exactly its ceiling with zero headroom, and it also let a
@@ -1116,12 +1124,37 @@ def main() -> int:
             )
             for old, new in carried:
                 print(f"check-prose: carried {old} -> {new}")
+        # The split half of that carry, and the reason the module header gives:
+        # forgiving it at check time alone kept the entry out of the baseline,
+        # and `--absolute` then charged the carried prose to the new-file
+        # ceiling (#6408). A rename remaps the key because the old path is
+        # gone; a split looks the source up, because the source is still there.
+        split_from = split_sources(root, resolve_base_commit(root, absolute=False))
+        for new, old in sorted(split_from.items()):
+            print(f"check-prose: {new} carries the ceiling of {old} (split)")
         # A pair absent from the baseline is held to zero, so `.get(pair, 0)`
         # is what makes --update refuse to grandfather a first-time offender.
+        # A split falls back to its source's allowance for that pattern, capped
+        # by the same `min`, so it can still only lower a count.
         retighten = "--retighten" in flagset
         moved_in = set(moved.values())
+        carried_in = moved_in | set(split_from)
+
+        def pair_ceiling(pair: tuple[str, str]) -> int:
+            if pair in baseline:
+                return baseline[pair]
+            source = split_from.get(pair[0])
+            return baseline.get((source, pair[1]), 0) if source else 0
+
+        def grade_ceiling(path: str) -> int:
+            if path in grade_baseline:
+                return grade_baseline[path]
+            source = split_from.get(path)
+            if source is not None and source in grade_baseline:
+                return grade_baseline[source]
+            return NEW_FILE_GRADE
         if retighten:
-            merged = {p: min(n, baseline.get(p, 0)) for p, n in per_pair.items()}
+            merged = {p: min(n, pair_ceiling(p)) for p, n in per_pair.items()}
         else:
             # Every entry stays where it stands, apart from one a move carried.
             # A global reclaim here lowers the ceiling of files the branch never
@@ -1130,12 +1163,12 @@ def main() -> int:
             # itself wrote (`#6274`). `--retighten` is the deliberate pass.
             merged = dict(baseline)
             for pair, n in per_pair.items():
-                if pair[0] in moved_in:
-                    merged[pair] = min(n, baseline.get(pair, 0))
+                if pair[0] in carried_in:
+                    merged[pair] = min(n, pair_ceiling(pair))
         raised = {
-            p: (baseline.get(p, 0), n)
+            p: (pair_ceiling(p), n)
             for p, n in per_pair.items()
-            if n > baseline.get(p, 0)
+            if n > pair_ceiling(p)
         }
         if raised:
             print(
@@ -1159,6 +1192,10 @@ def main() -> int:
         # its own headers the first time anyone runs --update. A unit a move
         # touched is judged against the same files' lengths at HEAD instead --
         # see `base_tracked_paths` for why a set change is not a prose change.
+        # Density takes a move and not a split, by arithmetic rather than
+        # omission: the mean is header lines over file count, so a split that
+        # moves header text lowers it. It rises only when a split ADDS lines,
+        # and a header written during a split is new prose.
         rebased = {
             unit: density_at_commit(
                 root,
@@ -1200,9 +1237,9 @@ def main() -> int:
                 moved.get(path, path): n for path, n in grade_baseline.items()
             }
         grade_raised = {
-            path: (grade_baseline.get(path, NEW_FILE_GRADE), grade)
+            path: (grade_ceiling(path), grade)
             for path, (grade, _) in per_grade.items()
-            if grade > grade_baseline.get(path, NEW_FILE_GRADE)
+            if grade > grade_ceiling(path)
         }
         if grade_raised:
             print(
@@ -1227,16 +1264,14 @@ def main() -> int:
         # failed the merge commit on three sentences its author never opened.
         if retighten:
             merged_grades = {
-                path: min(grade, grade_baseline.get(path, NEW_FILE_GRADE))
+                path: min(grade, grade_ceiling(path))
                 for path, (grade, _) in per_grade.items()
             }
         else:
             merged_grades = dict(grade_baseline)
             for path, (grade, _) in per_grade.items():
-                if path in moved_in:
-                    merged_grades[path] = min(
-                        grade, grade_baseline.get(path, NEW_FILE_GRADE)
-                    )
+                if path in carried_in:
+                    merged_grades[path] = min(grade, grade_ceiling(path))
         write_grade_baseline(grade_path, merged_grades)
         if retighten:
             # Pairs that reached zero drop out entirely; the ratchet retightens.
