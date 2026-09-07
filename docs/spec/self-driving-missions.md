@@ -25,7 +25,7 @@ manifest differently, this one wins (§11).
 ## 1. The gap this closes
 
 Today's self-driving loop is a stewardship engine: fix a batch, audit, file,
-bench, ship, repeat (`crates/stella-core/src/self_driving.rs`). It is
+bench, ship, repeat (the `stella-autonomy` crate). It is
 deliberately never-terminating and has no destination — "no defects" is a
 statement about a lens, not the code. `doc:self-driving-foundry` adds the
 destination for one hard-coded case: Stella improving Stella, scored by
@@ -361,7 +361,7 @@ Measurement is a port, not a concretion (AGENTS.md #1). The pure plane sees
 only its output:
 
 ```rust
-// stella-core/src/self_driving/mission.rs — types only; the trait's
+// stella-autonomy/src/mission.rs — types only; the trait's
 // implementations live with the I/O in stella-cli.
 pub struct Measurement {
     pub twin: TwinId,
@@ -586,7 +586,7 @@ impact" cuts code, not evidence.
 ### 9.1 Two reports, one fold
 
 Both are pure functions of (manifest, ledger) in
-`stella-core/src/self_driving/mission.rs`, rendered by `status`, journaled at
+`stella-autonomy/src/mission.rs`, rendered by `status`, journaled at
 GATE, and byte-identical however many times they are recomputed — the same
 projection discipline as the rest of the plane, with the same rule: the
 ledger is ground truth and the report is a view of it.
@@ -711,12 +711,14 @@ Append-only, per that list's own rule.
 Placement follows the house split (AGENTS.md #1 and #2), matching how
 foundry placed the campaign machinery:
 
-- **`stella-core/src/self_driving/mission.rs`** — pure: manifest types and
+- **`stella-autonomy/src/mission.rs`** — pure: manifest types and
   validation (dimensions, budget axes, probe/playbook shapes, declared-metric
   parity), `Measurement`/verdict types, the improvement-witness check, the
-  allocator, the report folds. Serde round-trip tests for every type that
-  crosses the core/CLI boundary (AGENTS.md #4); property tests beside the
-  existing `self_driving` ones.
+  allocator, the report folds. It sits beside the campaign fold, out of
+  `stella-core`, for the reason `doc:self-driving-foundry` §3 gives: the
+  engine's step path never reaches it. Serde round-trip tests for every type
+  that crosses into `stella-cli` (AGENTS.md #4); property tests beside the
+  crate's existing ones.
 - **`stella-cli/src/self_driving_cmd/mission.rs`** — I/O: manifest load,
   evaluator adapters (`arenabench` shell-out, `command`), probe execution,
   tamper-set computation, ledger append.
