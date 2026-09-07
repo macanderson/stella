@@ -109,12 +109,64 @@ want "a run queued for hours with no runner is reported" expect-fail \
   "$A queued none $(long_ago)" \
   "no runner is coming"
 
-# ...and a run queued for a moment is NOT. Without this the guard fires on
-# every merge in the ninety seconds before a runner picks it up, which is how a
-# monitor earns a mute filter.
-want "a run queued a moment ago is not reported" expect-pass \
+# ── P: queued inside the threshold — the third state ─────────────────────────
+#
+# A run that has not concluded is not a verdict. Folding one into `verified`
+# for the whole 45-minute window let the script print "each of the last N
+# commits on main has a completed ci run" over commits that had no completed
+# run — a monitor asserting what it had not established.
+#
+# It still exits 0. Firing on every merge in the ninety seconds before a runner
+# picks it up is how a monitor earns a mute filter, and an unknown that blocks
+# a merge is the failure this whole file argues against. The state is reported,
+# not enforced.
+want "a run queued a moment ago does not fail the check" expect-pass \
   "$(commit $A 'a merge just now')" \
   "$A in_progress none $(now_iso)"
+
+want "...and is reported as pending rather than verified" expect-pass \
+  "$(commit $A 'a merge just now')" \
+  "$A in_progress none $(now_iso)" \
+  "PENDING"
+
+want "...naming the commit whose run has not concluded" expect-pass \
+  "$(commit $A 'a merge just now')" \
+  "$A in_progress none $(now_iso)" \
+  "${A:0:8}"
+
+# The false claim itself. This is the line a reader takes as green, and it must
+# not appear over a commit with no completed run.
+out="$("$SCRIPT" --fixture-commits "$(commit $A 'a merge just now')" \
+  --fixture-runs "$A queued none $(now_iso)" 2>&1)"
+case "$out" in
+  *"has a completed ci run"*)
+    fail=$((fail + 1)); echo "FAIL a queued run was described as completed:"; echo "$out" ;;
+  *) pass=$((pass + 1)); echo "ok   ...and never claims a completed run over a queued one" ;;
+esac
+
+# A pending commit beside an unverified one is still a failure, and the report
+# carries both: a reader who sees only the absence cannot tell how much of the
+# tree is unanswered.
+pending_and_missing="$(commit $A 'a merge nothing ran for')
+$(commit $B 'a merge still queued')"
+want "an unverified commit outranks a pending one" expect-fail \
+  "$pending_and_missing" \
+  "$B queued none $(now_iso)" \
+  "missing"
+want "...and the pending one is still listed" expect-fail \
+  "$pending_and_missing" \
+  "$B queued none $(now_iso)" \
+  "has not concluded yet"
+
+# The backlog census, which is what separates "a run is a minute old" from
+# "this repository is a hundred runs deep and cannot answer for half an hour".
+out="$("$SCRIPT" --fixture-commits "$(commit $A 'a merge just now')" \
+  --fixture-runs "$A queued none $(now_iso)" --fixture-queue 46 2>&1)"
+case "$out" in
+  *"46 of the 100 most recent runs"*)
+    pass=$((pass + 1)); echo "ok   the pending report names the queue depth" ;;
+  *) fail=$((fail + 1)); echo "FAIL the pending report did not name the queue depth:"; echo "$out" ;;
+esac
 
 # ── S: startup_failure — the canary's own blind spot ─────────────────────────
 want "a startup_failure is reported" expect-fail \
@@ -247,6 +299,52 @@ out="$("$SCRIPT" --fixture-commits "$verified_commits" --fixture-runs "$verified
 case "$out" in
   *"gh "*) fail=$((fail + 1)); echo "FAIL a green run with nothing open must never call gh:"; echo "$out" ;;
   *) pass=$((pass + 1)); echo "ok   ...and never calls gh" ;;
+esac
+
+# ── announcing: pending closes nothing ───────────────────────────────────────
+#
+# The recovery branch fires on a run with no unverified commit, and a tree
+# where every run is queued has none. So the backlog that hides an outage
+# would also close the issue tracking it, and the next reader would find a
+# tracker saying `main` recovered on the strength of nobody having looked.
+
+pending_commits="$(commit $A 'a merge still queued')"
+pending_runs="$A queued none $(now_iso)"
+
+out="$("$SCRIPT" --fixture-commits "$pending_commits" --fixture-runs "$pending_runs" \
+  --announce --dry-run --fixture-open-issue 42 2>&1)"
+case "$out" in
+  *"issue close"*)
+    fail=$((fail + 1)); echo "FAIL a pending run closed the open issue:"; echo "$out" ;;
+  *) pass=$((pass + 1)); echo "ok   a pending run does not close the open issue" ;;
+esac
+case "$out" in
+  *"leaving issue 42 open"*)
+    pass=$((pass + 1)); echo "ok   ...and says which issue it left open" ;;
+  *) fail=$((fail + 1)); echo "FAIL a pending run did not say what it left open:"; echo "$out" ;;
+esac
+
+# A filed issue carries the backlog beside the absence. "Nothing verified
+# these commits" and "this repository is 46 runs deep" are one finding, and an
+# issue that reports the first without the second sends the reader hunting for
+# a cause that is on the same screen.
+out="$("$SCRIPT" --fixture-commits "$pending_and_missing" \
+  --fixture-runs "$B queued none $(now_iso)" \
+  --announce --dry-run --fixture-queue 46 2>&1)"
+case "$out" in
+  *"46 of the 100 most recent runs"*)
+    pass=$((pass + 1)); echo "ok   a filed issue names the backlog beside the absence" ;;
+  *) fail=$((fail + 1)); echo "FAIL the filed issue did not name the backlog:"; echo "$out" ;;
+esac
+
+# Nor does it file: an answer that has not arrived is not yet an absence, and
+# the stuck threshold above owns the point where it becomes one.
+out="$("$SCRIPT" --fixture-commits "$pending_commits" --fixture-runs "$pending_runs" \
+  --announce --dry-run 2>&1)"
+case "$out" in
+  *"gh issue"*)
+    fail=$((fail + 1)); echo "FAIL a pending run with nothing open touched the tracker:"; echo "$out" ;;
+  *) pass=$((pass + 1)); echo "ok   ...and a pending run with nothing open files nothing" ;;
 esac
 
 # ── the real repository ──────────────────────────────────────────────────────

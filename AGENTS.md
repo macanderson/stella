@@ -288,7 +288,7 @@ number, so 0031's renumber hunted seven of those by hand (`#5930`).
 `docs/adr/README.md` § "The number is a shared cell" carries the rest,
 including why id citations for ADRs are a stated non-goal today.
 
-It answers "is `main` **known broken**". A second step in the same workflow —
+It answers "is `main` **known broken**". A second job in the same workflow —
 `scripts/check-main-verified.sh` (`make main-verified`) — answers the question
 nothing else here asks: is there a commit on `main` that nothing **verified**?
 Those are different states, and every other mechanism reads the second as
@@ -302,9 +302,31 @@ failing run is a **verified** commit and stays the canary's business; this
 reports only the absence of an answer, and fails open at every unknown so it
 can never be the thing blocking a repair.
 
-**Both steps file, under different labels.** The first step's `--announce`
-opened an issue; the second printed its finding into the step's own log and
-exited 1, and the composition step above it can pass on the same run — so the
+**A run still going is not an answer either.** Counting one as an answer is
+what this script did for the whole 45-minute stuck window, and it then printed
+"each of the last N commits on main has a completed ci run" over commits with
+no completed run. That window fills up under ordinary load, not only during an
+outage: fourteen open pull requests fanning out across these workflows put
+every `main` run 24 to 27 minutes behind a runner on 2026-09-05, and eleven
+commits went unanswered while a repaired tree still read as broken. So the
+script reports three states rather than two. `pending` names the commits whose run has not
+concluded, counts how many of the repository's 100 most recent runs are
+unfinished, exits 0, and closes no open `main-unverified` issue — a recovery
+is claimed off an answer, never off the absence of one.
+
+It is a separate job because it was the third step of the compile job, so an
+answer that costs seconds waited on a toolchain, a cache and
+`cargo check --workspace`, and a timeout there took it away entirely. Its
+checkout asks for thirty commits: the default shallow one gave `--limit 10`
+exactly one commit, so every CI run of this guard had reported on the tip
+alone. Hosted runners have no priority lane, so neither change makes the
+answer immune to a full queue — they stop it waiting on this repository's own
+slowest job, and the `pending` state is what keeps the wait from reading as
+green.
+
+**Both jobs file, under different labels.** The first job's `--announce`
+opened an issue; the second printed its finding into a step log and
+exited 1, and the composition job can pass on the same run — so the
 finding never reached anything a person reads. That happened twice, both
 times on a `chore(release): sync versions` commit whose run concluded
 `failure` with no `main-red` issue open either day.

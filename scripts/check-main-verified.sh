@@ -39,6 +39,26 @@
 #   queued too long  a run past --stuck-minutes with no runner
 #   startup_failure  the workflow never began, so no check ran
 #
+# ── Three states, because a run still going is not a verdict ─────────────────
+#
+# A run that has not ended is not an answer. Folding one into `verified` let
+# this script print "each of the last N commits on main has a completed ci
+# run" over commits with no completed run. A monitor must not say that.
+#
+# The window fills up under plain load. On 2026-09-05 fourteen open pull
+# requests fanned out across the workflows here. Every `main` run then sat 24
+# to 27 minutes behind a runner. Eight were queued at once, so the eleven
+# newest commits had no answer. The tree had been fixed eighteen minutes
+# earlier and nothing could see it.
+#
+#   verified   a terminal conclusion exists for the commit
+#   pending    a run exists, has not ended, and is inside the threshold
+#   unverified the absences listed above
+#
+# `pending` exits 0, like every other unknown here, and says what it is. It
+# closes no open `main-unverified` issue. A recovery is read off an answer,
+# never off the lack of one.
+#
 # ── It fails OPEN, at every unknown ──────────────────────────────────────────
 #
 # No `gh`, an unreachable API, an unparseable answer: report and exit 0. This
@@ -64,7 +84,7 @@
 # `main-red-hold.yml` reads only `main-red`, so an unverified-main issue never
 # arms it; blocking every open PR on an absence of information would fight the
 # fail-open discipline this whole file argues for. AGENTS.md's canary section
-# names which of `main-canary.yml`'s two steps files under which label.
+# names which of `main-canary.yml`'s two jobs files under which label.
 
 set -uo pipefail
 
@@ -75,6 +95,7 @@ limit=10
 stuck_minutes=45
 fixture_runs=""
 fixture_commits=""
+fixture_queue=""
 use_fixture=0
 announce=0
 dry_run=0
@@ -129,6 +150,16 @@ while [ $# -gt 0 ]; do
   --fixture-commits)
     fixture_commits="${2:-}"
     use_fixture=1
+    shift 2
+    ;;
+  # Test-only: stand in for the repository-wide queue census the pending
+  # report reads, so a case can pin the backlog line without an API.
+  --fixture-queue)
+    [ $# -ge 2 ] || {
+      echo "check-main-verified: --fixture-queue needs a number" >&2
+      exit 2
+    }
+    fixture_queue="$2"
     shift 2
     ;;
   -h | --help)
@@ -217,6 +248,7 @@ age_seconds() {
 }
 
 unverified=""
+still_running=""
 count=0
 
 while IFS= read -r commit; do
@@ -257,7 +289,7 @@ while IFS= read -r commit; do
         if [ "$age" -gt $((stuck_minutes * 60)) ]; then
           verdict="$status for $((age / 60))m — past the ${stuck_minutes}m threshold, so no runner is coming"
         else
-          verdict="verified"
+          verdict="pending: $status for $((age / 60))m, inside the ${stuck_minutes}m threshold"
         fi
       fi
       ;;
@@ -266,17 +298,55 @@ while IFS= read -r commit; do
 $runs
 EOF
 
-  if [ "$verdict" != "verified" ]; then
+  case "$verdict" in
+  verified) ;;
+  pending:*)
+    still_running="${still_running}  $short  ${verdict#pending: }
+      $subject
+"
+    ;;
+  *)
     unverified="${unverified}  $short  $verdict
       $subject
 "
-  fi
+    ;;
+  esac
 done <<EOF
 $commits
 EOF
 
-green=1
-[ -n "$unverified" ] && green=0
+# Three states, and only the first one is green. `pending` and `unverified`
+# both mean no answer; they differ in whether an answer is still coming.
+state=verified
+[ -n "$still_running" ] && state=pending
+[ -n "$unverified" ] && state=unverified
+
+# How deep is the backlog these pending commits sit in? A commit list alone
+# cannot tell "the run is a minute old" from "this repo is a hundred runs
+# behind and nothing about `main` gets an answer for half an hour".
+queue_depth() {
+  if [ -n "$fixture_queue" ]; then
+    printf '%s' "$fixture_queue"
+    return
+  fi
+  [ "$use_fixture" -eq 1 ] && return
+  command -v gh >/dev/null 2>&1 || return
+  gh run list --limit 100 --json status \
+    --jq '[.[] | select(.status != "completed")] | length' 2>/dev/null || true
+}
+
+# Read once, up front, so the three places that print the block below cost one
+# API call between them rather than one each.
+depth=""
+[ -n "$still_running" ] && depth="$(queue_depth)"
+case "$depth" in '' | *[!0-9]*) depth="" ;; esac
+
+# Every report that prints this block prints the same one.
+pending_report() {
+  printf 'These commits have a ci run that has not concluded yet:\n\n%s' "$still_running"
+  [ -n "$depth" ] &&
+    printf '\n%s of the 100 most recent runs in this repository have not finished.\n' "$depth"
+}
 
 # ── Announcing ───────────────────────────────────────────────────────────────
 #
@@ -306,8 +376,17 @@ elif [ "$announce" -eq 1 ] && [ "$dry_run" -eq 0 ] && command -v gh >/dev/null 2
     --json number --jq '.[0].number // empty' 2>/dev/null || true)"
 fi
 
-if [ "$announce" -eq 1 ]; then
-  if [ "$green" -eq 1 ]; then
+if [ "$announce" -eq 1 ] && [ "$state" = "pending" ]; then
+  # An open issue stays open. Closing it here would report a recovery this run
+  # cannot see. That is the swap this script exists to refuse: no answer, read
+  # as green.
+  if [ -n "$open_issue" ]; then
+    printf 'check-main-verified: still pending — leaving issue %s open\n' "$open_issue" || true
+  else
+    printf 'check-main-verified: pending, nothing to file — an answer is still coming\n' || true
+  fi
+elif [ "$announce" -eq 1 ]; then
+  if [ "$state" = "verified" ]; then
     if [ -n "$open_issue" ]; then
       body="Every commit checked on this run has a completed \`ci\` run again.
 Closing automatically — reopen if you disagree.
@@ -326,13 +405,22 @@ Closing automatically — reopen if you disagree.
       printf 'check-main-verified: green, nothing open to close\n' || true
     fi
   else
-    body="\`main-canary.yml\`'s \`check-main-verified.sh\` step found commit(s) on
+    # A `main-unverified` issue filed during a forty-run backlog reads very
+    # differently once the reader can see the backlog, and nothing else on the
+    # issue says it.
+    pending_block=""
+    [ -n "$still_running" ] && pending_block="
+\`\`\`
+$(pending_report)
+\`\`\`
+"
+    body="\`main-canary.yml\`'s \`check-main-verified.sh\` job found commit(s) on
 \`main\` that **nothing has verified** — as distinct from a commit a check said
 no about, which \`main-canary.sh\`'s own issue already owns.
 
 \`\`\`
 ${unverified}\`\`\`
-
+${pending_block}
 This is NOT \"main is red\". A failing run is a verified commit and the canary
 owns that. These commits have no answer at all, which every other mechanism
 here reads as green: the canary files only when its job runs and fails, the
@@ -392,14 +480,35 @@ ${unverified}\`\`\`"
   fi
 fi
 
-if [ "$green" -eq 1 ]; then
+if [ "$state" = "verified" ]; then
   echo "check-main-verified: OK — each of the last $count commit(s) on main has a completed ci run."
+  exit 0
+fi
+
+if [ "$state" = "pending" ]; then
+  echo "check-main-verified: PENDING — main carries commits with no answer yet."
+  echo
+  pending_report
+  cat <<'TXT'
+
+Exiting 0: an answer is still coming, so this is not a finding. It is also not
+green. Nothing here has checked these commits, and merging onto them is a bet
+on a run that has not reported.
+
+Watch for the answer rather than reading the silence:
+
+  gh run list --workflow ci.yml --branch main --limit 5
+TXT
   exit 0
 fi
 
 echo "check-main-verified: FAILED — main carries commits nothing verified."
 echo
 echo "$unverified"
+if [ -n "$still_running" ]; then
+  pending_report
+  echo
+fi
 cat <<'TXT'
 This is NOT "main is red". A failing run is a verified commit and the canary
 owns that. These commits have no answer at all, which every other mechanism
