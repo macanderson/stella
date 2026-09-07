@@ -143,7 +143,7 @@ proptest! {
             .into_iter()
             .map(|record| from(record, origin))
             .collect();
-        let config = LoopDetectionConfig { exact_repeat_threshold, short_cycle_repeats, stagnation_threshold, interleaved_repeat_threshold, monotonic_sweep_threshold, stall_steer_threshold_secs: 0 };
+        let config = LoopDetectionConfig { exact_repeat_threshold, short_cycle_repeats, stagnation_threshold, interleaved_repeat_threshold, monotonic_sweep_threshold, self_appending_threshold: 0, stall_steer_threshold_secs: 0 };
         prop_assert!(
             !matches!(detect_loop(&records, config), LoopVerdict::Stagnant { .. }),
             "a tool from outside the binary reached Stagnant"
@@ -169,7 +169,7 @@ proptest! {
             .cloned()
             .map(|record| from(record, ToolOrigin::Builtin))
             .collect();
-        let config = LoopDetectionConfig { exact_repeat_threshold, short_cycle_repeats, stagnation_threshold, interleaved_repeat_threshold, monotonic_sweep_threshold, stall_steer_threshold_secs: 0 };
+        let config = LoopDetectionConfig { exact_repeat_threshold, short_cycle_repeats, stagnation_threshold, interleaved_repeat_threshold, monotonic_sweep_threshold, self_appending_threshold: 0, stall_steer_threshold_secs: 0 };
         prop_assert_eq!(detect_loop(&marked, config), detect_loop(&records, config));
     }
 }
