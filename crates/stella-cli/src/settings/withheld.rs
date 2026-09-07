@@ -201,13 +201,20 @@ pub(crate) struct WithheldNotice {
 }
 
 impl WithheldNotice {
-    /// The human channel's line: the workspace, the inventory, and the one
+    /// The human channel's line: the workspace, the inventory, and the
     /// remedy that works on the arm it is actually on.
+    ///
+    /// The untrusted arm names two routes, standing one first. A reader
+    /// hitting this notice is hitting it on every launch in every repo, so
+    /// the env var alone answers the wrong question — it is a one-launch
+    /// remedy offered for a permanent condition, and a reader told only
+    /// about it reasonably concludes no permanent remedy exists.
     pub(crate) fn line(&self, workspace_root: &Path) -> String {
         let remedy = match self.by {
             Withholder::ProjectUntrusted => {
-                "set STELLA_TRUST_PROJECT=1 to let this repo's memories, rules, skills, commands \
-                 and agents steer this session"
+                "set run.auto_trust_project = true in ~/.stella/stella.toml to let repos' \
+                 memories, rules, skills, commands and agents steer sessions from now on, or \
+                 STELLA_TRUST_PROJECT=1 for this session alone"
             }
             Withholder::ManagedCeiling => {
                 "your org's managed settings set authority.project_prompts = \"off\", so no \

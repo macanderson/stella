@@ -207,6 +207,8 @@ pub fn budget_tick(spent_usd: f64, limit_usd: Option<f64>) -> EventLine {
 /// The remedy differs by authority and that is the whole reason the event
 /// carries one: `STELLA_TRUST_PROJECT=1` printed against an org-managed
 /// ceiling tells a user who has already set that flag to set it again.
+/// The untrusted arm leads with `run.auto_trust_project`, because this row
+/// recurs every launch and only the config key ends it for good.
 pub fn steering_withheld(withheld_by: Withholder, counts: &[(usize, &str, &str)]) -> EventLine {
     let parts: Vec<String> = counts
         .iter()
@@ -221,7 +223,8 @@ pub fn steering_withheld(withheld_by: Withholder, counts: &[(usize, &str, &str)]
         detail: Some(
             match withheld_by {
                 Withholder::ProjectUntrusted => {
-                    "set STELLA_TRUST_PROJECT=1 to let this repo steer the session"
+                    "set run.auto_trust_project = true in ~/.stella/stella.toml to let repos \
+                     steer sessions from now on, or STELLA_TRUST_PROJECT=1 for this one"
                 }
                 Withholder::ManagedCeiling => {
                     "your org's managed settings forbid it; STELLA_TRUST_PROJECT does not lift it"
