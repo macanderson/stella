@@ -79,6 +79,9 @@ pub(crate) async fn run_turn(
     budget.begin_turn();
     let turn_start = Instant::now();
     let execution = begin_execution(store, door.kind, prompt, cfg, session, door.variant);
+    // Which row this turn journals against, for a caller that has to add to it
+    // after the turn's own channel is gone (`crate::turn_row`).
+    door.opened(execution.as_ref());
     stamp_and_record_skill_usage(
         &execution,
         session_memory.as_deref_mut(),

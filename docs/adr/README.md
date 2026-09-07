@@ -98,6 +98,7 @@ open; nothing before Phase 3 forces it.
 | [0029](0029-branch-protection-stays-non-strict.md) | Branch Protection Stays Non-Strict | Accepted |
 | [0030](0030-the-wrapper-socket-is-the-plugin-sdk.md) | The Wrapper Socket Is the Plugin SDK | Accepted |
 | [0031](0031-a-turn-has-no-step-cap-by-default.md) | A Turn Has No Step Cap by Default | Accepted |
+| [0033](0033-a-wrappers-verdict-lands-on-the-round-that-earned-it.md) | A Wrapper's Verdict Lands on the Round That Earned It | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible
@@ -172,3 +173,11 @@ wandering turn is loop detection, the stall rung, the budget, the deadline and
 the goal predicate, each of which reads evidence. `max_steps` is now
 `Option<usize>`, `None` by default, and a host that means a count still sets
 one.
+
+ADR 0033 settles where a wrapper plugin's judged verdict is recorded. Each
+round of `stella run --pipeline` closes its own execution row and its own
+channel before the verdict is decided, so the events reached no store at all.
+The row now travels back to the caller through the door it already threads in,
+and `Store::append_event` writes the verdict beside the file changes it is
+about, which is what the dataset export's one-execution fold needs. The wrapper
+socket's `DrivenTurn` is untouched.

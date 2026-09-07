@@ -119,9 +119,14 @@ pub(crate) use planes::{
 // `#[allow(unused_imports)]` would assert the lint is wrong, and it is not.
 #[cfg(test)]
 pub(crate) use planes::{candidate_fanout_plane, child_turn_plane};
-/// Every `! wrapper:` line a run prints, in one renderer.
+/// Every `! wrapper:` line a run prints, in one renderer, and the events a
+/// finished dispatch contributes to the run's journal.
 mod report;
 use report::{report_to, sweep_lines};
+// The journal half, for the fleet door: `crate::fleet_cmd::wrapped` publishes
+// the same two events onto its attempt's channel, so the three doors that
+// drive a wrapper say what it decided in one vocabulary rather than three.
+pub(crate) use report::run_events;
 /// Whether a wrapper's conclusion decides the run's exit status (#3554).
 mod verdict_gate;
 pub(crate) use verdict_gate::verdict_refusal;
@@ -1047,6 +1052,13 @@ pub(crate) struct RawTurnDriver<'a> {
     /// because a ledger built from this host's journal would describe them as
     /// steps of a turn they were not part of.
     pub(crate) friction: &'a mut Vec<crate::memory::TurnFriction>,
+    /// The execution row each round's turn journals against, kept so the
+    /// verdict decided after the last round can be written to it.
+    ///
+    /// Owned rather than borrowed, unlike the ledgers above it, because
+    /// nothing outside this dispatch reads it: `run_wrapped` appends to it and
+    /// the run is over.
+    pub(crate) rounds: crate::turn_row::TurnRow,
 }
 
 #[async_trait(?Send)]
@@ -1088,7 +1100,10 @@ impl TurnDriver for RawTurnDriver<'_> {
             self.store,
             TurnDoor::new("run")
                 .wrapped_by(self.variant)
-                .reporting_to(facts.clone()),
+                .reporting_to(facts.clone())
+                // Each round replaces the last, so what survives the dispatch
+                // is the final round's row — the round the verdict is about.
+                .recording_to(self.rounds.clone()),
             self.prompt,
             Some(self.session),
             crate::memory::OpeningRecall {
@@ -1263,21 +1278,26 @@ pub(crate) async fn run_wrapped(
     }
     match report {
         Ok(report) => {
-            // What the round decided, onto the run's own event stream so the
-            // deck, the recorded journal and the offline transcript export all
-            // carry it rather than only the verdict's prose. Sent through the
-            // registry's sender because this door assembles no channel of its
-            // own; a run with persistence off has none, and neither event is
-            // recorded — the same degradation every other event on this path
-            // takes.
+            // What the round decided, into the recorded journal, so the
+            // dataset export and the offline transcript both carry it rather
+            // than only the verdict's prose on stderr.
             //
-            // After the stream closed above, because that stream belongs to a
-            // *different* execution — the plugin's own child turns — and these
-            // belong to the run.
-            if let Some(events) = registry.events() {
-                for event in report::run_events(&report) {
-                    let _ = events.send(event);
-                }
+            // Appended to the last round's own execution row rather than sent
+            // on a channel, because on this door there is no channel left to
+            // send on: each round is a `crate::agent::run_turn`, which opens
+            // its row and closes its channel before it returns, and the
+            // verdict is decided after the last of them has done both. A send
+            // through the registry did nothing at all here, and the events
+            // reached no store for any wrapped `stella run`.
+            //
+            // The last round's row, not the plugin's own: `crate::dataset_cmd`
+            // folds ONE execution's journal, so a verdict recorded beside the
+            // turn's mutating file changes is the only one that fold can see.
+            // A run with persistence off recorded no row and records neither
+            // event — the same degradation every other event on this path
+            // takes.
+            for event in report::run_events(&report) {
+                driver.rounds.append(&event);
             }
             report_to(
                 // One wrapper, one lane, one process — nothing to attribute.

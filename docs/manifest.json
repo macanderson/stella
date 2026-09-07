@@ -160,6 +160,11 @@
       "status": "implemented",
       "title": "ADR 0031: A turn has no step cap by default"
     },
+    "adr/0033-a-wrappers-verdict-lands-on-the-round-that-earned-it": {
+      "path": "docs/adr/0033-a-wrappers-verdict-lands-on-the-round-that-earned-it.md",
+      "status": "implemented",
+      "title": "ADR 0033: A wrapper's verdict lands on the round that earned it"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",
