@@ -367,7 +367,9 @@ four results as above, and exits with code `1` if any trial comes back
 list came up empty, or the report couldn't be written. Exit code `3` means
 no trial results were found at all. That's an infrastructure problem, not a
 loop problem. Exit code `4` means the loop worked fine, but fewer trials
-passed than `--min-pass` required.
+passed than `--min-pass` required. Exit code `8` means more of the trials
+died than finished. A verdict over what is left is a verdict about a night
+that mostly did not run.
 
 stella runs this nightly, not on every pull request, since it needs Docker,
 a task runner, a provider key, and real money. Two details of that setup are

@@ -190,6 +190,11 @@
       "status": "implemented",
       "title": "ADR 0037: A credit balance lives outside the engine"
     },
+    "adr/0038-a-night-that-mostly-died-is-not-a-run": {
+      "path": "docs/adr/0038-a-night-that-mostly-died-is-not-a-run.md",
+      "status": "implemented",
+      "title": "ADR 0038: A night that mostly died is not a run"
+    },
     "adr/0039-a-live-smoke-provider-is-armed-or-declared-unarmed": {
       "path": "docs/adr/0039-a-live-smoke-provider-is-armed-or-declared-unarmed.md",
       "status": "implemented",
