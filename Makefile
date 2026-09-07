@@ -963,6 +963,14 @@ recheck-lock-compositions-test: ## Test the lock re-check sweep, its fail-open b
 release-lockfile-test: ## Test that the release version stamp leaves Cargo.lock resolvable, new members included (hermetic; not part of `gate`)
 	./scripts/test-release-lockfile.sh
 
+# Not a gate step: it resolves two dependency trees, which is seconds a diff
+# touching neither crate has no use for, and the configuration it measures is
+# one no shipped build uses. .github/workflows/tools-no-graph.yml is where it
+# runs for real, beside the compile of that configuration.
+.PHONY: no-graph-tree
+no-graph-tree: ## Assert an index-free stella-tools links no tree-sitter grammar (#6286)
+	@./scripts/check-no-graph-tree.sh
+
 # Deliberately not a gate step: it judges the MERGED tree, which is a question
 # no pre-merge run can answer. .github/workflows/main-canary.yml is where it
 # runs for real; this target is here so the logic can be exercised by hand.

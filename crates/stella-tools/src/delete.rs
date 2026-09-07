@@ -30,7 +30,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use stella_protocol::tool::{ToolOutput, ToolSchema};
 
-use crate::graph_fact::{Codegraph, GraphFact, WorkspaceGraph};
+use crate::graph_fact::{GraphFact, WorkspaceGraph};
 use crate::registry::Tool;
 use crate::rootfd::{EntryKind, RootHandle};
 
@@ -43,7 +43,7 @@ pub struct DeleteFile {
 impl Default for DeleteFile {
     fn default() -> Self {
         Self {
-            graph: std::sync::Arc::new(Codegraph),
+            graph: crate::graph_fact::workspace_graph(),
         }
     }
 }

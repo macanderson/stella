@@ -193,7 +193,6 @@ impl ToolRegistry {
             Arc::new(crate::write::WriteFile::with_ledger(read_ledger.clone())),
             Arc::new(crate::edit::EditFile::with_ledger(read_ledger)),
             Arc::new(crate::delete::DeleteFile::default()),
-            Arc::new(crate::search::Search::from_env()),
             Arc::new(crate::tasks::TaskCreate(task_board.clone())),
             Arc::new(crate::tasks::TaskList(task_board.clone())),
             Arc::new(crate::tasks::TaskStart(task_board.clone())),
@@ -219,6 +218,16 @@ impl ToolRegistry {
             // as complete.
             Arc::new(crate::ask::AskQuestion::new(question.clone())),
         ];
+        // Every rung of `search` reads the code-graph index. Build without
+        // the `graph` feature and there is no search to register (`#6286`).
+        // The catalog says so as `Availability::BuildFeature("graph")`, and
+        // `BUILD_FEATURES` says what this binary built, so the table and the
+        // registry agree.
+        //
+        // A push, not a `cfg` inside the list above. An attribute on a `vec!`
+        // argument is macro input. The compiler does not strip it.
+        #[cfg(feature = "graph")]
+        entries.push(Arc::new(crate::search::Search::from_env()));
         match scratch {
             Ok(scratch) => entries.extend([
                 Arc::new(crate::scratch::SaveState(scratch.clone())) as Arc<dyn Tool>,

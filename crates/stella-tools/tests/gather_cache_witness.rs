@@ -12,6 +12,12 @@
 //! asserts the first search **did** gather, so the second search's behaviour
 //! is a real saving (or a real re-gather) rather than an absence of work.
 
+// Every test in this file drives `search`, which exists only under the
+// `graph` feature (`#6286`). Gated at the crate root so a
+// `--no-default-features` build compiles this target to an empty test
+// binary instead of failing on a module that is not there.
+#![cfg(feature = "graph")]
+
 use stella_tools::ctx::ToolCtx;
 use stella_tools::registry::Tool;
 use stella_tools::search::Search;

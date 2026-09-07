@@ -105,6 +105,12 @@
 //! been observed in a ranking. #3097 is not closed by this file's existence;
 //! it is closed by one green run of it with a real key.
 
+// Every test in this file drives `search`, which exists only under the
+// `graph` feature (`#6286`). Gated at the crate root so a
+// `--no-default-features` build compiles this target to an empty test
+// binary instead of failing on a module that is not there.
+#![cfg(feature = "graph")]
+
 use std::path::{Path, PathBuf};
 
 use stella_embed::{Embedder, Resolution, SimilarityPosture};

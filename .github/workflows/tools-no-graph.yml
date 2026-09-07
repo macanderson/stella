@@ -1,0 +1,94 @@
+name: tools-no-graph
+
+# The only build in this project that compiles `stella-tools` without the
+# code-graph index.
+#
+# `stella-graph` and `stella-embed` sit behind the crate's `graph` feature,
+# which is on by default (#6286) — so `ci.yml`, `make gate`, the pre-push hook
+# and every release build resolve the feature and never look at the other
+# configuration. An unbuilt configuration rots: the first `stella_graph::` in
+# an ungated module, or a doc link to a `cfg`-ed item, compiles green
+# everywhere a contributor looks and breaks only for the embedding host or
+# plugin-only build the feature exists for.
+#
+# So this compiles it with the feature off. `--all-targets` because the tests
+# are where the ungated reference lands: the search integration tests carry a
+# crate-level `#![cfg(feature = "graph")]` and would silently start failing to
+# compile if a new one forgot it. Plus `cargo doc`, because rustdoc resolves
+# intra-doc links per feature set and a link to a `#[cfg(feature = "graph")]`
+# item is an error here and nowhere else — which is the exact failure this
+# workflow caught while it was being written.
+#
+# Its own file rather than a job in `ci.yml`, for the reason
+# `wire-schema.yml` and `macos-check.yml` have one: a second full compile of
+# this crate's dependency tree is minutes a diff touching neither crate has no
+# use for. Not a required check.
+on:
+  pull_request:
+    paths:
+      - "crates/stella-tools/**"
+      - "crates/stella-tool-facts/**"
+      - "crates/stella-graph/**"
+      - "crates/stella-embed/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - ".github/workflows/tools-no-graph.yml"
+  push:
+    branches: [main]
+    paths:
+      - "crates/stella-tools/**"
+      - "crates/stella-tool-facts/**"
+      - "crates/stella-graph/**"
+      - "crates/stella-embed/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - ".github/workflows/tools-no-graph.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tools-no-graph-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile:
+    name: stella-tools still builds with no code-graph index
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Despite the action's name this does not build on `stable`:
+      # rust-toolchain.toml pins the repo to a concrete toolchain and rustup
+      # honors it for every cargo invocation inside the checkout. This step
+      # exists to put *a* rustup on PATH.
+      - name: Install Rust (rustup; the build uses the rust-toolchain.toml pin)
+        id: rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+
+      - if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+
+      - name: clippy, no default features, all targets
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        run: cargo clippy -p stella-tools --no-default-features --all-targets --locked -- -D warnings
+
+      - name: rustdoc, no default features
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc -p stella-tools --no-deps --document-private-items --no-default-features --locked
+
+      - name: test, no default features
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        run: cargo test -p stella-tools --no-default-features --locked
+
+      # The subtraction the feature exists for, asserted rather than assumed.
+      # `cargo check` succeeding says nothing about what got linked, and the
+      # nine tree-sitter grammars are the cost an embedding host is opting out
+      # of.
+      - name: the index-free build links no tree-sitter grammar
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        run: ./scripts/check-no-graph-tree.sh

@@ -20,6 +20,7 @@
 //! success strings the stagnation detector keys on (#3176).
 
 use std::path::Path;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use stella_protocol::tool::ToolOutput;
@@ -75,14 +76,53 @@ pub trait WorkspaceGraph: Send + Sync {
     fn register(&self, root: &Path, file: &Path) -> Option<bool>;
 }
 
+/// The graph a file mutation asks in this build.
+///
+/// `Codegraph` under the `graph` feature, `Unindexed` without it. A host that
+/// built no index has none to ask. [`WorkspaceGraph`] already answers `None`
+/// to that, so the fact drops out, the way it does in a workspace nobody has
+/// run `stella init` in.
+#[must_use]
+pub fn workspace_graph() -> Arc<dyn WorkspaceGraph> {
+    #[cfg(feature = "graph")]
+    {
+        Arc::new(Codegraph)
+    }
+    #[cfg(not(feature = "graph"))]
+    {
+        Arc::new(Unindexed)
+    }
+}
+
+/// The answer a build with no index gives: nothing, to both questions.
+///
+/// `None` is how this trait says no index answered. A build with no index is
+/// that case for every path. So a mutation states no graph fact. It does not
+/// state a zero.
+#[cfg(not(feature = "graph"))]
+pub struct Unindexed;
+
+#[cfg(not(feature = "graph"))]
+impl WorkspaceGraph for Unindexed {
+    fn inbound_refs(&self, _root: &Path, _file: &Path) -> Option<u32> {
+        None
+    }
+
+    fn register(&self, _root: &Path, _file: &Path) -> Option<bool> {
+        None
+    }
+}
+
 /// The workspace's own code graph (`.stella/private/codegraph.db`).
 ///
 /// Every method opens the index, asks, and closes: a mutation is rare next
 /// to a query, and a handle held for the session's lifetime would keep a
 /// write connection open against a store `stella observe` and the session's
 /// own watcher are also writing.
+#[cfg(feature = "graph")]
 pub struct Codegraph;
 
+#[cfg(feature = "graph")]
 impl Codegraph {
     /// The index, or `None` when this workspace has none.
     ///
@@ -99,6 +139,7 @@ impl Codegraph {
     }
 }
 
+#[cfg(feature = "graph")]
 impl WorkspaceGraph for Codegraph {
     fn inbound_refs(&self, root: &Path, file: &Path) -> Option<u32> {
         let graph = Codegraph::open(root)?;
@@ -170,5 +211,5 @@ pub fn from_output(output: &ToolOutput) -> Vec<GraphFact> {
         .unwrap_or_default()
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "graph"))]
 mod tests;

@@ -22,6 +22,12 @@
 //! test that set it in a shared binary would be mutating state every
 //! concurrently-running test in that binary can observe.
 
+// Every test in this file drives `search`, which exists only under the
+// `graph` feature (`#6286`). Gated at the crate root so a
+// `--no-default-features` build compiles this target to an empty test
+// binary instead of failing on a module that is not there.
+#![cfg(feature = "graph")]
+
 use std::path::Path;
 
 /// The path a reader resolves, or a panic naming why it could not.

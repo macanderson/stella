@@ -291,8 +291,16 @@ fn every_non_exempt_tool_is_driven_by_the_sentinel() {
 /// identical strings are identical.
 #[tokio::test]
 async fn declared_comparability_holds_when_the_tool_is_actually_run() {
+    let registered = crate::catalog::registered_with(crate::BUILD_FEATURES);
     for (name, posture) in REGISTRY {
         let Some(probe) = probe(name) else { continue };
+        // A row this build does not register has no success path to drive
+        // (`#6286`). Read off the catalog rather than a `cfg` here, so the skip
+        // is the same declaration the registry itself follows and a row that
+        // stops registering for a reason nobody declared still fails.
+        if !registered.contains(name) {
+            continue;
+        }
         let (first, second) = drive_twice(name, &probe).await;
         assert!(
             !first.is_error() && !second.is_error(),

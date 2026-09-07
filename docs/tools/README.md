@@ -8,11 +8,13 @@ status: living
 
 # `docs/tools/`
 
-One TOML page per dispatchable tool — 19 of them — generated from the declarations by `crates/stella-cli/src/tool_docs.rs` and re-derived by the `tool-docs` gate step. A tool added to `crates/stella-tools/src/catalog.rs` without regenerating turns the gate red; there is no path where a new tool ships undocumented.
+One TOML page per dispatchable tool — 19 of them — generated from the declarations by `crates/stella-cli/src/tool_docs.rs` and re-derived by the `tool-docs` gate step. A tool added to `crates/stella-tool-facts/src/catalog.rs` without regenerating turns the gate red; there is no path where a new tool ships undocumented.
 
 Each page carries the tool's name, description, input schema, output schema, `read_only`, `available_for_speculation`, `risk_level`, category, and a commented example input and output payload.
 
-`risk_level` is a reviewed judgement declared beside the flags it sits with in `crates/stella-tools/src/catalog.rs`, graded against the rubric on `ToolEntry::risk` (#2716, #3060). It answers a different question from `read_only` — what one honest call costs the world, rather than whether the workspace changes — and is deliberately not derived from the booleans above it, which would be a relabelling rather than information. A policy grant is expressed as a ceiling over this grade; every tool that is not a built-in (MCP, custom manifest) is graded `high` for being unreviewed.
+`risk_level` is a reviewed judgement declared beside the flags it sits with in `crates/stella-tool-facts/src/catalog.rs`, graded against the rubric on `ToolEntry::risk` (#2716, #3060). It answers a different question from `read_only` — what one honest call costs the world, rather than whether the workspace changes — and is deliberately not derived from the booleans above it, which would be a relabelling rather than information. A policy grant is expressed as a ceiling over this grade; every tool that is not a built-in (MCP, custom manifest) is graded `high` for being unreviewed.
+
+`availability` reads `always` for a tool every build registers, and names a cargo feature for one that needs the host to have compiled something. `search` is the only conditional row today: it ranks over the code-graph index, so a `stella-tools` built without the `graph` feature registers no `search` at all. The feature is on by default, so the shipping CLI has it.
 
 One field remains a stated absence rather than a value, because inventing it would manufacture a source of truth nobody reviewed:
 
@@ -33,7 +35,7 @@ One field remains a stated absence rather than a value, because inventing it wou
 | [`list_state`](list_state.toml) | scratch | always | yes | yes | none observed |
 | [`read_file`](read_file.toml) | file | always | yes | yes | none observed |
 | [`save_state`](save_state.toml) | scratch | always | no | no | none observed |
-| [`search`](search.toml) | search | always | yes | no | none observed |
+| [`search`](search.toml) | search | build feature `graph` | yes | no | none observed |
 | [`task_assign`](task_assign.toml) | task | always | no | no | none observed |
 | [`task_cancel`](task_cancel.toml) | task | always | no | no | none observed |
 | [`task_complete`](task_complete.toml) | task | always | no | no | yes |
