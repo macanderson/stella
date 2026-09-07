@@ -256,6 +256,11 @@ before it crosses.
 - `src/consent.rs` — the install-consent surface: `Capability` (the
   `[[capabilities]]` entry and its validation), `highest_risk`, and
   `consent_text`, the pure renderer of the whole consent document.
+- `src/composition.rs` — `TurnComposition`: what a package adds to a turn,
+  as data. Each stage with its band and its condition, and each role with
+  its tier and its seat key. `consent_text` renders it before an install,
+  and `stella plugin list` renders it for a package on disk. It derives
+  `Serialize`, so a listing a script can read emits the value itself.
 - `src/wire.rs` — the wrapper socket's wire contract (#3380, `doc:wrapper-socket`
   §2): `BeforeTurnRequest`/`Response`, `AfterTurnRequest`/`Response`,
   `WrapperPoint`, `CandidateGrant`, `EvidenceSet`, and `VerdictRule` — the

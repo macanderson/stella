@@ -43,6 +43,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::composition::{
+    BAND_ORDER_SENTENCE, TIER_IS_AN_ASK_SENTENCE, TurnComposition, UNASSIGNED_SEAT_SENTENCE,
+};
 use crate::error::ManifestError;
 use crate::host_call::HostCall;
 use crate::manifest::{Participation, PluginManifest};
@@ -489,31 +492,57 @@ fn loop_say(manifest: &PluginManifest) -> Vec<String> {
     }
     lines.extend(role_spend(manifest));
 
-    if let Some(wrapper) = &manifest.wrapper {
-        // A contributed stage is named as the plugin's own rather than listed
-        // beside the host's twelve as though Stella had always had it (#3963).
-        // Consent is a claim about what installing this changes, and "it runs
-        // a stage of its own invention" is exactly the part a reader cannot
-        // recover from the name alone once the vocabulary is open.
-        let stages: Vec<String> = wrapper
-            .stages
-            .iter()
-            .map(|stage| {
-                let name = one_line(stage.name.as_str());
-                if stage.name.is_contributed() {
-                    format!("{name} (this plugin's own stage)")
-                } else {
-                    name
-                }
-            })
-            .collect();
-        lines.push(format!(
-            "  - wraps every turn as variant `{}`, running: {}",
-            one_line(&wrapper.id),
-            stages.join(", ")
-        ));
-    }
+    lines.extend(stage_say(manifest));
 
+    lines
+}
+
+/// The stages a `[wrapper]` block adds to every turn, each with the band it
+/// runs in and the condition it runs under.
+///
+/// Empty for a manifest with no `[wrapper]` block, on
+/// `the_scope_disclaimer_appears_only_when_a_scope_was_declared`'s reasoning.
+///
+/// # Why the band belongs here
+///
+/// A stage's band decides when it runs against every other active plugin's
+/// stages, so two manifests naming the same stages in different bands compose
+/// into two different turns. The list of names alone rendered those two
+/// declarations identically, which left a reader agreeing to an order they
+/// were never shown (`doc:roleless-core` §6). A contributed name is marked as
+/// the plugin's own for the same reason: once the vocabulary is open, the name
+/// cannot tell a reader whether Stella has always had that stage.
+///
+/// One line per stage rather than a comma-joined list, because a band and a
+/// condition are two more facts per entry and a single line stops being
+/// readable at the second one.
+fn stage_say(manifest: &PluginManifest) -> Vec<String> {
+    let Some(wrapper) = &manifest.wrapper else {
+        return Vec::new();
+    };
+    let Some(composed) = TurnComposition::of(manifest) else {
+        return Vec::new();
+    };
+    if composed.stages.is_empty() {
+        return Vec::new();
+    }
+    let mut lines = vec![format!(
+        "  - wraps every turn as pipeline `{}`, adding these stages to it:",
+        one_line(&wrapper.id)
+    )];
+    for stage in &composed.stages {
+        let mut line = format!("      {}", one_line(&stage.name));
+        if stage.contributed {
+            line.push_str(" (this plugin's own stage)");
+        }
+        line.push_str(&format!(" — band: {}", stage.band.as_str()));
+        match &stage.condition {
+            Some(condition) => line.push_str(&format!(", when: {}", one_line(condition))),
+            None => line.push_str(", on every turn"),
+        }
+        lines.push(line);
+    }
+    lines.push(format!("      {BAND_ORDER_SENTENCE}"));
     lines
 }
 
@@ -540,26 +569,24 @@ fn loop_say(manifest: &PluginManifest) -> Vec<String> {
 /// default. Rendering it as a model would be `capability_grant`'s claimed-limit
 /// error in the other direction — a promise this crate cannot keep.
 fn role_spend(manifest: &PluginManifest) -> Vec<String> {
-    let Some(roles) = &manifest.roles else {
+    let Some(composed) = TurnComposition::of(manifest) else {
         return Vec::new();
     };
-    if roles.is_empty() {
+    if composed.roles.is_empty() {
         return Vec::new();
     }
     let mut lines = vec!["  - spends each stage's model calls at a tier it names:".into()];
     // A `BTreeMap`, so the order is the manifest's own and is stable.
-    for (name, role) in roles {
+    for role in &composed.roles {
         lines.push(format!(
-            "      {}: the `{}` tier",
-            one_line(name),
-            one_line(&role.tier)
+            "      {}: the `{}` tier, assigned through the seat `{}`",
+            one_line(&role.role),
+            one_line(&role.tier),
+            one_line(&role.seat)
         ));
     }
-    lines.push(
-        "      A tier is the name this plugin asks for, never a model: your own provider \
-         configuration decides what each one resolves to, and your key pays for it."
-            .into(),
-    );
+    lines.push(format!("      {TIER_IS_AN_ASK_SENTENCE}"));
+    lines.push(format!("      {UNASSIGNED_SEAT_SENTENCE}"));
     lines
 }
 

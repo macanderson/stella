@@ -315,10 +315,19 @@ no stage at the **end** of the order built so far for exactly this reason —
 starting it at the front, which is right for a member read against a stage
 already placed, answered with the reverse of what somebody wrote.
 
+**Landed with it — the disclosure.** `stella_plugin::TurnComposition` is what
+a manifest adds to a turn, as data: each stage with its band and its
+condition, and each role with its tier and the seat key the host writes.
+`consent_text` renders it before anything executes, and `stella plugin list`
+renders it for a package on disk, adding the model each seat resolves to. A
+role with no `[seats]` line is reported as running on the session's own model
+rather than omitted, so an unassigned seat is visible instead of silent. The
+value derives `Serialize`, so a machine-readable `stella plugin list` emits it
+rather than re-encoding a paragraph.
+
 Still ahead: `stella plugin enable`/`disable`, which would write the list for
 you and pick the insertion point from the band with a lexicographic tie-break
-on plugin id; consent text and `stella plugin list` rendering the stages and
-roles a package adds; and interactive mode, which offers no `--pipeline` and so
+on plugin id; and interactive mode, which offers no `--pipeline` and so
 runs no wrapper at all. A contributed stage also publishes no signal — the
 signal vocabulary stays closed, because a plugin minting a fact for another
 plugin's condition to read is a decision nothing here has made.
