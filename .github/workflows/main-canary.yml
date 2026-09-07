@@ -33,7 +33,11 @@ name: main-canary
 # What it must NOT become is a second `ci.yml`. The canary earns its keep by
 # asking *composition* questions cheaply and reporting by filing an issue. Move
 # the whole gate in here and it becomes a slow duplicate that gets muted, which
-# is the #1464 failure this file exists to avoid.
+# is the #1464 failure this file exists to avoid. `scripts/main-canary.sh`'s
+# `ci-tests` row stays inside that rule: it reads the CONCLUSION `ci.yml`
+# already produced for the most recent commit that has one, rather than
+# running the suite again — the join between "does it compose" and "did the
+# suite pass".
 #
 # ── Why this is a separate workflow ──────────────────────────────────────────
 #

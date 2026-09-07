@@ -273,6 +273,26 @@ failing run is a **verified** commit and stays the canary's business; this
 reports only the absence of an answer, and fails open at every unknown so it
 can never be the thing blocking a repair.
 
+A third question sat unasked between the two above: `ci.yml` runs the whole
+test suite, on every push to `main`. It reports pass/fail on the commit and
+stops there — it neither files nor blocks anything. `main` failed the same
+test three times running across two days and the `main-red` chain never fired
+once, because nothing in it had ever asked `ci.yml` what it found.
+`scripts/main-canary.sh`'s `ci-tests` row (`scripts/check-ci-tests.sh`, `make
+ci-tests`) is that question, read cheaply: it does not run the suite a second
+time — the canary's `compile` row already pays for asking whether the tree
+*builds*, and doubling a full workspace test run on every push is the cost
+`main-canary.yml`'s header argues against paying twice. It reads the
+CONCLUSION of the run `ci.yml` already produced for the most recent commit
+that has a completed one, and reports "nothing to say" — not red — on a
+still-queued run, a cancelled one, a `startup_failure`, or a run this build
+does not recognise, the same fail-open discipline `check-main-verified.sh`
+uses for the adjacent question above. Landing it as a row of the canary's
+existing `checks` array, rather than a fourth workflow step, means a green
+suite closes the same `main-red` issue a red one opened, with the
+single-issue-lifecycle code that already exists for the other four rows —
+without a second actor racing the canary to open or close it.
+
 One cause of that absence is a push that raised no event, and the canary
 cannot see it from the inside: it is suppressed by the same rule.
 `auto-tag.yml` merges the release version write-back with the token GitHub

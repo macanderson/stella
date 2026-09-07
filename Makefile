@@ -942,6 +942,19 @@ main-verified: ## Ask whether every recent commit on main has a completed ci run
 main-verified-test: ## Test the unverified-main detector (hermetic; not part of `gate`)
 	./scripts/test-main-verified.sh
 
+# The join #5850 closes: main-canary.sh's `compile` row asks whether the tree
+# BUILDS; this asks whether the SUITE last passed, by reading the conclusion
+# ci.yml already produced rather than running it again. Not a gate step for
+# the same reason main-canary/main-verified are not — it reads the tracker's
+# run history, and `gate` is hermetic and offline by contract.
+.PHONY: ci-tests
+ci-tests: ## Ask whether ci.yml's most recently completed run on main failed its suite (#5850)
+	@./scripts/check-ci-tests.sh
+
+.PHONY: ci-tests-test
+ci-tests-test: ## Test the ci-tests verdict reader (hermetic; not part of `gate`)
+	./scripts/test-ci-tests.sh
+
 # The imperative half of the check above. A push made with the token a
 # workflow run holds raises no event, so the release version write-back landed
 # a commit on main that ci.yml and main-canary.yml never saw (#5817).
