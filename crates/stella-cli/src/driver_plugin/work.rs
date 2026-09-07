@@ -51,7 +51,7 @@
 //! here tests the code that ships.
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use stella_plugin::{HostCallFailure, HostCallRefusal, WorkReport, WorkState};
@@ -81,25 +81,31 @@ pub(crate) struct SpawnedWorkRunner {
     /// This workspace's own loop settings — the branch prefix, the commit
     /// signature, and which worker runs the turn.
     config: LoopConfig,
-    /// The session's ceiling, and what has gone against it.
+    /// The run's ceiling, and what has gone against it.
     ///
     /// Behind a lock. A driver may send two asks at once, and a budget that
     /// two turns both read as full is no budget. The lock is never held across
     /// an `await`: the value is copied out, spent, and put back.
-    budget: Mutex<RunBudget>,
+    ///
+    /// Shared rather than owned, because one invocation now opens a sequence
+    /// of sessions (`driver_plugin::sequence`) and each one builds a runner of
+    /// its own. A ceiling every session got a fresh copy of would cap one
+    /// session and nothing else, which is the cap `RunBudget`'s own header
+    /// says is no cap at all.
+    budget: Arc<Mutex<RunBudget>>,
 }
 
 impl SpawnedWorkRunner {
     /// A runner over one workspace, under `budget`.
-    pub(crate) fn new(root: PathBuf, config: LoopConfig, budget: RunBudget) -> Self {
+    pub(crate) fn new(root: PathBuf, config: LoopConfig, budget: Arc<Mutex<RunBudget>>) -> Self {
         Self {
             root,
             config,
-            budget: Mutex::new(budget),
+            budget,
         }
     }
 
-    /// The session's budget, as it stands.
+    /// The run's budget, as it stands.
     ///
     /// A poisoned lock is read through, not passed on. This is
     /// `DriverCallGate::refusals`'s rule. Losing the number because some other
