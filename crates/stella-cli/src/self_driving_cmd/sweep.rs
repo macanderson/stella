@@ -102,8 +102,7 @@ pub(super) fn run(st: &LoopState, cmd: &SweepCmd) -> Result<(), String> {
         ),
         SweepCmd::Meta { dry_run, format } => ("meta", supply::draw_meta(st), *dry_run, *format),
     };
-    let report = collect(st, name, drawn, dry_run)?;
-    render(&report, format)
+    render(&collect(st, name, drawn, dry_run), format)
 }
 
 /// Drop what the seen set holds, file what is left, and count both.
@@ -119,7 +118,7 @@ fn collect(
     supply_name: &'static str,
     drawn: supply::Drawn,
     dry_run: bool,
-) -> Result<Report, String> {
+) -> Report {
     let seen = st.live_seen();
     let novel: Vec<Finding> = stella_autonomy::supply::novel(&drawn.findings, &seen)
         .into_iter()
@@ -129,10 +128,10 @@ fn collect(
     let keys = if dry_run {
         vec![None; novel.len()]
     } else {
-        file_each(st, &novel)?
+        file_each(st, &novel)
     };
 
-    Ok(Report {
+    Report {
         supply: supply_name,
         dry_run,
         offered: drawn.findings.len(),
@@ -152,14 +151,14 @@ fn collect(
                 key,
             })
             .collect(),
-    })
+    }
 }
 
 /// File each finding through the one door, and say what the tracker did.
 ///
 /// A refusal is printed, never raised. The rest of the sweep still has
 /// findings worth filing.
-fn file_each(st: &LoopState, novel: &[Finding]) -> Result<Vec<Option<String>>, String> {
+fn file_each(st: &LoopState, novel: &[Finding]) -> Vec<Option<String>> {
     let cfg = config::load(&st.repo_root);
     let provider = crate::issue_provider::GhIssueProvider::from_manifest(&cfg.manifest);
     let mut keys = Vec::with_capacity(novel.len());
@@ -172,7 +171,7 @@ fn file_each(st: &LoopState, novel: &[Finding]) -> Result<Vec<Option<String>>, S
             }
         }
     }
-    Ok(keys)
+    keys
 }
 
 fn render(report: &Report, format: QueryFormat) -> Result<(), String> {
@@ -252,7 +251,7 @@ mod tests {
         );
 
         let drawn = supply::draw_regress(&st, &st.repo_root);
-        let report = collect(&st, "regress", drawn, true).expect("a dry run reaches no tracker");
+        let report = collect(&st, "regress", drawn, true);
 
         assert_eq!(report.supply, "regress");
         assert!(report.dry_run);
@@ -281,7 +280,7 @@ mod tests {
         let st = workspace(tmp.path());
 
         let drawn = supply::draw_regress(&st, &st.repo_root);
-        let report = collect(&st, "regress", drawn, true).expect("a dry run reaches no tracker");
+        let report = collect(&st, "regress", drawn, true);
 
         assert_eq!(report.offered, 0);
         assert_eq!(report.filed, 0);
@@ -305,7 +304,7 @@ mod tests {
         .expect("calibration");
 
         let drawn = supply::draw_meta(&st);
-        let report = collect(&st, "meta", drawn, true).expect("a dry run reaches no tracker");
+        let report = collect(&st, "meta", drawn, true);
 
         assert_eq!(report.supply, "meta");
         assert!(
