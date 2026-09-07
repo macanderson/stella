@@ -2,6 +2,7 @@
 //! provably never touches a protected record.
 
 use stella_context::ContextStore;
+use stella_learn::ledger::ArtifactKind;
 use stella_learn::skills::appraisal::{AppraisalConfig, SkillTrial, appraise, decide_demotion};
 use stella_records::context_record::{
     DirectiveEnforcement, PromotionAction, PromotionActor, PromotionEventRecord,
@@ -50,7 +51,12 @@ fn decided(
     origin: SkillOrigin,
     trials: Vec<SkillTrial>,
 ) -> (SkillAppraisal, DemotionDecision) {
-    let appraisal = appraise(record_id, &trials, &AppraisalConfig::default());
+    let appraisal = appraise(
+        ArtifactKind::Memory,
+        record_id,
+        &trials,
+        &AppraisalConfig::default(),
+    );
     let decision = decide_demotion(origin, &appraisal);
     (appraisal, decision)
 }
