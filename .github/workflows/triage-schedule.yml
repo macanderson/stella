@@ -1,0 +1,186 @@
+name: Scheduled triage
+
+# SCR-005 splits creating an issue from sizing one: a creator applies `triage`
+# and nothing else, and a triage authority assigns the priority. Until this
+# workflow existed the second half ran only when a person remembered. It did
+# not get remembered — the queue reached 128 issues, and 29 of them were P1
+# work nobody could see because the queue label was hiding it.
+#
+# This is the sizing half, on a clock. It reads the issues carrying the bare
+# `triage` label, asks a model to size each one against the repository's own
+# label taxonomy, applies the labels it validated, and takes `triage` off as
+# its last write per issue — the ordering `issue-triage.yml` explains, so an
+# interrupted run leaves an issue in the queue rather than half-sized and
+# invisible.
+#
+# It refuses out loud. A missing credential, an API rejection, or a reply it
+# cannot parse fails the run, because a sweep that could not size anything
+# must not read like a sweep that found nothing to size.
+
+on:
+  schedule:
+    # Every three hours, off the hour: a queue that fills in bursts is worth
+    # checking between the sessions that fill it.
+    - cron: '23 */3 * * *'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+concurrency:
+  # Two sweeps over one queue would size the same issue twice and race each
+  # other's writes.
+  group: scheduled-triage
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  REPO: ${{ github.repository }}
+  # A cap per run. The sweep is a habit, not a migration: a queue larger than
+  # this drains over the following runs, and one run can never cost unbounded
+  # time or tokens.
+  MAX_ISSUES: '25'
+  MODEL: claude-sonnet-5
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+      # Checked out for one file: the SCR that names the priority levels. The
+      # sweep reads them at run time rather than carrying its own copy, which
+      # is what `scripts/check-priority-scheme.py` asks of every file but the
+      # one derived copy in `triage-guard.yml`.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Size every issue in the triage queue
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SCR: docs/scr/SCR-005-triage-separation-of-duties.md
+        run: |
+          set -euo pipefail
+
+          if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+            echo "ANTHROPIC_API_KEY: UNAVAILABLE — THIS SWEEP DID NOT RUN" >&2
+            exit 1
+          fi
+
+          # The levels and their meanings, quoted from their only home. An
+          # empty read means the SCR moved or its heading changed, and a sweep
+          # that cannot state what it is sizing against must not size.
+          scheme=$(sed -n '/^Priority scheme:/,/never both\./p' "$SCR")
+          if [ -z "$scheme" ]; then
+            echo "$SCR: the priority scheme did not parse — THIS SWEEP DID NOT RUN" >&2
+            exit 1
+          fi
+
+          queue=$(gh issue list --repo "$REPO" --state open --label triage \
+            --limit "$MAX_ISSUES" --json number --jq '[.[].number] | join(" ")')
+
+          if [ -z "$queue" ]; then
+            echo "triage queue empty — nothing to size"
+            exit 0
+          fi
+
+          # The taxonomy is read from the repository rather than written here,
+          # so a label added or renamed upstream reaches this sweep without an
+          # edit, and a label the model invents fails validation below.
+          gh label list --repo "$REPO" --limit 300 --json name --jq '.[].name' > /tmp/labels.txt
+          areas=$(grep '^area:' /tmp/labels.txt | paste -sd, -)
+          models=$(grep '^use-model:' /tmp/labels.txt | paste -sd, -)
+          pains=$(grep '^pain:' /tmp/labels.txt | paste -sd, -)
+
+          sized=0
+          for n in $queue; do
+            title=$(gh issue view "$n" --repo "$REPO" --json title --jq .title)
+            body=$(gh issue view "$n" --repo "$REPO" --json body --jq .body | head -c 6000)
+
+            jq -n \
+              --arg model "$MODEL" \
+              --arg title "$title" \
+              --arg body "$body" \
+              --arg scheme "$scheme" \
+              --arg areas "$areas" \
+              --arg models "$models" \
+              --arg pains "$pains" \
+              '{
+                model: $model,
+                max_tokens: 400,
+                messages: [{
+                  role: "user",
+                  content: (
+                    "Size this GitHub issue for the stella repository. Reply with JSON only, no prose.\n\n" +
+                    "priority — pick exactly one level from this scheme, which is quoted from the " +
+                    "repository policy that defines it:\n" + $scheme + "\n\n" +
+                    "area — one or more, from exactly this list: " + $areas + "\n" +
+                    "use-model — exactly one, from: " + $models + ". Judge by the hardest step the issue implies: " +
+                    "cheap for mechanical work, balanced for routine work against a clear spec, pro for cross-crate " +
+                    "design or subtle correctness, ultra for architecture-critical or novel design.\n" +
+                    "pain — one or more, from exactly this list: " + $pains + "\n\n" +
+                    "Reply as {\"priority\":\"<one level from the scheme>\",\"area\":[\"area:cli\"]," +
+                    "\"use_model\":\"use-model:balanced\",\"pain\":[\"pain:maintainability\"]," +
+                    "\"why\":\"one short sentence\"}\n\n" +
+                    "TITLE: " + $title + "\n\nBODY:\n" + $body
+                  )
+                }]
+              }' > /tmp/req.json
+
+            status=$(curl -sS -o /tmp/resp.json -w '%{http_code}' https://api.anthropic.com/v1/messages \
+              -H "x-api-key: $ANTHROPIC_API_KEY" \
+              -H 'anthropic-version: 2023-06-01' \
+              -H 'content-type: application/json' \
+              --data @/tmp/req.json)
+
+            if [ "$status" != "200" ]; then
+              echo "issue $n: the API answered $status — THIS SWEEP DID NOT FINISH" >&2
+              head -c 400 /tmp/resp.json >&2
+              exit 1
+            fi
+
+            verdict=$(jq -r '.content[0].text' /tmp/resp.json \
+              | sed -e 's/^```json//' -e 's/^```//' -e 's/```$//')
+
+            if ! echo "$verdict" | jq -e . >/dev/null 2>&1; then
+              echo "issue $n: the reply was not JSON — skipping, queue label kept" >&2
+              continue
+            fi
+
+            labels=$(echo "$verdict" | jq -r '[.priority, .use_model] + (.area // []) + (.pain // []) | join("\n")')
+
+            # Every label is checked against the live list before it is written.
+            # A name the model invented is dropped here rather than failing the
+            # `gh` call halfway through a partial edit.
+            valid=""
+            while IFS= read -r label; do
+              [ -z "$label" ] && continue
+              if grep -qxF "$label" /tmp/labels.txt; then
+                valid="${valid:+$valid,}$label"
+              else
+                echo "issue $n: dropping unknown label '$label'" >&2
+              fi
+            done <<< "$labels"
+
+            # A priority has to have survived validation, and the levels come
+            # from the scheme read above rather than from a pattern spelled
+            # here. A reply naming a level the scheme does not carry lands in
+            # neither list and the issue stays queued.
+            priority=$(echo "$verdict" | jq -r '.priority // ""')
+            if [ -z "$priority" ] \
+              || ! echo "$scheme" | grep -qF "\`$priority\`" \
+              || ! echo ",$valid," | grep -qF ",$priority,"; then
+              echo "issue $n: no priority the scheme recognises — skipping, queue label kept" >&2
+              continue
+            fi
+
+            why=$(echo "$verdict" | jq -r '.why // "sized by the scheduled triage sweep"')
+
+            # `triage` comes off last, as its own write: an interrupted run
+            # leaves the issue in the queue for the next sweep rather than
+            # sized-but-unfindable.
+            gh issue edit "$n" --repo "$REPO" --add-label "$valid"
+            gh issue comment "$n" --repo "$REPO" --body "Triage (scheduled sweep): $valid — $why"
+            gh issue edit "$n" --repo "$REPO" --remove-label triage
+            sized=$((sized + 1))
+            echo "issue $n: $valid"
+          done
+
+          echo "sized $sized issue(s)" >> "$GITHUB_STEP_SUMMARY"

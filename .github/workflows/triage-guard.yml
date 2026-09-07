@@ -24,7 +24,13 @@ jobs:
           # A guard naming only `triage-bot` does not enforce SCR-005 — it
           # locks every login out of a facet SCR-005 requires somebody to
           # set, which is how #5205 made the whole backlog unprioritisable.
-          TRIAGE_LOGINS: triage-bot macanderson
+          #
+          # `github-actions[bot]` is the login `triage-schedule.yml` posts
+          # under, because a workflow using the run's own token authenticates
+          # as that bot. Without it here the scheduled sweep and this guard
+          # fight: the sweep writes a priority, the guard strips it and puts
+          # `triage` back, and the next sweep sizes the same issue again.
+          TRIAGE_LOGINS: triage-bot macanderson github-actions[bot]
         with:
           script: |
             const issue = context.payload.issue;
