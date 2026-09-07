@@ -234,6 +234,8 @@ fn a_tool_rule_has_no_opinion_about_a_lane_seam() {
                 purpose: "runs the lane".into(),
                 scope: Vec::new(),
             }],
+            &[],
+            &[],
         )],
     };
 

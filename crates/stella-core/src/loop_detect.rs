@@ -9,11 +9,12 @@
 //! drives) a real, typed verdict it can act on early: steer or abort with
 //! a clear reason instead of grinding to the cap.
 //!
-//! Five failure modes are detected, matching real agent stuck-loop
+//! Six failure modes are detected, matching real agent stuck-loop
 //! signatures. The first three read a **contiguous suffix** and reset at the
 //! first mismatch; the fourth exists because that is a blind spot they all
-//! share (#1851), and the fifth because all four are defined on repeated
-//! output, which a linear sweep never produces (#4042):
+//! share (#1851); the fifth and sixth because all four are defined on repeated
+//! output, which neither a linear sweep (#4042) nor a command that grows every
+//! step (`#5863`) ever produces:
 //!
 //! 1. **Exact repeat** — the same tool called with byte-identical input,
 //!    over and over (`read_file` on the same path, `bash` re-running the
@@ -51,6 +52,13 @@
 //!    call, so all four checks above reset on every one of them. The `sweep`
 //!    submodule carries the argument for why the wrap, and not the call
 //!    count, is the discriminator.
+//! 6. **Self-appending** — many calls to one tool, each re-sending the whole
+//!    of the call before it with more glued on the end. Blind to the four
+//!    output-keyed rungs for the same reason a sweep is — the command grows,
+//!    so its answer grows, and no two outputs match — and blind to the sweep
+//!    rung too, because a growing command carries no cursor to advance and
+//!    wrap. The `append` submodule carries the measured shape and the argument
+//!    for why the nesting is the evidence.
 //!
 //! # What a rung may read, and what this module does not detect
 //!
@@ -74,8 +82,9 @@
 //! the shape instead — the budget, the deadline and the halt predicate that
 //! `doc:adr/0031-a-turn-has-no-step-cap-by-default` already chose over a
 //! count. `loop_detect::tests::grind` holds the recorded trace and pins that
-//! nothing here fires on it, so a sixth rung that does is a decision
-//! somebody made rather than a side effect.
+//! nothing here fires on it, so a new rung that does is a decision
+//! somebody made rather than a side effect. The self-appending rung
+//! below was added after that pin and stays silent on the trace.
 //!
 //! **Progress is part of the loop definition.** A repeat or cycle only
 //! counts when the *outputs* are byte-identical too: identical input with
@@ -105,6 +114,7 @@ use std::borrow::Cow;
 
 use stella_protocol::{ToolCall, ToolOutput};
 
+mod append;
 mod sweep;
 
 /// Longest trailing cycle period the short-cycle detector considers.
@@ -246,6 +256,19 @@ pub struct LoopDetectionConfig {
     /// through and going back to the top is ordinary navigation. Eight is a
     /// sweep by any reading and is far below the 85-call shape #4034 measured.
     pub monotonic_sweep_threshold: usize,
+    /// Consecutive calls to one tool, each re-sending the whole of the call
+    /// before it with more on the end, required before a self-appending grind
+    /// is reported. `0` or `1` disable the check — one call extends nothing.
+    ///
+    /// A floor, and the whole of the evidence, since the nesting itself is
+    /// what the rung reads. `#5863`'s corpus cannot choose the number for us:
+    /// every threshold from 3 to 20 fires on the same three trials out of 371.
+    /// So the number is chosen for what it says. Three calls is a model
+    /// composing a pipeline; eight, each re-asking for everything the last one
+    /// already returned, is not composition. It matches
+    /// [`Self::monotonic_sweep_threshold`], the other rung that reads no
+    /// output and needs its floor to carry the same weight.
+    pub self_appending_threshold: usize,
     /// Seconds of *pure* `sleep` one turn may ask for before the stall rung
     /// says something about it. `0` disables the rung, like every threshold
     /// above.
@@ -294,6 +317,7 @@ impl Default for LoopDetectionConfig {
             stagnation_threshold: 6,
             interleaved_repeat_threshold: 3,
             monotonic_sweep_threshold: 8,
+            self_appending_threshold: 8,
             stall_steer_threshold_secs: 120,
         }
     }
@@ -374,6 +398,21 @@ pub enum LoopVerdict {
         calls: usize,
         wraps: usize,
     },
+    /// `calls` consecutive calls to `tool`, each re-sending the whole of the
+    /// call before it with more on the end, growing out of `base` — the run's
+    /// first and shortest input.
+    ///
+    /// The shape the five rungs above are all blind to (`#5863`). The four
+    /// output-keyed ones need bytes that repeat, and a growing command returns
+    /// a growing answer; the sweep rung needs a cursor that advances and wraps,
+    /// and a growing command has none. The measured case ground for 107 of a
+    /// trial's 307 calls, adding one more copy of the same twelve-file `grep`
+    /// block each step.
+    SelfAppending {
+        tool: String,
+        base: serde_json::Value,
+        calls: usize,
+    },
 }
 
 impl LoopVerdict {
@@ -441,6 +480,10 @@ impl LoopVerdict {
                 },
                 truncate(target, MAX_DESCRIBED_INPUT)
             )),
+            LoopVerdict::SelfAppending { tool, base, calls } => Some(format!(
+                "the last {calls} `{tool}` calls each re-sent the whole of the call before                  them with more added on the end, so every one of them asked again for                  everything the last answer already gave you. What you are looking for is                  not further along this command. Start again from a short one that asks                  only the question you have left, or change approach (it grew out of: {})",
+                truncate(&base.to_string(), MAX_DESCRIBED_INPUT)
+            )),
         }
     }
 
@@ -487,6 +530,18 @@ impl LoopVerdict {
             LoopVerdict::MonotonicSweep { tool, target, .. } => Some(LoopIdentity {
                 tools: vec![tool.clone()],
                 inputs: Some(vec![target.clone()]),
+            }),
+            // The same reasoning as a sweep's, over the field that plays the
+            // sweep target's part here. Every input in the run differs, so
+            // naming the trailing one would call each step of one grind a new
+            // loop and buy a fresh steering warning for every call. The base
+            // is stable for as long as the run is, so a model steered about
+            // one growing command and then growing a different one is
+            // recognized as looping twice, the way one sweep is told from
+            // another.
+            LoopVerdict::SelfAppending { tool, base, .. } => Some(LoopIdentity {
+                tools: vec![tool.clone()],
+                inputs: Some(vec![base.to_string()]),
             }),
         }
     }
@@ -666,10 +721,14 @@ fn same_output(a: &CallRecord<'_>, b: &CallRecord<'_>) -> bool {
 ///    too, so checking it earlier would swallow both of the better-described
 ///    verdicts above.
 /// 4. **Monotonic sweep** (see the module docs), checked after all of them.
-///    Not because it is weak — the wrap is strong evidence — but because it is
-///    the only rung that reads no output, so it is also the only one that can
-///    fire on a window another rung describes better. A sweep whose pages
-///    happen to repeat is a repeat, and should be reported as one.
+///    Not because it is weak — the wrap is strong evidence — but because it
+///    reads no output, so it can fire on a window another rung describes
+///    better. A sweep whose pages happen to repeat is a repeat, and should be
+///    reported as one.
+/// 5. **Self-appending** (see the module docs), last, for that same reason one
+///    step further: it reads neither the output nor a cursor, so it is the
+///    loosest reading of a window, and anything the sweep rung can describe
+///    should be reported as the sweep it is.
 ///
 /// Never panics on any input — empty history, a single call, history
 /// shorter than every threshold, and a zeroed-out `config` (which disables
@@ -689,6 +748,9 @@ pub fn detect_loop(records: &[CallRecord<'_>], config: LoopDetectionConfig) -> L
     }
     if let Some(verdict) = sweep::detect_monotonic_sweep(records, config.monotonic_sweep_threshold)
     {
+        return verdict;
+    }
+    if let Some(verdict) = append::detect_self_appending(records, config.self_appending_threshold) {
         return verdict;
     }
     LoopVerdict::NoLoop
