@@ -1872,7 +1872,10 @@ macanderson org repos.
   CI — not just the implementation. A PR that advances an issue without
   finishing it links it with `Refs #N` rather than `Closes #N`: `Refs`
   does not close, so the merge gate does not hold that PR against the
-  issue's DoD. A PR may carry both, and is gated only on what it closes.
+  issue's DoD. A PR may carry both, and is gated only on what it closes. A
+  PR that closes nothing is waived by a label, and which one is a claim:
+  `no-issue` for a trivial change, `closes-nothing` for a substantial one
+  that closes no issue by design.
 - **[SCR-004](docs/scr/SCR-004-residue-becomes-issues.md) — Fix over
   file:** Fix what you notice in the PR you are making; two unrelated fixes
   in one PR is fine. File an issue only when a fix cannot responsibly ride
