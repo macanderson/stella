@@ -567,6 +567,14 @@ pub(super) async fn resolve_for_attempt(
     // task name on any of them. What each attempt's baseline was is in the
     // grant the plugin receives, and a fleet's own attempt reporting is where a
     // line about it belongs.
+    //
+    // Minting the grant runs the attempt's whole test suite, and the two doors
+    // a person types at put every instant refusal in front of that by building
+    // the provider first. This one keeps the earlier order: its provider is
+    // built against a per-worker config whose root is the attempt's tree, which
+    // does not exist as a value until after this call, and `run_fleet`'s
+    // pre-flight has already resolved the same variant from the same root
+    // before any task was dispatched.
     Ok(ResolvedAttempt {
         resolved: crate::wrapper_plugin::resolve(invocation_root, variant, &mut |_| {})?,
         candidate: crate::wrapper_candidate::grant_shared_tree(tree, test_command).await?,
