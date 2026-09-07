@@ -429,8 +429,12 @@ impl PullRequestProvider for GhPullRequests {
         let raw = gh(&args)?;
         let rows: Vec<GhPullRequest> =
             serde_json::from_str(&raw).map_err(|error| malformed("gh pr list", &error))?;
+        // A row with no `number` is skipped rather than failing the whole
+        // read. It decodes as 0, which is no pull request, and passing that on
+        // would hand a caller a key that addresses nothing.
         Ok(rows
             .into_iter()
+            .filter(|row| row.number != 0)
             .map(|row| PullRequestSummary {
                 key: PullRequestKey(row.number.to_string()),
                 title: row.title,
@@ -734,6 +738,26 @@ mod tests {
                 },
             ]
         );
+    }
+
+    /// A listing row with no number is skipped, not passed on as zero.
+    ///
+    /// `number` defaults, so a payload that dropped it decodes as pull request
+    /// 0. That key addresses nothing. Handing it to a caller would turn a
+    /// dropped field into a pull request the loop then tries to read.
+    #[test]
+    fn a_listing_row_with_no_number_is_skipped() {
+        let raw = r#"[
+            {"title": "no number here", "body": "Closes #43"},
+            {"number": 9, "title": "t", "body": "Closes #43", "headRefName": "fix/43"}
+        ]"#;
+        let rows: Vec<GhPullRequest> = serde_json::from_str(raw).expect("decode");
+        let kept: Vec<String> = rows
+            .into_iter()
+            .filter(|row| row.number != 0)
+            .map(|row| row.number.to_string())
+            .collect();
+        assert_eq!(kept, vec!["9".to_owned()]);
     }
 
     /// An unknown state keeps the caller asking. It never calls a pull
