@@ -209,12 +209,22 @@ calls = [
 [driver.process]
 argv = ["python3", "${plugin_dir}/main.py"]
 # A session now includes the work and the pull request, because `work_start`
-# and the `deliver` verbs are served. The host cuts a checkout, runs one turn
-# in it, pushes the branch and reads the forge while this program waits. A turn
-# on a real issue takes minutes. A one-minute backstop would have killed every
-# session that got as far as doing something. An hour is a backstop against a
-# child that wedges. It is not a work budget: `stella plugin drive
-# --spend-limit` is the number that decides what a session may cost.
+# and the `deliver` verbs are served. The host cuts a checkout, runs one turn in
+# it, pushes the branch and reads the forge while this program waits. A turn on a
+# real issue takes minutes. A one-minute backstop would have killed every
+# session that got as far as doing something. It is not a work budget: `stella
+# plugin drive --spend-limit` is the number that decides what a session may
+# cost.
+#
+# 3600 is not an independent guess: it is
+# `crates/stella-cli/src/self_driving_cmd/work.rs`'s own
+# `DEFAULT_WORK_TURN_TIMEOUT_SECS` (3300s — the bound a work turn now carries
+# even when nobody asks for one, so a wedged `stella run` stops itself well
+# short of this ceiling) plus a fixed 300s margin for everything else one
+# session pays for: the worktree cut, the code-graph seed, the tree diff,
+# process start/stop. That file's own
+# `the_manifests_session_ceiling_leaves_this_bound_a_real_margin` reads this
+# exact number back and fails if the two drift apart.
 timeout_secs = 3600
 # Default-deny, and `PATH` is the whole list — it is here so the host can find
 # `python3`. This program reaches for no file, no forge token and no provider

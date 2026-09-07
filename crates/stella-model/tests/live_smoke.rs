@@ -56,12 +56,14 @@
 //! **A red run names its own cause.** These tests are opt-in and cost money,
 //! so a failure is typically read days later by someone with no credential to
 //! re-run it. Every failing smoke therefore reports through
-//! [`failure_report`]: a verdict (credential / quota / wire shape /
+//! [`failure_report`]: a verdict (credential / quota / billing / wire shape /
 //! undetermined) derived from the typed `ProviderError` case — which *is*
 //! the adapter's own classification of the status code — plus the recovered
-//! status and a bounded prefix of the provider's text. The message it
-//! replaces stated the ambiguity instead of resolving it ("could be a genuine
-//! wire-shape regression OR an unrelated account/auth/quota/billing
+//! status and a bounded prefix of the provider's text. A body is read for one
+//! purpose only, in [`resolve`]: naming billing where the status code cannot,
+//! because two providers spell an empty account as a 400 and a 429. The
+//! message it replaces stated the ambiguity instead of resolving it ("could be
+//! a genuine wire-shape regression OR an unrelated account/auth/quota/billing
 //! problem"), which is what left #3259's red run undiagnosable from its log.
 //! The verdict path is covered offline by the witnesses beside it.
 //!
@@ -727,9 +729,12 @@ enum FailureCause {
     Credential,
     /// HTTP 429, or a refusal to fund the requested output ceiling.
     Quota,
+    /// The account behind the key is out of money — HTTP 402, or a body that
+    /// says so in the provider's own words.
+    Billing,
     /// A response arrived and stella's own parser could not reassemble it.
     WireShape,
-    /// None of the above; the status code does not settle it by itself.
+    /// None of the above; neither the status code nor the body settles it.
     Undetermined,
 }
 
@@ -750,6 +755,12 @@ impl FailureCause {
                  wire-shape regression: the request shape was never judged. Wait out the limit \
                  or raise the cap/credit, then re-run."
             }
+            FailureCause::Billing => {
+                "BILLING — the account behind the key is out of money, and the provider said so \
+                 itself (HTTP 402, or a body naming the balance). The key is valid and the \
+                 request shape was never judged, so this is NOT a wire-shape regression and NOT \
+                 a rotation. Fund the account, then re-run."
+            }
             FailureCause::WireShape => {
                 "WIRE SHAPE — the provider answered and stella's own parser could not \
                  reassemble a CompletionResult from it. The credential worked. This is the \
@@ -757,11 +768,10 @@ impl FailureCause {
                  crates/stella-model/src/ and land a witness test with it."
             }
             FailureCause::Undetermined => {
-                "UNDETERMINED — this failure is none of the three a status code resolves on its \
-                 own, so this run does not name a cause. Read the status and detail below: a \
-                 4xx naming a rejected field is a wire-shape regression; a 402 or an \
-                 out-of-credits body is billing; a 5xx or a transport fault is the provider \
-                 being unwell and settles nothing either way."
+                "UNDETERMINED — neither the status code nor the body settles this failure, so \
+                 this run does not name a cause. Read the status and detail below: a 4xx naming \
+                 a rejected field is a wire-shape regression; a 5xx or a transport fault is the \
+                 provider being unwell and settles nothing either way."
             }
         }
     }
@@ -772,9 +782,10 @@ impl FailureCause {
 ///
 /// The test holds a [`ProviderError`], never the raw `reqwest::Response` — the
 /// adapter has already read the status and the body and folded both into this
-/// error (`http::classify_http_status`). So the verdict is derived from the
-/// **case**, which *is* the adapter's own classification of the status
-/// code, and never from scraping its prose.
+/// error (`http::classify_http_status`). So the cause here is derived from the
+/// **case**, which *is* the adapter's own classification of the status code,
+/// and never from scraping its prose. [`resolve`] is the one place a body is
+/// read, and it may only narrow the case this function leaves undetermined.
 ///
 /// One exhaustive match on purpose: a new `ProviderError` case must fail
 /// this file to compile rather than landing silently in the `Undetermined`
@@ -806,7 +817,7 @@ fn classify(error: &ProviderError) -> (&'static str, FailureCause) {
         }
         // A 4xx the dialect does not model (400/402/404/422 …). A rejected
         // field and an out-of-credits 402 both arrive as this, so the class
-        // alone cannot separate them — the printed status and body can.
+        // alone cannot separate them — the status and body can, in `resolve`.
         ProviderError::Terminal(_) => ("ProviderError::Terminal", FailureCause::Undetermined),
         ProviderError::ContextOverflow { .. } => {
             ("ProviderError::ContextOverflow", FailureCause::Undetermined)
@@ -821,10 +832,11 @@ fn classify(error: &ProviderError) -> (&'static str, FailureCause) {
 /// The numeric HTTP status the adapter stamped into its message, when it
 /// stamped one.
 ///
-/// **Display only** — no verdict depends on it. `classify_http_status` writes
-/// the status as `HTTP 401` / `HTTP 400 Bad Request` into every arm that saw
-/// a wire response, so recovering it puts the number on its own line instead
-/// of leaving a reader to find it inside a paragraph. A miss returns `None`
+/// `classify_http_status` writes the status as `HTTP 401` / `HTTP 400 Bad
+/// Request` into every arm that saw a wire response, so recovering it puts the
+/// number on its own line instead of leaving a reader to find it inside a
+/// paragraph. One verdict reads it: [`resolve`] treats a 402 as billing, since
+/// RFC 9110 gives that code exactly one meaning. A miss returns `None`
 /// rather than a guess: an error raised before any response (DNS, connect,
 /// TLS, cancellation) genuinely has no status, and printing one would be the
 /// invented evidence this whole change exists to stop.
@@ -859,6 +871,57 @@ fn bounded_detail(text: &str) -> String {
     )
 }
 
+/// The phrases a provider writes when the account is out of money, lowercased
+/// for a case-insensitive match.
+///
+/// Each one was captured by this suite's own failure report on a red run, and
+/// neither resolves through its status code — Anthropic sends its balance
+/// refusal as a 400 and Z.ai sends one as a 429. Guessing a phrase no provider
+/// has been seen to write would be the invented evidence the report exists to
+/// stop, so a row is added when a run prints it:
+///
+/// - `credit balance is too low` — Anthropic, HTTP 400: "Your credit balance
+///   is too low to access the Anthropic API. Please go to Plans & Billing to
+///   upgrade or purchase credits." (live-smoke run 33692795506, 2026-09-02).
+/// - `insufficient balance` — Z.ai, HTTP 429: "Insufficient balance or no
+///   resource package. Please recharge." (same run).
+const BILLING_BODY_MARKERS: &[&str] = &["credit balance is too low", "insufficient balance"];
+
+/// The billing phrase `text` carries, if it carries one.
+fn billing_marker(text: &str) -> Option<&'static str> {
+    let haystack = text.to_ascii_lowercase();
+    BILLING_BODY_MARKERS
+        .iter()
+        .copied()
+        .find(|marker| haystack.contains(marker))
+}
+
+/// The class name and the cause a failure establishes, with the provider's own
+/// body consulted where the typed case leaves the question open.
+///
+/// [`classify`] answers from the case alone, which cannot separate a rejected
+/// field from an exhausted account: both arrive as `Terminal`. The body can,
+/// and on the two runs this suite has failed for money reasons it did — the
+/// report captured Anthropic's "credit balance is too low" and printed
+/// `UNDETERMINED` over the top of it. A signal captured and then dropped one
+/// step later is the whole of "the log does not name a cause".
+///
+/// Reading prose is confined to the undetermined case, so a body can only
+/// narrow an answer the status code failed to give. It can never raise a WIRE
+/// SHAPE verdict — the one verdict that indicts stella's own adapters — and
+/// never suppress one, since `Malformed` never reaches this branch.
+fn resolve(error: &ProviderError) -> (&'static str, FailureCause) {
+    let (class, cause) = classify(error);
+    if cause != FailureCause::Undetermined {
+        return (class, cause);
+    }
+    let text = error.to_string();
+    if recovered_status(&text) == Some(402) || billing_marker(&text).is_some() {
+        return (class, FailureCause::Billing);
+    }
+    (class, cause)
+}
+
 /// The panic message a failed smoke reports: a verdict, the status that
 /// justifies it, the error class it came from, and a bounded prefix of the
 /// provider's own text.
@@ -870,7 +933,7 @@ fn bounded_detail(text: &str) -> String {
 /// keyed URL into these strings.
 fn failure_report(provider_id: &str, error: &ProviderError) -> String {
     let text = error.to_string();
-    let (class, cause) = classify(error);
+    let (class, cause) = resolve(error);
     let status = recovered_status(&text).map_or_else(
         || "none — this error was raised before any HTTP response arrived".to_string(),
         |status| format!("HTTP {status}"),
@@ -1028,6 +1091,77 @@ fn an_undetermined_failure_still_prints_the_status_it_had() {
         ),
     );
     assert!(report.contains("status: HTTP 400"), "{report}");
+}
+
+/// The body Anthropic sent on live-smoke run 33692795506, verbatim inside the
+/// wording `http::classify_http_status` wraps it in.
+///
+/// A red run carrying this text is what left the log unable to name a cause:
+/// the money answer was in the body, and the status code it arrived on (400)
+/// resolves nothing.
+const ANTHROPIC_OUT_OF_CREDIT: &str = "terminal provider error: Anthropic HTTP 400 Bad Request: \
+     {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit \
+     balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or \
+     purchase credits.\"},\"request_id\":\"req_011CefSWJHaVhb5btCy6BRfS\"}";
+
+/// The verdict a reader of that run needed: the account is empty, and no
+/// adapter is suspect.
+#[test]
+fn an_out_of_credit_body_is_reported_as_billing() {
+    let error = ProviderError::Terminal(ANTHROPIC_OUT_OF_CREDIT.to_string());
+    assert_eq!(resolve(&error).1, FailureCause::Billing);
+
+    let report = failure_report("anthropic", &error);
+    assert!(report.contains("BILLING"), "{report}");
+    assert!(!report.contains("UNDETERMINED"), "{report}");
+    assert!(
+        report.contains("NOT a wire-shape regression"),
+        "a named balance settles the question the whole report exists to answer: {report}"
+    );
+    assert!(
+        report.contains("status: HTTP 400"),
+        "the status the billing answer arrived on must still print: {report}"
+    );
+}
+
+/// Z.ai spells the same answer differently, on a different status code. One
+/// provider's phrasing must not be the only one the report can read.
+#[test]
+fn a_second_providers_wording_for_an_empty_account_is_also_billing() {
+    let error = ProviderError::Terminal(
+        "terminal provider error: Z.ai HTTP 429: {\"error\":{\"message\":\"Insufficient balance \
+         or no resource package. Please recharge.\"}}"
+            .to_string(),
+    );
+    assert_eq!(resolve(&error).1, FailureCause::Billing);
+    assert!(failure_report("zai", &error).contains("BILLING"));
+}
+
+/// A 402 means one thing, so it needs no phrase at all.
+#[test]
+fn a_payment_required_status_is_billing_without_a_body_phrase() {
+    let error = ProviderError::Terminal("openrouter HTTP 402 Payment Required: {}".to_string());
+    assert_eq!(resolve(&error).1, FailureCause::Billing);
+}
+
+/// The narrowing runs one way. A body may name money where the status code is
+/// silent; it may never talk the report out of the one verdict that indicts
+/// stella's own code, or into it.
+#[test]
+fn a_billing_phrase_never_moves_a_verdict_the_case_already_settled() {
+    let malformed = ProviderError::Malformed(
+        "missing field `content` — the account has insufficient balance".to_string(),
+    );
+    assert_eq!(resolve(&malformed).1, FailureCause::WireShape);
+
+    let auth = ProviderError::Auth(
+        "anthropic rejected the credential (HTTP 401): your credit balance is too low".to_string(),
+    );
+    assert_eq!(resolve(&auth).1, FailureCause::Credential);
+
+    let rejected_field =
+        ProviderError::Terminal("anthropic HTTP 400 Bad Request: bad `thinking` field".to_string());
+    assert_eq!(resolve(&rejected_field).1, FailureCause::Undetermined);
 }
 
 /// A provider that answers a failure with a multi-kilobyte CDN page must not

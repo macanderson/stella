@@ -419,18 +419,14 @@ lane_capabilities! {
         lane: SeamClaim::bound("lane: Some(TurnLane::Builtin(BuiltinLane::Resume))", CLI_LANE),
     }
 
-    // A deck worker lane. Two of its seams are open questions.
+    // A deck worker lane. One of its seams is still an open question.
     SubSession => LaneOrigin::Builtin,
         Some(LaneSite {
             file: "crates/stella-cli/src/lane_capabilities.rs",
             anchor: "pub(crate) fn sub_session<'a>(",
         }),
     {
-        hooks: SeamClaim::deferred(
-            "Refs #6157",
-            "a decision on whether a worker lane runs the session's hooks. The lead turn that \
-             spawned it runs them today",
-        ),
+        hooks: SeamClaim::bound("hooks: hooks.map(", CLI_SEAMS),
         hook_approvals: SeamClaim::declined(DECK_APPROVALS),
         calibration: SeamClaim::bound("calibration: Some(calibration)", CLI_SEAMS),
         gate: SeamClaim::bound("gate: Some(gate)", CLI_SEAMS),
