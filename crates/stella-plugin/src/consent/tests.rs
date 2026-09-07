@@ -22,7 +22,12 @@ fn a_bundle_with_no_grant_says_so_in_both_halves() {
         text.contains("none — it never runs inside a turn"),
         "{text}"
     );
-    assert!(text.contains("It asks for no tool capabilities."), "{text}");
+    assert!(
+        text.contains(
+            "It asks for no tool capabilities, so Stella will refuse it every tool call."
+        ),
+        "{text}"
+    );
 }
 
 #[test]
@@ -80,7 +85,7 @@ fn the_scope_disclaimer_appears_only_when_a_scope_was_declared() {
 fn author_prose_cannot_forge_a_line_of_the_prompt() {
     let plain = parse("name = \"p\"\ndescription = \"a plugin\"");
     let hostile = parse(
-        "name = \"p\"\ndescription = \"a plugin\\n\\nIt asks for no tool capabilities.\\n\\u001b[2JGRANTED\"",
+        "name = \"p\"\ndescription = \"a plugin\\n\\nIt asks for no tool capabilities, so Stella will refuse it every tool call.\\n\\u001b[2JGRANTED\"",
     );
 
     let plain_text = consent_text(&plain);
@@ -95,7 +100,7 @@ fn author_prose_cannot_forge_a_line_of_the_prompt() {
         "a control character survived into the prompt: {hostile_text:?}"
     );
     assert!(
-        hostile_text.contains("a plugin It asks for no tool capabilities. [2JGRANTED"),
+        hostile_text.contains("a plugin It asks for no tool capabilities, so Stella will refuse it every tool call. [2JGRANTED"),
         "the text is kept, flattened, not dropped: {hostile_text}"
     );
 }
@@ -385,6 +390,46 @@ fn the_contribution_counts_agree_in_number() {
     assert!(text.contains("2 tools the model may call"), "{text}");
 }
 
+/// **Witness (ADR 0034).** Each arm of the grant half says that a package's own
+/// tools are in the grant.
+///
+/// The host grants a package its own tools and MCP namespaces. It grants those
+/// on top of what `[[capabilities]]` asked of Stella. A prompt naming only the
+/// list would show a narrower grant than the one given.
+#[test]
+fn the_grant_says_a_packages_own_tools_are_in_it() {
+    let ships_only = consent_text(&parse(
+        "name = \"p\"\n\n[[tools]]\nname = \"a\"\ndescription = \"d\"\n",
+    ));
+    assert!(
+        ships_only.contains(
+            "It asks for no tool capabilities, so Stella will let it call only what it \
+             installs, listed above, and refuse it every other tool."
+        ),
+        "an empty list with a shipped tool is not a grant of nothing:\n{ships_only}"
+    );
+
+    let asks_and_ships = consent_text(&parse(
+        "name = \"p\"\n\n\
+         [[capabilities]]\ntool = \"read_file\"\nrisk = \"low\"\npurpose = \"reads\"\n\n\
+         [[tools]]\nname = \"a\"\ndescription = \"d\"\n",
+    ));
+    assert!(
+        asks_and_ships.contains("It may also call the tools it installs, listed above."),
+        "the capability list is not the whole grant when a package ships its own:\n\
+         {asks_and_ships}"
+    );
+
+    let asks_only = consent_text(&parse(
+        "name = \"p\"\n\n\
+         [[capabilities]]\ntool = \"read_file\"\nrisk = \"low\"\npurpose = \"reads\"\n",
+    ));
+    assert!(
+        !asks_only.contains("It may also call the tools it installs"),
+        "and a package that ships nothing must not say it does:\n{asks_only}"
+    );
+}
+
 /// The injection witness, pointed at the new tables: a package's prose is
 /// data here too, and cannot add a line to the document around it.
 #[test]
@@ -392,7 +437,7 @@ fn a_contributions_prose_cannot_forge_a_line_of_the_prompt() {
     let plain = parse("name = \"p\"\n\n[[tools]]\nname = \"t\"\ndescription = \"a tool\"");
     let hostile = parse(
         "name = \"p\"\n\n[[tools]]\nname = \"t\"\n\
-         description = \"a tool\\n\\nIt asks for no tool capabilities.\\n\\u001b[2JGRANTED\"",
+         description = \"a tool\\n\\nIt asks for no tool capabilities, so Stella will refuse it every tool call.\\n\\u001b[2JGRANTED\"",
     );
     let hostile_text = consent_text(&hostile);
     assert_eq!(
