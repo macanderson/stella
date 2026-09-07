@@ -198,6 +198,21 @@ expect_line() {
   fi
 }
 
+# $1 = case name, $2 = root, $3 = substring the guard's stdout must contain.
+# The guard must also exit 0 -- this is for the passing-mode-note cases, not
+# a general-purpose grep.
+expect_output_contains() {
+  out="$(python3 "$SCRIPT" "$2" 2>&1)"
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    no "$1" "the guard exited non-zero"
+  elif printf '%s' "$out" | grep -qF "$3"; then
+    ok "$1"
+  else
+    no "$1" "stdout has no \"$3\" -- got: $out"
+  fi
+}
+
 # ── P1: clean prose passes ───────────────────────────────────────────────────
 r="$(new_root p1)"
 doc "$r" docs/a.md <<'EOF'
@@ -1013,6 +1028,30 @@ expect_line "S7 the moved entry is carried, and capped at its own count" \
 expect_line "S7 the untouched file keeps the ceiling it had" \
   "$r" "docs/untouched.md filler-adverb 3"
 expect_absent "S7 the old path is gone" "$r" "docs/old.md"
+
+# ── S8: a run with no resolvable base says so, rather than passing silently
+# in strict mode (#6273). A repository at its very first commit has no
+# `HEAD^2`, no `origin/main`, and no `HEAD^1` -- every rung of
+# `resolve_base_commit` misses, exactly as it does on a depth-1
+# `guard-self-tests.yml` checkout. The green line must name that, or an inert
+# allowance and a working one print the same thing.
+r="$(new_root s8)"
+baseline "$r"
+commit_all "$r"
+expect_output_contains "S8 no base resolved is named on the way past" "$r" \
+  "No base resolved -- strict whole-tree check."
+
+# S9: a resolvable base is named too, so the two modes read differently in a
+# log rather than only one of them announcing itself.
+r="$(new_root s9)"
+baseline "$r"
+commit_all "$r"
+doc "$r" docs/second.md <<'EOF'
+The cache is keyed by path.
+EOF
+commit_all "$r"
+expect_output_contains "S9 a resolved base is named on the way past" "$r" \
+  "Judged against"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
