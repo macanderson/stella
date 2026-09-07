@@ -49,9 +49,9 @@ revert — so there is no meaningful DoD to verify.
 
 `closes-nothing` says the change is substantial and closes no issue by
 design: an audit that files issues rather than closing them, a mechanical
-refactor, a sweep. Without it such a pull request had no honest route
-through the gate, because `Closes #N` would be untrue and `no-issue` claims
-a triviality that is not there.
+refactor, a sweep. Without it such a pull request had no route through the
+gate that was not a false claim: `Closes #N` would name a close that is not
+happening, and `no-issue` claims a triviality that is not there.
 
 They are labels rather than phrases in the description so that every use is
 enumerable (`is:pr label:no-issue`, `is:pr label:closes-nothing`): an escape
