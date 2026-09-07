@@ -96,6 +96,9 @@ machine runs before pushing:
 ```bash
 make gate                # = no-scratch + no-secrets + design-refs
                          #   + action-pins + cargo-install-pins
+                         #   + untrusted-checkout (no workflow_run job
+                         #     checks out a ref its trigger does not
+                         #     vouch for)
                          #   + license-allowlist-parity + repro-wiring
                          #   + shellcheck + invariants + doc-links
                          #   + adr-numbering

@@ -36,6 +36,7 @@ CARGO_SCOPE ?= --workspace
 # compiles the workspace for clippy anyway, so excluding wire-schema there
 # saved nothing and let a GATE=fast push land stale generated wire artifacts.
 GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-pins \
+                    untrusted-checkout \
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
                     adr-numbering \
                     command-docs website-inputs brand-case file-size god-files gate-parity \
@@ -291,6 +292,10 @@ design-refs: ## Assert nothing outside docs/design cites it (docs/design is work
 .PHONY: action-pins
 action-pins: ## Assert every workflow `uses:` is pinned to a commit SHA (#648)
 	@./scripts/check-action-pins.sh
+
+.PHONY: untrusted-checkout
+untrusted-checkout: ## Assert no workflow_run job checks out a ref its trigger does not vouch for (#6367)
+	@./scripts/check-untrusted-checkout.sh
 
 .PHONY: cargo-install-pins
 cargo-install-pins: ## Assert every workflow `cargo install` names an exact version (#915)
