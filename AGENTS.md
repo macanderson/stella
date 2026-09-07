@@ -212,8 +212,10 @@ gate steps ci.yml's job cannot — `prose`, `line-citations`, `hue-separation`,
 `transcript-surfaces` and `cargo-flags`; it is skipped for a prose-only diff,
 which is the diff `prose` exists to judge — alongside the hermetic suites that
 prove a guard can still fail (#3820, #4427). `cargo-flags` is there for a
-sharper version of the same reason: it reads the `Makefile`, and no workflow
-that runs a Makefile recipe can be started by a Makefile edit, which is how
+sharper version of the same reason: it reads the `Makefile`, and the one
+workflow that runs `doc-warnings-schema` cannot be started by a `Makefile`
+edit at all — its `paths:` list asks whether the diff could have made
+`docs/wire/` stale, which a recipe edit cannot. That is how
 `doc-warnings-schema` came to ship a first line cargo refuses and stay dead
 for seven hours with every run green. Which workflow runs a step is a
 judgement; *that* one does is checked, by `gate-parity` against every `run:`
