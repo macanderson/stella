@@ -99,6 +99,7 @@ open; nothing before Phase 3 forces it.
 | [0030](0030-the-wrapper-socket-is-the-plugin-sdk.md) | The Wrapper Socket Is the Plugin SDK | Accepted |
 | [0031](0031-a-turn-has-no-step-cap-by-default.md) | A Turn Has No Step Cap by Default | Accepted |
 | [0032](0032-a-loop-rung-reads-structure.md) | A Loop Rung Reads Structure, Not Progress | Accepted |
+| [0033](0033-free-text-is-not-evidence.md) | Free Text Is Not Evidence | Accepted |
 | [0034](0034-silence-is-not-a-grant.md) | Silence Is Not a Grant | Accepted |
 | [0035](0035-a-wrappers-verdict-lands-on-the-round-that-earned-it.md) | A Wrapper's Verdict Lands on the Round That Earned It | Accepted |
 
@@ -184,6 +185,12 @@ separates it from the trials that succeeded, because what is wrong with it is
 not in its calls. The recorded trace is committed with a pin that no rung
 fires on it.
 
+ADR 0033 settles how a goal-mode verifier's free text reaches a wrapper
+plugin's host. It does not reach `EvidenceSet`: that type stays closed so
+`judge`'s totality is the compiler's job, `met` rides as a `0`/`1`
+measurement, and the verifier's own sentence rides as the advisory
+`ObservedEvidence::detail` that no verdict is decided from. The half the
+record adds is a reader for a passing verdict, which had none.
 ADR 0034 settles what a plugin with an empty `[[capabilities]]` list may call.
 It may call nothing of the host's. Its grant is what its manifest declared and
 a person took, which also covers the tools and MCP servers the package ships.

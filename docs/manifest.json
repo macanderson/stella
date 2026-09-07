@@ -165,6 +165,11 @@
       "status": "implemented",
       "title": "ADR 0032: A loop rung reads structure, not progress"
     },
+    "adr/0033-free-text-is-not-evidence": {
+      "path": "docs/adr/0033-free-text-is-not-evidence.md",
+      "status": "implemented",
+      "title": "ADR 0033: Free text is not evidence"
+    },
     "adr/0034-silence-is-not-a-grant": {
       "path": "docs/adr/0034-silence-is-not-a-grant.md",
       "status": "implemented",

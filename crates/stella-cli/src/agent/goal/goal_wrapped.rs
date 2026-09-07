@@ -16,11 +16,12 @@
 //! The goal verifier — [`stella_core::Engine::assess`], the exact primitive
 //! [`super::run_goal_turn`] (raw) and `run_goal_pipeline_turn`
 //! (classic) both call — decides met/unmet here exactly as it does on those
-//! two arms. Moving that decision onto the wrapper's own `judge`/`again`
-//! would mean encoding [`stella_core::goal::GoalVerifierVerdict`]'s free-text
-//! feedback into [`stella_plugin::EvidenceSet`]'s flip/tamper/measurement
-//! vocabulary, which has no slot for it today — `docs/spec/turn-loop-wrappers.md`
-//! §9.2 names the gap without settling the encoding. Out of scope for this
+//! two arms. Moving that decision onto the wrapper's own `judge`/`again` is
+//! now a piece of work rather than an open question: `doc:adr/0033-free-text-is-not-evidence` settles
+//! how [`stella_core::goal::GoalVerifierVerdict`] is encoded — `met` as a
+//! `0`/`1` measurement [`stella_plugin::EvidenceSet`] already carries, and
+//! the two free-text fields as the advisory `ObservedEvidence::detail` that
+//! never enters that vocabulary at all. Out of scope for this
 //! slice by design: the round loop below still decides continuation itself,
 //! precisely as [`stella_core::Engine::run_goal`] does, and only the WORKER
 //! turn inside each round is what reaches the wrapper.
