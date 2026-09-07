@@ -321,9 +321,6 @@ state=verified
 [ -n "$still_running" ] && state=pending
 [ -n "$unverified" ] && state=unverified
 
-green=1
-[ "$state" = "verified" ] || green=0
-
 # How deep is the backlog these pending commits sit in? A commit list alone
 # cannot tell "the run is a minute old" from "this repo is a hundred runs
 # behind and nothing about `main` gets an answer for half an hour".
@@ -389,7 +386,7 @@ if [ "$announce" -eq 1 ] && [ "$state" = "pending" ]; then
     printf 'check-main-verified: pending, nothing to file — an answer is still coming\n' || true
   fi
 elif [ "$announce" -eq 1 ]; then
-  if [ "$green" -eq 1 ]; then
+  if [ "$state" = "verified" ]; then
     if [ -n "$open_issue" ]; then
       body="Every commit checked on this run has a completed \`ci\` run again.
 Closing automatically — reopen if you disagree.
