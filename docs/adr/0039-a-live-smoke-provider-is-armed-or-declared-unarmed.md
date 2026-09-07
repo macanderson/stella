@@ -1,10 +1,10 @@
 ---
-id: adr/0038-a-live-smoke-provider-is-armed-or-declared-unarmed
-title: "ADR 0038: A live smoke provider is armed or declared unarmed"
+id: adr/0039-a-live-smoke-provider-is-armed-or-declared-unarmed
+title: "ADR 0039: A live smoke provider is armed or declared unarmed"
 status: implemented
 ---
 
-# ADR 0038: A live smoke provider is armed or declared unarmed
+# ADR 0039: A live smoke provider is armed or declared unarmed
 
 - Status: accepted
 - Date: 2026-09-07

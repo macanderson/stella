@@ -22,7 +22,7 @@
 # A secret this repository does not hold is DECLARED rather than absent.
 # `crates/stella-model/tests/live_smoke/arming.rs` carries the list: one row
 # per provider that cannot run, naming what is missing, the run that
-# established it, and the issue that owns it (ADR 0038, #5595). Today eight
+# established it, and the issue that owns it (ADR 0039, #5595). Today eight
 # of the nine sit there — six with no credential in the repository secrets,
 # and Anthropic and Z.ai with a working key and an empty account. A green run
 # means one live call plus eight declared rows, and the log prints each one.

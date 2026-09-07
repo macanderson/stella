@@ -5,7 +5,7 @@
 //! There is no third state. [`stale_declaration`] re-asks each row's reason
 //! on every run, so a row cannot outlive what it claims.
 //!
-//! `doc:adr/0038-a-live-smoke-provider-is-armed-or-declared-unarmed` is the
+//! `doc:adr/0039-a-live-smoke-provider-is-armed-or-declared-unarmed` is the
 //! decision and the argument behind it.
 
 /// Why a provider is not armed here today.

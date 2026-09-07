@@ -190,10 +190,10 @@
       "status": "implemented",
       "title": "ADR 0037: A credit balance lives outside the engine"
     },
-    "adr/0038-a-live-smoke-provider-is-armed-or-declared-unarmed": {
-      "path": "docs/adr/0038-a-live-smoke-provider-is-armed-or-declared-unarmed.md",
+    "adr/0039-a-live-smoke-provider-is-armed-or-declared-unarmed": {
+      "path": "docs/adr/0039-a-live-smoke-provider-is-armed-or-declared-unarmed.md",
       "status": "implemented",
-      "title": "ADR 0038: A live smoke provider is armed or declared unarmed"
+      "title": "ADR 0039: A live smoke provider is armed or declared unarmed"
     },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",

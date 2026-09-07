@@ -104,7 +104,7 @@ open; nothing before Phase 3 forces it.
 | [0035](0035-a-wrappers-verdict-lands-on-the-round-that-earned-it.md) | A Wrapper's Verdict Lands on the Round That Earned It | Accepted |
 | [0036](0036-a-driver-takes-a-pull-request-out-of-draft.md) | A Driver Takes a Pull Request Out of Draft | Accepted |
 | [0037](0037-a-credit-balance-lives-outside-the-engine.md) | A Credit Balance Lives Outside the Engine | Accepted |
-| [0038](0038-a-live-smoke-provider-is-armed-or-declared-unarmed.md) | A Live Smoke Provider Is Armed or Declared Unarmed | Accepted |
+| [0039](0039-a-live-smoke-provider-is-armed-or-declared-unarmed.md) | A Live Smoke Provider Is Armed or Declared Unarmed | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible
@@ -222,7 +222,7 @@ a customer owes, and this repository grows no ledger for money. The engine's
 part is to report what a turn cost, which the enterprise export path already
 does under the content-free rule.
 
-ADR 0038 settles what the live provider smoke suite says while it cannot reach
+ADR 0039 settles what the live provider smoke suite says while it cannot reach
 eight of its nine endpoints. A provider is armed, or a row names what is
 missing, when that was checked, and the issue that owns it. The reason is
 re-asked on every run, so a row goes red the moment it stops being true — a
