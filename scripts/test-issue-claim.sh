@@ -36,13 +36,19 @@ bad() { printf '  \033[31m✗\033[0m %s\n' "$*"; fail=$((fail + 1)); }
 # One assertion shape: run with every seam pinned and compare the exit code.
 # An expected block must also name its reason, because "exit 1" is satisfied by
 # a typo in the script just as well as by the case's own subject.
-want() { # want <name> <expect-proceed|expect-block> <want-substring> <mode> <login> <claims> <prs>
+want() { # want <name> <expect-proceed|expect-block> <want-substring> <mode> <login> <claims> <prs> [state] [extra flags...]
   local name="$1" expect="$2" want_text="$3" mode="$4" login="$5" claims="$6" prs="$7"
+  # The issue's own state, `STATE` or `STATE:REASON`; an empty eighth argument
+  # keeps the script's default (OPEN). Anything after it is passed through.
+  local state="${8:-}"
+  shift 7
+  [ $# -gt 0 ] && shift
   local out rc
   out="$("$SCRIPT" "$mode" 5045 \
     --fixture-login "$login" \
     --fixture-claims "$claims" \
-    --fixture-prs "$prs" 2>&1)"
+    --fixture-prs "$prs" \
+    ${state:+--fixture-issue-state "$state"} "$@" 2>&1)"
   rc=$?
   if [ "$expect" = "expect-proceed" ] && [ "$rc" -ne 0 ]; then
     bad "$name — expected proceed, got exit $rc: $out"
@@ -120,7 +126,53 @@ esac
 want "a Refs-only pull request does not stand this session down, but is named" \
   expect-proceed "6203 OPEN" check "ada" "" "6203 OPEN refs"
 
+# ── a closed issue is not work to claim ──────────────────────────────────────
+
+# The fold shape: an audit closed the issue into a batch, so no PR and no
+# claim names it, and the unfixed script called it unclaimed. The report has
+# to say the reason and point at the batch, or a reader takes the stand-down
+# for a stale claim and works it anyway.
+out="$("$SCRIPT" check 5045 \
+  --fixture-login ada --fixture-claims "" --fixture-prs "" \
+  --fixture-issue-state "CLOSED:NOT_PLANNED" 2>&1)"
+rc=$?
+case "$rc,$out" in
+1,*"is closed (NOT_PLANNED)"*"batch"*)
+  ok "a closed issue stands this session down and names the reason"
+  ;;
+*)
+  bad "expected exit 1 naming 'is closed (NOT_PLANNED)' and the batch, got exit $rc: $out"
+  ;;
+esac
+
+want "a closed issue also refuses to take a claim" \
+  expect-block "is closed" claim "ada" "" "" "CLOSED:COMPLETED"
+
+# An explicit OPEN state is the default the other cases run under, spelled
+# out once so the seam is shown to reach the comparison.
+want "an open issue proceeds" \
+  expect-proceed "is unclaimed" check "ada" "" "" "OPEN:REOPENED"
+
 # ── the negative controls: every unknown proceeds ────────────────────────────
+
+# An unreadable state proceeds, and the claim check still runs after it: a
+# peer's live claim must block even when the tracker would not say whether
+# the issue is open.
+out="$("$SCRIPT" check 5045 \
+  --fixture-login ada --fixture-claims "grace - 300" --fixture-prs "" \
+  --fixture-issue-state-failed 2>&1)"
+rc=$?
+case "$rc,$out" in
+1,*"state, so this run cannot tell an open"*"claimed by @grace"*)
+  ok "an unreadable issue state proceeds to the claim check, which still blocks"
+  ;;
+*)
+  bad "expected the state note and then a stand-down on @grace, got exit $rc: $out"
+  ;;
+esac
+
+want "an unreadable issue state proceeds when nothing else blocks" \
+  expect-proceed "is unclaimed" check "ada" "" "" "" --fixture-issue-state-failed
 
 want "an unclaimed issue proceeds" \
   expect-proceed "is unclaimed" check "ada" "" ""
