@@ -160,6 +160,11 @@
       "status": "implemented",
       "title": "ADR 0031: A turn has no step cap by default"
     },
+    "adr/0032-a-loop-rung-reads-structure": {
+      "path": "docs/adr/0032-a-loop-rung-reads-structure.md",
+      "status": "implemented",
+      "title": "ADR 0032: A loop rung reads structure, not progress"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",

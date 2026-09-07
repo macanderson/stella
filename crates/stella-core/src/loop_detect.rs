@@ -52,6 +52,31 @@
 //!    submodule carries the argument for why the wrap, and not the call
 //!    count, is the discriminator.
 //!
+//! # What a rung may read, and what this module does not detect
+//!
+//! A rung reads **structure**: a property of the recorded calls and answers
+//! that a reader can check by looking at them. It never reads whether the
+//! turn is getting closer to what was asked for. That is a judgement about
+//! the task, this module is a pure synchronous function over owned data
+//! (AGENTS.md #2), and no verdict here may cost a model call.
+//!
+//! So one shape is out of reach on purpose: a turn whose commands vary,
+//! whose answers vary, and whose stated next step varies, that is still
+//! getting nowhere. `#3292` opened on a recorded case of it. Three candidate
+//! signals — how much of the output was seen before, whether any file moved,
+//! whether the plan restated itself — were each measured against a
+//! 497-trial corpus and each failed the same way: the turns that succeeded
+//! do the same things. The difference between grinding and working there is
+//! what the work is *for*, which is not in the call stream.
+//!
+//! `doc:adr/0032-a-loop-rung-reads-structure` decides that, records the
+//! measurements so they are not run a fourth time, and names what bounds
+//! the shape instead — the budget, the deadline and the halt predicate that
+//! `doc:adr/0031-a-turn-has-no-step-cap-by-default` already chose over a
+//! count. `loop_detect::tests::grind` holds the recorded trace and pins that
+//! nothing here fires on it, so a sixth rung that does is a decision
+//! somebody made rather than a side effect.
+//!
 //! **Progress is part of the loop definition.** A repeat or cycle only
 //! counts when the *outputs* are byte-identical too: identical input with
 //! identical output means the model gained no new information, which is
