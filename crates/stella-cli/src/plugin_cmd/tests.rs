@@ -1200,8 +1200,13 @@ fn driving_manifest_text(name: &str) -> String {
 ///
 /// `sleep_secs` is a parameter because a run of sessions waits between them:
 /// a test that opens several passes zero, so it costs no wall clock.
+///
+/// `ask` names one capability the driver requests before it answers, and
+/// `None` is a driver that asks for nothing. The script reads the host's reply
+/// and ignores what it says: the answer is the gate's business, and what this
+/// fixture is here to produce is the ask.
 #[cfg(unix)]
-fn driving_package(dir: &Path, name: &str, sleep_secs: u32) -> PathBuf {
+fn driving_package(dir: &Path, name: &str, sleep_secs: u32, ask: Option<&str>) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
 
     let source = dir.join(format!("src-{name}"));
@@ -1211,12 +1216,19 @@ fn driving_package(dir: &Path, name: &str, sleep_secs: u32) -> PathBuf {
         driving_manifest_text(name),
     )
     .expect("fixture manifest");
+    let asking = match ask {
+        Some(call) => {
+            format!("printf '{{\"call\":\"{call}\",\"id\":1}}\\n'\nread -r _answer\n")
+        }
+        None => String::new(),
+    };
     let script = source.join("drive.sh");
     std::fs::write(
         &script,
         format!(
             "#!/bin/sh\n\
              read -r _line\n\
+             {asking}\
              printf '{{\"point\":\"drive\",\"body\":{{\"next\":{{\"sleep\":{{\"secs\":{sleep_secs}}}}}}}}}\\n'\n"
         ),
     )
@@ -1242,7 +1254,7 @@ fn a_driver_session_leaves_a_durable_record_of_what_it_asked_and_how_it_ended() 
     unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
 
     let root = temp_root("drive-record");
-    let source = driving_package(&root, "watcher", 9);
+    let source = driving_package(&root, "watcher", 9, None);
     let settings = Settings::default();
     install(&root, &source, PluginScope::Project, true, &settings).expect("install must succeed");
 
@@ -1264,13 +1276,67 @@ fn a_driver_session_leaves_a_durable_record_of_what_it_asked_and_how_it_ended() 
     assert_eq!(entry.plugin, "watcher");
     assert!(!entry.session_id.is_empty(), "{entry:?}");
     assert!(entry.program.ends_with("drive.sh"), "{entry:?}");
+    // The session that asks for nothing records nothing, which is what makes
+    // the sibling below's non-empty list mean something. Its `None` is the
+    // choice this test makes, not a shape the fixture is stuck with.
     assert!(
         entry.refusals.is_empty(),
-        "the fixture never asks for a capability: {entry:?}"
+        "this fixture asks for no capability: {entry:?}"
     );
     assert_eq!(
         entry.outcome,
         crate::driver_plugin::session_log::DriverSessionOutcome::Sleep { secs: 9 }
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// **The witness.** A refusal a session actually produced reaches the file,
+/// naming the ask and the plugin that made it.
+///
+/// The sibling above only ever asserted the recorded list was *empty*, against
+/// a fixture that could not ask for anything — so `drive` could stop reading
+/// the gate, or read it before the session rather than after, and every test
+/// here would still pass. `DriverCallGate` fills that list while the session
+/// runs, so reading it early gives an empty vector that looks exactly like a
+/// well-behaved driver.
+///
+/// The ask is `deliver_merge`, which `driving_manifest_text` does not declare.
+/// The gate refuses it on the grant alone, before any capability is consulted,
+/// so this test reaches no tracker and starts no `gh`.
+#[cfg(unix)]
+#[test]
+fn a_refusal_a_driver_session_produced_is_named_in_the_durable_record() {
+    let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT"]);
+    // SAFETY: the env lock above is held for the whole mutate-read-restore
+    // window, and `EnvRestore` puts the prior value back on drop.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+
+    let root = temp_root("drive-refusal");
+    // Zero seconds, so the run's one wait costs the test nothing.
+    let source = driving_package(&root, "asker", 0, Some("deliver_merge"));
+    let settings = Settings::default();
+    install(&root, &source, PluginScope::Project, true, &settings).expect("install must succeed");
+
+    drive(&root, "asker", Some(1), TurnFlags::default())
+        .expect("a refused ask is a value the driver reads, never a failed run");
+
+    let sessions = crate::driver_plugin::session_log::read_sessions(&root);
+    assert_eq!(sessions.len(), 1, "{sessions:?}");
+    let entry = &sessions[0];
+    assert_eq!(entry.refusals.len(), 1, "one ask, one refusal: {entry:?}");
+    let refusal = &entry.refusals[0];
+    assert!(refusal.contains("deliver_merge"), "{refusal}");
+    assert!(refusal.contains("undeclared"), "{refusal}");
+    assert!(
+        refusal.contains("asker"),
+        "the record says which plugin asked: {refusal}"
+    );
+    assert_eq!(
+        entry.outcome,
+        crate::driver_plugin::session_log::DriverSessionOutcome::Sleep { secs: 0 },
+        "the session went on to answer after the refusal: {entry:?}"
     );
 
     let _ = std::fs::remove_dir_all(&root);
@@ -1296,7 +1362,7 @@ fn one_invocation_opens_a_session_for_each_sleep_the_driver_asks_for() {
 
     let root = temp_root("drive-sequence");
     // Zero seconds, so the run's waits cost the test nothing.
-    let source = driving_package(&root, "sleeper", 0);
+    let source = driving_package(&root, "sleeper", 0, None);
     let settings = Settings::default();
     install(&root, &source, PluginScope::Project, true, &settings).expect("install must succeed");
 
