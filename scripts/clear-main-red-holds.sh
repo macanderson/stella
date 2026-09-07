@@ -96,10 +96,12 @@ while [ $# -gt 0 ]; do
     esac
     shift 2
     ;;
-  # Test-only seams. Any one of them stubs every lookup, and stops the re-run
-  # from being sent. So a case cannot half-reach the network, and cannot pass
-  # or fail for a reason it did not pick. Same rule as the paired fixtures in
-  # `check-main-red-hold.sh`.
+  # Test-only seams. Any one of them stubs the reads — which pull requests
+  # are open, which run belongs to each head — so a case cannot half-reach
+  # the network there. The write past that point still calls `gh`: a test
+  # puts a stub `gh` ahead of the real one on `PATH`, so the mutation is
+  # exercised for real rather than assumed from "cleared N". Same read-side
+  # rule as the paired fixtures in `check-main-red-hold.sh`.
   --fixture-open-issues)
     [ $# -ge 2 ] || {
       echo "clear-main-red-holds: --fixture-open-issues needs a value" >&2
@@ -140,8 +142,6 @@ while [ $# -gt 0 ]; do
     ;;
   esac
 done
-
-[ "$use_fixture" -eq 1 ] && dry_run=1
 
 note() { printf 'clear-main-red-holds: %s\n' "$*" >&2 || true; }
 say() {
