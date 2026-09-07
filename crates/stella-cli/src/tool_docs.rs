@@ -34,6 +34,7 @@
 //! `make record-golden` establishes the fixture's shape — an env-var-blessed
 //! test that rewrites it, with the plain test run as the drift guard.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -70,14 +71,14 @@ const DOCS_DIR: &str = "docs/tools";
 /// declared.
 const RISK_NOTE: &str = "\
 # risk_level: how bad one honest call is — a reviewed judgement, declared in
-# crates/stella-tools/src/catalog.rs beside the flags above and graded against
+# crates/stella-tool-facts/src/catalog.rs beside the flags above and graded against
 # the rubric on `ToolEntry::risk` (#2716, #3060). A DIFFERENT axis from
 # `read_only`: `delegate` mutates no file and spends real money, while
-# `task_create` mutates a board that dies with the session. Deliberately not
-# derived from the two booleans above — that would be a relabelling, not
-# information. A policy grant is expressed as a ceiling over this grade, and
-# every non-built-in tool (MCP, custom manifest) is graded `high` for being
-# unreviewed.";
+# `task_create` mutates a board that dies with the session. It is not derived
+# from the two booleans above. That would only relabel them.
+#
+# A policy grant is a ceiling over this grade. Every tool that is not a
+# built-in (MCP, a custom manifest) is graded `high` for being unreviewed.";
 
 // ── the committed example fixture ───────────────────────────────────────────
 
@@ -153,9 +154,13 @@ fn repo_root() -> PathBuf {
 
 // ── collecting every declared schema ────────────────────────────────────────
 
-/// Every schema the native [`ToolRegistry`] advertises. One registry: every
-/// catalog row registers unconditionally, so the constructor's surface IS the
-/// documented surface.
+/// Every schema the native [`ToolRegistry`] advertises. One registry, built
+/// with this crate's own feature resolution — `stella-cli` takes
+/// `stella-tools` with default features, so `search` is present here and the
+/// constructor's surface IS the documented surface. A row whose
+/// [`Availability`] names a build feature says so on its own page, so a host
+/// that compiled the feature out reads which tool it does not have
+/// (`#6286`).
 ///
 /// With one pin, [`pin_capability_conditional_schemas`], because one tool
 /// chooses its description from a capability the *generator's own host* has or
@@ -347,11 +352,14 @@ fn output_schema() -> Value {
 
 // ── rendering ───────────────────────────────────────────────────────────────
 
-fn availability_word(availability: Availability) -> &'static str {
+fn availability_word(availability: Availability) -> Cow<'static, str> {
     // Matched exhaustively on purpose: a new Availability variant should fail
     // to compile here rather than render as something plausible.
     match availability {
-        Availability::Always => "always",
+        Availability::Always => Cow::Borrowed("always"),
+        // The feature is named, because "conditional" would leave a reader
+        // asking the source which condition (`#6286`).
+        Availability::BuildFeature(name) => Cow::Owned(format!("build feature `{name}`")),
     }
 }
 
@@ -549,7 +557,7 @@ fn usage_comment(name: &str, fixture: &Fixture) -> String {
             let (also, subject) = if has_former_names(name) {
                 (
                     ", and neither does any name it dispatched under before (the rename \
-                     ledger in crates/stella-tools/src/catalog.rs)",
+                     ledger in crates/stella-tool-facts/src/catalog.rs)",
                     "no name this tool has answered to was",
                 )
             } else {
@@ -768,7 +776,7 @@ fn render_tool(entry: &ToolEntry, schema: &ToolSchema, fixture: &Fixture) -> Str
          # Where each field comes from:\n\
          #   name / description / input_schema      the tool's own ToolSchema\n\
          #   read_only / available_for_speculation / category / availability\n\
-         #   risk_level                             crates/stella-tools/src/catalog.rs\n\
+         #   risk_level                             crates/stella-tool-facts/src/catalog.rs\n\
          #   output_schema                          stella_protocol::ToolOutput",
         name = entry.name,
     );
@@ -869,7 +877,7 @@ fn render_index(entries: &[&ToolEntry], fixture: &Fixture) -> String {
     out.push_str(&format!(
         "One TOML page per dispatchable tool — {count} of them — generated from the \
          declarations by `crates/stella-cli/src/tool_docs.rs` and re-derived by the \
-         `tool-docs` gate step. A tool added to `crates/stella-tools/src/catalog.rs` \
+         `tool-docs` gate step. A tool added to `crates/stella-tool-facts/src/catalog.rs` \
          without regenerating turns the gate red; there is no path where a new tool \
          ships undocumented.\n\n",
         count = entries.len()
@@ -879,13 +887,18 @@ fn render_index(entries: &[&ToolEntry], fixture: &Fixture) -> String {
          `read_only`, `available_for_speculation`, `risk_level`, category, and a \
          commented example input and output payload.\n\n\
          `risk_level` is a reviewed judgement declared beside the flags it sits with \
-         in `crates/stella-tools/src/catalog.rs`, graded against the rubric on \
+         in `crates/stella-tool-facts/src/catalog.rs`, graded against the rubric on \
          `ToolEntry::risk` (#2716, #3060). It answers a different question from \
          `read_only` — what one honest call costs the world, rather than whether the \
          workspace changes — and is deliberately not derived from the booleans above \
          it, which would be a relabelling rather than information. A policy grant is \
          expressed as a ceiling over this grade; every tool that is not a built-in \
          (MCP, custom manifest) is graded `high` for being unreviewed.\n\n\
+         `availability` reads `always` for a tool every build registers, and names a \
+         cargo feature for one that needs the host to have compiled something. \
+         `search` is the only conditional row today: it ranks over the code-graph \
+         index, so a `stella-tools` built without the `graph` feature registers no \
+         `search` at all. The feature is on by default, so the shipping CLI has it.\n\n\
          One field remains a stated absence rather than a value, because inventing it \
          would manufacture a source of truth nobody reviewed:\n\n\
          - **`output_schema` is the envelope only.** Every tool answers in \

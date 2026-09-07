@@ -24,12 +24,15 @@ stella-store = { path = "../stella-store" }
 # file (#2178).
 stella-home = { path = "../stella-home" }
 # The code-graph index the `search` tool ranks over: symbols, callers,
-# imports, and the stored file/chunk vectors.
-stella-graph = { path = "../stella-graph" }
+# imports, and the stored file/chunk vectors. Optional, behind the `graph`
+# feature — see `[features]` below.
+stella-graph = { path = "../stella-graph", optional = true }
 # The embedding seam plus its HTTP backend — `search`'s semantic rung. This
 # crate is where the network is allowed to live: `stella-graph` stores vectors
-# and ranks them, and never learns what produced them (invariant 1).
-stella-embed = { path = "../stella-embed", features = ["http"] }
+# and ranks them, and never learns what produced them (invariant 1). Optional
+# for the same reason and behind the same feature: nothing outside `search`
+# takes it.
+stella-embed = { path = "../stella-embed", features = ["http"], optional = true }
 # The differ `write_file` and `edit_file` run over the bytes they read and the
 # bytes they wrote (`own_change`), so a mutation the work-tree measurement
 # cannot see — a gitignored path, a workspace with no journal — still renders
@@ -60,6 +63,20 @@ toml.workspace = true
 # dispatch timeout does. Tests see a normal dependency, so the witness keeps
 # compiling with no second entry below.
 futures-util.workspace = true
+
+# `graph` compiles the code-graph index in: the `search` tool and the
+# `Codegraph` implementation of `graph_fact::WorkspaceGraph`. On by default,
+# so `stella-cli` and every shipped build resolve exactly the dependency set
+# they resolved before (`#6286`).
+#
+# Off, this crate builds with no tree-sitter grammar and no bundled SQLite,
+# which is what an embedding host or a plugin-only build wants. It is a
+# subtraction those hosts opt into, never one the CLI takes: `search` is then
+# not registered, and it says so through `Availability::BuildFeature("graph")`
+# in `stella-tool-facts`'s catalog rather than going quietly absent.
+[features]
+default = ["graph"]
+graph = ["dep:stella-graph", "dep:stella-embed"]
 
 # The Job Object API behind `exec::GroupKillGuard`'s Windows arm (#3550) —
 # `CreateJobObjectW`, `AssignProcessToJobObject`, `TerminateJobObject`. It is

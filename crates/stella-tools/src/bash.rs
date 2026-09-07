@@ -334,7 +334,7 @@ fn refuse_if_outside(argument: &str, ctx: &crate::ctx::ToolCtx) -> Option<String
 ///
 /// **A bash result carries no tool-preference advice, ever.** There used to be
 /// a second note here, appended whenever a grep pattern looked symbol-shaped,
-/// pointing the model at [`crate::search`]. It was measured on a 20-task
+/// pointing the model at the `search` tool. It was measured on a 20-task
 /// Terminal-Bench panel and it was pure loss: it fired on **44 of 415 tool
 /// results across 10 of 20 tasks** and produced **zero** `search` calls. It
 /// fired on hardware probes (`cat /proc/cpuinfo | grep -i vmx`), on package

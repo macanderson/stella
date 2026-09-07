@@ -116,6 +116,30 @@ depend on the crate for exactly one thing —
 `subprocess_env::scrub_sensitive_env`, so their own spawns share the single
 credential deny-list rather than growing a second one that drifts.
 
+### The `graph` feature
+
+`stella-graph` and `stella-embed` sit behind a `graph` cargo feature. It is
+on by default, so `stella-cli` and every shipped build resolve the same
+dependency set they always did.
+
+Turn it off and this crate builds with no tree-sitter grammar. That drops 22
+edges from the dependency tree, which is what an embedding host or a
+plugin-only build is trying not to compile. It also drops the `search` tool,
+because every rung of `search` ranks over the code-graph index. The catalog
+declares that rather than leaving the row quietly unregistered:
+`stella-tool-facts` grades it `Availability::BuildFeature("graph")`, this
+crate publishes what it built as `BUILD_FEATURES`, and
+`tests/graph_feature_witness.rs` checks that the two agree in both builds.
+
+A build with no index still answers the mutation tools' graph questions. It
+answers `None` to all of them, through `graph_fact::Unindexed`, which is what
+the trait already means by "no index answered".
+
+`.github/workflows/tools-no-graph.yml` compiles, documents and tests the
+feature-off configuration, and `make no-graph-tree` asserts the tree-sitter
+edges are really gone. rusqlite is not gone: `stella-store` is still an
+unconditional dependency, and `#6423` tracks that seam.
+
 ## Boundary — does this change belong here?
 
 This crate owns the built-in tools — everything the model can invoke by name

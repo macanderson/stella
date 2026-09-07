@@ -333,9 +333,9 @@ fn registry_advertises_exactly_the_catalog_tool_set() {
     let names: Vec<&str> = schemas.iter().map(|s| s.name.as_str()).collect();
     assert_eq!(
         names,
-        crate::catalog::always_on(),
+        crate::catalog::registered_with(crate::BUILD_FEATURES),
         "registry disagrees with catalog::CATALOG — register the tool, or \
-         add/remove its line in stella-tools/src/catalog.rs"
+         add/remove its line in stella-tool-facts/src/catalog.rs"
     );
 }
 
@@ -347,7 +347,7 @@ fn an_undeclared_tool_fails_the_catalog_pin_by_name() {
     let (_root, reg) = bare_registry();
     let schemas = reg.schemas();
     let live: Vec<&str> = schemas.iter().map(|s| s.name.as_str()).collect();
-    let mut catalog_missing_one = crate::catalog::always_on();
+    let mut catalog_missing_one = crate::catalog::registered_with(crate::BUILD_FEATURES);
     let dropped = catalog_missing_one.pop().expect("catalog is non-empty");
     assert_ne!(
         live, catalog_missing_one,

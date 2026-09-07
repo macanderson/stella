@@ -12,7 +12,11 @@
 //!
 //! - the **working surface** — one shell ([`bash`]), the file CRUD quartet
 //!   ([`read`] / [`mod@write`] / [`edit`] / [`delete`]), and one unified code
-//!   search ([`search`], lexical and semantic in a single `query` parameter);
+//!   search (`search`, lexical and semantic in a single `query` parameter),
+//!   whose every rung ranks over the code-graph index and which therefore
+//!   compiles only under the `graph` feature. That feature is on by default,
+//!   so a `stella` user has it; [`BUILD_FEATURES`] is what this build
+//!   compiled;
 //! - the **coordination surface** — the sub-agent spawn tool (`delegate`), the
 //!   session task board (`task_create` / `task_list` / `task_start` /
 //!   `task_complete` / `task_cancel` / `task_assign`), the session scratch
@@ -77,6 +81,14 @@ mod recheck;
 pub mod registry;
 pub mod rootfd;
 pub mod scratch;
+// Present only under the `graph` feature (`#6286`): every rung ranks over the
+// code-graph index. A build without it registers no `search` tool, which the
+// catalog declares as `Availability::BuildFeature("graph")` rather than
+// leaving the row silently unregistered. A plain comment rather than a `///`
+// doc: an outer doc block on a `mod` line joins the module's own `//!`
+// header, and rustdoc then resolves that header's intra-doc links in this
+// file's scope, where none of them exist.
+#[cfg(feature = "graph")]
 pub mod search;
 mod shell_resolve;
 pub mod skill_grant;
@@ -100,6 +112,18 @@ pub mod workspace_scope;
 pub mod write;
 
 pub use registry::ToolRegistry;
+
+/// The cargo features of this build that a catalog row may name.
+///
+/// [`stella_tool_facts::catalog::Availability::BuildFeature`] declares a
+/// compile-time prerequisite by name; this is the other end of that seam, so
+/// a caller asking "does this binary register `search`" reads one list
+/// instead of re-deriving a `cfg`. It is the argument
+/// [`stella_tool_facts::catalog::registered_with`] takes.
+pub const BUILD_FEATURES: &[&str] = &[
+    #[cfg(feature = "graph")]
+    "graph",
+];
 
 /// Turn a workspace-relative `path` into a full path, refusing one that names
 /// a location outside `root`.

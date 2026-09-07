@@ -41,23 +41,44 @@ use stella_protocol::RiskLevel;
 /// *allowed* is [`crate::policy::ToolPolicy`]'s business, driven by
 /// `settings.json`.
 ///
-/// Every current row registers unconditionally, so [`Availability::Always`]
-/// is the whole enum today. The type survives (rather than collapsing into a
-/// boolean or vanishing) because it is the declared seam a conditionally
-/// registered tool re-enters through, and because the doc generator
-/// (`stella-cli/src/tool_docs.rs`) renders each row's availability from it.
+/// This is the declared seam a conditionally registered tool re-enters
+/// through, and the doc generator (`stella-cli/src/tool_docs.rs`) renders
+/// each row's availability from it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Availability {
     /// Registers in every session, with no configuration and no prerequisite.
     Always,
+    /// Registers only when the host binary was compiled with the named cargo
+    /// feature of `stella-tools` (`#6286`).
+    ///
+    /// A compile-time prerequisite is still the environment supplying
+    /// something, so it belongs here rather than in
+    /// [`crate::policy::ToolPolicy`]: nothing an operator writes in
+    /// `settings.json` can turn it on. Every shipped build enables the
+    /// default feature set, so a row here is present for a `stella` user and
+    /// absent only in a host that opted the feature out.
+    BuildFeature(&'static str),
 }
 
 impl Availability {
-    /// Whether the native `stella_tools::registry::ToolRegistry` is what registers
-    /// this tool. True for every current variant; a future CLI-layered
-    /// declaration would answer false.
+    /// Whether the native `stella_tools::registry::ToolRegistry` is what
+    /// registers this tool. True for every current variant; a future
+    /// CLI-layered declaration would answer false.
     pub const fn is_native(self) -> bool {
-        matches!(self, Availability::Always)
+        matches!(self, Availability::Always | Availability::BuildFeature(_))
+    }
+
+    /// Whether a build compiling `features` registers this tool.
+    ///
+    /// `features` is what the host says it compiled — `stella_tools`
+    /// publishes its own as `BUILD_FEATURES`. An unconditional row is
+    /// satisfied by every build, including one that names no feature at all.
+    #[must_use]
+    pub fn satisfied_by(self, features: &[&str]) -> bool {
+        match self {
+            Availability::Always => true,
+            Availability::BuildFeature(name) => features.contains(&name),
+        }
     }
 }
 
@@ -169,8 +190,13 @@ macro_rules! catalog {
     };
 }
 
-use Availability::Always;
+use Availability::{Always, BuildFeature};
 use RiskLevel::{Destructive, High, Low, Medium};
+
+/// The `stella-tools` cargo feature that compiles the code-graph index in.
+/// Named once, so the row below and the host publishing its own feature list
+/// cannot spell it differently.
+const GRAPH: Availability = BuildFeature("graph");
 
 // Column order: (read_only, speculation_safe, risk, availability, group, label).
 // The
@@ -193,7 +219,13 @@ catalog! {
     "delete_file"         => (false, false, Destructive, Always, "file", "delete"),
     // Read-only, but NOT speculation-safe: the semantic rung writes
     // embeddings through into `codegraph.db` while it ranks.
-    "search"              => (true, false, Low, Always, "search", "search"),
+    //
+    // The one row that is not unconditional. Every rung it ranks over is
+    // built on the code-graph index, so a host that compiled `stella-tools`
+    // without the `graph` feature does not register it (`#6286`). That is a
+    // subtraction other hosts opt into: the shipped CLI takes the default
+    // feature set, where this row reads exactly as `Always` did.
+    "search"              => (true, false, Low, GRAPH, "search", "search"),
     // The session task board. In-memory and session-scoped: every row here is
     // `Low` because what it mutates cannot outlive the process, which is the
     // clearest demonstration that `risk` is not `read_only` spelled twice.
@@ -582,9 +614,18 @@ pub fn always_on() -> Vec<&'static str> {
 }
 
 /// Every tool the native registry can register — the ceiling the docs quote.
-/// Identical to [`always_on`] while every row is unconditional.
 pub fn native() -> Vec<&'static str> {
     names_where(Availability::is_native)
+}
+
+/// The names a build compiling `features` registers, sorted.
+///
+/// This is what a registry pins itself against: [`always_on`] is the rows no
+/// build can drop, and this adds the rows whose
+/// [`Availability::BuildFeature`] the caller says it compiled.
+/// `stella_tools::BUILD_FEATURES` is the list the shipped registry passes.
+pub fn registered_with(features: &[&str]) -> Vec<&'static str> {
+    names_where(|a| a.satisfied_by(features))
 }
 
 /// The read-only partition across the whole catalog, sorted. What dispatch
@@ -693,6 +734,40 @@ mod tests {
         for name in always_on() {
             assert!(native_set.contains(name), "{name} must be native");
         }
+    }
+
+    /// **Witness (`#6286`).** A row behind a build feature is registered by a
+    /// build that compiled it and by no other, and the unconditional rows are
+    /// unaffected either way. Before `Availability` grew the option this
+    /// asserts on, a conditionally registered tool had nowhere to say so and
+    /// the catalog advertised it regardless of what the host had compiled.
+    #[test]
+    fn a_build_feature_row_registers_only_where_the_feature_is_compiled() {
+        assert!(
+            Availability::BuildFeature("graph").satisfied_by(&["graph"]),
+            "a build naming the feature registers the row"
+        );
+        assert!(
+            !Availability::BuildFeature("graph").satisfied_by(&[]),
+            "a build naming no feature does not"
+        );
+        assert!(
+            !Availability::BuildFeature("graph").satisfied_by(&["other"]),
+            "another feature is not this one"
+        );
+        assert!(
+            Availability::Always.satisfied_by(&[]),
+            "an unconditional row is satisfied by every build"
+        );
+
+        // `search` is the row, and the derived views agree with it.
+        assert!(!always_on().contains(&"search"));
+        assert!(registered_with(&["graph"]).contains(&"search"));
+        assert!(!registered_with(&[]).contains(&"search"));
+        // Every other row is present in both, so the feature subtracts one
+        // tool rather than reshaping the table.
+        assert_eq!(registered_with(&[]), always_on());
+        assert_eq!(registered_with(&["graph"]).len(), always_on().len() + 1);
     }
 
     /// `speculation_safe` narrows `read_only`; it never widens it. A

@@ -78,7 +78,7 @@ impl WriteFile {
     pub fn with_ledger(ledger: Arc<ReadLedger>) -> Self {
         Self {
             ledger,
-            graph: Arc::new(crate::graph_fact::Codegraph),
+            graph: crate::graph_fact::workspace_graph(),
         }
     }
 

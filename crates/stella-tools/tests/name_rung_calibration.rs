@@ -33,6 +33,12 @@
 //! own `MEASURED:` marker in `crates/stella-tools/src/search/names.rs`
 //! carries the row of the sweep that read it.
 
+// Every test in this file drives `search`, which exists only under the
+// `graph` feature (`#6286`). Gated at the crate root so a
+// `--no-default-features` build compiles this target to an empty test
+// binary instead of failing on a module that is not there.
+#![cfg(feature = "graph")]
+
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
