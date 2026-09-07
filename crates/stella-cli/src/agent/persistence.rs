@@ -196,7 +196,9 @@ pub(crate) fn spawn_renderer(
     prompt: Option<String>,
 ) -> tokio::task::JoinHandle<RendererOutcome> {
     tokio::spawn(async move {
-        let mut tool_names: HashMap<String, (String, Option<String>)> = HashMap::new();
+        // The name a `ToolResult` needs but does not carry (`#2450`). The
+        // deck has its own lookup for this; this table is this surface's.
+        let mut tool_names = stella_tui::tool_call_index::ToolCallIndex::new();
         // Shared with every blocking persistence hop below, so the provider id
         // is not re-allocated once per persisted event.
         let provider_id: Arc<str> = provider_id.into();
@@ -361,9 +363,10 @@ pub(crate) fn spawn_renderer(
                         call, sub_agent_id, ..
                     } = &event
                     {
-                        tool_names.insert(
-                            call.call_id.clone(),
-                            (call.name.clone(), sub_agent_id.clone()),
+                        tool_names.observe_start(
+                            &call.call_id,
+                            &call.name,
+                            sub_agent_id.as_deref(),
                         );
                     }
                     if let Some(printer) = transcript.as_mut() {
@@ -374,9 +377,10 @@ pub(crate) fn spawn_renderer(
                     AgentEvent::ToolStart {
                         call, sub_agent_id, ..
                     } => {
-                        tool_names.insert(
-                            call.call_id.clone(),
-                            (call.name.clone(), sub_agent_id.clone()),
+                        tool_names.observe_start(
+                            &call.call_id,
+                            &call.name,
+                            sub_agent_id.as_deref(),
                         );
                         plain::tool_call_card(
                             &call.name,
@@ -392,10 +396,7 @@ pub(crate) fn spawn_renderer(
                         sub_agent_id,
                         ..
                     } => {
-                        let (name, started_agent) = tool_names
-                            .get(call_id)
-                            .map(|(name, agent)| (name.as_str(), agent.as_deref()))
-                            .unwrap_or(("tool", None));
+                        let (name, started_agent) = tool_names.resolve(call_id);
                         let content = match output {
                             ToolOutput::Ok { content, .. } => content.clone(),
                             ToolOutput::Error { message, .. } => message.clone(),

@@ -88,6 +88,7 @@ pub mod splash;
 pub mod start_work;
 pub mod syntax;
 pub mod theme;
+pub mod tool_call_index;
 pub mod tool_class;
 pub mod transcript_build;
 pub mod transcript_nav;

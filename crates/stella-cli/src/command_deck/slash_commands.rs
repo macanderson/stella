@@ -55,6 +55,16 @@ pub(super) enum DeckCommand {
     /// only the loop owns (the provider handle, the prompt plane, the lead's
     /// registered meta) — see `session_override`.
     SessionModel(String),
+    /// A settings write already answered locally — its own line printed, and
+    /// its own snapshot sent for the ENGINE overlay — but one that also
+    /// touches the TOOLS panel. `/model default <id>` is today's case. Skip
+    /// the turn and refresh TOOLS with a fresh, MCP-inclusive row list.
+    ///
+    /// Its own case, not folded into `Reloaded`: that one also reseats the
+    /// plugin panel deck (`#5253`), which a plain settings write never
+    /// causes. Carried to the driver loop because only it holds `mcp_slot`
+    /// (`#1990`).
+    SettingsReloaded,
 }
 
 // The deck's productized vocabulary (`DECK_BUILTINS`) and the
@@ -275,6 +285,11 @@ pub(super) async fn run_deck_command(
                                 say(msg);
                                 // Refresh an open SETTINGS tab with the merged view.
                                 let _ = in_tx.send(engine_config_inbound(cfg, None));
+                                // ...and an open TOOLS panel: a persisted
+                                // default model is a settings write like any
+                                // other, and the panel must not go stale
+                                // behind it (`#1990`).
+                                return DeckCommand::SettingsReloaded;
                             }
                             Err(msg) => say(msg),
                         }

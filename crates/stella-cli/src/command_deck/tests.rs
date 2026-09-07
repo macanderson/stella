@@ -156,7 +156,7 @@ fn extract_skill_md_unwraps_a_fenced_block_or_frontmatter() {
 
 #[test]
 fn mcp_outcome_report_lists_connected_servers_by_name() {
-    let report = crate::mcp_cmd::mcp_outcome_report(&["files", "search"], &[], &[], &[], &[]);
+    let report = crate::mcp_cmd::mcp_outcome_report(&["files", "search"], &[], &[], &[], &[], &[]);
     assert_eq!(report, "2 MCP server(s) connected: files, search");
 }
 
@@ -166,7 +166,7 @@ fn mcp_outcome_report_names_each_failure_with_its_reason() {
         "slow".to_string(),
         "connect timed out after 10000ms".to_string(),
     )];
-    let report = crate::mcp_cmd::mcp_outcome_report(&["files"], &failed, &[], &[], &[]);
+    let report = crate::mcp_cmd::mcp_outcome_report(&["files"], &failed, &[], &[], &[], &[]);
     let lines: Vec<&str> = report.lines().collect();
     assert_eq!(lines[0], "1 MCP server(s) connected: files");
     assert_eq!(
@@ -178,7 +178,7 @@ fn mcp_outcome_report_names_each_failure_with_its_reason() {
 #[test]
 fn mcp_outcome_report_states_total_failure_outright() {
     let failed = vec![("a".to_string(), "spawn failed".to_string())];
-    let report = crate::mcp_cmd::mcp_outcome_report(&[], &failed, &[], &[], &[]);
+    let report = crate::mcp_cmd::mcp_outcome_report(&[], &failed, &[], &[], &[], &[]);
     assert!(
         report.starts_with("no MCP servers connected"),
         "the degraded mode is stated, not implied: {report}"
@@ -191,7 +191,8 @@ fn mcp_outcome_report_states_total_failure_outright() {
 /// no consumer, so the model silently had fewer tools than the server offered.
 #[test]
 fn mcp_outcome_report_reports_a_truncated_server_as_connected_not_unavailable() {
-    let report = crate::mcp_cmd::mcp_outcome_report(&["greedy"], &[], &[("greedy", 12)], &[], &[]);
+    let report =
+        crate::mcp_cmd::mcp_outcome_report(&["greedy"], &[], &[("greedy", 12)], &[], &[], &[]);
     let lines: Vec<&str> = report.lines().collect();
     assert_eq!(lines[0], "1 MCP server(s) connected: greedy");
     assert!(
@@ -217,7 +218,7 @@ fn mcp_outcome_report_reports_a_truncated_server_as_connected_not_unavailable() 
 fn mcp_outcome_report_carries_truncation_and_failure_together() {
     let failed = vec![("dead".to_string(), "spawn failed".to_string())];
     let report =
-        crate::mcp_cmd::mcp_outcome_report(&["greedy"], &failed, &[("greedy", 3)], &[], &[]);
+        crate::mcp_cmd::mcp_outcome_report(&["greedy"], &failed, &[("greedy", 3)], &[], &[], &[]);
     assert!(report.contains("MCP server `dead` unavailable: spawn failed"));
     assert!(report.contains("`greedy` advertised more than"));
 }
@@ -229,7 +230,7 @@ fn mcp_outcome_report_carries_truncation_and_failure_together() {
 #[test]
 fn mcp_outcome_report_reports_a_schema_budget_trim_in_its_own_words() {
     let budgeted = vec![("verbose".to_string(), 4)];
-    let report = crate::mcp_cmd::mcp_outcome_report(&["verbose"], &[], &[], &budgeted, &[]);
+    let report = crate::mcp_cmd::mcp_outcome_report(&["verbose"], &[], &[], &budgeted, &[], &[]);
     let lines: Vec<&str> = report.lines().collect();
     assert_eq!(lines[0], "1 MCP server(s) connected: verbose");
     assert!(
@@ -259,6 +260,7 @@ fn mcp_outcome_report_keeps_the_count_cap_and_the_byte_budget_distinct() {
         &[("greedy", 3)],
         &budgeted,
         &[],
+        &[],
     );
     assert!(report.contains("`greedy` advertised more than"), "{report}");
     assert!(
@@ -275,7 +277,7 @@ fn mcp_outcome_report_keeps_the_count_cap_and_the_byte_budget_distinct() {
 /// zero is noise that trains operators to ignore the real one.
 #[test]
 fn mcp_outcome_report_is_silent_when_nothing_was_truncated() {
-    let report = crate::mcp_cmd::mcp_outcome_report(&["files"], &[], &[], &[], &[]);
+    let report = crate::mcp_cmd::mcp_outcome_report(&["files"], &[], &[], &[], &[], &[]);
     assert_eq!(report, "1 MCP server(s) connected: files");
 }
 
@@ -292,7 +294,8 @@ fn mcp_outcome_report_names_every_claimant_of_a_contested_wire_name() {
             ("acme".to_string(), "_status".to_string()),
         ],
     }];
-    let report = crate::mcp_cmd::mcp_outcome_report(&["acme_", "acme"], &[], &[], &[], &collisions);
+    let report =
+        crate::mcp_cmd::mcp_outcome_report(&["acme_", "acme"], &[], &[], &[], &collisions, &[]);
     assert!(report.contains("`mcp__acme___status`"), "{report}");
     assert!(report.contains("`acme_` tool `status`"), "{report}");
     assert!(report.contains("`acme` tool `_status`"), "{report}");
@@ -303,6 +306,31 @@ fn mcp_outcome_report_names_every_claimant_of_a_contested_wire_name() {
     assert!(
         !report.contains("unavailable"),
         "claimant servers are connected, not down: {report}"
+    );
+}
+
+/// `#2802`: without the `auth_required` parameter, an auth-suppressed
+/// server stayed invisible in the deck's connect notice. Text mode already
+/// named the server and its login command; this test pins the shared
+/// wording so the two cannot drift apart again.
+#[test]
+fn mcp_outcome_report_names_an_auth_suppressed_server_with_its_login_command() {
+    let auth_required = vec![(
+        "linear".to_string(),
+        "server requires OAuth login".to_string(),
+    )];
+    let report = crate::mcp_cmd::mcp_outcome_report(&["files"], &[], &[], &[], &[], &auth_required);
+    assert!(
+        report.contains("MCP server `linear` requires authentication"),
+        "{report}"
+    );
+    assert!(
+        report.contains("stella mcp login linear"),
+        "the fix is named, not just the symptom: {report}"
+    );
+    assert!(
+        !report.contains("unavailable"),
+        "auth-suppressed is actionable, not the same word failed_servers uses: {report}"
     );
 }
 
@@ -866,4 +894,41 @@ fn every_command_a_relevance_rule_can_name_is_a_real_one() {
              {vocabulary:?}"
         );
     }
+}
+
+/// **The redirect witness.** A worktree session's palette recents land in the
+/// repository the state root names, not in the worktree.
+///
+/// Join `.stella/private/palette-recent.json` onto the workspace root and
+/// this fails by construction: the path lands inside the worktree, and the
+/// list goes when the worktree does. Agents in this repository run under
+/// `.claude/worktrees/`, so that is where the list would be least kept.
+///
+/// The env var is process-wide, so this runs under the same serial lock every
+/// other test that sets it takes.
+#[test]
+fn palette_recents_follow_the_workspace_state_root() {
+    let anchor = tempfile::tempdir().expect("tempdir");
+    let worktree = tempfile::tempdir().expect("tempdir");
+
+    let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&[stella_home::WORKSPACE_STATE_ROOT_ENV]);
+    // SAFETY: `test_env::lock` is held for the whole window, and `_restore`
+    // puts the variable back even if an assertion below unwinds.
+    unsafe {
+        std::env::set_var(stella_home::WORKSPACE_STATE_ROOT_ENV, anchor.path());
+    }
+
+    let resolved = super::palette_recent_path(worktree.path()).expect("the private tier resolves");
+    assert!(
+        resolved.starts_with(anchor.path()),
+        "recents must follow the state root, got {}",
+        resolved.display()
+    );
+    assert!(
+        !resolved.starts_with(worktree.path()),
+        "recents must not stay in the worktree, got {}",
+        resolved.display()
+    );
+    assert!(resolved.ends_with("palette-recent.json"), "{resolved:?}");
 }

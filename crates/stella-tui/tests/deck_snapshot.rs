@@ -472,6 +472,88 @@ fn inspect_overlay_renders_the_call_list_then_the_context_sent() {
     );
 }
 
+/// **The witness (`#2029`).** On an 80-column terminal — SPEC's narrowest
+/// width — the overlay's banner lines clip at the popup's edge without
+/// this fix, and drop their tail. This test fails on that:
+/// `buffer_text` never has "or attachments" (the unresolved-blocks line's
+/// last words), and the mismatch line loses its own tail the same way.
+///
+/// A banner can now wrap onto more than one screen row, so a plain
+/// `contains(full_sentence)` check would fail for the wrong reason: a `\n`
+/// or padding now sits where the wrap point falls. Stripping whitespace
+/// from both sides first survives a wrap without hiding a clip —
+/// `wrap_chars` moves characters onto a new row, it never drops any.
+#[test]
+fn inspect_overlay_banner_lines_wrap_at_80_columns_instead_of_clipping() {
+    use stella_tui::{InspectMessage, InspectView, JournalEra, RecordedCallInfo};
+
+    let model = folded_model();
+    let mut ui = ready_ui();
+    ui.inspect_open = true;
+    ui.inspect_view = Some(Box::new(InspectView {
+        call: RecordedCallInfo {
+            turn_instance: 0,
+            step: 3,
+            call_seq: 1,
+            call_role: "summarization".into(),
+            provider: "anthropic".into(),
+            model: "claude-opus".into(),
+            estimated_input_tokens: 1234,
+        },
+        messages: vec![InspectMessage {
+            role: "user".into(),
+            content: "t0 t1 t2".into(),
+            sections: Vec::new(),
+        }],
+        verified: false,
+        unresolved: 3,
+        digest_mismatches: 2,
+        journal_era: JournalEra::CompactionJournaled,
+    }));
+
+    let mut terminal = Terminal::new(TestBackend::new(80, 40)).unwrap();
+    terminal.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+    let screen = buffer_text(terminal.backend().buffer());
+    // Letters and digits only. A wrapped line's second row sits past the
+    // popup's own border, and other panels' rails and rules can land there
+    // too. None of that is prose. Keeping only letters and digits lets one
+    // check span the wrap point without a border symbol breaking it.
+    let flat: String = only_alnum(&screen);
+
+    let unresolved_line = "3 block(s) unresolved — synthetic results, discarded speculation, \
+                            or attachments";
+    assert!(
+        flat.contains(&only_alnum(unresolved_line)),
+        "the unresolved-blocks line lost characters at 80 columns:\n{screen}"
+    );
+
+    let mismatch_line = view_digest_mismatch_text(&ui);
+    assert!(
+        flat.contains(&only_alnum(&mismatch_line)),
+        "the digest-mismatch line lost characters at 80 columns:\n{screen}"
+    );
+}
+
+/// Lowercase letters and digits only. Compares screen text to source prose
+/// across a wrap point; see the caller.
+fn only_alnum(text: &str) -> String {
+    text.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// The exact mismatch text the overlay draws for `ui`'s current inspect
+/// view, read from the same source the render calls. A wording change
+/// there cannot leave this test asserting stale text.
+fn view_digest_mismatch_text(ui: &DeckUi) -> String {
+    ui.inspect_view
+        .as_ref()
+        .and_then(|view| view.digest_mismatch_line())
+        .map(|(text, _)| text)
+        .expect("this test's fixture always has a mismatch")
+}
+
 /// Witness for #689. `stella-mcp` has recorded per-server tool truncation
 /// since #551, but nothing rendered it: an over-advertising server lost every
 /// tool past the cap and the operator was never told, so the model silently

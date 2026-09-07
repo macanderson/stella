@@ -399,7 +399,8 @@ fn render_diff_pane(
     // footer could disagree about one file.
     let (added, removed) = record.map(|r| (r.added, r.removed)).unwrap_or((0, 0));
     match diff_text {
-        Some((text, current)) if !text.is_empty() => {
+        Some(shown) if !shown.text.is_empty() => {
+            let text = shown.text;
             // A viewer scrolls, so its budget is the generous one — but it is
             // still a budget: a generated file arrives as one hunk of
             // thousands of `+` lines, and this pane re-renders on every frame.
@@ -416,7 +417,7 @@ fn render_diff_pane(
             // of which can fail), and showing the previous diff under the
             // footer's cumulative counts without a word would be the same
             // quiet mismatch this pane already has too much of (#1741, #1740).
-            if !current {
+            if !shown.current {
                 lines.insert(
                     0,
                     Line::from(Span::styled(
@@ -424,6 +425,21 @@ fn render_diff_pane(
                          reported no diff)",
                         Style::new().fg(token::MUTED),
                     )),
+                );
+            } else if shown.changes > 1 {
+                // The common `#1740` case: this is the latest mutation's own
+                // diff, but the footer sums every mutation of this path.
+                // Say which one, and its own delta when known, so the
+                // footer's total is not read as a count of the lines shown.
+                let label = match shown.latest_delta {
+                    Some((a, r)) => {
+                        format!("(latest of {} changes here · +{a} -{r})", shown.changes)
+                    }
+                    None => format!("(latest of {} changes here)", shown.changes),
+                };
+                lines.insert(
+                    0,
+                    Line::from(Span::styled(label, Style::new().fg(token::MUTED))),
                 );
             }
             let total = lines.len();
@@ -447,14 +463,42 @@ fn render_diff_pane(
     Paragraph::new(diff::footer_line(added, removed, w)).render(bands[2], buf);
 }
 
+/// What [`find_diff`] found, plus enough of the path's mutation history to
+/// say whether it is the whole story (`#1740`).
+struct DiffShown<'a> {
+    text: &'a str,
+    /// True when `text` is the newest mutation's own diff. False when an
+    /// older one is shown because the newest brought none —
+    /// [`crate::model::FileState::best_diff`].
+    current: bool,
+    /// This path's total mutation count —
+    /// [`crate::model::FileState::changes`]. The footer sums every one; the
+    /// body shows only one.
+    changes: u32,
+    /// The shown mutation's own delta, when `current` is true (the back of
+    /// [`crate::model::FileState::recent_diffs`]). Left unset for the
+    /// `!current` case, which already has its own message.
+    latest_delta: Option<(u32, u32)>,
+}
+
 /// The diff TEXT for a ledger record: found via the owning agent's
-/// `SessionModel::files[].latest_diff()` (`deck.rs` L-T5) — never re-derived.
+/// `SessionModel::files[].best_diff()` (`deck.rs` L-T5) — never re-derived.
 /// Borrowed, not cloned: this runs on every ~30 fps frame the diff pane is
 /// open, and a single mutation's diff can be hundreds of KiB.
-fn find_diff<'a>(model: &'a WorkspaceModel, rec: &FileRecord) -> Option<(&'a str, bool)> {
+fn find_diff<'a>(model: &'a WorkspaceModel, rec: &FileRecord) -> Option<DiffShown<'a>> {
     let agent = model.agents.iter().find(|a| a.meta.id == rec.agent)?;
     let file = agent.model.files.iter().find(|f| f.path == rec.path)?;
-    file.best_diff()
+    let (text, current) = file.best_diff()?;
+    let latest_delta = current
+        .then(|| file.recent_diffs.back())
+        .flatten()
+        .map(|d| (d.added, d.removed));
+    Some(DiffShown {
+        text,
+        current,
+        changes: file.changes,
+        latest_delta,
+    })
 }
 
 #[cfg(test)]
@@ -738,6 +782,69 @@ mod tests {
             text.contains("earlier change"),
             "shown, but labelled — an older diff under the footer's cumulative \
              counts with no note is the mismatch #1740 is about:\n{text}"
+        );
+    }
+
+    /// **Witness (`#1740`'s reported shape).** Four mutations of one path,
+    /// each with its own diff. The footer sums all four (`+64 -6`); the
+    /// body renders only the latest one's text (`+13 -4`). This test
+    /// checks for the label that says so. It is a different case from the
+    /// `!current` branch above (a mutation with no diff at all), since
+    /// every mutation here has one, so a pane with no such label draws
+    /// nothing here and this test fails.
+    #[test]
+    fn a_footer_summing_several_mutations_labels_which_one_the_body_shows() {
+        let mut model = sample_model();
+        for (added, removed, tail) in [(1u32, 1u32, "third"), (13, 4, "fourth")] {
+            model.apply_inbound(&Inbound::Event {
+                agent: "lead".into(),
+                event: AgentEvent::FileChange {
+                    path: "src/existing.rs".into(),
+                    kind: FileChangeKind::Modified,
+                    added,
+                    removed,
+                    diff: Some(format!("@@ -1,1 +1,1 @@\n-old\n+{tail}\n")),
+                    minimal: true,
+                    task_id: None,
+                },
+            });
+        }
+        // sample_model's own +2/-1, then +1/-1 and +13/-4 above: cumulative
+        // +16/-6 over 3 mutations, the last one alone +13/-4.
+        let record = model
+            .ledger
+            .records
+            .iter()
+            .find(|r| r.path == "src/existing.rs")
+            .expect("the ledger keeps the row");
+        assert_eq!((record.added, record.removed), (16, 6));
+
+        let mut ui = DeckUi::default();
+        ui.files_sel = 1; // "existing.rs"
+        ui.files_diff_open = true;
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+        render(&model, &mut ui, area, &mut buf);
+        let text = buffer_text(&buf);
+
+        assert!(
+            text.contains("fourth"),
+            "the body shows the LATEST mutation's own diff:\n{text}"
+        );
+        assert!(
+            !text.contains("third"),
+            "not an earlier one — that is the `!current` case, tested \
+             separately:\n{text}"
+        );
+        assert!(
+            text.contains("latest of 3 changes"),
+            "the body must say it is one of several, matching the ledger's \
+             own mutation count:\n{text}"
+        );
+        assert!(
+            text.contains("+13") && text.contains("-4"),
+            "and name that one mutation's own delta, not the footer's \
+             cumulative +16 -6:\n{text}"
         );
     }
 

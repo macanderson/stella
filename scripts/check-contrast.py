@@ -101,7 +101,9 @@ PAIRINGS = [
     ("gold", "panel", "actions on a panel", 4.5),
     ("green", "bg", "pass verdict", 4.5),
     ("red", "bg", "fail verdict", 4.5),
-    ("dim", "bg", "hints and line numbers (large/decorative floor)", 3.0),
+    # `dim` labels real words too, not just gutters. It keeps the lower
+    # floor anyway, as a stated exception (SPEC.md §13, `#6005`).
+    ("dim", "bg", "hints, keybinding rows, and line numbers (terminal exception)", 3.0),
     # `comment on panel` sat here at 2.64:1 and measured a value nothing
     # painted: `comment` was a token with no consumer on any surface, and code
     # comments ship in `muted` — already on this list, on the same ground. It

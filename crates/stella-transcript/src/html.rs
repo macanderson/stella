@@ -49,12 +49,29 @@ pub fn escape(text: &str) -> String {
     out
 }
 
+/// The policy this page declares about itself.
+///
+/// The document is built from model output and tool output — text the
+/// workspace influenced — and every interpolation goes through [`escape`].
+/// This is the backstop under that: the page says it loads nothing and talks
+/// to nobody. Inline style only, its own; no script at any origin, because
+/// there is none to run; no frames, no forms, no fetches.
+///
+/// It is a whole page's policy, so it belongs beside the page rather than at
+/// one caller. The archive `stella export` writes has no server to set a
+/// header, and the Observatory sends a wider header of its own — a browser
+/// enforces every policy it is given, so the narrower one here still holds.
+pub const CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; \
+                       base-uri 'none'; form-action 'none'; frame-ancestors 'none'; \
+                       connect-src 'none'";
+
 /// Render a complete standalone page.
 #[must_use]
 pub fn render_page(run: &Run, state: &FoldState) -> String {
     format!(
         "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
+         <meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\">\n\
          <title>{}</title>\n<style>\n{STYLE}\n</style>\n</head>\n<body>\n\
          <div class=\"wrap\">{}</div>\n</body>\n</html>\n",
         escape(&run.name),

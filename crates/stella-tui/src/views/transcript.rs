@@ -126,6 +126,13 @@ pub struct Touched {
 /// release and a renderer that needs an arm per kind silently drops the ones it
 /// has not heard of. Anything unrecognised is [`EventKind::Other`] and renders
 /// as a plain muted row, which is the correct degradation.
+///
+/// There is no standalone `Gate` kind (`#5651`). SPEC 6.3 once specced one
+/// (`◇ gate <name> · state`), but the engine only sends a whole board
+/// (`AgentEvent::GateBoard`), never one gate. That kind had no wire event
+/// to draw from. A single gate's row, price included, belongs to
+/// [`super::gate_board`] alone — a second copy of that text here could
+/// drift with no way to notice.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EventKind {
     /// `▸ read <path> · n lines` — folded by default.
@@ -179,8 +186,6 @@ pub enum EventKind {
         confidence: u8,
         audit_event_id: String,
     },
-    /// `◇ gate <name> · state` — always priced, `$0.00` when deterministic.
-    Gate { state: String, deterministic: bool },
     /// `◐ model <activity> · tok/s`.
     ///
     /// The rate is an `Option` for the reason [`Extent`]'s counts are: a model
@@ -228,10 +233,7 @@ impl EventKind {
     pub fn metal(&self) -> Color {
         match self {
             EventKind::Read { .. } => token::MUTED,
-            EventKind::Edit { .. }
-            | EventKind::Write { .. }
-            | EventKind::Run { .. }
-            | EventKind::Gate { .. } => token::GOLD,
+            EventKind::Edit { .. } | EventKind::Write { .. } | EventKind::Run { .. } => token::GOLD,
             EventKind::Delete { .. } => token::RED,
             EventKind::Skill { .. }
             | EventKind::MemoryLog { .. }
@@ -263,7 +265,6 @@ impl EventKind {
             EventKind::Delete { .. } => glyph::FAILED,
             EventKind::Skill { .. } => glyph::SKILL,
             EventKind::MemoryLog { .. } | EventKind::MemoryPromote { .. } => glyph::MEMORY,
-            EventKind::Gate { .. } => glyph::GATE,
             EventKind::Model { .. } => glyph::RUNNING,
             EventKind::Compaction { .. } => glyph::COMPACTED,
             EventKind::Other { class, .. } => match class {
@@ -289,7 +290,6 @@ impl EventKind {
             EventKind::Run { .. } => "run",
             EventKind::Skill { .. } => "skill",
             EventKind::MemoryLog { .. } | EventKind::MemoryPromote { .. } => "memory",
-            EventKind::Gate { .. } => "gate",
             EventKind::Model { .. } => "model",
             EventKind::Compaction { .. } => "compacted",
             EventKind::Other { .. } => "",
@@ -695,7 +695,6 @@ fn head_row(event: &Event, metal: Color, width: usize) -> Line<'static> {
 /// The kind-specific tail of a head line (SPEC 6.3's per-event columns).
 fn kind_detail(kind: &EventKind) -> Vec<Span<'static>> {
     let dim = Style::new().fg(token::DIM);
-    let text = Style::new().fg(token::TEXT);
     match kind {
         // `n of m` when the read was truncated, `n lines` when it was whole —
         // so a partial read is visibly partial rather than silently
@@ -748,16 +747,6 @@ fn kind_detail(kind: &EventKind) -> Vec<Span<'static>> {
             Span::styled(format!(" · {trigger}"), dim),
             Span::styled(format!(" · {} tok", fmt_tokens(u64::from(*tokens))), dim),
         ],
-        EventKind::Gate {
-            state,
-            deterministic,
-        } => {
-            let mut spans = vec![Span::styled(format!(" · {state}"), text)];
-            if *deterministic {
-                spans.push(Span::styled(" · $0.00 · det", dim));
-            }
-            spans
-        }
         EventKind::Model { tokens_per_sec } => match tokens_per_sec {
             Some(rate) => vec![Span::styled(format!(" · {rate} tok/s"), dim)],
             None => Vec::new(),

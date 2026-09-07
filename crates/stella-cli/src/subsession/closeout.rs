@@ -67,6 +67,12 @@ pub(crate) fn close_worker_execution(
     let Some((store, id)) = execution else {
         return cost_usd;
     };
+    // The SQLite code behind a refused write goes unread here, and the reason
+    // is the signature above: this closeout takes no channel, so it has
+    // nowhere to send a line. The deck owns the terminal while a worker runs,
+    // so stderr is wiped by the next frame. A caller that wants the detail on
+    // a lane reads it the way `command_deck::lead_turn` does, off the
+    // `ExecutionEndOutcome` this discards.
     let _ = agent::record_execution_end(
         store,
         *id,

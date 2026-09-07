@@ -711,15 +711,25 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
     };
     Clear.render(popup, buf);
 
+    // The width a banner line has once the block's own border is drawn (one
+    // column each side). Every free-text line below wraps at this width
+    // instead of clipping (`#2029`). The wrap makes real `Line`s here, not a
+    // `Paragraph::wrap` call: this popup scrolls by row offset, and
+    // `push_wrapped`'s own doc explains why that scroll needs one `Line`
+    // per row.
+    let banner_width = (w as usize).saturating_sub(2);
+
     let mut lines: Vec<Line<'static>> = Vec::new();
     let title;
 
     if ui.inspect_pending && ui.inspect_view.is_none() {
         title = " inspect · reconstructing ";
-        lines.push(Line::from(Span::styled(
+        push_wrapped_banner(
+            &mut lines,
             "  reconstructing the call's context from the recorded receipt…",
             theme::text_secondary(),
-        )));
+            banner_width,
+        );
     } else if let Some(view) = ui.inspect_view.as_ref() {
         // Borrowed, never cloned and never moved out: a reconstructed context
         // is a whole prompt (up to a full window of messages) and the deck
@@ -729,48 +739,57 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
         // (see `crate::panel_guard`); a shared borrow avoids both.
         title = " inspect · context sent ";
         let call = &view.call;
-        lines.push(Line::from(Span::styled(
-            format!(
+        push_wrapped_banner(
+            &mut lines,
+            &format!(
                 "  turn {} · step {} · call-seq {} · {}",
                 call.turn_instance, call.step, call.call_seq, call.call_role
             ),
             theme::accent().add_modifier(Modifier::BOLD),
-        )));
-        lines.push(Line::from(Span::styled(
-            format!(
+            banner_width,
+        );
+        push_wrapped_banner(
+            &mut lines,
+            &format!(
                 "  {} / {} · {} message(s)",
                 call.provider,
                 call.model,
                 view.messages.len()
             ),
             theme::text_secondary(),
-        )));
+            banner_width,
+        );
         // Never merged: unresolved is a coverage gap, a mismatch means the
         // recovered bytes are not this block's. The gap is never phrased as
         // tampering — it is a documented coverage boundary, not a signal.
         if view.unresolved > 0 {
-            lines.push(Line::from(Span::styled(
-                format!(
+            push_wrapped_banner(
+                &mut lines,
+                &format!(
                     "  ! {} block(s) unresolved — synthetic results, discarded speculation, \
                      or attachments",
                     view.unresolved
                 ),
                 Style::default().fg(theme::WARN),
-            )));
+                banner_width,
+            );
         }
         // A mismatch means one of two things depending on who wrote the
         // journal, and `InspectView` (not this renderer) holds that verdict —
-        // see `envelope::InspectView::digest_mismatch_line`, which also keeps
-        // both variants short enough to survive this overlay's clip (#1981).
+        // see `envelope::InspectView::digest_mismatch_line`. Wrapped like
+        // every other banner line here (`#2029`), so its wording does not
+        // have to fit unaided (`#1981`'s original constraint).
         if let Some((text, alarm)) = view.digest_mismatch_line() {
             let tone = if alarm { theme::DANGER } else { theme::WARN };
-            lines.push(Line::from(Span::styled(text, Style::default().fg(tone))));
+            push_wrapped_banner(&mut lines, &text, Style::default().fg(tone), banner_width);
         }
         if view.verified {
-            lines.push(Line::from(Span::styled(
+            push_wrapped_banner(
+                &mut lines,
                 "  verified · every journal-resolved block re-hashed to its recorded digest",
                 Style::default().fg(theme::SUCCESS),
-            )));
+                banner_width,
+            );
         }
         let body_width = (w as usize).saturating_sub(6);
         for (index, message) in view.messages.iter().enumerate() {
@@ -804,28 +823,38 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
             }
         }
         lines.push(Line::default());
-        lines.push(Line::from(Span::styled(
+        push_wrapped_banner(
+            &mut lines,
             " ↑/↓ pgup/pgdn scroll · esc/← back to calls · q close",
             theme::text_secondary(),
-        )));
+            banner_width,
+        );
     } else {
         title = " inspect · recorded calls ";
-        lines.push(Line::from(Span::styled(
+        push_wrapped_banner(
+            &mut lines,
             "  every model call this execution recorded a receipt for",
             theme::text_secondary(),
-        )));
+            banner_width,
+        );
         lines.push(Line::default());
         if ui.inspect_calls.is_empty() {
-            lines.push(Line::from(Span::styled(
+            push_wrapped_banner(
+                &mut lines,
                 "    no receipts for this execution yet — run a turn, then reopen",
                 theme::text_secondary(),
-            )));
+                banner_width,
+            );
         } else {
             lines.push(Line::from(Span::styled(
                 "    TURN  STEP  SEQ  ROLE            PROVIDER    MODEL",
                 theme::text_secondary(),
             )));
         }
+        // How many rows come before the call list. Used below to find the
+        // selected row without assuming a fixed count, now that a banner
+        // above can wrap onto more than one row (`#2029`).
+        let rows_before_calls = lines.len();
         for (index, call) in ui.inspect_calls.iter().enumerate() {
             let selected = index == ui.inspect_sel;
             let style = if selected {
@@ -833,6 +862,9 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
             } else {
                 Style::default().fg(theme::INK)
             };
+            // A fixed-width table row, not a banner: wrapping it would break
+            // its own column headers. A long value elides here instead,
+            // through `columns::head`.
             lines.push(Line::from(Span::styled(
                 format!(
                     "  {} {:>4}  {:>4}  {:>3}  {:<14}  {:<10}  {}",
@@ -848,17 +880,18 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
             )));
         }
         lines.push(Line::default());
-        lines.push(Line::from(Span::styled(
+        push_wrapped_banner(
+            &mut lines,
             " ↑/↓ select · ⏎ show the context it was sent · r refresh · esc close",
             theme::text_secondary(),
-        )));
+            banner_width,
+        );
         // The whole popup scrolls by `inspect_scroll`, and the list-mode key
-        // handler only moves `inspect_sel` — it never touches the scroll. Track
-        // the selection here so the `›` row stays on-screen when the call list
-        // is taller than the popup. The rows are preceded by three fixed lines
-        // (title · blank · header), so the selected row is at `3 + inspect_sel`.
+        // handler only moves `inspect_sel` — it never touches the scroll.
+        // Track the selection here so the `›` row stays on-screen when the
+        // call list is taller than the popup.
         let inner_h = (h as usize).saturating_sub(2);
-        let sel_line = 3 + ui.inspect_sel;
+        let sel_line = rows_before_calls + ui.inspect_sel;
         ui.inspect_scroll = scroll_window_start(lines.len(), sel_line, inner_h);
     }
 
@@ -894,6 +927,18 @@ fn push_wrapped(lines: &mut Vec<Line<'static>>, body: &str, width: usize) {
                 Style::default().fg(theme::INK),
             )));
         }
+    }
+}
+
+/// Push one banner/status line, hard-wrapped at `width` (`#2029`) instead
+/// of left to clip at the popup's edge. No added indent on a continuation
+/// row: `wrap_chars` already fills each chunk to `width`.
+///
+/// One `Line` per row, same as `push_wrapped`, so `ui.inspect_scroll` still
+/// matches what is on screen.
+fn push_wrapped_banner(lines: &mut Vec<Line<'static>>, text: &str, style: Style, width: usize) {
+    for chunk in wrap_chars(text, width) {
+        lines.push(Line::from(Span::styled(chunk, style)));
     }
 }
 

@@ -59,12 +59,17 @@ api_key_env    = "JIRA_API_TOKEN"
 # to `Feature` would apply the wrong delivery policy quietly, which is worse
 # than refusing loudly.
 [classes]
-# `Defect` carries the regression obligation (§6.2) — a witness test that
+# The keys are the kernel's own class names, lowercased — `bug`, `feature`,
+# `task`. A key the loader does not read is skipped, so a misspelled one costs
+# the whole mapping.
+#
+# `Bug` carries the regression obligation (§6.2) — a witness test that
 # fails at the commit the defect was reported against, not merely at HEAD.
-defect  = ["Bug", "Defect", "Incident", "Production Issue"]
-feature = ["Story", "Task", "Improvement", "Spike"]
-# `Epic` is the spec anchor (§5) and is never worked directly.
-epic    = ["Epic", "Initiative"]
+bug     = ["Bug", "Defect", "Incident", "Production Issue"]
+feature = ["Story", "Improvement", "Spike"]
+task    = ["Task", "Chore"]
+# A container issue is not a class. `Epic` and `Initiative` carry the container
+# label instead (§5), and are never worked directly.
 
 
 # ── STATES ───────────────────────────────────────────────────────────────────

@@ -325,6 +325,74 @@ fn a_panicking_worker_body_ends_as_failed_never_silence() {
     assert!(matches!(end, WorkerEnd::Done(answer) if answer == "done"));
 }
 
+/// **The panicked-lane witness.** A lane whose worker thread panicked leaves
+/// the terminal frame its lead reads, naming the last step it committed.
+///
+/// Settle only from inside `run_worker` and this fails by construction: the
+/// unwind skips that call, the lane's checkpoint sits on disk with nothing to
+/// turn it into a frame, and the lead's report says nothing at all about the
+/// loudest way a lane can die.
+#[test]
+fn a_panicked_lane_still_leaves_its_lead_a_frame() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    // Its own store, never the shared `data_dir()` — see
+    // `durability::bind_session_in`.
+    let store = tempfile::tempdir().expect("store");
+
+    let durability = crate::durability::SessionDurability::default();
+    assert!(
+        crate::durability::bind_session_in(
+            &durability,
+            store.path(),
+            workspace.path(),
+            &lane_journal_key("ses-1", "sub:9"),
+        )
+        .is_none(),
+        "the lane binds"
+    );
+
+    let recorder = crate::lane_frame::LaneRecorder::new(&durability, "sub:9");
+    let sink = recorder.sink().expect("the lane's sink");
+    sink.persist(
+        &stella_core::step::Checkpoint {
+            version: stella_core::step::CHECKPOINT_VERSION,
+            step: 2,
+            messages: vec![
+                stella_protocol::CompletionMessage::user("do the task"),
+                stella_protocol::CompletionMessage::assistant("on it"),
+            ],
+            budget: stella_core::step::BudgetSnapshot {
+                mode: stella_protocol::BudgetMode::Observed,
+                turn_limit_usd: None,
+                session_limit_usd: None,
+                turn_spent_usd: 0.0,
+                session_spent_usd: 0.0,
+            },
+            total_cost_usd: 0.0,
+            calibration_model: None,
+            loop_steered: false,
+            loop_steered_pattern: Vec::new(),
+            loop_steered_inputs: None,
+            transcript_rewrites: 0,
+            loop_steers_spent: 0,
+        }
+        .to_json()
+        .expect("the fixture encodes"),
+    );
+
+    // What a panic leaves: the checkpoint standing at the lane's tip, and no
+    // end of a turn at all.
+    let (_, _, end) = run_caught(|| panic!("tool blew up"));
+    terminal_frame::settle_bound_lane(&durability, "sub:9", &end);
+
+    let frame = crate::lane_frame::TerminalFrame::read(&durability)
+        .expect("a panicked lane leaves a frame");
+    assert_eq!(frame.lane, "sub:9");
+    assert_eq!(frame.committed_steps, 2);
+    assert_eq!(frame.ending, crate::lane_frame::Ending::Failed);
+    assert!(frame.reason.contains("worker panicked"), "{}", frame.reason);
+}
+
 #[tokio::test]
 async fn quit_shutdown_stops_workers_and_reaps_their_endings() {
     // Quit-time teardown: every live worker sees its stop signal and the

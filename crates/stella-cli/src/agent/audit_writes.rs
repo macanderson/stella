@@ -140,7 +140,11 @@ pub(crate) fn warn_dropped_audit_writes(db_path: Option<&Path>, dropped: &[Dropp
 ///
 /// It reads only what was lost, so both answers to "which file" can be tested
 /// without a database.
-fn dropped_write_report(db_path: Option<&Path>, dropped: &[DroppedWrite]) -> String {
+///
+/// Reachable from the deck and the fleet, which have no stderr to print to:
+/// their close-outs send the same text through their own surfaces rather than
+/// telling a watching person that the record is incomplete and stopping there.
+pub(crate) fn dropped_write_report(db_path: Option<&Path>, dropped: &[DroppedWrite]) -> String {
     let mut report = String::new();
     for write in dropped {
         report.push_str(&format!("      {}\n", write.diagnosis()));

@@ -125,13 +125,38 @@ impl Default for LoopConfig {
 /// are edited in, and requiring a second file beside it to make the first one
 /// count would make the manifest unreachable for the workspace that has
 /// configured nothing else — which is the workspace it exists for.
+///
+/// The worker is the exception, and it fails closed. A document that does not
+/// parse but does declare `[self_driving.worker]` resolves
+/// [`crate::settings::toml_config::WorkerKind::Unreadable`], and the work path
+/// refuses the turn. Falling back to the default there would run stella under
+/// a file that asked for Claude Code, which is the one substitution the typed
+/// setting exists to stop, and `stella self-driving drive` runs unattended, so
+/// a warning on stderr is not a stop.
 #[must_use]
 pub(crate) fn load(root: &Path) -> LoopConfig {
-    let Some(parsed) = read_toml(root) else {
-        return LoopConfig {
-            manifest: ProviderManifest::for_workspace(root),
-            ..LoopConfig::default()
-        };
+    let parsed = match read_toml(root) {
+        LoopDocument::Parsed(parsed) => parsed,
+        LoopDocument::Absent => {
+            return LoopConfig {
+                manifest: ProviderManifest::for_workspace(root),
+                ..LoopConfig::default()
+            };
+        }
+        LoopDocument::Unparsed { names_a_worker } => {
+            return LoopConfig {
+                manifest: ProviderManifest::for_workspace(root),
+                worker: crate::settings::toml_config::WorkerSection {
+                    kind: if names_a_worker {
+                        crate::settings::toml_config::WorkerKind::Unreadable
+                    } else {
+                        crate::settings::toml_config::WorkerKind::default()
+                    },
+                    ..crate::settings::toml_config::WorkerSection::default()
+                },
+                ..LoopConfig::default()
+            };
+        }
     };
 
     LoopConfig {
@@ -167,16 +192,88 @@ fn default_container_labels() -> Vec<String> {
         .collect()
 }
 
-fn read_toml(root: &Path) -> Option<TomlConfig> {
+/// What a workspace's `stella.toml` gave the loop.
+enum LoopDocument {
+    /// No file, or one this process cannot read.
+    Absent,
+    /// The document parsed.
+    Parsed(Box<TomlConfig>),
+    /// The document did not parse. Every setting falls back to its default
+    /// except the worker, which fails closed when the file declared one.
+    Unparsed {
+        /// Whether the raw text opens a `[self_driving.worker]` table.
+        names_a_worker: bool,
+    },
+}
+
+fn read_toml(root: &Path) -> LoopDocument {
     let path = crate::settings::toml_config::project_toml_path(root);
-    let raw = std::fs::read_to_string(&path).ok()?;
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return LoopDocument::Absent;
+    };
     match TomlConfig::parse(&raw, &path) {
-        Ok(parsed) => Some(parsed),
+        Ok(parsed) => LoopDocument::Parsed(Box::new(parsed)),
         Err(error) => {
             eprintln!("warning: {error}; self-driving is using its defaults");
-            None
+            LoopDocument::Unparsed {
+                names_a_worker: declares_a_worker(&raw),
+            }
         }
     }
+}
+
+/// Whether the text opens a `[self_driving.worker]` table.
+///
+/// Read from the raw text because the document did not parse, so there is no
+/// tree to ask. A table header is the whole line, so a scan of the line
+/// starts answers exactly: a `[` in the middle of a value cannot reach here,
+/// and a header split across lines is not TOML.
+///
+/// Whitespace inside the brackets and around the dot is TOML-legal and
+/// carries no meaning, so it is dropped before the comparison rather than
+/// matched literally — `[ self_driving . worker ]` names the same table as
+/// `[self_driving.worker]`, and reading the spaced spelling as "no worker
+/// named" is what would hand an unparsable document back to the default
+/// agent. The name is taken up to the closing bracket rather than off the
+/// end of the line, so a trailing comment does not hide the header.
+///
+/// A quoted key is TOML-legal too, and it is dropped for the same reason the
+/// whitespace is: `[self_driving."worker"]` opens the table
+/// `[self_driving.worker]` opens. Every miss here fails in one direction, and
+/// it is the unsafe one — `names_a_worker: false` resolves
+/// [`WorkerKind::default`](crate::settings::toml_config::WorkerKind), which is
+/// `Stella`, so a spelling this does not recognise runs the default agent
+/// under a file that named a different one rather than refusing the turn.
+///
+/// Splitting on the dots before unquoting is what keeps the normalization from
+/// widening: `["self_driving.worker"]` is one quoted key holding a dot, a
+/// different table, and it must not match. Nor may `[[self_driving.worker]]`,
+/// an array of tables, which cannot carry a `kind`.
+fn declares_a_worker(raw: &str) -> bool {
+    raw.lines().map(str::trim).any(|line| {
+        line.strip_prefix('[')
+            .and_then(|rest| rest.split_once(']'))
+            .is_some_and(|(name, _)| {
+                let mut keys = name.split('.').map(|key| unquote(key.trim()));
+                keys.next() == Some("self_driving")
+                    && keys.next() == Some("worker")
+                    && keys.next().is_none()
+            })
+    })
+}
+
+/// One table-header key with its TOML quoting removed, if it carried any.
+///
+/// Both quote characters, because TOML spells a key as a basic string
+/// (`"worker"`) or a literal one (`'worker'`).
+fn unquote(key: &str) -> &str {
+    key.strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .or_else(|| {
+            key.strip_prefix('\'')
+                .and_then(|rest| rest.strip_suffix('\''))
+        })
+        .unwrap_or(key)
 }
 
 #[cfg(test)]
@@ -352,6 +449,120 @@ dangerously_skip_permissions = true
         assert_eq!(worker.model.as_deref(), Some("opus"));
         assert_eq!(worker.max_turns, Some(40));
         assert!(worker.dangerously_skip_permissions);
+    }
+
+    /// **The fail-closed witness.** A document that names a worker and does
+    /// not parse resolves no worker at all.
+    ///
+    /// Fall back to the defaults here and this fails by construction: the
+    /// whole-document parse fails, `load` returns `LoopConfig::default()`,
+    /// and the operator who wrote `kind = "clade"` gets `WorkerKind::Stella`
+    /// — the substitution the typed setting was chosen to stop. Every `match`
+    /// on the enum has to answer for `Unreadable`, so the work path refuses
+    /// instead.
+    #[test]
+    fn an_unreadable_worker_kind_resolves_no_worker() {
+        let ws = workspace();
+        write(
+            ws.path(),
+            "stella.toml",
+            r#"
+[meta]
+schema_version = 1
+scope = "project"
+
+[self_driving.worker]
+kind = "clade"
+"#,
+        );
+
+        assert_eq!(
+            load(ws.path()).worker.kind,
+            crate::settings::toml_config::WorkerKind::Unreadable,
+            "a worker the file cannot express must not resolve to one the operator did not name"
+        );
+    }
+
+    /// **The witness for the spaced header.** TOML lets a table header carry
+    /// whitespace inside its brackets and around its dots, and lets a comment
+    /// follow it. Each of those spellings names `[self_driving.worker]`, so
+    /// each must fail closed the same way.
+    ///
+    /// Matching the header literally fails here by construction: none of
+    /// these three lines starts with `[self_driving.worker]`, so the document
+    /// reads as naming no worker, `load` hands back `LoopConfig::default()`,
+    /// and the operator who wrote `kind = "clade"` gets `WorkerKind::Stella`
+    /// — the substitution the whole fail-closed path exists to stop, reached
+    /// through the one spelling nothing checked.
+    #[test]
+    fn a_spaced_or_commented_worker_header_still_fails_closed() {
+        for header in [
+            "[ self_driving.worker ]",
+            "[self_driving . worker]",
+            "[self_driving.worker] # the agent this loop drives",
+            "[self_driving.\"worker\"]",
+            "[\"self_driving\".worker]",
+            "[self_driving.'worker']",
+        ] {
+            let ws = workspace();
+            write(
+                ws.path(),
+                "stella.toml",
+                &format!(
+                    "[meta]\nschema_version = 1\nscope = \"project\"\n\n{header}\nkind = \"clade\"\n"
+                ),
+            );
+
+            assert_eq!(
+                load(ws.path()).worker.kind,
+                crate::settings::toml_config::WorkerKind::Unreadable,
+                "`{header}` names the worker table, so it must refuse like the bare spelling"
+            );
+        }
+    }
+
+    /// The negative control for the test above. Dropping whitespace and quotes
+    /// must not widen the match into a header naming a different table:
+    /// `["self_driving.worker"]` is one quoted key holding a dot, and
+    /// `[[self_driving.worker]]` is an array of tables that cannot carry a
+    /// `kind`. Either one matching would refuse a turn over a document that
+    /// names no worker at all.
+    #[test]
+    fn a_lookalike_header_is_not_read_as_the_worker_table() {
+        for header in ["[\"self_driving.worker\"]", "[[self_driving.worker]]"] {
+            let ws = workspace();
+            write(
+                ws.path(),
+                "stella.toml",
+                &format!(
+                    "[meta]\nschema_version = 1\nscope = \"project\"\n\n{header}\nkind = \"clade\"\n"
+                ),
+            );
+
+            assert_eq!(
+                load(ws.path()).worker.kind,
+                crate::settings::toml_config::WorkerKind::Stella,
+                "`{header}` does not open [self_driving.worker]"
+            );
+        }
+    }
+
+    /// A document that does not parse and names no worker keeps today's
+    /// recovery: the loop says so and runs its default agent. Only the key
+    /// that selects an executing agent fails closed.
+    #[test]
+    fn an_unparsable_document_with_no_worker_table_keeps_the_default() {
+        let ws = workspace();
+        write(
+            ws.path(),
+            "stella.toml",
+            "[meta]\nschema_version = 1\nscope = \"project\"\n\n[self_driving]\ntriage = 7\n",
+        );
+
+        assert_eq!(
+            load(ws.path()).worker.kind,
+            crate::settings::toml_config::WorkerKind::Stella
+        );
     }
 
     /// The default is unchanged by the seam existing: a workspace that says

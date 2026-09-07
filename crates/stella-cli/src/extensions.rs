@@ -768,8 +768,12 @@ impl CustomExtensions {
                 stella_learn::skills::SkillProblem::MissingName => "no usable name",
                 stella_learn::skills::SkillProblem::MissingDescription => "no description",
                 stella_learn::skills::SkillProblem::EmptyBody => "empty body",
+                stella_learn::skills::SkillProblem::Unreadable => "could not be read",
             };
-            problems.push(format!("{}: {why}", diag.path));
+            match &diag.detail {
+                Some(detail) => problems.push(format!("{}: {why} ({detail})", diag.path)),
+                None => problems.push(format!("{}: {why}", diag.path)),
+            }
         }
         Self {
             commands,

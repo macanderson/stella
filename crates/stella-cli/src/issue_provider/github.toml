@@ -45,8 +45,7 @@ parent = "parent"
 # labels. An issue in none of these lists is `Other`. A reader can see that.
 # A wrong class hides.
 #
-# The keys are Stella's own class names. §4.1 draws this block with `defect`
-# and `epic`. `IssueClass` is what shipped, so these follow the code.
+# The keys are Stella's own class names, and §4.1 draws the same three.
 # `#1281` owns the rest.
 [classes]
 bug = ["bug"]

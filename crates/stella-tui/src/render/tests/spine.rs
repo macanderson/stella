@@ -14,8 +14,9 @@
 //!
 //! [`declared`] covers every kind, so a new one stops this file from building
 //! until somebody says what sends it. A kind nothing sends is allowed and
-//! names the issue that will settle it. `EventKind::Gate` is the only one
-//! (`#5651`).
+//! names the issue that will settle it — SPEC 6.3's `gate` row was the one
+//! standing example (`EventKind::Gate`), and `#5651` deleted the kind rather
+//! than give it a sender, since the engine only ever emits a whole board.
 
 use super::*;
 use crate::tool_class::ToolClass;
@@ -23,11 +24,15 @@ use crate::views::transcript::{EventKind, Extent};
 use stella_protocol::{MemoryClass, ModelCallRole, SkillTrigger, TaskId, ToolCall};
 
 /// What draws one head kind.
+///
+/// `Gap(u32)` — nothing sends one, and the number of the issue that settles
+/// it — is not one of the options below. It was `EventKind::Gate`'s,
+/// removed with the kind in `#5651`. Reintroduce it the day a new kind
+/// again ships with no wire event behind it; until then a second option
+/// nothing ever constructs is dead code, not a declared gap.
 enum Producer {
     /// A wire event a session sends.
     Live,
-    /// Nothing sends one, and the number of the issue that settles it.
-    Gap(u32),
 }
 
 /// What draws `kind`.
@@ -49,11 +54,6 @@ fn declared(kind: &EventKind) -> Producer {
         | EventKind::Model { .. }
         | EventKind::Compaction { .. }
         | EventKind::Other { .. } => Producer::Live,
-        // SPEC 6.3's lone gate row. The engine sends a whole board
-        // (`AgentEvent::GateBoard`), never one gate, so no fold can build this
-        // head. `#5651` picks between routing the board through it and
-        // dropping the kind.
-        EventKind::Gate { .. } => Producer::Gap(5651),
     }
 }
 
@@ -333,22 +333,25 @@ fn a_live_tool_head_carries_the_task_tag_the_wire_stamped() {
     );
 }
 
-/// The one head nothing sends stays out of the table above and names the
-/// issue that will settle it.
+/// `#5651`: `EventKind::Gate` is gone, and with it the copy of the gate
+/// board's price text that could never be reached (nothing built one).
+/// Before that deletion `views/transcript.rs`'s `kind_detail` carried its
+/// own `" · $0.00 · det"` literal beside `gate_board.rs`'s live one — two
+/// implementations of one fact, only one of which a session could ever see
+/// drift — which is what this test asserts against and would have failed on.
 #[test]
-fn the_gate_head_has_no_wire_event_and_names_its_issue() {
-    assert!(
-        !live()
-            .iter()
-            .any(|row| matches!(row.kind, EventKind::Gate { .. })),
-        "a gate row is listed as live, so it has a sender and belongs in `live`"
+fn the_deterministic_gate_price_is_built_in_exactly_one_place() {
+    let transcript_src = include_str!("../../views/transcript.rs");
+    let gate_board_src = include_str!("../../views/gate_board.rs");
+    let needle = "\" · $0.00 · det\"";
+    assert_eq!(
+        transcript_src.matches(needle).count(),
+        0,
+        "views/transcript.rs builds the gate board's own price literal again"
     );
-    let gate = EventKind::Gate {
-        state: "green".into(),
-        deterministic: true,
-    };
-    match declared(&gate) {
-        Producer::Gap(issue) => assert!(issue > 0, "a gap has to name its issue: {issue}"),
-        Producer::Live => panic!("a gate head has a sender now, so it belongs in `live`"),
-    }
+    assert_eq!(
+        gate_board_src.matches(needle).count(),
+        1,
+        "the price literal should live in gate_board.rs's live renderer alone"
+    );
 }

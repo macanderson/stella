@@ -40,7 +40,11 @@ pub struct McpServerInfo {
     /// reachable). A newly-installed server shows `configured` but not
     /// `connected` until the next session.
     pub connected: bool,
-    /// Short health label when connected (e.g. `live`, `reconnecting`).
+    /// Short health label (e.g. `live`, `reconnecting`, `auth required`).
+    /// Not gated on [`Self::connected`] (`#2802`): an auth-suppressed server
+    /// has no client and so is never connected, but it still carries a
+    /// synthesized `auth required` row — the one state a reader most needs
+    /// for a server with no live connection.
     pub health: Option<String>,
     /// Round-trip time of the connect handshake's `initialize` request, in
     /// whole milliseconds — SPEC §9.3's latency column.
@@ -184,9 +188,12 @@ impl McpSignature {
 
     /// The label the row renders. The blocked states carry the word `blocked`
     /// rather than relying on the red alone (SPEC §13).
+    ///
+    /// `"attributed"`, not `"signed"` (`#5176`) — see
+    /// `stella_mcp::SignatureStatus::label` for why.
     pub fn label(self) -> &'static str {
         match self {
-            McpSignature::Signed => "signed",
+            McpSignature::Signed => "attributed",
             McpSignature::Unsigned => "unsigned · blocked",
             McpSignature::Withdrawn => "withdrawn · blocked",
         }
