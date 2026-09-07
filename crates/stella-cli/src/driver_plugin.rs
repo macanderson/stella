@@ -27,9 +27,9 @@
 //! # What a session does today
 //!
 //! [`capabilities::HostDriverCapabilities`] serves the tracker read, the
-//! cooperative claim, the three `work` verbs and the four `deliver` verbs, and
-//! answers `unsupported` for the rest, so a driver's ask for an unbuilt verb
-//! degrades rather than dying.
+//! cooperative claim, the three `work` verbs, the four `deliver` verbs, and
+//! the two `sweep` verbs that need no lens. It answers `unsupported` for the
+//! rest, so a driver's ask for an unbuilt verb degrades rather than dying.
 //! This module does not paper over the rest: the refusals are printed, in the
 //! driver's own vocabulary and under the plugin's own name, so an operator sees
 //! exactly which asks this build could not serve and for whom.

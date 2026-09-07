@@ -77,7 +77,31 @@ pub(crate) struct Ledger {
 ///
 /// A cycle begins in one place and a sweep draws in another. Both call this.
 /// The second call in one cycle costs a file read.
+///
+/// The runtime is built here because the cycle driver is synchronous. A caller
+/// that already has one awaits [`reconcile_now`] instead: `Runtime::block_on`
+/// inside a runtime panics, and the driver channel serves its asks from one.
 pub(super) fn reconcile(durable: &Durable, provider: &dyn IssueProvider) {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            audit::record(
+                durable,
+                Audit::Transient,
+                None,
+                &format!("could not start a runtime to read closed issues: {error}"),
+            );
+            return;
+        }
+    };
+    runtime.block_on(reconcile_now(durable, provider));
+}
+
+/// The same read, for a caller that is already inside a runtime.
+pub(super) async fn reconcile_now(durable: &Durable, provider: &dyn IssueProvider) {
     let cycle = durable.cycle_counter();
     let mut ledger = durable.tracker_closures();
     if ledger.asked_on_cycle == Some(cycle) {
@@ -94,26 +118,10 @@ pub(super) fn reconcile(durable: &Durable, provider: &dyn IssueProvider) {
     let filed: BTreeSet<String> = filings.iter().map(|filing| key(&filing.key)).collect();
     let since = window_start(&ledger, &filings);
 
-    let runtime = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
-        Ok(runtime) => runtime,
-        Err(error) => {
-            audit::record(
-                durable,
-                Audit::Transient,
-                None,
-                &format!("could not start a runtime to read closed issues: {error}"),
-            );
-            return;
-        }
-    };
-
     // Asked, whatever the answer. A tracker that is down costs one read a
     // cycle, not one per pass.
     ledger.asked_on_cycle = Some(cycle);
-    match runtime.block_on(provider.closed_since(&since, WINDOW)) {
+    match provider.closed_since(&since, WINDOW).await {
         Ok(rows) => {
             let learned = absorb(&mut ledger, &rows, &filed);
             ledger.through = crate::timefmt::rfc3339_utc_now();

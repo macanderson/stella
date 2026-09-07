@@ -157,25 +157,33 @@ impl<'a> PluginDriveHost<'a> {
     /// the second one the first one's checkout. The budget behind them is
     /// shared, which is the opposite choice for the opposite reason: a ceiling
     /// that reset per session would cap nothing.
+    ///
+    /// The loop's state directory is the one `stella self-driving drive`
+    /// writes. So a sweep over the channel reads the same receipts and the
+    /// same ledger a hand-started loop has been filling. A home that will not
+    /// resolve leaves it unbound, and the two `sweep` verbs then say so.
     fn capabilities(&self) -> Box<dyn stella_runtime::wrapper::DriverCapabilities> {
-        Box::new(super::capabilities::HostDriverCapabilities::new(
-            self.plugin,
-            self.resolved.gates().cloned(),
-            Box::new(crate::issue_provider::GhIssueProvider::for_workspace(
-                self.workspace_root,
-            )),
-            self.config.clone(),
-            self.workspace_root.to_path_buf(),
-            super::work::WorkSlot::new(Box::new(super::work::SpawnedWorkRunner::new(
-                self.workspace_root.to_path_buf(),
+        Box::new(
+            super::capabilities::HostDriverCapabilities::new(
+                self.plugin,
+                self.resolved.gates().cloned(),
+                Box::new(crate::issue_provider::GhIssueProvider::for_workspace(
+                    self.workspace_root,
+                )),
                 self.config.clone(),
-                Arc::clone(&self.budget),
-            ))),
-            super::deliver::DeliverDesk::new(Box::new(super::deliver::GhDeliverForge::new(
                 self.workspace_root.to_path_buf(),
-                self.config.clone(),
-            ))),
-        ))
+                super::work::WorkSlot::new(Box::new(super::work::SpawnedWorkRunner::new(
+                    self.workspace_root.to_path_buf(),
+                    self.config.clone(),
+                    Arc::clone(&self.budget),
+                ))),
+                super::deliver::DeliverDesk::new(Box::new(super::deliver::GhDeliverForge::new(
+                    self.workspace_root.to_path_buf(),
+                    self.config.clone(),
+                ))),
+            )
+            .sweeping(crate::self_driving_cmd::state::LoopState::open().ok()),
+        )
     }
 }
 
@@ -191,8 +199,8 @@ impl DriveHost for PluginDriveHost<'_> {
             println!(
                 "  this build serves `backlog_next`, `backlog_claim`, `work_start`, \
                  `work_status`, `work_abandon`, `deliver_open`, `deliver_observe`, \
-                 `deliver_next` and `deliver_merge`; every other capability this run asks \
-                 for will be refused as unsupported"
+                 `deliver_next`, `deliver_merge`, `sweep_regress` and `sweep_meta`; every \
+                 other capability this run asks for will be refused as unsupported"
             );
             if self
                 .budget

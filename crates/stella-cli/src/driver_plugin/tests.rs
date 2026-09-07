@@ -11,6 +11,7 @@
 //! transport itself would be testing the half that already worked.
 
 mod deliver;
+mod sweep;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -530,11 +531,26 @@ async fn a_served_call_is_attributed_to_the_plugin_and_held_to_its_grant() {
 #[tokio::test]
 async fn an_unbuilt_verb_names_its_family() {
     let refused = capabilities_for(GRANTS_BASH, FixtureTracker { open: Vec::new() })
+        .perform(DriverCall::CurateList, None)
+        .await
+        .expect_err("nothing here serves a curate listing");
+    assert_eq!(refused.refusal, HostCallRefusal::Unsupported);
+    assert!(refused.detail.contains("curate"), "{refused}");
+}
+
+/// **The witness.** `sweep_audit` names the issue that will build it, so its
+/// refusal reads as a gap somebody chose rather than one nobody noticed.
+///
+/// Before this change it shared the catch-all arm, which said the rest of the
+/// `sweep` family was unbuilt — and two thirds of it now is built.
+#[tokio::test]
+async fn an_audit_sweep_names_the_issue_that_will_build_it() {
+    let refused = capabilities_for(GRANTS_BASH, FixtureTracker { open: Vec::new() })
         .perform(DriverCall::SweepAudit, None)
         .await
         .expect_err("nothing here serves an audit");
     assert_eq!(refused.refusal, HostCallRefusal::Unsupported);
-    assert!(refused.detail.contains("sweep"), "{refused}");
+    assert!(refused.detail.contains("6182"), "{refused}");
 }
 
 /// The shipped package names a program, and the host resolves it against the

@@ -10,10 +10,12 @@ Status: **B0–B3 and B5 built; B4, B6 and B7 designed and unbuilt.** Phases in 
 channel §3.0 specifies exists — `stella_plugin::driver` is its wire half,
 `stella_runtime::wrapper::DriverCallGate` its host half, and
 `plugins/stella-selfdriving/plugin.toml` declares the `[driver]` grant a human
-reads at install. The `backlog` read and claim, the three `work` verbs and the
-four `deliver` verbs are served from `stella-cli`. Every other verb §3.1–§3.5
-names answers `unsupported` and the driver degrades, which is what the
-remaining phases land family by family.
+reads at install. The `backlog` read and claim, the three `work` verbs, the
+four `deliver` verbs and the two `sweep` verbs that need no lens are served
+from `stella-cli`. A sweep draws only from a supply the workspace opened in
+`[self_driving.supply]`, so granting the verb opens nothing. Every other verb
+§3.1–§3.5 names answers `unsupported` and the driver degrades, which is what
+the remaining phases land family by family.
 
 **Reads on top of:** [`doc:pipeline-as-plugins`](pipeline-as-plugins.md) §10
 (self-driving is a *host*, not a wrapper — that decision is upstream of this

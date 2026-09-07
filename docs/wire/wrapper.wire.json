@@ -248,6 +248,47 @@
       }
     },
     {
+      "case": "ok/sweep/regress",
+      "message": {
+        "ok": {
+          "sweep": {
+            "examined": 11,
+            "filed": [
+              "4310"
+            ],
+            "fresh": 1,
+            "offered": 2,
+            "skipped": [
+              {
+                "count": 4,
+                "reason": "no_change_cited"
+              },
+              {
+                "count": 1,
+                "reason": "unknown_at_close"
+              }
+            ],
+            "supply": "regress"
+          }
+        },
+        "result": 13
+      }
+    },
+    {
+      "case": "ok/sweep/meta",
+      "message": {
+        "ok": {
+          "sweep": {
+            "examined": 40,
+            "fresh": 0,
+            "offered": 0,
+            "supply": "meta"
+          }
+        },
+        "result": 14
+      }
+    },
+    {
       "case": "err/undeclared",
       "message": {
         "err": {

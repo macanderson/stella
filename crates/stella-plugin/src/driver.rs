@@ -67,11 +67,13 @@ use crate::host_call::HostCallFailure;
 use crate::runtime::Runtime;
 
 pub mod deliver;
+pub mod sweep;
 
 pub use deliver::{
     DecideArgs, DeliverAction, DeliverCi, DeliverDecision, DeliverEscalation, DeliverMergeability,
     DeliverObservation, DeliverReview, DeliverState, MergeReport, OpenReport, PullRequestArgs,
 };
+pub use sweep::{SweepReport, SweepSkip, SweepSkipReason, SweptSupply};
 
 /// The capabilities a **driver** may ask the host for.
 ///
@@ -918,6 +920,14 @@ pub struct DriverOk {
     /// landed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge: Option<MergeReport>,
+    /// What [`DriverCall::SweepRegress`] and [`DriverCall::SweepMeta`]
+    /// answered with: one draw from one supply.
+    ///
+    /// One member for both verbs, and [`SweepReport::supply`] says which one
+    /// answered. The two report the same counts over different records, so a
+    /// member each would be one shape wearing two names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sweep: Option<SweepReport>,
 }
 
 /// The ranked queue one [`DriverCall::BacklogNext`] read produced.
@@ -1311,6 +1321,56 @@ mod tests {
                 panic!("a served answer decoded as a refusal: {failure}")
             }
         }
+    }
+
+    /// A sweep report survives the wire whole: which supply answered, the
+    /// counts, and each reason a record could not be re-checked.
+    #[test]
+    fn a_sweep_report_round_trips_with_its_reasons() {
+        let answered = DriverCallResponse::ok(
+            9,
+            DriverOk {
+                sweep: Some(SweepReport {
+                    supply: SweptSupply::Regress,
+                    examined: 11,
+                    skipped: vec![SweepSkip {
+                        reason: SweepSkipReason::AbsentAtClose,
+                        count: 2,
+                    }],
+                    offered: 3,
+                    fresh: 1,
+                    filed: vec!["4310".into()],
+                }),
+                ..DriverOk::default()
+            },
+        );
+        let json = serde_json::to_string(&answered).expect("a sweep report serializes");
+        assert!(json.contains(r#""supply":"regress""#), "{json}");
+        assert!(json.contains(r#""reason":"absent_at_close""#), "{json}");
+        let back: DriverCallResponse = serde_json::from_str(&json).expect("and reads back");
+        assert_eq!(back, answered);
+    }
+
+    /// A sweep that read every record it holds drops the skip list and the
+    /// filed list, so the emptiest report is three counts.
+    #[test]
+    fn a_sweep_that_skipped_nothing_sends_no_skip_key() {
+        let json = serde_json::to_string(&DriverOk {
+            sweep: Some(SweepReport {
+                supply: SweptSupply::Meta,
+                examined: 40,
+                skipped: Vec::new(),
+                offered: 0,
+                fresh: 0,
+                filed: Vec::new(),
+            }),
+            ..DriverOk::default()
+        })
+        .expect("a meta report serializes");
+        assert_eq!(
+            json,
+            r#"{"sweep":{"supply":"meta","examined":40,"offered":0,"fresh":0}}"#
+        );
     }
 
     /// A page the host never sent is `None`, not an empty one — the two are

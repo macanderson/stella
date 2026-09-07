@@ -49,7 +49,7 @@ pub(crate) mod residue;
 pub(crate) mod state;
 mod stats;
 mod stop;
-mod supply;
+pub(crate) mod supply;
 mod surface;
 mod triage;
 pub(crate) mod turn_flags;

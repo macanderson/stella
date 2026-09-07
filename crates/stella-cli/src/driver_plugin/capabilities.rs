@@ -20,11 +20,22 @@
 //!
 //! The host serves `backlog_next` — the queue, read through [`IssueProvider`]
 //! in the order `self_driving_cmd::ready` folds — `backlog_claim`, the three
-//! `work` verbs, and the four `deliver` verbs.
+//! `work` verbs, the four `deliver` verbs, and two of the three `sweep` verbs.
 //!
 //! Each other verb answers [`HostCallRefusal::Unsupported`] and names its
 //! family. That is a stated gap, not a silence. The match below covers every
 //! verb, so a new one is a build error here.
+//!
+//! # A sweep draws only from a supply the workspace opened
+//!
+//! `sweep_regress` and `sweep_meta` run the code the cycle driver runs, in
+//! `self_driving_cmd::supply`. Each supply is shut until an operator opens it
+//! in `stella.toml`. Granting the verb does not open one. An ask against a
+//! shut supply is refused by the switch's own name.
+//!
+//! `sweep_audit` runs a lens's own tooling. The host cannot yet do that for a
+//! driver (`#6182`), so it keeps refusing and names that issue. The gap is one
+//! somebody chose.
 //!
 //! # A merge is decided on what this host read
 //!
@@ -52,7 +63,8 @@ use serde_json::Value;
 use stella_core::ports::{AuthzDecision, AuthzGate, Principal};
 use stella_plugin::{
     BacklogEntry, BacklogPage, ClaimReport, DriverArgs, DriverCall, DriverOk, HostCallFailure,
-    HostCallRefusal, PullRequestArgs, UnitArgs,
+    HostCallRefusal, PullRequestArgs, SweepReport, SweepSkip, SweepSkipReason, SweptSupply,
+    UnitArgs,
 };
 use stella_protocol::issue::{Issue, IssueProvider};
 use stella_runtime::wrapper::DriverCapabilities;
@@ -63,6 +75,8 @@ use super::work::WorkSlot;
 use crate::plugin_authz::PluginGates;
 use crate::self_driving_cmd::claim::Claim;
 use crate::self_driving_cmd::config::LoopConfig;
+use crate::self_driving_cmd::state::LoopState;
+use crate::self_driving_cmd::supply::{Drawn, Shut};
 
 /// How many ranked issues one `backlog_next` answer carries.
 ///
@@ -105,6 +119,14 @@ pub(crate) struct HostDriverCapabilities {
     /// only as long as `perform` would be free again before the turn it exists
     /// to protect had started.
     lease: Mutex<Option<crate::self_driving_cmd::claim::Lease>>,
+    /// The loop's own state directory: the receipts a regress sweep re-checks
+    /// and the ledger a meta sweep folds.
+    ///
+    /// `None` when nothing bound one, which is what [`Self::new`] leaves
+    /// behind. Resolving it reads the stella home and seeds files, and a
+    /// session that never sweeps should pay for neither. A sweep asked for
+    /// without one is refused, never answered over an empty ledger.
+    state: Option<LoopState>,
 }
 
 impl HostDriverCapabilities {
@@ -127,7 +149,20 @@ impl HostDriverCapabilities {
             work,
             deliver,
             lease: Mutex::new(None),
+            state: None,
         }
+    }
+
+    /// Bind the loop's state directory. The two served `sweep` verbs read the
+    /// receipts and the ledger in it.
+    ///
+    /// Apart from [`Self::new`] because it is the one argument a caller can
+    /// fail to get: `LoopState::open` reads the stella home and seeds files.
+    /// A host that cannot get one still serves every other verb.
+    #[must_use]
+    pub(crate) fn sweeping(mut self, state: Option<LoopState>) -> Self {
+        self.state = state;
+        self
     }
 
     /// Who every ask here is run as.
@@ -304,6 +339,95 @@ impl HostDriverCapabilities {
             .attribution
             .title(&format!("{} (#{issue})", resolved.title));
         self.deliver.open(&branch, &issue, &title).await
+    }
+
+    /// One draw from one supply — `sweep_regress` and `sweep_meta`.
+    ///
+    /// It shells out twice. Git says whether a cited fix is still on the base,
+    /// and the tracker takes what the sweep files. So it is held to the grant
+    /// [`Self::backlog_next`] is held to.
+    async fn sweep(&self, supply: SweptSupply) -> Result<DriverOk, HostCallFailure> {
+        self.may_shell()?;
+        let Some(state) = &self.state else {
+            return Err(HostCallFailure::new(
+                HostCallRefusal::Unavailable,
+                "this host could not resolve the loop's own state directory, so it has no \
+                 receipts to re-check and no ledger to fold",
+            ));
+        };
+        let drawn = match supply {
+            SweptSupply::Regress => {
+                crate::self_driving_cmd::supply::draw_regress(
+                    state,
+                    self.issues.as_ref(),
+                    &self.config,
+                    &self.root,
+                )
+                .await
+            }
+            SweptSupply::Meta => {
+                crate::self_driving_cmd::supply::draw_meta(
+                    state,
+                    self.issues.as_ref(),
+                    &self.config,
+                    &self.root,
+                )
+                .await
+            }
+        };
+        let drawn = drawn.map_err(|Shut { switch }| shut(supply, switch))?;
+        Ok(DriverOk {
+            sweep: Some(report(supply, drawn)),
+            ..DriverOk::default()
+        })
+    }
+}
+
+/// The refusal for a sweep of a supply this workspace has not opened.
+///
+/// It names the line an operator edits. A driver told only "no" would read a
+/// shut switch as a host that cannot sweep. Those two call for opposite
+/// answers.
+fn shut(supply: SweptSupply, switch: &str) -> HostCallFailure {
+    HostCallFailure::new(
+        HostCallRefusal::Unavailable,
+        format!(
+            "this workspace has not opened the `{supply}` supply, so nothing was swept — set \
+             `[self_driving.supply] {switch} = \"on\"` in stella.toml to open it"
+        ),
+    )
+}
+
+/// One draw, in the channel's own words.
+///
+/// The map from `stella_autonomy`'s skip reasons to the wire's is total. So
+/// the two sets of words cannot drift apart.
+fn report(supply: SweptSupply, drawn: Drawn) -> SweepReport {
+    use stella_autonomy::regress::Skip;
+
+    let mut counted: Vec<(SweepSkipReason, u64)> = Vec::new();
+    for skip in drawn.skipped {
+        let reason = match skip {
+            Skip::NoChangeCited => SweepSkipReason::NoChangeCited,
+            Skip::UnknownAtClose => SweepSkipReason::UnknownAtClose,
+            Skip::AbsentAtClose => SweepSkipReason::AbsentAtClose,
+        };
+        match counted.iter_mut().find(|(held, _)| *held == reason) {
+            Some((_, count)) => *count += 1,
+            None => counted.push((reason, 1)),
+        }
+    }
+
+    SweepReport {
+        supply,
+        examined: drawn.examined,
+        skipped: counted
+            .into_iter()
+            .map(|(reason, count)| SweepSkip { reason, count })
+            .collect(),
+        offered: drawn.offered,
+        fresh: drawn.fresh,
+        filed: drawn.filed,
     }
 }
 
@@ -510,12 +634,32 @@ impl DriverCapabilities for HostDriverCapabilities {
                     ..DriverOk::default()
                 })
             }
+            // No arguments, and none accepted. A sweep re-checks every
+            // receipt the loop holds and folds the whole ledger. Neither is
+            // about one unit, so a key here could only name something the
+            // draw does not read.
+            DriverCall::SweepRegress => {
+                no_args(call, args.as_ref())?;
+                self.sweep(SweptSupply::Regress).await
+            }
+            DriverCall::SweepMeta => {
+                no_args(call, args.as_ref())?;
+                self.sweep(SweptSupply::Meta).await
+            }
+            // Its own arm, because its gap has a name. Running a lens's own
+            // tooling on a driver's behalf is `#6182`, and a refusal saying
+            // so is what tells a driver author which work they are waiting on.
+            DriverCall::SweepAudit => Err(HostCallFailure::new(
+                HostCallRefusal::Unsupported,
+                format!(
+                    "this host does not perform \"{call}\" yet: running an open lens's own \
+                     tooling for a driver is `#6182`. The other two {} verbs are served",
+                    call.family()
+                ),
+            )),
             DriverCall::BacklogFile
             | DriverCall::BacklogClose
             | DriverCall::BacklogLink
-            | DriverCall::SweepAudit
-            | DriverCall::SweepRegress
-            | DriverCall::SweepMeta
             | DriverCall::CuratePropose
             | DriverCall::CurateList
             | DriverCall::CurateAccept => Err(HostCallFailure::new(

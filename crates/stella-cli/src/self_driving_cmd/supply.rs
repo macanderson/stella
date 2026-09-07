@@ -318,8 +318,8 @@ fn pass_with(
     let mut filed = 0_u32;
     for finding in &fresh {
         match file(durable, provider, cfg, root, finding) {
-            Ok(true) => filed += 1,
-            Ok(false) => {}
+            Ok(Some(_)) => filed += 1,
+            Ok(None) => {}
             Err(error) => audit::record(
                 durable,
                 Audit::Transient,
@@ -329,6 +329,152 @@ fn pass_with(
         }
     }
     filed > 0
+}
+
+/// A supply the workspace has not opened.
+///
+/// Named as `stella.toml` spells it, so a refusal points at the line an
+/// operator would edit rather than at the code that read it.
+pub(crate) struct Shut {
+    /// The switch under `[self_driving.supply]`.
+    pub switch: &'static str,
+}
+
+/// What one draw from one supply produced.
+///
+/// The counts the driver channel answers with. `filed` is shorter than `fresh`
+/// when the tracker read a finding as a repeat or refused it, which is an
+/// ordinary answer rather than an error.
+pub(crate) struct Drawn {
+    /// Records the supply could read.
+    pub examined: u64,
+    /// Records it could not, in the order the sweep met them.
+    pub skipped: Vec<stella_autonomy::regress::Skip>,
+    /// Findings the supply offered.
+    pub offered: u64,
+    /// Those the seen set did not already hold.
+    pub fresh: u64,
+    /// The tracker keys this draw filed.
+    pub filed: Vec<String>,
+}
+
+/// Re-check every closure receipt, and file the fixes that have left the base.
+///
+/// The switch is read here rather than at the caller, so no second door into
+/// this supply can open one the workspace shut.
+///
+/// # Errors
+///
+/// [`Shut`] when `[self_driving.supply] regress` is off.
+pub(crate) async fn draw_regress(
+    durable: &Durable,
+    provider: &dyn IssueProvider,
+    cfg: &LoopConfig,
+    root: &Path,
+) -> Result<Drawn, Shut> {
+    if !cfg.supply.regress {
+        return Err(Shut { switch: "regress" });
+    }
+    super::closures::reconcile_now(durable, provider).await;
+
+    let receipts = durable.receipts();
+    let report = stella_autonomy::regress::sweep(&receipts, |cite| present_on_base(root, cite));
+    audit::record(
+        durable,
+        Audit::Swept,
+        None,
+        &format!(
+            "regress: {} of {} receipt(s) re-checked, {} could not be, {} fix(es) gone",
+            report.checked,
+            receipts.len(),
+            report.skipped.len(),
+            report.findings.len()
+        ),
+    );
+    Ok(offer(
+        durable,
+        provider,
+        cfg,
+        root,
+        report.checked,
+        report.skipped,
+        report.findings,
+    )
+    .await)
+}
+
+/// Fold the loop's own ledger, and file the habits it shows.
+///
+/// # Errors
+///
+/// [`Shut`] when `[self_driving.supply] meta` is off.
+pub(crate) async fn draw_meta(
+    durable: &Durable,
+    provider: &dyn IssueProvider,
+    cfg: &LoopConfig,
+    root: &Path,
+) -> Result<Drawn, Shut> {
+    if !cfg.supply.meta {
+        return Err(Shut { switch: "meta" });
+    }
+    super::closures::reconcile_now(durable, provider).await;
+
+    let rows = durable.cycles().rows;
+    let found = stella_autonomy::meta::sweep(&rows, &durable.calibration());
+    audit::record(
+        durable,
+        Audit::Swept,
+        None,
+        &format!(
+            "meta: {} finding(s) over {} cycle(s)",
+            found.len(),
+            rows.len()
+        ),
+    );
+    let examined = rows.len() as u64;
+    Ok(offer(durable, provider, cfg, root, examined, Vec::new(), found).await)
+}
+
+/// Drop what the seen set already holds, file the rest, and count both.
+///
+/// The one filing door, shared by both draws above, so neither can grow a rule
+/// the other does not have.
+async fn offer(
+    durable: &Durable,
+    provider: &dyn IssueProvider,
+    cfg: &LoopConfig,
+    root: &Path,
+    examined: u64,
+    skipped: Vec<stella_autonomy::regress::Skip>,
+    findings: Vec<Finding>,
+) -> Drawn {
+    let seen = durable.live_seen();
+    let fresh: Vec<Finding> = stella_autonomy::supply::novel(&findings, &seen)
+        .into_iter()
+        .cloned()
+        .collect();
+
+    let mut filed = Vec::new();
+    for finding in &fresh {
+        match file_now(durable, provider, cfg, root, finding).await {
+            Ok(Some(key)) => filed.push(key),
+            Ok(None) => {}
+            Err(error) => audit::record(
+                durable,
+                Audit::Transient,
+                None,
+                &format!("could not file `{}`: {error}", finding.title),
+            ),
+        }
+    }
+
+    Drawn {
+        examined,
+        skipped,
+        offered: findings.len() as u64,
+        fresh: fresh.len() as u64,
+        filed,
+    }
 }
 
 /// Write down what a closure cited, and whether that change was on the base.
@@ -449,15 +595,35 @@ fn noisy(durable: &Durable) -> bool {
 
 /// File one finding through the door every filing goes through.
 ///
-/// `Ok(true)` means the tracker took it. A repeat and a refusal are both
-/// `Ok(false)`. Neither is an error, and both are counted already.
+/// The runtime is built here because the cycle driver is synchronous. A caller
+/// that already has one awaits [`file_now`] instead: `Runtime::block_on` inside
+/// a runtime panics, and the driver channel serves its asks from one.
 fn file(
     durable: &Durable,
     provider: &dyn IssueProvider,
     cfg: &LoopConfig,
     root: &Path,
     finding: &Finding,
-) -> Result<bool, String> {
+) -> Result<Option<String>, String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("could not start a runtime for the issue provider: {error}"))?;
+    runtime.block_on(file_now(durable, provider, cfg, root, finding))
+}
+
+/// The same filing, for a caller that is already inside a runtime.
+///
+/// `Ok(Some(key))` means the tracker took it, under that key. A repeat and a
+/// refusal are both `Ok(None)`. Neither is an error, and both are counted
+/// already.
+async fn file_now(
+    durable: &Durable,
+    provider: &dyn IssueProvider,
+    cfg: &LoopConfig,
+    root: &Path,
+    finding: &Finding,
+) -> Result<Option<String>, String> {
     let bound = convention::load(root);
     let draft = IssueDraft {
         title: finding.title.clone(),
@@ -471,19 +637,15 @@ fn file(
         assignee: None,
     };
 
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| format!("could not start a runtime for the issue provider: {error}"))?;
-    let outcome = runtime
-        .block_on(backlog::file_finding(
-            provider,
-            &bound.convention,
-            &durable.live_seen(),
-            &draft,
-            &cfg.attribution.issue,
-        ))
-        .map_err(|error| error.to_string())?;
+    let outcome = backlog::file_finding(
+        provider,
+        &bound.convention,
+        &durable.live_seen(),
+        &draft,
+        &cfg.attribution.issue,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
 
     durable.update_stats(|stats| stats.record_filing(outcome.canonical()));
 
@@ -498,7 +660,7 @@ fn file(
             Some(&key.to_string()),
             &finding.title,
         );
-        return Ok(true);
+        return Ok(Some(key.to_string()));
     }
 
     audit::record(
@@ -507,7 +669,7 @@ fn file(
         None,
         &format!("not filed ({}): {}", outcome.canonical(), finding.title),
     );
-    Ok(false)
+    Ok(None)
 }
 
 #[cfg(test)]
