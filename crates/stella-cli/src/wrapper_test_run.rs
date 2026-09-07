@@ -39,6 +39,16 @@
 //! `stella-serve` or an embedded host never has. The host call is the portable
 //! way to ask, and this is the door answering it.
 //!
+//! # The same runner observes the baseline
+//!
+//! [`observe_baseline`] runs the granted invocation once before the turn, which
+//! is where [`stella_plugin::TestBaseline`] gets a value other than `NotRun`.
+//! It is here rather than in [`crate::wrapper_candidate`] so that one function
+//! decides pass and fail for both readings: what a plugin is told the tests
+//! said *before* the work, and what this host reports when a plugin asks it to
+//! re-run them *after*. Two copies of that decision is how a deadline ends up
+//! red on one path and unobserved on the other.
+//!
 //! # The environment is not scrubbed, and that is a decision
 //!
 //! `stella_tools::exec::scrub_sensitive_env` strips host credentials from a
@@ -162,6 +172,40 @@ impl TestRunHost for GrantedTestRuns {
     }
 }
 
+/// Run the invocation once **before** the turn, so the grant carries the red
+/// half of a flip instead of asking a plugin to reconstruct it.
+///
+/// The host is the only party that can do this. A subprocess wrapper is a fresh
+/// process at every point — `stella_runtime::wrapper`'s subprocess transport
+/// spawns one per request — so it cannot see red at `before_turn` and remember
+/// it at `after_turn`. Nothing it observes survives the point it observed it in.
+///
+/// It shares [`run_in`] with the `run_test` capability above, so pass and fail
+/// are decided in one place, off the exit status, with a run killed at the
+/// deadline reported as [`TestBaseline::Unobserved`] rather than as red.
+///
+/// # Errors
+///
+/// [`TestRunDenial::Failed`] when the invocation could not be started, or ran
+/// and its output could not be read. The caller records that as
+/// [`TestBaseline::Unobserved`] and never as [`TestBaseline::Failed`]: a host
+/// that could not run the tests has observed no assertion, and scoring its own
+/// failure as red would hand the oracle a precondition the work did not earn.
+pub(crate) async fn observe_baseline(
+    root: &std::path::Path,
+    invocation: &stella_plugin::TestInvocation,
+) -> Result<TestObservation, TestRunDenial> {
+    run_in(
+        &GrantedTests {
+            root: root.to_path_buf(),
+            program: invocation.program.clone(),
+            args: invocation.args.clone(),
+        },
+        DEFAULT_TEST_RUN_TIMEOUT,
+    )
+    .await
+}
+
 /// Run one grant's invocation in its own root, and report what was observed.
 ///
 /// Never a shell: `program` and `args` go to the process builder exactly as
@@ -265,8 +309,9 @@ mod tests {
     use super::*;
 
     /// A grant over `root`, with `command` parsed the way a door parses it.
-    fn granted(root: &std::path::Path, command: Option<&str>) -> CandidateGrant {
+    async fn granted(root: &std::path::Path, command: Option<&str>) -> CandidateGrant {
         crate::wrapper_candidate::grant_shared_tree(root, command)
+            .await
             .expect("the root resolves and the command parses")
             .grant
     }
@@ -288,7 +333,7 @@ mod tests {
     #[tokio::test]
     async fn a_granted_candidate_is_run_in_its_own_tree() {
         let dir = workspace("#!/bin/sh\necho 'ok: 1 passed'\nexit 0\n");
-        let grant = granted(dir.path(), Some("sh tests/witness_flip.sh"));
+        let grant = granted(dir.path(), Some("sh tests/witness_flip.sh")).await;
         let host = GrantedTestRuns::over([&grant]);
 
         let observed = host
@@ -305,7 +350,7 @@ mod tests {
     #[tokio::test]
     async fn a_failing_invocation_reports_failed_assertions_and_its_output() {
         let dir = workspace("#!/bin/sh\necho 'FAILED: tests::flip' >&2\nexit 1\n");
-        let grant = granted(dir.path(), Some("sh tests/witness_flip.sh"));
+        let grant = granted(dir.path(), Some("sh tests/witness_flip.sh")).await;
         let host = GrantedTestRuns::over([&grant]);
 
         let observed = host.run_test(&handle(&grant)).await.expect("it ran");
@@ -321,7 +366,7 @@ mod tests {
     #[tokio::test]
     async fn a_handle_this_door_did_not_grant_is_unknown() {
         let dir = workspace("#!/bin/sh\nexit 0\n");
-        let grant = granted(dir.path(), Some("sh tests/witness_flip.sh"));
+        let grant = granted(dir.path(), Some("sh tests/witness_flip.sh")).await;
         let host = GrantedTestRuns::over([&grant]);
 
         let denial = host
@@ -336,7 +381,7 @@ mod tests {
     #[tokio::test]
     async fn a_grant_with_no_test_command_has_nothing_to_re_run() {
         let dir = workspace("#!/bin/sh\nexit 0\n");
-        let grant = granted(dir.path(), None);
+        let grant = granted(dir.path(), None).await;
         let host = GrantedTestRuns::over([&grant]);
 
         let denial = host
@@ -352,7 +397,7 @@ mod tests {
     #[tokio::test]
     async fn an_unspawnable_program_reports_that_the_host_tried() {
         let dir = workspace("#!/bin/sh\nexit 0\n");
-        let mut grant = granted(dir.path(), Some("sh tests/witness_flip.sh"));
+        let mut grant = granted(dir.path(), Some("sh tests/witness_flip.sh")).await;
         if let Some(plan) = grant.test.as_mut() {
             plan.program = "stella-no-such-runner".to_string();
         }
@@ -376,7 +421,7 @@ mod tests {
     #[tokio::test]
     async fn a_run_killed_at_the_deadline_observed_no_assertions() {
         let dir = workspace("#!/bin/sh\nsleep 30\n");
-        let grant = granted(dir.path(), Some("sh tests/witness_flip.sh"));
+        let grant = granted(dir.path(), Some("sh tests/witness_flip.sh")).await;
         let host = GrantedTestRuns::over([&grant]).with_timeout(Duration::from_millis(150));
 
         let observed = host
@@ -388,11 +433,60 @@ mod tests {
 
     /// A door with no grant installs no plane rather than one that refuses
     /// everything, and this is the question it asks.
-    #[test]
-    fn a_host_over_no_grants_is_empty() {
+    #[tokio::test]
+    async fn a_host_over_no_grants_is_empty() {
         assert!(GrantedTestRuns::over([]).is_empty());
         let dir = workspace("#!/bin/sh\nexit 0\n");
-        let grant = granted(dir.path(), None);
+        let grant = granted(dir.path(), None).await;
         assert!(!GrantedTestRuns::over([&grant]).is_empty());
+    }
+
+    fn invocation(program: &str, args: &[&str]) -> stella_plugin::TestInvocation {
+        stella_plugin::TestInvocation {
+            program: program.to_string(),
+            args: args.iter().map(|arg| (*arg).to_string()).collect(),
+        }
+    }
+
+    /// **Witness.** The pre-turn observation reads the same exit status the
+    /// post-turn re-run does, so red before the work and red after it are the
+    /// same word.
+    #[tokio::test]
+    async fn the_baseline_reads_the_invocation_the_same_way_a_re_run_does() {
+        let red = workspace("#!/bin/sh\nexit 1\n");
+        assert_eq!(
+            observe_baseline(red.path(), &invocation("sh", &["tests/witness_flip.sh"]))
+                .await
+                .expect("it ran")
+                .assertions,
+            TestBaseline::Failed,
+        );
+
+        let green = workspace("#!/bin/sh\nexit 0\n");
+        assert_eq!(
+            observe_baseline(green.path(), &invocation("sh", &["tests/witness_flip.sh"]))
+                .await
+                .expect("it ran")
+                .assertions,
+            TestBaseline::Passed,
+        );
+    }
+
+    /// A program that will not start is refused rather than reported as red.
+    ///
+    /// The caller turns this into `Unobserved`. Reporting it as `Failed` would
+    /// hand the oracle a failing baseline this host manufactured out of its own
+    /// inability to run anything, and the next clean run would be credited as a
+    /// verified fix.
+    #[tokio::test]
+    async fn a_baseline_that_could_not_be_run_is_refused_rather_than_scored_red() {
+        let dir = workspace("#!/bin/sh\nexit 0\n");
+        let denial = observe_baseline(dir.path(), &invocation("stella-no-such-runner", &[]))
+            .await
+            .expect_err("no such program");
+        let TestRunDenial::Failed(reason) = denial else {
+            panic!("a program that will not start is a host that tried");
+        };
+        assert!(reason.contains("stella-no-such-runner"), "{reason}");
     }
 }

@@ -382,10 +382,17 @@ async fn a_plan_files_per_task_test_command_reaches_the_plugin_as_a_test_plan() 
     );
     // The parsed argv, not the raw line: the command crossed the host's closed
     // runner vocabulary before anything reached the wire.
+    // The parsed argv **and** the red the host observed by running it before
+    // the attempt. Without that last field the plugin's oracle has no failing
+    // observation to lock a command onto, so it can only ever report
+    // `unobservable` and every attempt on this door ends `Undecided`.
     for call in &calls {
         assert!(
-            call.contains(r#""test":{"program":"sh","args":["tests/witness_flip.sh"]"#),
-            "the plan's test command must ride the candidate grant as a parsed plan: {call}"
+            call.contains(
+                r#""test":{"program":"sh","args":["tests/witness_flip.sh"],"baseline":"failed"}"#
+            ),
+            "the plan's test command must ride the grant as a parsed plan carrying its \
+             pre-attempt baseline: {call}"
         );
     }
 }

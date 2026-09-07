@@ -29,6 +29,44 @@
 //! failed adoption is the user's work stranded in a shadow worktree) and is not
 //! this slice.
 //!
+//! # When the baseline is observed, and every case where it cannot be
+//!
+//! A flip is a claim about two moments: the tests failed, and then they passed.
+//! Only the second is visible after the work, so the first has to be recorded
+//! before it. [`grant_shared_tree`] runs the granted invocation once, in the
+//! granted root, before the turn starts, and stamps what it saw onto
+//! [`stella_plugin::TestPlan::baseline`].
+//!
+//! **The host is the only party that can.** A subprocess wrapper is a fresh
+//! process at every point, so a plugin that ran the suite at `before_turn`
+//! would exit with what it learned and start again at `after_turn` knowing
+//! nothing. Leaving that field at `NotRun` cost the whole path: with no red on
+//! record `plugins/stella-witness` reports `unobservable`, and `judge` turns
+//! that into `Undecided` under `flip = "required"`, so no run on any door could
+//! reach a credited flip.
+//!
+//! **Three answers, and only one of them is red.**
+//! [`stella_plugin::TestBaseline::Failed`] is an invocation that ran and whose
+//! assertions genuinely failed. `Passed` is one that ran and passed, which
+//! leaves the oracle nothing to lock onto and is reported as itself rather than
+//! quietly dropped. `Unobserved` covers every way the answer is missing: a run
+//! killed at the deadline, a program that would not start, output that could
+//! not be read. Scoring any of those as red would satisfy a flip's precondition
+//! on this host's own noise, and the next clean run would be credited as a
+//! verified fix. `NotRun` keeps its meaning and is reached only by a turn that
+//! named no test command at all.
+//!
+//! **It costs one run of the user's own invocation.** That is the price of the
+//! flip the `--test-command` asked for: without it there is no before, so
+//! nothing a passing suite afterwards could prove. Making that run cheaper by
+//! narrowing it to the tests a change actually touches is a separate piece of
+//! work, and it changes *which* command is run rather than whether the baseline
+//! is observed at all.
+//!
+//! The observation happens before the tamper watch below is pinned. A test run
+//! can rewrite generated files, and a watch pinned first would report this
+//! host's own run as a worker tampering with the witness.
+//!
 //! # The tamper watch, and exactly what it covers
 //!
 //! `TamperPolicy::ArtifactIdentity` asks the **host** to snapshot artifact
@@ -110,6 +148,14 @@ pub(crate) struct GrantedCandidate {
     pub(crate) grant: CandidateGrant,
     /// The artifacts whose identity the host pinned before the turn.
     pub(crate) watch: TamperWatch,
+    /// What the pre-turn test run said, as one sentence for whoever is
+    /// watching the door.
+    ///
+    /// `None` when this turn named no test command, which is the one case
+    /// where there was nothing to observe and nothing to say. Otherwise the
+    /// door prints it: the run pauses for a whole test suite here, and a
+    /// silent pause is indistinguishable from a hang.
+    pub(crate) baseline_notice: Option<String>,
 }
 
 /// The host's own tamper baseline: workspace-relative path → the identity
@@ -252,8 +298,8 @@ impl TamperWatch {
     }
 }
 
-/// Mint the grant for the shared work tree, and pin whatever witness artifacts
-/// the test command names.
+/// Mint the grant for the shared work tree, observe what its tests say before
+/// the turn, and pin whatever witness artifacts the test command names.
 ///
 /// `test_command` is the oracle for this turn, unparsed — `stella run`'s
 /// `--test-command`, or the fleet task's own `test_command` plan field
@@ -270,7 +316,7 @@ impl TamperWatch {
 /// and a message naming `--test-command` is wrong on the one whose oracle came
 /// out of a plan file. `stella-cli` is a binary, so a `String` here is the
 /// finished product (AGENTS.md invariant 5).
-pub(crate) fn grant_shared_tree(
+pub(crate) async fn grant_shared_tree(
     workspace_root: &Path,
     test_command: Option<&str>,
 ) -> Result<GrantedCandidate, String> {
@@ -285,26 +331,84 @@ pub(crate) fn grant_shared_tree(
         None => None,
     };
 
-    // No baseline run: the host does not spend a test run the plugin is about
-    // to spend itself. A wrapper observes red in `before_turn` — it holds the
-    // root and the plan there — and green in `after_turn`, which is the flip
-    // the oracle is for. `TestBaseline::NotRun` says exactly that, and a plugin
-    // that wanted the host's own observation instead reads it as absent rather
-    // than as passing.
+    // Minted with no baseline, then stamped with one below. The two steps are
+    // in this order because the observation belongs in the *canonical* root
+    // this call resolves: the directory the plugin will be told to test, rather
+    // than a path that happens to resolve there today.
     let plan = invocation.as_ref().map(|parsed| test_plan(parsed, None));
-    let grant = host_tree_grant(root_text, plan)
+    let mut grant = host_tree_grant(root_text, plan)
         .map_err(|denial| format!("no candidate grant could be minted: {denial}"))?;
+
+    // The red half of the flip, observed before the turn. See this module's
+    // docs for why the host has to be the one that does this, and why the
+    // observation happens before the watch below is pinned.
+    let granted_root = std::path::PathBuf::from(&grant.root);
+    let mut baseline_notice = None;
+    if let Some(parsed) = invocation.as_ref() {
+        let (observed, notice) = observed_baseline(&granted_root, parsed).await;
+        if let Some(plan) = grant.test.as_mut() {
+            plan.baseline = observed;
+        }
+        baseline_notice = Some(notice);
+    }
 
     // Opened from the *canonical* root the grant carries, so the host watches
     // the same directory it told the plugin about — and holds it open, so the
     // two cannot come apart while the turn runs.
     let watch = TamperWatch::pin(
-        Path::new(&grant.root),
+        &granted_root,
         &invocation
             .map(|parsed| named_artifacts(&parsed.args))
             .unwrap_or_default(),
     )?;
-    Ok(GrantedCandidate { grant, watch })
+    Ok(GrantedCandidate {
+        grant,
+        watch,
+        baseline_notice,
+    })
+}
+
+/// Run the granted invocation once before the turn, and say what it reported.
+///
+/// Returns the wire value the plan carries and one sentence for the door to
+/// print. Every answer other than [`stella_plugin::TestBaseline::Failed`] says
+/// it has no red to offer: a passing suite and an unobservable run both leave
+/// the oracle with nothing to lock onto, and neither may be dressed up as the
+/// precondition a flip needs.
+async fn observed_baseline(
+    root: &Path,
+    invocation: &stella_plugin::TestInvocation,
+) -> (stella_plugin::TestBaseline, String) {
+    use stella_plugin::TestBaseline;
+
+    match crate::wrapper_test_run::observe_baseline(root, invocation).await {
+        Ok(observation) => match observation.assertions {
+            TestBaseline::Failed => (
+                TestBaseline::Failed,
+                "the tests failed before this turn, which is the red a flip needs".to_string(),
+            ),
+            TestBaseline::Passed => (
+                TestBaseline::Passed,
+                "the tests passed before this turn, so no flip can be observed against them"
+                    .to_string(),
+            ),
+            // The deadline, which says nothing about assertions either way.
+            // `run_in` reports no other answer, and rendering the remaining two
+            // rather than asserting on them keeps a binary from aborting a
+            // user's run over something this match did not expect.
+            other => (
+                other,
+                "the tests did not finish before this turn, so nothing was observed either way"
+                    .to_string(),
+            ),
+        },
+        Err(denial) => (
+            TestBaseline::Unobserved,
+            format!(
+                "the tests could not be run before this turn ({denial}), so no flip can be credited"
+            ),
+        ),
+    }
 }
 
 /// The workspace-relative paths a parsed invocation's arguments name.
@@ -327,13 +431,14 @@ mod tests {
     use super::*;
 
     fn workspace() -> tempfile::TempDir {
+        workspace_whose_tests("#!/bin/sh\nexit 1\n")
+    }
+
+    /// A workspace whose one witness script is `body`.
+    fn workspace_whose_tests(body: &str) -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("a temp workspace");
         std::fs::create_dir_all(dir.path().join("tests")).expect("tests dir");
-        std::fs::write(
-            dir.path().join("tests/witness_flip.sh"),
-            "#!/bin/sh\nexit 1\n",
-        )
-        .expect("the witness");
+        std::fs::write(dir.path().join("tests/witness_flip.sh"), body).expect("the witness");
         dir
     }
 
@@ -341,10 +446,11 @@ mod tests {
     /// turn runs in, carrying the parsed test plan a plugin needs to observe a
     /// flip at all. Before #3553 this value did not exist and `candidate` was
     /// `None` on every round.
-    #[test]
-    fn the_shared_tree_is_granted_with_the_test_the_host_would_run() {
+    #[tokio::test]
+    async fn the_shared_tree_is_granted_with_the_test_the_host_would_run() {
         let dir = workspace();
         let granted = grant_shared_tree(dir.path(), Some("sh tests/witness_flip.sh"))
+            .await
             .expect("the root resolves and the command parses");
 
         assert_eq!(
@@ -364,8 +470,70 @@ mod tests {
         assert_eq!(plan.args, vec!["tests/witness_flip.sh".to_string()]);
         assert_eq!(
             plan.baseline,
-            stella_plugin::TestBaseline::NotRun,
-            "the host did not run it, and says so rather than claiming red"
+            stella_plugin::TestBaseline::Failed,
+            "the host ran the invocation before the turn and hands over what it said"
+        );
+    }
+
+    /// **Witness.** The red half of a flip rides the grant.
+    ///
+    /// The falsifier is the host stamping `NotRun` on every grant it mints —
+    /// `test_plan(parsed, None)` was its only production call — which leaves the
+    /// oracle in `plugins/stella-witness` with no failing observation to lock a
+    /// command onto. It reports `unobservable`, `judge` turns that into
+    /// `Undecided` under `flip = "required"`, and no run on any door reaches a
+    /// credited flip. A subprocess plugin cannot close that gap itself: it is a
+    /// fresh process at each point, so anything it saw at `before_turn` is gone
+    /// by `after_turn`.
+    #[tokio::test]
+    async fn a_red_suite_before_the_turn_reaches_the_plugin_as_red() {
+        let dir = workspace_whose_tests("#!/bin/sh\nexit 1\n");
+        let granted = grant_shared_tree(dir.path(), Some("sh tests/witness_flip.sh"))
+            .await
+            .expect("the grant mints");
+
+        assert_eq!(
+            granted.grant.test.as_ref().expect("a test plan").baseline,
+            stella_plugin::TestBaseline::Failed,
+            "the assertions genuinely failed, which is the one answer a flip can build on"
+        );
+        assert_eq!(
+            granted.baseline_notice.as_deref(),
+            Some("the tests failed before this turn, which is the red a flip needs"),
+            "a run that pauses for a whole suite says what the pause bought"
+        );
+    }
+
+    /// A suite that was already green is reported as green, and never dressed
+    /// up as the red a flip needs. `judge` then abstains, which is the right
+    /// answer: a suite passing before the turn and after it says nothing about
+    /// the turn.
+    #[tokio::test]
+    async fn a_green_suite_before_the_turn_is_not_dressed_up_as_red() {
+        let dir = workspace_whose_tests("#!/bin/sh\nexit 0\n");
+        let granted = grant_shared_tree(dir.path(), Some("sh tests/witness_flip.sh"))
+            .await
+            .expect("the grant mints");
+
+        assert_eq!(
+            granted.grant.test.as_ref().expect("a test plan").baseline,
+            stella_plugin::TestBaseline::Passed,
+        );
+    }
+
+    /// A turn that named no test command runs nothing and claims nothing.
+    /// `NotRun` keeps its old meaning, which is now the only way to reach it.
+    #[tokio::test]
+    async fn a_turn_with_no_test_command_observes_nothing_and_says_nothing() {
+        let dir = workspace();
+        let granted = grant_shared_tree(dir.path(), None)
+            .await
+            .expect("no test command is fine");
+
+        assert!(granted.grant.test.is_none(), "no plan is not an empty plan");
+        assert!(
+            granted.baseline_notice.is_none(),
+            "there was nothing to observe, so there is nothing to report"
         );
     }
 
@@ -373,10 +541,11 @@ mod tests {
     /// refuses one the turn rewrote — the two findings `judge` needs to credit
     /// or deny a flip. Both were unreachable before: this host only ever said
     /// `NotChecked`.
-    #[test]
-    fn the_host_vouches_for_an_untouched_witness_and_names_a_rewritten_one() {
+    #[tokio::test]
+    async fn the_host_vouches_for_an_untouched_witness_and_names_a_rewritten_one() {
         let dir = workspace();
         let granted = grant_shared_tree(dir.path(), Some("sh tests/witness_flip.sh"))
+            .await
             .expect("the grant mints");
         assert_eq!(
             granted.watch.finding(),
@@ -400,11 +569,12 @@ mod tests {
 
     /// A deleted witness is tampering, not an unchanged one: the comparison
     /// fails closed on an artifact it can no longer observe.
-    #[test]
-    fn a_witness_that_vanished_is_refused_rather_than_vouched_for() {
+    #[tokio::test]
+    async fn a_witness_that_vanished_is_refused_rather_than_vouched_for() {
         let dir = workspace();
-        let granted =
-            grant_shared_tree(dir.path(), Some("sh tests/witness_flip.sh")).expect("the grant");
+        let granted = grant_shared_tree(dir.path(), Some("sh tests/witness_flip.sh"))
+            .await
+            .expect("the grant");
         std::fs::remove_file(dir.path().join("tests/witness_flip.sh")).expect("removed");
         assert!(matches!(
             granted.watch.finding(),
@@ -415,14 +585,17 @@ mod tests {
     /// An invocation that names no file on disk watches nothing, and says so.
     /// `NotChecked` is not a pass — `judge` reads it as `TamperUnchecked` — so
     /// this is a declared limit rather than a hidden credit.
-    #[test]
-    fn an_invocation_that_names_no_artifact_checks_nothing() {
+    #[tokio::test]
+    async fn an_invocation_that_names_no_artifact_checks_nothing() {
         let dir = workspace();
         let granted = grant_shared_tree(dir.path(), Some("cargo test --test witness_flip"))
+            .await
             .expect("the grant mints");
         assert_eq!(granted.watch.finding(), TamperFinding::NotChecked);
 
-        let none = grant_shared_tree(dir.path(), None).expect("no test command is fine");
+        let none = grant_shared_tree(dir.path(), None)
+            .await
+            .expect("no test command is fine");
         assert!(none.grant.test.is_none(), "no plan is not an empty plan");
         assert_eq!(none.watch.finding(), TamperFinding::NotChecked);
     }
@@ -431,10 +604,11 @@ mod tests {
     /// it — the plugin never receives an invocation this host would not run.
     /// The refusal quotes the command, which is the half a user can act on
     /// whichever door supplied it (`--test-command` or a fleet plan file).
-    #[test]
-    fn a_refused_test_command_mints_no_grant() {
+    #[tokio::test]
+    async fn a_refused_test_command_mints_no_grant() {
         let dir = workspace();
         let error = grant_shared_tree(dir.path(), Some("rm -rf /"))
+            .await
             .expect_err("`rm` is not in the runner vocabulary");
         assert!(error.contains("rm -rf /"), "{error}");
     }
@@ -469,10 +643,11 @@ mod tests {
     /// run of every plugin, so the finding was `NotChecked` and `judge` read
     /// that as `UndecidedReason::TamperUnchecked`: never a wrong credit, and
     /// never a decidable verdict either.
-    #[test]
-    fn a_declared_artifact_is_watched_where_the_invocation_named_none() {
+    #[tokio::test]
+    async fn a_declared_artifact_is_watched_where_the_invocation_named_none() {
         let dir = workspace();
         let granted = grant_shared_tree(dir.path(), Some("cargo test --test witness_flip"))
+            .await
             .expect("the grant mints");
         assert_eq!(
             granted.watch.finding(),
@@ -505,10 +680,12 @@ mod tests {
 
     /// A declaration is a path, never a permission: the same fence the
     /// invocation's own arguments cross.
-    #[test]
-    fn a_declared_path_outside_the_root_is_dropped_rather_than_followed() {
+    #[tokio::test]
+    async fn a_declared_path_outside_the_root_is_dropped_rather_than_followed() {
         let dir = workspace();
-        let granted = grant_shared_tree(dir.path(), None).expect("no test command is fine");
+        let granted = grant_shared_tree(dir.path(), None)
+            .await
+            .expect("no test command is fine");
         granted.watch.pin_declared(&[
             "../outside.sh".to_string(),
             "/etc/passwd".to_string(),
@@ -526,10 +703,12 @@ mod tests {
     /// round 1 would read as "unchanged" from round 2 onward — the exact
     /// laundering the watch exists to refuse, arriving through the mechanism
     /// that widened it.
-    #[test]
-    fn re_declaring_an_artifact_does_not_relaunder_an_earlier_rewrite() {
+    #[tokio::test]
+    async fn re_declaring_an_artifact_does_not_relaunder_an_earlier_rewrite() {
         let dir = workspace();
-        let granted = grant_shared_tree(dir.path(), None).expect("the grant mints");
+        let granted = grant_shared_tree(dir.path(), None)
+            .await
+            .expect("the grant mints");
         let declared = vec!["tests/witness_flip.sh".to_string()];
 
         granted.watch.pin_declared(&declared);
@@ -561,16 +740,17 @@ mod tests {
     /// the turn never touched. Holding the root open makes the path irrelevant:
     /// a descriptor keeps naming the directory it was opened on.
     #[cfg(unix)]
-    #[test]
-    fn a_root_renamed_after_the_grant_cannot_launder_a_rewritten_witness() {
+    #[tokio::test]
+    async fn a_root_renamed_after_the_grant_cannot_launder_a_rewritten_witness() {
         let outer = tempfile::tempdir().expect("a temp parent");
         let root = outer.path().join("workspace");
         std::fs::create_dir_all(root.join("tests")).expect("tests dir");
         std::fs::write(root.join("tests/witness_flip.sh"), "#!/bin/sh\nexit 1\n")
             .expect("the witness");
 
-        let granted =
-            grant_shared_tree(&root, Some("sh tests/witness_flip.sh")).expect("the grant mints");
+        let granted = grant_shared_tree(&root, Some("sh tests/witness_flip.sh"))
+            .await
+            .expect("the grant mints");
         assert_eq!(granted.watch.finding(), TamperFinding::Clean);
 
         // The worker rewrites the witness in the tree the turn is running in…

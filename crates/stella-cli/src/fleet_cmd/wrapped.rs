@@ -548,7 +548,7 @@ impl ResolvedAttempt {
 /// candidate fence will not mint a grant over, or a `test_command` the host's
 /// runner vocabulary refuses. Every one of them fails this attempt's dispatch
 /// by name; the fan-out's other tasks are unaffected.
-pub(super) fn resolve_for_attempt(
+pub(super) async fn resolve_for_attempt(
     invocation_root: &std::path::Path,
     tree: &std::path::Path,
     variant: &str,
@@ -561,9 +561,23 @@ pub(super) fn resolve_for_attempt(
     // every notice this sink would print, once. Repeating them here would put
     // N identical copies of one sentence on the stderr of a run with N
     // workers, interleaved by concurrency and attributed to nothing.
+    //
+    // `GrantedCandidate::baseline_notice` is dropped here for the same reason
+    // and one more: it is per attempt, so N of them arrive interleaved with no
+    // task name on any of them. What each attempt's baseline was is in the
+    // grant the plugin receives, and a fleet's own attempt reporting is where a
+    // line about it belongs.
+    //
+    // Minting the grant runs the attempt's whole test suite, and the two doors
+    // a person types at put every instant refusal in front of that by building
+    // the provider first. This one keeps the earlier order: its provider is
+    // built against a per-worker config whose root is the attempt's tree, which
+    // does not exist as a value until after this call, and `run_fleet`'s
+    // pre-flight has already resolved the same variant from the same root
+    // before any task was dispatched.
     Ok(ResolvedAttempt {
         resolved: crate::wrapper_plugin::resolve(invocation_root, variant, &mut |_| {})?,
-        candidate: crate::wrapper_candidate::grant_shared_tree(tree, test_command)?,
+        candidate: crate::wrapper_candidate::grant_shared_tree(tree, test_command).await?,
         task: task.to_string(),
     })
 }
