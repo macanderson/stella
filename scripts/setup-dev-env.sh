@@ -250,10 +250,10 @@ tool_table() {
   cat <<'EOF'
 cargo-deny|ci|CI job "cargo deny + cargo audit" (name kept for branch protection; only cargo-deny actually runs, see #919) is a required check; make deny|cargo|cargo-deny
 shellcheck|ci|the `shellcheck` step of make gate / make guards-fast, and of ci.yml's "fmt + clippy + test" job; without it that step cannot run at all (#3615)|brew|shellcheck
-gh|repo|PR + release flow (scripts/release.sh hard-requires it)|brew|gh
+gh|repo|PR + release flow (scripts/release.sh hard-requires it), and the claim pre-flight both anti-collision scripts run; without it neither can ask whether somebody is already on this work|brew|gh
 rg|repo|repo convention: rg over grep, and it is gitignore-aware|brew|ripgrep
 fd|repo|repo convention: fd over find|brew|fd
-jq|repo|lets --agent-settings merge into an existing file instead of replacing it|brew|jq
+jq|repo|lets --agent-settings merge into an existing file instead of replacing it, and reads the claim comments the two anti-collision scripts judge|brew|jq
 cargo-watch|opt|make watch / watch-core / watch-lint (hard-errors without it)|cargo|cargo-watch
 docker|opt|make serve-image + scripts/smoke-serve-image.sh|manual|
 node|opt|the website/ docs build|brew|node

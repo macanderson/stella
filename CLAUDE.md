@@ -302,3 +302,14 @@
   rather than a judgement. It fails open at every unknown, so it can never
   be what stops a repair — see AGENTS.md § the canary for why a claim lapses
   after twenty minutes instead of being an assignee.
+- **When a claim check cannot run, it says so, and the rule falls to you.**
+  `main-red-claim.sh` above needs `gh` and `jq`, and so does
+  `issue-claim.sh`, which you run before you take an issue. The agent
+  container ships neither tool,
+  so the run prints `gh: UNAVAILABLE — THIS CHECK DID NOT RUN` and proceeds.
+  Read that as no answer, never as "nobody is on it". Ask the question by
+  hand instead: the open pull requests whose body says `Closes #N`, the
+  issue's own state, and the claim comments on it. Then leave a claim
+  comment yourself. Posting the claim is the half a session without `gh`
+  can still do for the next one, and it is what turns a collision into a
+  stand-down.

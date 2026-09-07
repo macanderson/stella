@@ -76,10 +76,22 @@
 
 set -uo pipefail
 
+# This script's own directory, without spending a `dirname` on it. A run with
+# a thin `PATH` is the run this pre-flight is for, and a source line that
+# needs a program on `PATH` is the wrong thing to hang the tool check on.
+script_dir="${0%/*}"
+[ "$script_dir" = "$0" ] && script_dir="."
+
 # `plain_word` and `resolve_session` — the same word `main-red-claim.sh`
 # claims under, so two scripts cannot disagree about which session this is.
 # shellcheck source=scripts/lib/claim-session.sh
-. "$(dirname "$0")/lib/claim-session.sh"
+. "$script_dir/lib/claim-session.sh"
+
+# `missing_claim_tools` and `report_claim_tools_unavailable` — the pre-flight
+# both claim scripts run, so a session with no `gh` reads one message rather
+# than two.
+# shellcheck source=scripts/lib/claim-tools.sh
+. "$script_dir/lib/claim-tools.sh"
 
 # A decided verdict must survive a reader that closes the pipe early (#1815).
 trap '' PIPE
@@ -243,11 +255,27 @@ proceed() {
   exit 0
 }
 
-if [ "$use_fixture" -eq 0 ] && ! command -v gh >/dev/null 2>&1; then
-  echo "note: gh is not installed, so this run could not ask whether #$issue is" >&2
-  echo "      already being worked. Proceeding: a claim check that can block" >&2
-  echo "      work is worse than the duplication it prevents." >&2
-  proceed "ok  proceed (could not ask)"
+# ── The tools, before anything is asked ──────────────────────────────────────
+#
+# The agent container ships neither tool, so this is the branch most sessions
+# take. It says the check did not run, in the register the gate uses for a
+# `shellcheck` it cannot find, and it says how to ask by hand. A session that
+# is told to run a pre-flight and gets a line it reads as "all clear" is worse
+# off than one told plainly that nothing was asked.
+missing_tools=""
+if [ "$use_fixture" -eq 0 ]; then
+  missing_tools="$(missing_claim_tools)"
+fi
+if [ -n "$missing_tools" ]; then
+  report_claim_tools_unavailable "$missing_tools" \
+    "Nothing asked whether #$issue is already being worked." \
+    "     Ask by hand, from a machine that has these tools or in a browser:
+       - open and merged pull requests whose body says \`Closes #$issue\`
+       - the state of #$issue, and its claim comments: they open with
+         \`$marker\`, and one holds while it is under ${window_minutes}m old
+     Then say on #$issue that you are taking it, so the next session reads
+     a claim rather than a collision."
+  proceed "ok  proceed (UNAVAILABLE: $missing_tools — nothing was asked)"
 fi
 
 # ── The stronger signal first ────────────────────────────────────────────────

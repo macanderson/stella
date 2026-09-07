@@ -151,31 +151,80 @@ want "claim stands down on another session of the same author" \
 want "claim takes an unclaimed issue" \
   expect-proceed "claimed #4671 as @ada" claim "4671" "ada" ""
 
-# A `gh` that is not installed is the one unknown the fixtures cannot pin,
-# because supplying a fixture is what bypasses the lookup. A PATH of nothing
-# is not the way to drive it — that breaks the shebang and exits 127, which
-# is a broken test rather than a missing `gh`. Instead: a PATH holding every
-# program this script does use, and not `gh`.
-gh_less="$(mktemp -d)"
-trap 'rm -rf "$gh_less"' EXIT
-for tool in bash awk tr mktemp; do
-  tool_path="$(command -v "$tool")"
-  if [ -z "$tool_path" ]; then
-    bad "the suite needs $tool on PATH to build its gh-less fixture"
-    continue
-  fi
-  ln -s "$tool_path" "$gh_less/$tool"
-done
-out="$(PATH="$gh_less" "$SCRIPT" check 2>&1)"
+# ── the tools the check itself needs ─────────────────────────────────────────
+#
+# The branch an agent container takes: it ships neither `gh` nor `jq`.
+#
+# A fixture cannot pin this one. Supplying a fixture is what skips the
+# lookup. An empty `PATH` is not the way either. That breaks the shebang and
+# exits 127, which is a broken test, not a missing tool. So: a `PATH` with
+# every program this script uses, minus the one under test.
+#
+# Both cases read the banner, not just the exit code. This script proceeds at
+# every unknown. An exit of 0 alone cannot tell a check that ran from a check
+# that never ran.
+tools_dir() { # tools_dir <dir> <tool>...
+  local dir="$1"
+  shift
+  mkdir -p "$dir"
+  local tool tool_path
+  for tool in "$@"; do
+    tool_path="$(command -v "$tool")"
+    if [ -z "$tool_path" ]; then
+      bad "the suite needs $tool on PATH to build its fixture"
+      continue
+    fi
+    ln -s "$tool_path" "$dir/$tool"
+  done
+}
+
+sandbox="$(mktemp -d)"
+trap 'rm -rf "$sandbox"' EXIT
+
+tools_dir "$sandbox/gh-less" bash awk tr mktemp date jq
+out="$(PATH="$sandbox/gh-less" "$SCRIPT" check 2>&1)"
 rc=$?
-if [ "$rc" -eq 0 ]; then
-  case "$out" in
-  *"could not ask"*) ok "a missing gh proceeds" ;;
-  *) bad "a missing gh proceeded for the wrong reason: $out" ;;
-  esac
-else
+case "$rc,$out" in
+0,*"gh: UNAVAILABLE — THIS CHECK DID NOT RUN"*)
+  ok "a missing gh proceeds, and says the check did not run"
+  ;;
+0,*)
+  bad "a missing gh proceeded without saying the check did not run: $out"
+  ;;
+*)
   bad "a missing gh must proceed, got exit $rc: $out"
-fi
+  ;;
+esac
+
+# `jq` is the other half. `gh --jq` carries its own copy, so the issue list
+# needs `gh` alone. A missing `jq` then reaches the comment read, and reads
+# there as unreadable comments — the tracker blamed for a missing tool.
+#
+# The stub `gh` here fails loudly if it is called. So this case also shows
+# that the pre-flight runs first, before anything is asked.
+tools_dir "$sandbox/jq-less" bash awk tr mktemp date
+cat >"$sandbox/jq-less/gh" <<'STUB'
+#!/usr/bin/env bash
+echo "gh stub: the tool pre-flight should have run before any gh call" >&2
+exit 1
+STUB
+chmod +x "$sandbox/jq-less/gh"
+out="$(PATH="$sandbox/jq-less" "$SCRIPT" check 2>&1)"
+rc=$?
+case "$rc,$out" in
+0,*"gh stub"*)
+  bad "the tool pre-flight must run before any gh call: $out"
+  ;;
+0,*"jq: UNAVAILABLE — THIS CHECK DID NOT RUN"*)
+  ok "a missing jq names jq, rather than blaming the comments"
+  ;;
+0,*)
+  bad "a missing jq proceeded without saying the check did not run: $out"
+  ;;
+*)
+  bad "a missing jq must proceed, got exit $rc: $out"
+  ;;
+esac
 
 # Bad input is a caller error, distinct from both verdicts: exit 2.
 if "$SCRIPT" check --window-minutes soon >/dev/null 2>&1; then
@@ -209,7 +258,7 @@ else
   clone_a="$(mktemp -d)"
   clone_b="$(mktemp -d)"
   no_repo="$(mktemp -d)"
-  trap 'rm -rf "$gh_less" "$clone_a" "$clone_b" "$no_repo"' EXIT
+  trap 'rm -rf "$sandbox" "$clone_a" "$clone_b" "$no_repo"' EXIT
   git -C "$clone_a" init -q
   git -C "$clone_b" init -q
 
@@ -380,7 +429,7 @@ fi
 # are set, broken text otherwise. Restoring the old call passes every case
 # above (none of them touch `gh`) and fails only this one — why it exists.
 gh_colorish="$(mktemp -d)"
-trap 'rm -rf "$gh_less" "${clone_a:-}" "${clone_b:-}" "${no_repo:-}" "$gh_colorish"' EXIT
+trap 'rm -rf "$sandbox" "${clone_a:-}" "${clone_b:-}" "${no_repo:-}" "$gh_colorish"' EXIT
 # Production stamps `select_claims`'s `now` from the real clock (`date -u
 # +%s`), not from `NOW_SELECT` above, so the fixture's `createdAt` has to be
 # a few minutes behind the real clock too — a future timestamp reads as a

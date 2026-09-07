@@ -470,6 +470,29 @@ Run it **before writing code and again before opening the PR**. The gap
 between those two is enough: a peer's PR can merge inside one issue's worth of
 work, and then the check that was clean at the start is stale at the end.
 
+**Neither claim check can run in the agent container, and both now say so.**
+They need `gh` to reach the tracker and `jq` to read the claims out of the
+reply, and that container ships neither. So the check every session is told
+to run printed `ok  proceed (could not ask)` — a line a reader takes for a
+clean check — and two sessions then implemented one issue twice, four
+repaired one red `main`, and two resolved one merge conflict, each pair
+paying for a full required-CI run as well as the work (`#5934`). Both scripts
+open with a tool pre-flight now, in the `shellcheck: UNAVAILABLE` register
+above and for the same reason: a check that did not run must not read as a
+check that found nothing. The banner names the missing tool, says what went
+unasked, and lists the by-hand questions — the open pull requests, the
+issue's state, the claim comments. `scripts/lib/claim-tools.sh` holds it, so
+one message serves both scripts, and each suite drives it with the tool
+masked off `PATH`.
+
+**The image is out of this repository's reach, so the rule is best-effort
+there.** Nothing in this tree defines the container, exactly as with
+`shellcheck` above (`#3830`) — the two wants are the same want and are
+tracked together. Until the image carries them, a session without `gh` owes
+the by-hand check and, more importantly, the claim comment: posting one is
+the half such a session can still do, and it is what lets the next session
+stand down rather than collide.
+
 An eighth, `windows-check.yml`, is the only compiler in this project that
 looks at a `#[cfg(windows)]` arm: `ci.yml` runs on `ubuntu-latest` and
 `release.yml`'s matrix is two Apple targets and two Linux ones, so every

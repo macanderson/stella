@@ -65,7 +65,9 @@
 #
 # Anything this cannot answer means PROCEED, loudly. An unreachable tracker, a
 # `gh` that is not installed, an identity it cannot read, two open `main-red`
-# issues at once: each prints a note and exits 0. That is not caution about
+# issues at once: each says so and exits 0. A missing tool says the most,
+# because it is the case where nothing was asked at all — see
+# `scripts/lib/claim-tools.sh`. That is not caution about
 # GitHub's uptime, it is the ordering of costs — duplicated work is what this
 # prevents, and a blocked repair is worse than what it prevents. Standing a
 # session down is reserved for the one case it can actually establish: a
@@ -220,10 +222,22 @@ proceed() {
   exit 0
 }
 
+# This script's own directory, without spending a `dirname` on it. A run with
+# a thin `PATH` is the run the tool pre-flight below is for, and a source line
+# that needs a program on `PATH` is the wrong thing to hang that check on.
+script_dir="${0%/*}"
+[ "$script_dir" = "$0" ] && script_dir="."
+
 # `plain_word` and `resolve_session` — shared with scripts/issue-claim.sh, which
 # needs the same word or a fleet would have to set two environment variables.
 # shellcheck source=scripts/lib/claim-session.sh
-. "$(dirname "$0")/lib/claim-session.sh"
+. "$script_dir/lib/claim-session.sh"
+
+# `missing_claim_tools` and `report_claim_tools_unavailable` — the pre-flight
+# `scripts/issue-claim.sh` runs too, so a session with no `gh` reads one
+# message rather than two.
+# shellcheck source=scripts/lib/claim-tools.sh
+. "$script_dir/lib/claim-tools.sh"
 
 # `session` asks nothing of the tracker: it prints the word this clone claims
 # under and exits. A diagnostic rather than a verdict, so an absent word is a
@@ -277,11 +291,27 @@ if [ "$mode" = "select" ]; then
   exit $?
 fi
 
-if [ "$use_fixture" -eq 0 ] && ! command -v gh >/dev/null 2>&1; then
-  echo "note: gh is not installed, so this run could not ask whether the" >&2
-  echo "      repair is already claimed. Proceeding: a claim check that can" >&2
-  echo "      block a repair is worse than the duplication it prevents." >&2
-  proceed "ok  proceed (could not ask)"
+# ── The tools, before anything is asked ──────────────────────────────────────
+#
+# The agent container ships neither tool, so this is the branch most sessions
+# take. It says the check did not run, in the register the gate uses for a
+# `shellcheck` it cannot find, and it says how to ask by hand. A session that
+# is told to run a pre-flight and gets a line it reads as "all clear" is worse
+# off than one told plainly that nothing was asked.
+missing_tools=""
+if [ "$use_fixture" -eq 0 ]; then
+  missing_tools="$(missing_claim_tools)"
+fi
+if [ -n "$missing_tools" ]; then
+  report_claim_tools_unavailable "$missing_tools" \
+    "Nothing asked whether the repair of \`main\` is already claimed." \
+    "     Ask by hand, from a machine that has these tools or in a browser:
+       - the open \`$label\` issue, the one the canary files
+       - its claim comments: they open with \`$marker\`, and one holds
+         while it is under ${window_minutes}m old
+     Then say on that issue that you are taking the repair, so the next
+     session reads a claim rather than a collision."
+  proceed "ok  proceed (UNAVAILABLE: $missing_tools — nothing was asked)"
 fi
 
 if [ "$use_fixture" -eq 1 ]; then
