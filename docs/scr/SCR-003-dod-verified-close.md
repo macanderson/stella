@@ -41,24 +41,24 @@ comment instead of verifying a DoD. Mechanically, close these as **not
 planned** rather than completed: only a "completed" close claims the DoD was
 met, and it is the one `dod-close-guard` verifies.
 
-A pull request that closes no issue is waived from the merge gate by one of
-two labels, and which one is a claim about the change.
+A pull request that closes no issue is waived by one of two labels. Which
+one is itself a claim.
 
-`no-issue` says the change is trivial — a typo, a pinned-digest bump, a
-revert — so there is no meaningful DoD to verify.
+`no-issue` says the change is trivial: a typo, a bump, a revert. There is no
+DoD to verify.
 
-`closes-nothing` says the change is substantial and closes no issue by
-design: an audit that files issues rather than closing them, a mechanical
-refactor, a sweep. Without it such a pull request had no route through the
-gate that was not a false claim: `Closes #N` would name a close that is not
-happening, and `no-issue` claims a triviality that is not there.
+`closes-nothing` says the change is large and closes no issue by design. An
+audit that files issues rather than closing them. A refactor. A sweep.
+Without it, such a pull request had no route through the gate that was not a
+false claim. `Closes #N` would name a close that is not happening.
+`no-issue` claims a triviality that is not there.
 
-They are labels rather than phrases in the description so that every use is
-enumerable (`is:pr label:no-issue`, `is:pr label:closes-nothing`): an escape
-hatch nobody can audit becomes the default path. Keeping them separate is
-what lets a reviewer tell a small waived change from a large one at a
-glance. Reach for either when filing an issue would be pure ceremony, never
-to skip a DoD that should have been written.
+They are labels rather than phrases, so that every use is enumerable
+(`is:pr label:no-issue`, `is:pr label:closes-nothing`). An escape hatch
+nobody can audit becomes the default path. Two labels, not one, so a
+reviewer can tell a small waived change from a large one at a glance. Reach
+for either when filing an issue would be pure ceremony. Never to skip a DoD
+that should have been written.
 
 A pull request that advances an issue without finishing it links that issue
 with `Refs #N` instead of `Closes #N`. `Refs` does not close, so the merge
