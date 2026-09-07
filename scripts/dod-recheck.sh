@@ -72,7 +72,7 @@ while [ $# -gt 0 ]; do
   # Test-only seams. Either one stubs every lookup, and stops the re-run from
   # being sent. So a case cannot half-reach the network, and cannot pass or
   # fail for a reason it did not pick. Same rule as the fixtures in
-  # `clear-main-red-holds.sh`.
+  # `refresh-main-red-holds.sh`.
   --fixture-open-prs)
     [ $# -ge 2 ] || {
       echo "dod-recheck: --fixture-open-prs needs a value" >&2
@@ -94,7 +94,7 @@ while [ $# -gt 0 ]; do
   -h | --help)
     # The whole block after the shebang, cut off at its first line of code. A
     # line number here goes stale the first time the header grows. Same reader
-    # as the one in `clear-main-red-holds.sh`.
+    # as the one in `refresh-main-red-holds.sh`.
     awk 'NR == 1 { next } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$0"
     exit 0
     ;;
