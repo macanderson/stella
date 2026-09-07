@@ -197,15 +197,35 @@ pub(crate) fn run_plugin(cmd: &PluginCmd, globals: &crate::cli::GlobalArgs) -> R
 
 /// A session identifier the driver echoes into its own records.
 ///
-/// Minted the way `self_driving_cmd::state::new_run_id` mints a run id — a
-/// timestamp plus a salt off the clock's sub-second remainder and the process
-/// id — so two sessions started in the same second are still distinguishable.
+/// The salt is 16 bits of the clock's sub-second remainder, xored with the
+/// process id. It keeps two processes apart, the way
+/// `self_driving_cmd::state::new_run_id` does for a run id. It cannot keep
+/// two sessions apart: 16 bits of nanoseconds repeat every 65.5 microseconds,
+/// and one invocation opens its sessions in a loop. Two sessions of one run
+/// collided on it in CI, and the session log then held two rows under one id.
+///
+/// The counter is what makes the id unique. It advances once per mint for the
+/// life of the process, so no two sessions opened here can share one.
 pub(crate) fn session_id() -> String {
+    static MINTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
-    let salt = (now.subsec_nanos() ^ std::process::id()) & 0xffff;
-    format!("drive-{}-{salt:04x}", now.as_secs())
+    mint_session_id(
+        now,
+        std::process::id(),
+        MINTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+    )
+}
+
+/// [`session_id`] over its three inputs.
+///
+/// Split out so the uniqueness property can be checked against a clock that
+/// does not move, which is the case that collided. A test cannot hold the
+/// real clock still.
+fn mint_session_id(now: std::time::Duration, pid: u32, minted: u64) -> String {
+    let salt = (now.subsec_nanos() ^ pid) & 0xffff;
+    format!("drive-{}-{salt:04x}-{minted:04x}", now.as_secs())
 }
 
 /// `stella plugin drive <name>` — drive an installed plugin until it stops.
