@@ -141,6 +141,12 @@ jobs:
     name: main carries no unverified commit
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Narrower than the workflow's block, which the job above needs: this one
+    # reads run history and writes one labelled issue. It re-runs nobody's
+    # hold, so it has no business with `actions` or `pull-requests`.
+    permissions:
+      contents: read
+      issues: write
     steps:
       # `--limit 10` reads ten commits, and the default shallow checkout gives
       # it one. Every CI run of this script has reported on the tip alone —
