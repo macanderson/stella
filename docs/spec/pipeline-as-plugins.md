@@ -186,13 +186,20 @@ the host serves `recall` but no `child_turn` plane (#3882).
 
 **Update, 2026-08-19: `stella goal` drives it too, per round — but only a
 steering/observer wrapper.** The other half of #3695 is closed: `stella goal
---pipeline <variant>` (`crates/stella-cli/src/agent/goal/goal_wrapped.rs`)
-binds the same wrapper once and calls `WrapperDispatch::run` once per judged
-round, wrapping the round's WORKER turn only — the goal verifier
-(`Engine::assess`) is untouched, so this does *not* answer
-§9.2's "where does the verifier's model call live" question below; it
+--pipeline <variant>` binds the same wrapper once and calls
+`WrapperDispatch::run` once per judged round, wrapping the round's WORKER turn
+only — the goal verifier (`Engine::assess`) is untouched, so this does *not*
+answer §9.2's "where does the verifier's model call live" question below; it
 sidesteps it by keeping the verifier off the wrapper socket entirely for this
 slice.
+
+**Superseded, 2026-09-07 (`#3911`): `stella goal` is a resolver onto this
+socket and refuses nothing.** The verb binds `goal-v1` with no `--pipeline`
+named, hands the plugin the turn, and lets its `again` decide how many rounds
+the goal takes. Its built-in round loop is gone, so the refusal below has
+nothing left to protect and arbiter is the grade the door wants. The paragraph
+is kept because the hazard it names is real for any door that keeps a
+completion arbiter of its own beside a wrapper's.
 
 **Update, 2026-08-19 (later the same day): an arbiter-grade wrapper is
 refused on this door outright, before dispatch (#3832).** A fault-injection
@@ -200,8 +207,8 @@ audit found the shape #3832 originally described — a wrapper's own `[oracle]`
 holding a round open past one internal turn collides `turn_instance` receipts
 — was reachable only through an arbiter-grade wrapper, and that reaching it
 first burned `1 + DEFAULT_HOST_MAX_HOLDS` (3) billed worker turns inside one
-already-judged goal round before `run_goal_wrapped_turn`'s `DispatchReport::
-rounds != 1` check discarded the whole run. The fix does not allocate
+already-judged goal round before the goal door's `DispatchReport::rounds != 1`
+check discarded the whole run. The fix does not allocate
 `turn_instance` room for a held-open round (#3832's original ask); it refuses
 the participation grade that can ever hold one, at the pre-flight rung, before
 the provider is ever built (`wrapper_plugin::reject_arbiter_wrapper_on_goal`)

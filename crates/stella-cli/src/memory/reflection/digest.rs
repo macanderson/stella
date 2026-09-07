@@ -172,10 +172,10 @@ pub struct TurnFriction {
     retries: Vec<String>,
     loops: Vec<String>,
     dropped: usize,
-    /// Which goal round this ledger covers, when it covers one — set only by
-    /// [`Self::per_goal_round`] (#3962). `None` on every single-turn door,
-    /// where "this turn" is the whole answer and a round number would be a
-    /// number invented to fill a field.
+    /// Which round of a held-open arc this ledger covers, when it covers one
+    /// — set only by [`Self::in_round`] (#3962). `None` on every single-turn
+    /// door, where "this turn" is the whole answer and a round number would be
+    /// a number invented to fill a field.
     round: Option<usize>,
 }
 
@@ -230,43 +230,25 @@ impl TurnFriction {
         friction
     }
 
-    /// Fold a **goal arc's** journal into one ledger *per round* (#3962).
+    /// Label this ledger as round `round` of an arc a wrapper held open.
     ///
-    /// A goal run is several turns on one event channel
-    /// (`stella_core::goal::Engine::run_goal`), and [`Self::from_events`] over
-    /// that whole stream is not a smaller answer — it is a wrong one. It
-    /// reports round 1's failed `bash` as something the turn that ran third
-    /// did, which is exactly the misattribution #3552 named on the wrapper's
-    /// `TurnFacts`. Reflection is handed the rounds as a slice
-    /// ([`TurnEvidence::with_rounds`]) and renders them separately, so no
-    /// round can borrow another's friction.
+    /// A wrapper's `again` decides how many rounds a turn takes, and the host
+    /// drives one turn per hold — so the driver knows the round number and the
+    /// ledger cannot derive it. Reflection renders it only when there is more
+    /// than one ledger to tell apart ([`Self::section`]).
     ///
-    /// The split key is [`AgentEvent::GoalVerdict`], the round's own
-    /// terminator, which **carries its round number** — so a segment is
-    /// labelled from the stream rather than from its position in it. A
-    /// trailing segment with no verdict is the round that ended the arc
-    /// without being judged (an aborted working turn, the round cap): it takes
-    /// the next round number, because it ran.
-    pub fn per_goal_round(events: &[AgentEvent]) -> Vec<Self> {
-        let mut rounds: Vec<Self> = Vec::new();
-        let mut current = Self::default();
-        let mut judged = 0usize;
-        for event in events {
-            current.observe(event);
-            if let AgentEvent::GoalVerdict { round, .. } = event {
-                judged = *round;
-                current.round = Some(*round);
-                rounds.push(std::mem::take(&mut current));
-            }
-        }
-        // An empty tail is the ordinary shape of a goal that ended ON a
-        // verdict — the run's own terminator folds to nothing — and a round
-        // that ran nothing is not a round worth naming.
-        if !current.is_empty() {
-            current.round = Some(judged.saturating_add(1));
-            rounds.push(current);
-        }
-        rounds
+    /// It replaces a fold that split one arc-wide journal at each
+    /// `AgentEvent::GoalVerdict` (#3962). That split existed because the
+    /// built-in goal loop drove its rounds inside `stella-core` and left the
+    /// door one undivided stream, and a stream folded whole reports round 1's
+    /// failed `bash` as something the round that ran last did — the
+    /// misattribution #3552 named on the wrapper's `TurnFacts`. With that loop
+    /// gone (`#3911`) every round is its own `run_turn` with its own journal, so
+    /// the rounds arrive already separate and only the number is missing.
+    #[must_use]
+    pub fn in_round(mut self, round: usize) -> Self {
+        self.round = Some(round);
+        self
     }
 
     /// Fold one event into the ledger.
@@ -487,12 +469,11 @@ impl TurnFriction {
     /// behind several thousand characters of transcript would make it the first
     /// thing a narrating model skims past.
     ///
-    /// `total` is how many ledgers this one is being rendered among, which is
-    /// what lets the header name the round (#3962). The round label is written
-    /// only when there is more than one ledger to tell apart: a single-turn
-    /// door renders the byte-identical section it rendered before this
-    /// parameter existed, because "round 1 of 1" is a distinction with nothing
-    /// on the other side of it.
+    /// `total` is how many ledgers this one is rendered among, which is what
+    /// lets the header name the round (#3962). The label is written only when
+    /// there is more than one ledger to tell apart. A single-turn door renders
+    /// the same bytes it did before this parameter existed, because "round 1
+    /// of 1" is a distinction with nothing on the other side of it.
     fn section(&self, total: usize) -> String {
         if self.is_empty() {
             return String::new();
@@ -639,7 +620,9 @@ impl<'a> TurnEvidence<'a> {
 
     /// Evidence from a transcript plus **one ledger per round** — what a
     /// surface that reflects over several turns at once builds (#3962), and
-    /// today that is `/goal` alone (`TurnFriction::per_goal_round`).
+    /// today that is every door a wrapper plugin can hold a turn open on:
+    /// `stella run --pipeline`, `stella goal`, and interactive mode's
+    /// `/goal`.
     ///
     /// Separate from [`Self::with_friction`] rather than that constructor
     /// taking a slice, so the single-turn doors keep saying "this turn has one

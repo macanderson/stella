@@ -1,19 +1,26 @@
-//! **Witness (#3695, goal half).** `stella goal --pipeline <variant>` used to
-//! be refused unconditionally by `wrapper_plugin::reject_plugin_variant_for_door`
-//! before this change — this file fails on the old binary for the plainest
-//! possible reason (the process exits nonzero with "is not supported on
-//! `stella goal` yet") and passes on this one: the door binds the installed
-//! wrapper once and dispatches every judged round's worker turn through it,
-//! and `executions.pipeline_variant` names it for the whole run.
+//! **Witness (#3911).** `stella goal` binds an installed wrapper plugin and
+//! hands it the turn. The plugin's own `again` decides how many rounds the
+//! goal takes.
+//!
+//! It fails on the old binary for the plainest possible reason: the plugin
+//! this file installs declares `participation = "arbiter"`, and
+//! `wrapper_plugin::reject_arbiter_wrapper_on_goal` refused that grade on this
+//! door before any provider was built — the process exited nonzero with "is
+//! arbiter-grade and cannot run on `stella goal`" and the fixture's logs stayed
+//! empty. It passes on this one: the door has no completion arbiter of its own
+//! left to collide with, so arbiter is the grade it wants.
+//!
+//! Its subject before that was the other arrangement (#3695, goal half): a
+//! *steering* plugin dispatched once per round of the built-in goal loop, with
+//! `stella_core::Engine::assess` deciding met/unmet. That loop is gone from
+//! this door, and with it the only reason a steering plugin saw more than one
+//! round here.
 //!
 //! Deliberately a real subprocess against a real (mocked) HTTP endpoint,
 //! matching `run_exits_cli.rs`'s hermeticity discipline — no ambient
 //! credentials, `--base-url` pointed at a `wiremock` server this test drives
-//! itself — because the property under test (the wrapper's `before_turn`
-//! firing once per goal round, and the store row it lands on) only exists
-//! once the goal loop has genuinely run two rounds end to end; nothing about
-//! it is visible from a unit test that never builds a real `Engine::run_turn`
-//! transcript.
+//! itself — because the property under test only exists once the dispatch has
+//! genuinely held a turn open and run two worker turns end to end.
 //!
 //! `cfg(unix)`: the fixture wrapper is a `/bin/sh` script, same reason
 //! `stella-runtime`'s `tests/wrapper_dispatch.rs` is unix-only.
@@ -24,8 +31,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use wiremock::matchers::{body_string_contains, method, path};
-use wiremock::{Match, Mock, MockServer, Request, ResponseTemplate};
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 mod common;
 use common::SealsEmbedderBackend;
@@ -34,35 +41,35 @@ use common::SealsEmbedderBackend;
 /// `executions.pipeline_variant`.
 const VARIANT: &str = "goal-fixture-v1";
 
-/// No `[requirements]`/`[oracle]` at all: `judge` is `Verdict::Met` for an
-/// empty rule (`crates/stella-runtime/src/wrapper/verdict.rs`'s own doc,
-/// "a rule with no requirements is `Verdict::Met`"), so each call into
-/// `WrapperDispatch::run` drives exactly one internal turn — the property
-/// `run_goal_wrapped_turn` depends on (`DispatchReport::rounds == 1`) rather
-/// than guesses at.
+/// An arbiter-grade manifest shaped like `plugins/stella-goal`'s real one: the
+/// `Stop` hook arbiter requires, one requirement, and a `flip =
+/// "not-applicable"` oracle deciding it off a single `met` measurement.
 ///
-/// It is also the only shape this door accepts, which is worth knowing before
-/// reading the `--test-command` assertions below: `[requirements]` is refused
-/// below `participation = "arbiter"`
-/// (`ManifestError::RequirementsRequireArbiter`) and `stella goal` refuses
-/// arbiter grade outright (#3832), so no plugin on this door can carry an
-/// `[oracle]` for the host's tamper finding to qualify. What #3835 wired here
-/// is the grant and the watch that feed such an oracle; a run that *decides*
-/// on one is not reachable from this door until those two rules stop
-/// contradicting.
+/// `max_holds = 3` is an ask, not an authority — the host funds
+/// `DEFAULT_HOST_MAX_HOLDS`, and one hold is all this fixture needs.
 const PLUGIN_TOML: &str = r#"
 name = "goal-fixture"
 [loop]
-participation = "steering"
+participation = "arbiter"
+hooks = ["Stop"]
 points = ["before_turn", "after_turn"]
+max_holds = 3
 [runtime]
-argv = ["/bin/sh", "${plugin_dir}/main.sh", "${plugin_dir}/rounds.log", "${plugin_dir}/after.log"]
+argv = ["/bin/sh", "${plugin_dir}/main.sh", "${plugin_dir}/rounds.log", "${plugin_dir}/after.log", "${plugin_dir}/count"]
 timeout_secs = 30
 env = ["PATH"]
 [wrapper]
 id = "goal-fixture-v1"
 [[wrapper.stages]]
 name = "execute"
+[requirements]
+goal-met = "an independent verifier turn assessed the goal as accomplished"
+[oracle]
+flip = "not-applicable"
+measurements = ["met"]
+[[oracle.checks]]
+requirement = "goal-met"
+check = "met >= 1"
 "#;
 
 /// Every call appends the exact request it was asked (one line — the wire
@@ -71,34 +78,34 @@ name = "execute"
 /// dispatched through it, and `after_turn` to `$2`, which is where the turn
 /// facts the host reports back (#3834) are read from.
 ///
-/// `after_turn` answers with an empty, `flip = "not-attempted"` observation
-/// (nothing in this fixture's manifest declares an oracle that would read
-/// it).
+/// `after_turn` reports `met = 0` the first time and `met = 1` the second,
+/// counting through `$3`. That is what makes the dispatch hold the turn open
+/// exactly once: `judge` reads the declared check `met >= 1` against the
+/// evidence, `again` holds an unmet round open for an arbiter, and the second
+/// round settles it.
+///
+/// The `Stop` hook `ManifestError::ArbiterMustDeclareStop` requires reaches
+/// this same program, so its payload is answered and dropped rather than
+/// appended: it is a hook event, not a wrapper-socket point, and counting it
+/// as a round would make this file's central assertion wrong in the direction
+/// that reads as a pass.
 const PLUGIN_SCRIPT: &str = r#"#!/bin/sh
 input=$(cat)
 case "$input" in
   *'"point":"after_turn"'*)
     printf '%s\n' "$input" >> "$2"
-    printf '%s\n' '{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"not-attempted"}}}'
+    if [ -f "$3" ]; then met=1; else met=0; : > "$3"; fi
+    printf '%s\n' '{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"not-attempted","measurements":{"met":'"$met"'}}}}'
     ;;
-  *)
+  *'"point":"before_turn"'*)
     printf '%s\n' "$input" >> "$1"
     printf '%s\n' '{"point":"before_turn","body":{"protocol_version":1}}'
     ;;
+  *)
+    printf '%s\n' '{}'
+    ;;
 esac
 "#;
-
-/// A [`Match`] wiremock has no built-in for: "the body does NOT contain this
-/// substring". Needed to route the worker's calls away from the verifier's
-/// mocks without matching on the (large, prompt-engineering-internal, and
-/// therefore fragile) worker system prompt instead.
-struct NotContains(&'static str);
-
-impl Match for NotContains {
-    fn matches(&self, request: &Request) -> bool {
-        !String::from_utf8_lossy(&request.body).contains(self.0)
-    }
-}
 
 /// Write the fixture wrapper into the project plugin tier
 /// (`<workspace>/.stella/plugins/…/plugin.toml`) and return the two paths its
@@ -124,9 +131,7 @@ fn install_fixture_wrapper(workspace: &Path) -> (PathBuf, PathBuf) {
 ///
 /// It has to exist on disk before the run: `TamperWatch::pin` records a
 /// baseline of things that *were there*, and an absent artifact is left out of
-/// the watch entirely rather than pinned as missing — which would leave the
-/// watch empty, the finding `NotChecked`, and the verdict undecided for a
-/// reason that has nothing to do with what this test is about.
+/// the watch entirely rather than pinned as missing.
 fn install_witness(workspace: &Path) {
     let tests = workspace.join("tests");
     std::fs::create_dir_all(&tests).expect("tests dir");
@@ -135,8 +140,7 @@ fn install_witness(workspace: &Path) {
 
 /// The oracle `--test-command` arms, and the one artifact the host pins from
 /// it. `sh <path>` names its file syntactically, which is the only shape
-/// `wrapper_candidate::named_artifacts` will watch — `cargo test --test x`
-/// names `x`, not `tests/x.rs`, and the host does not guess.
+/// `wrapper_candidate::named_artifacts` will watch.
 const TEST_COMMAND: &str = "sh tests/witness_flip.sh";
 
 /// One SSE completion, in the shape `stella-model`'s shared chat-completions
@@ -168,36 +172,23 @@ fn sse_tool_call() -> String {
     .to_string()
 }
 
-/// A mock chat-completions endpoint standing in for the real provider, wired
-/// to make the goal loop run exactly two rounds: the round-1 verifier call
-/// answers `met: false` (forcing a second round), the round-2 verifier call
-/// answers `met: true` (ending the loop).
+/// A mock chat-completions endpoint standing in for the real provider.
 ///
-/// The two verifier responses are distinguished by whether the request body
-/// already carries `stella_core::goal::verifier_feedback_text`'s "NOT yet
-/// met" wording — present only once the round-1 verdict has been pushed onto
-/// the transcript the round-2 verifier reads. Verifier calls themselves are
-/// distinguished from worker calls by `goal::VERIFIER_SYSTEM_PROMPT`'s
-/// opening words, which never reach the worker's own (unrelated) system
-/// prompt.
-async fn mock_two_round_goal_loop() -> MockServer {
+/// No verifier arm: the plugin decides met/unmet from its own `after_turn`
+/// evidence and spends no child turn, so every request this server sees is a
+/// worker call. The first answers with a tool call rather than text, so round
+/// 1's turn genuinely dispatches something and the facts the host folds are
+/// non-trivial rather than merely present (#3834).
+///
+/// `get_environment` is the tool chosen for what it is *not*: it takes no
+/// arguments, changes nothing, and its `Always` authority means no approval
+/// gate stands between this fixture and a dispatched call — a headless goal
+/// run has no human to answer one.
+async fn mock_worker() -> MockServer {
     let server = MockServer::start().await;
 
-    // The very first worker call answers with a tool call rather than text,
-    // so round 1's turn genuinely dispatches something and the facts the host
-    // folds are non-trivial rather than merely present (#3834).
-    //
-    // `get_environment` is the tool chosen for what it is *not*: it takes no
-    // arguments, changes nothing, and its `Always` authority means no approval
-    // gate stands between this fixture and a dispatched call — a headless goal
-    // run has no human to answer one.
-    //
-    // Higher priority (a lower number) than the general worker mock below,
-    // and capped at one use, so the second worker call of round 1 falls
-    // through to the text answer and the turn ends.
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
-        .and(NotContains("impartial verifier"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(sse_tool_call(), "text/event-stream"))
         .up_to_n_times(1)
         .with_priority(1)
@@ -206,31 +197,8 @@ async fn mock_two_round_goal_loop() -> MockServer {
 
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
-        .and(NotContains("impartial verifier"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
             sse_completion("did the requested work"),
-            "text/event-stream",
-        ))
-        .mount(&server)
-        .await;
-
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .and(body_string_contains("impartial verifier"))
-        .and(NotContains("NOT yet met"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(
-            sse_completion(r#"{"met": false, "reasoning": "not yet", "feedback": "keep going"}"#),
-            "text/event-stream",
-        ))
-        .mount(&server)
-        .await;
-
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .and(body_string_contains("impartial verifier"))
-        .and(body_string_contains("NOT yet met"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(
-            sse_completion(r#"{"met": true, "reasoning": "done", "feedback": ""}"#),
             "text/event-stream",
         ))
         .mount(&server)
@@ -248,26 +216,18 @@ fn store_path(workspace: &Path) -> PathBuf {
 }
 
 #[tokio::test]
-async fn a_goal_run_dispatches_each_round_through_the_bound_wrapper() {
+async fn a_goal_run_binds_an_arbiter_plugin_and_takes_the_rounds_it_holds_open() {
     let workspace = tempfile::tempdir().expect("workspace");
     let data = tempfile::tempdir().expect("data dir");
-    // The user tier, which `STELLA_DATA_DIR` does not move.
-    //
-    // Removing every `*_API_KEY` below is not hermeticity on its own: an
-    // environment variable is one of two ways a credential reaches the
-    // process, and `~/.stella/credentials.toml` is the other. On a developer
-    // machine with providers configured, this test discovered them through
-    // that file, and the comment below is exactly right about why it matters —
-    // the goal loop's cross-family verifier takes *whatever* is configured. So
-    // the run bound a real OpenRouter verifier against a real zai worker,
-    // spent $0.08 of the developer's money per invocation, and then failed,
-    // because a live model does not answer like the wiremock fixture this test
-    // drives. `STELLA_HOME` moves the whole user tier, so there is no
-    // credentials file to find.
+    // The user tier, which `STELLA_DATA_DIR` does not move. Removing every
+    // `*_API_KEY` below is not hermeticity on its own: an environment variable
+    // is one of two ways a credential reaches the process, and
+    // `~/.stella/credentials.toml` is the other. `STELLA_HOME` moves the whole
+    // user tier, so there is no credentials file to find.
     let home = tempfile::tempdir().expect("stella home");
     let (rounds_log, after_log) = install_fixture_wrapper(workspace.path());
     install_witness(workspace.path());
-    let server = mock_two_round_goal_loop().await;
+    let server = mock_worker().await;
 
     let child = Command::new(env!("CARGO_BIN_EXE_stella"))
         .without_embedder_backend()
@@ -295,15 +255,6 @@ async fn a_goal_run_dispatches_each_round_through_the_bound_wrapper() {
         // fixture wrapper actually loads.
         .env("STELLA_NO_ENV_FILE", "1")
         .env("STELLA_TRUST_PROJECT", "1")
-        // Every other family's credential is removed too, not only the two
-        // `run_exits_cli.rs` guards against: the goal loop's cross-family
-        // verifier routing (`resolve_cross_family_verifier`) discovers
-        // *whatever* is configured, and this sandbox's own tooling injects
-        // AWS credentials for an unrelated proxy — which resolved a
-        // "bedrock" verifier and made a real (unmocked, failing) network
-        // call the first time this test ran. A single configured family
-        // (zai, via `--api-key` above) is what keeps the verifier routed to
-        // the SAME mock server the worker uses.
         .env_remove("OPENROUTER_API_KEY")
         .env_remove("ANTHROPIC_API_KEY")
         .env_remove("ZAI_API_KEY")
@@ -330,25 +281,26 @@ async fn a_goal_run_dispatches_each_round_through_the_bound_wrapper() {
         .expect("join")
         .expect("wait on stella");
 
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("is arbiter-grade and cannot run on `stella goal`"),
+        "the door must accept the grade it needs: {stderr}"
+    );
     assert!(
         output.status.success(),
-        "stella goal --pipeline {VARIANT} did not exit 0 — stdout: {}\nstderr: {}",
+        "stella goal --pipeline {VARIANT} did not exit 0 — stdout: {}\nstderr: {stderr}",
         String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
     );
 
-    // `before_turn` fired once per goal round — the wrapper was genuinely
-    // dispatched twice, not once, which is the only way two rounds happened
-    // at all under a manifest with no `[loop] max_holds` of its own (the
-    // wire's own `round` field cannot show this: it restarts at 0 on every
-    // `WrapperDispatch::run` call, one per goal round, by design — see
-    // `crates/stella-cli/src/agent/goal/goal_wrapped.rs`'s module doc).
+    // `before_turn` fired once per round the arbiter held open — two, because
+    // its first `after_turn` reported `met = 0` and the declared check
+    // `met >= 1` is what `judge` reads.
     let log = std::fs::read_to_string(&rounds_log).unwrap_or_default();
     let calls: Vec<&str> = log.lines().filter(|line| !line.is_empty()).collect();
     assert_eq!(
         calls.len(),
         2,
-        "expected exactly one before_turn call per goal round (2 rounds): {log}"
+        "the arbiter held the turn open once, so two rounds ran: {log}"
     );
     for call in &calls {
         assert!(
@@ -357,10 +309,7 @@ async fn a_goal_run_dispatches_each_round_through_the_bound_wrapper() {
         );
         // **Witness (#3835).** Every round carries the grant over the tree it
         // runs in, with `--test-command` parsed into the plan the plugin's
-        // oracle would run. This door sent `candidate: None` before, and
-        // `Option::None` is skipped on the wire — so the field is simply
-        // absent in the old binary's request, and a plugin had no root to read
-        // and no test to run.
+        // oracle would run.
         assert!(
             call.contains("\"candidate\":"),
             "a goal round must hand the plugin the tree it runs in: {call}"
@@ -374,13 +323,6 @@ async fn a_goal_run_dispatches_each_round_through_the_bound_wrapper() {
     // **Witness (#3834).** Every round reports what its worker turn actually
     // dispatched and changed, and the first round names the tool it called.
     //
-    // `GoalRoundDriver` drove `Engine::run_turn` directly and folded nothing,
-    // so it sent `tools: None, changed_files: None` on every round — and both
-    // are `skip_serializing_if = "Option::is_none"`, so the old binary's
-    // request simply has no such keys. That is honest under the wire contract
-    // ("this host does not report it") and strictly less than `stella run`'s
-    // wrapped door already gave the same plugin.
-    //
     // The distinction the assertions below draw is the one the wire type
     // exists to draw: `[]` is "the turn dispatched none", an absent key is
     // "this host cannot look".
@@ -393,7 +335,7 @@ async fn a_goal_run_dispatches_each_round_through_the_bound_wrapper() {
     assert_eq!(
         reports.len(),
         2,
-        "expected one after_turn call per goal round (2 rounds): {after}"
+        "one after_turn call per round the arbiter held open: {after}"
     );
     for report in &reports {
         let turn = &report["body"]["turn"];
@@ -420,53 +362,25 @@ async fn a_goal_run_dispatches_each_round_through_the_bound_wrapper() {
         reports[1]
     );
 
-    // The tamper finding the host now pins beside that grant is not
-    // observable from here, and the reason is a fact about this door rather
-    // than about the wiring: a finding only changes a verdict through an
-    // `[oracle]`, an oracle needs `[requirements]`, `[requirements]` needs
-    // `participation = "arbiter"`, and this door refuses arbiter grade
-    // (#3832). `crates/stella-cli/src/wrapper_candidate.rs`'s own tests are
-    // where `Clean` and `Tampered` are witnessed.
-
-    // The execution row this goal run opened names the wrapper that drove
-    // it, and the store shows two rounds' worth of turn_instance under that
-    // one row — the goal loop's own round math (`stella_protocol::turn_slots`'
-    // worker lane, with the verifier lane beside it), advancing exactly as it
-    // does on the raw arm.
+    // The rows this run opened are the goal door's, not the one-shot's. The
+    // driver takes the door name as a field for exactly this reason: both
+    // doors run the same wrapped turn, and a goal run whose rows all said
+    // `run` would be unfindable in the store under the verb the user typed.
     let conn = rusqlite::Connection::open(store_path(workspace.path())).expect("open store.db");
-    let (execution_id, variant): (i64, Option<String>) = conn
+    let (rows, variant): (i64, Option<String>) = conn
         .query_row(
-            "SELECT id, pipeline_variant FROM executions WHERE kind = 'goal' ORDER BY id DESC LIMIT 1",
+            "SELECT COUNT(*), MAX(pipeline_variant) FROM executions WHERE kind = 'goal'",
             [],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
-        .expect("one goal execution row");
+        .expect("goal execution rows");
+    assert_eq!(
+        rows, 2,
+        "each round the arbiter held open is a turn, and each turn opens its own row"
+    );
     assert_eq!(
         variant.as_deref(),
         Some(VARIANT),
         "executions.pipeline_variant must name the wrapper that drove every round"
-    );
-
-    let mut stmt = conn
-        .prepare("SELECT DISTINCT turn_instance FROM step_receipt WHERE execution_id = ?1 ORDER BY turn_instance")
-        .expect("prepare");
-    let turn_instances: Vec<i64> = stmt
-        .query_map([execution_id], |row| row.get(0))
-        .expect("query")
-        .collect::<Result<_, _>>()
-        .expect("rows");
-    assert!(
-        turn_instances.len() >= 4,
-        "two goal rounds (worker + verifier each) must claim four distinct turn_instance \
-         slots under the one execution row the wrapper drove: {turn_instances:?}"
-    );
-    // Round 1 is worker lane 0 / verifier lane 1; round 2 is the next slot of
-    // each, which is four along rather than two — the two slots between them
-    // are the host's own lanes, reserved so a wrapper plugin's child turns can
-    // run beside this loop without overwriting a round (#3833).
-    assert!(
-        turn_instances.starts_with(&[0, 1, 4, 5]),
-        "goal rounds must allocate through `stella_protocol::turn_slots`' worker and verifier \
-         lanes: {turn_instances:?}"
     );
 }

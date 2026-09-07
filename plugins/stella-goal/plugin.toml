@@ -18,38 +18,26 @@
 # and `perf-budget.toml` already exercise, pointed at a verifier's assessment
 # instead of a witness test's flip or a benchmark's number.
 #
-# This runs via `stella run --pipeline goal-v1` — NEVER via `stella goal`,
-# and `stella goal` refuses to load it: this plugin's own `participation =
-# "arbiter"` below is exactly the grade
-# `crates/stella-cli/src/wrapper_plugin.rs::reject_arbiter_wrapper_on_goal`
-# refuses on that door, at resolve/bind time, before any paid call (#3832).
-# The reason is one loop, one arbiter: `stella goal`'s round loop is already
-# this door's own completion arbiter (`stella_core::Engine::assess` decides
-# met/unmet after every round), and an arbiter-grade wrapper brings a SECOND
-# hold loop (`WrapperDispatch`'s `judge`/`again`) that would run *inside* one
-# already-judged goal round — a second supervisor judging the same round the
-# first one is already judging. `stella run`'s door has no such second
-# arbiter, which is exactly why that is this plugin's designed home instead.
+# This is what `stella goal` runs (#3911). The verb resolves `goal-v1` with no
+# `--pipeline` named, binds this plugin, and hands it the turn; `stella run
+# --pipeline goal-v1` is the same plugin reached the other way. Either door
+# gives it the same job.
 #
-# This is deliberately NOT the same thing as `stella goal --pipeline
-# <variant>` (`crates/stella-cli/src/agent/goal/goal_wrapped.rs`, landed this
-# session for #3695's goal half). That CLI path keeps
-# `stella_core::Engine::assess` as the one thing that decides met/unmet, and
-# says exactly why in its own module doc: encoding `GoalVerifierVerdict`'s
-# free-text feedback into `EvidenceSet`'s flip/measurement vocabulary is a
-# real gap, and moving goal's decision onto `judge`/`again` is a rewrite of
-# goal's verifier semantics ruled out of that slice. This plugin is the OTHER
-# half of the same design: a self-contained goal-supervision wrapper that
-# runs under `stella run --pipeline goal-v1`, using nothing but the generic
-# `WrapperDispatch` loop every arbiter-grade plugin already gets — it never
-# touches `stella goal`'s own command or `Engine::run_goal`. See the README's
-# "Known gaps" table for exactly what this costs against the real thing.
+# That door once refused it outright: this plugin's own `participation =
+# "arbiter"` below was exactly the grade it rejected at resolve/bind time
+# (#3832), because `stella goal` carried a round loop of its own —
+# `stella_core::Engine::assess` deciding met/unmet after every round — and an
+# arbiter-grade wrapper brings a SECOND hold loop (`WrapperDispatch`'s
+# `judge`/`again`) that would have run inside one already-judged round. That
+# loop is gone from the door, so there is no first arbiter left to double, and
+# arbiter is the grade the verb needs: the only one `again` lets hold a
+# completion open past its first turn.
 #
-# What it does, once per round of whatever turn `stella run --pipeline
-# goal-v1` is holding open. At `execute` it contributes the goal framing every
-# working turn gets — the byte-mirrored `goal_kickoff_text`
-# (`crates/stella-core/src/goal.rs`) — so a worker turn started fresh by
-# `stella run`'s door sees the same words `stella goal`'s own loop opens with.
+# What it does, once per round of the turn it is holding open. At `execute`
+# it contributes the goal framing every working turn gets — the
+# byte-mirrored `goal_kickoff_text` (`crates/stella-core/src/goal.rs`), which
+# `stella-serve`'s own goal route still opens with, so a worker turn started
+# fresh by either door sees the same words.
 # After the turn completes, it asks the host for one bounded turn at the
 # `verifier` role intent, sends it the byte-mirrored `VERIFIER_SYSTEM_PROMPT`
 # plus whatever the wire actually carries about the turn that ran, parses the

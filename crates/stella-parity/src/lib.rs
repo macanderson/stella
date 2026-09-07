@@ -432,10 +432,19 @@ pub static CAPABILITIES: &[Capability] = &[
         id: "goal.loop",
         engine_home: "stella-core goal: judged rounds until an independent verifier assesses the goal met",
         engine_entries: &["run_goal", "assess"],
+        // `stella goal` carried the engine's own loop until `#3911`. It binds
+        // an installed arbiter-grade wrapper plugin and hands it the turn:
+        // the plugin's `again` decides how many rounds the goal takes, its
+        // `after_turn` spends the verifier call, and the host's `judge` maps
+        // that evidence to a verdict against the plugin's declared rule. The
+        // engine entry above is what `stella-serve` still drives, so this row
+        // records two surfaces reaching one capability by two routes rather
+        // than one shared call.
         cli: SurfacePosture::Shipped {
-            mechanism: "`stella goal` / `stella monitor`, with a cross-family verifier resolved by \
-                        default",
-            witness: "distinct_families_route_a_cross_family_verifier",
+            mechanism: "`stella goal`, `stella monitor` and `/goal`, each binding an \
+                        installed wrapper plugin — `plugins/stella-goal` is the reference one — \
+                        with no built-in loop left to collide with it",
+            witness: "a_goal_run_binds_an_arbiter_plugin_and_takes_the_rounds_it_holds_open",
         },
         // Shipped in #1297 as the mode flag this row named as its second
         // acceptable shape, not as a `/v1/goals` resource:
@@ -736,7 +745,7 @@ mod tests {
     /// the same trade `provider_parity` documents: a witness that moves to a
     /// file outside this list fails loudly (a false alarm to fix by extending
     /// the list), never silently (the rotted proof this exists to catch).
-    fn cli_sources() -> [&'static str; 17] {
+    fn cli_sources() -> [&'static str; 18] {
         [
             // The deck's session-scoped whistle relay (#4768) — home of the
             // `turn.whistle` witness.
@@ -779,6 +788,12 @@ mod tests {
             include_str!("../../stella-cli/src/session_persist.rs"),
             include_str!("../../stella-cli/src/engine_config.rs"),
             include_str!("../../stella-cli/src/tests.rs"),
+            // The goal door's end-to-end suite — home of the `goal.loop` CLI
+            // witness since #3911 moved that verb onto the wrapper socket. It
+            // is an integration test rather than a unit one because the
+            // property only exists once a real plugin process has held a real
+            // turn open.
+            include_str!("../../stella-cli/tests/goal_wrapped_dispatch_cli.rs"),
         ]
     }
 

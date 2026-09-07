@@ -753,28 +753,36 @@ fn round_tool(
     ]
 }
 
-/// A three-round goal arc's journal, in the shape `run_goal_turn` hands to
-/// [`super::digest::TurnFriction::per_goal_round`]: every round calls a tool
-/// the other two never call, and each round is closed by its own `GoalVerdict`
-/// — the split key, carrying the round number.
-fn goal_journal() -> Vec<stella_protocol::AgentEvent> {
-    let verdict = |round: usize, met: bool| stella_protocol::AgentEvent::GoalVerdict {
-        round,
-        met,
-        reasoning: format!("round {round}"),
-        cost_usd: 0.01,
-    };
-    let mut events = round_tool("c1", "bash", "cargo test", Some("round one linker failure"));
-    events.push(verdict(1, false));
-    events.extend(round_tool("c2", "read_file", "src/lib.rs", None));
-    events.push(verdict(2, false));
-    events.extend(round_tool("c3", "edit_file", "src/leak.rs", None));
-    events.push(verdict(3, true));
-    events
+/// One round's journal: a tool call the other rounds never make, so a ledger
+/// that borrowed another round's friction would say so out loud.
+fn round_journal(
+    call: &str,
+    tool: &str,
+    arg: &str,
+    error: Option<&str>,
+) -> Vec<stella_protocol::AgentEvent> {
+    round_tool(call, tool, arg, error)
 }
 
-/// **The #3962 witness.** A goal run is several turns reflected on ONCE, and
-/// the ledger it reflects with must be one per round.
+/// Three rounds of an arc a wrapper held open, each folded from its own
+/// journal and numbered by the driver — the shape
+/// `wrapper_plugin::RawTurnDriver` builds, one `TurnFriction` per driven turn
+/// (`TurnFriction::in_round`).
+fn arc_rounds() -> Vec<super::TurnFriction> {
+    let journals = [
+        round_journal("c1", "bash", "cargo test", Some("round one linker failure")),
+        round_journal("c2", "read_file", "src/lib.rs", None),
+        round_journal("c3", "edit_file", "src/leak.rs", None),
+    ];
+    journals
+        .iter()
+        .enumerate()
+        .map(|(index, events)| super::TurnFriction::from_events(events).in_round(index + 1))
+        .collect()
+}
+
+/// **The #3962 witness.** An arc is several turns reflected on ONCE, and the
+/// ledger it reflects with must be one per round.
 ///
 /// Before this, `/goal` passed an explicitly-empty ledger, because the only
 /// alternative on offer — one fold over the whole arc — is not a smaller
@@ -783,13 +791,12 @@ fn goal_journal() -> Vec<stella_protocol::AgentEvent> {
 /// wrapper's `TurnFacts`, and the second half of this test is that wrong
 /// answer, executable, so the first half cannot be satisfied by producing it.
 #[tokio::test]
-async fn a_goal_arcs_rounds_reflect_separately_and_never_borrow_each_others_friction() {
-    let events = goal_journal();
-    let rounds = super::TurnFriction::per_goal_round(&events);
+async fn an_arcs_rounds_reflect_separately_and_never_borrow_each_others_friction() {
+    let rounds = arc_rounds();
     assert_eq!(
         rounds.len(),
         3,
-        "each `GoalVerdict` closes a round, so a three-round arc folds to three ledgers"
+        "one ledger per driven turn, so a three-round arc folds to three"
     );
     let transcript = vec![CompletionMessage::user("fix the leak and prove it")];
 
@@ -829,7 +836,13 @@ async fn a_goal_arcs_rounds_reflect_separately_and_never_borrow_each_others_fric
     // journal folded as ONE ledger puts every round's tools under a single
     // heading that speaks for "this turn", where nothing tells a reader which
     // round ran which — the third round inherits the first round's failure.
-    let merged = super::TurnFriction::from_events(&events);
+    let whole_arc: Vec<stella_protocol::AgentEvent> = [
+        round_journal("c1", "bash", "cargo test", Some("round one linker failure")),
+        round_journal("c2", "read_file", "src/lib.rs", None),
+        round_journal("c3", "edit_file", "src/leak.rs", None),
+    ]
+    .concat();
+    let merged = super::TurnFriction::from_events(&whole_arc);
     let conflated = prompt_for_evidence(super::TurnEvidence::with_friction(
         &transcript,
         &merged,
@@ -866,8 +879,7 @@ fn the_reflecting_doors_fold_a_ledger_and_reflect_with_it() {
     const REFLECT: &str = include_str!("../../agent/reflect.rs");
     const DECK: &str = include_str!("../../command_deck/authoring.rs");
     const FORWARDER: &str = include_str!("../../command_deck/forwarder.rs");
-    const WRAPPED_ONE_SHOT: &str = include_str!("../../wrapper_plugin.rs");
-    const WRAPPED_GOAL: &str = include_str!("../../agent/goal/goal_wrapped.rs");
+    const WRAPPED: &str = include_str!("../../wrapper_plugin.rs");
 
     assert!(
         AGENT_TURN.contains("TurnFriction::from_events(&collected)"),
@@ -889,21 +901,24 @@ fn the_reflecting_doors_fold_a_ledger_and_reflect_with_it() {
          wrapped arm drives one turn per hold (#3976)"
     );
 
-    // **The wrapped arms (#3976).** Both used to leave the slot at its default
-    // and say so in a comment, so a `--pipeline` run's reflection saw no cost,
-    // no wall clock, no retries and no loop firings — the #3946 regression
-    // scoped to one path. The slice above is satisfiable by the raw arm alone,
-    // which is why each wrapped producer is named here too.
+    // **The wrapped driver (#3976, #3911).** It used to leave the slot at its
+    // default and say so in a comment, so a `--pipeline` run's reflection saw
+    // no cost, no wall clock, no retries and no loop firings — the #3946
+    // regression scoped to one path. The slice above is satisfiable by a
+    // single-turn arm alone, which is why the producer is named here too. It
+    // is now the only producer: every door that can run several rounds —
+    // `stella run --pipeline`, `stella goal`, `/goal` — reaches them through
+    // this one driver.
     assert!(
-        WRAPPED_ONE_SHOT.contains("self.friction.push(friction)"),
+        WRAPPED.contains("self.friction.push(friction)"),
         "RawTurnDriver must fold each driven turn's ledger; it runs the turn \
          through the same `run_turn` every raw door does, so the journal is \
          reachable and leaving it unread is a choice rather than a limit"
     );
     assert!(
-        WRAPPED_GOAL.contains("TurnFriction::per_goal_round(&rendered.events)"),
-        "the wrapped `/goal` arm must split its journal at each round's own \
-         verdict, exactly as the raw arm does"
+        WRAPPED.contains(".in_round(self.friction.len().saturating_add(1))"),
+        "and must number each one, or reflection renders three ledgers that \
+         each say `this turn` and no reader can tell which round ran what"
     );
 
     // The interactive door — one ledger for a plain prompt, a slice of them
@@ -921,12 +936,8 @@ fn the_reflecting_doors_fold_a_ledger_and_reflect_with_it() {
     );
 
     // The `/goal` doors (#3962), both of which reflect ONCE over an arc of
-    // several turns: the fold is per round, and the reflection takes the slice.
-    assert!(
-        GOAL.contains("TurnFriction::per_goal_round(&rendered.events)"),
-        "run_goal_turn must split its journal at each round's own verdict; one \
-         fold over the whole arc reports round 1's tools as the last round's"
-    );
+    // several turns: the driver folds one ledger per round, and reflection
+    // takes the slice.
     assert!(
         GOAL.contains("TurnEvidence::with_rounds("),
         "the headless `stella goal` door must reflect with its per-round ledgers"

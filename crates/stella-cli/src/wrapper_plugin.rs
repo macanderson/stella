@@ -37,7 +37,8 @@
 //!   session's guard and this run's report but not the store's receipt; and
 //!   [`dispatch_under_turn_controls`] publishes the turn's boundary controls
 //!   for the whole dispatch, so a plugin's child parks with a paused parent.
-//!   This door supplies [`TurnControls::none`], being headless.
+//!   A headless door supplies the steering half alone — a whistle never
+//!   pauses — and the deck supplies both.
 //!
 //! [`bind_installed`] and [`ResolvedWrapper::serving`] are separate moments
 //! rather than one function with an `Option` in it: a `--pipeline` naming
@@ -52,11 +53,11 @@
 //! exists, though `--pipeline` itself reaches every door that takes it.
 //!
 //! `stella goal` is a second call site, not a second sequence:
-//! `crate::agent::goal::goal_wrapped` binds a wrapper the same way and calls
-//! [`WrapperDispatch::run`] once per judged round, the goal loop's own round
-//! loop deciding how many rounds run. [`reject_arbiter_wrapper_on_goal`]
-//! refuses an arbiter-grade wrapper there, because a hold-open round inside an
-//! already-judged goal round is a second round-holder judging the same round.
+//! [`crate::agent::goal::run_goal_cmd`] binds a wrapper the same way and calls
+//! [`WrapperDispatch::run`] once, the plugin's own `again` deciding how many
+//! rounds the goal takes (`#3911`). That door refuses no grade: the built-in
+//! goal loop that was its own completion arbiter is gone, and arbiter is the
+//! grade it wants.
 //! Child slots come from [`stella_protocol::turn_slots`], which reads
 //! `turn_instance` as a lane plus a sequence within it, so a plane counting
 //! only its own calls can never land where a door's rounds will; `stella
@@ -115,8 +116,9 @@ pub(crate) use planes::{
 };
 // The two plane constructors `session_host` composes internally. Nothing in the
 // shipped binary calls either directly — only this crate's tests do — so the
-// re-export is `#[cfg(test)]` for `report`'s reason two blocks down: an
-// `#[allow(unused_imports)]` would assert the lint is wrong, and it is not.
+// re-export is `#[cfg(test)]` for the reason the `report` re-export two blocks
+// down gives: an `#[allow(unused_imports)]` would assert the lint is wrong,
+// and it is not.
 #[cfg(test)]
 pub(crate) use planes::{candidate_fanout_plane, child_turn_plane};
 /// Every `! wrapper:` line a run prints, in one renderer, and the events a
@@ -273,57 +275,6 @@ pub(crate) fn no_pipeline_notice_for(
     no_pipeline_deprecation_notice(no_pipeline)
 }
 
-/// Refuse an arbiter-grade wrapper plugin on `stella goal`'s pre-flight rung,
-/// before binding completes and before any paid call (#3832).
-///
-/// `stella goal`'s own round loop is this door's completion arbiter:
-/// `Engine::assess` (called directly by
-/// `crate::agent::goal::goal_wrapped::run_goal_wrapped_turn`, or by
-/// `Engine::run_goal` on the raw arm) decides met/unmet after every round
-/// already. A wrapper plugin declaring `participation = "arbiter"` brings a
-/// SECOND hold loop — [`WrapperDispatch`]'s own `judge`/`again` — that wants
-/// to run *inside* one judged round, holding that one round open for up to
-/// `1 + DEFAULT_HOST_MAX_HOLDS` billed worker turns before
-/// `run_goal_wrapped_turn` ever sees the round back
-/// (`DispatchReport::rounds != 1`) — and only then discards the whole run,
-/// after every one of those turns was already paid for. Two round-holders
-/// judging the same round is exactly the doubled-supervisor shape the
-/// wrapper design forbids: an arbiter-grade plugin's designed home is
-/// `stella run --pipeline <variant>`, where `WrapperDispatch`'s hold loop is
-/// the ONLY thing that owns rounds (see `agent/goal/goal_wrapped.rs`'s
-/// module doc, and `plugins/stella-goal/README.md`, for why that plugin runs
-/// there and not here). So this refuses before the provider is ever built —
-/// the same pre-flight rung [`reject_verification_flags_without_pipeline`]
-/// uses — before any paid model call,
-/// every time, though not before config load and catalog bootstrap.
-///
-/// Steering and observer wrappers are unaffected and keep running per round
-/// on `stella goal` exactly as before: neither grade can reach `again`'s
-/// `Continuation::Again` arm (only [`stella_plugin::Participation::Arbiter`]
-/// can, `crates/stella-runtime/src/wrapper/verdict.rs`'s `again`), so their
-/// `WrapperDispatch::run` call always returns after exactly one internal
-/// turn and the goal loop's own round math is untouched.
-pub(crate) fn reject_arbiter_wrapper_on_goal(resolved: &ResolvedWrapper) -> Result<(), String> {
-    // Any member being arbiter-grade is enough: a composition holds at most
-    // one arbiter (`super::compose` refuses two), and one is what brings the
-    // second hold loop this door cannot have.
-    let Some(arbiter) = resolved.manifests().find(|manifest| {
-        manifest.loop_grant.participation == stella_plugin::Participation::Arbiter
-    }) else {
-        return Ok(());
-    };
-    Err(format!(
-        "--pipeline {variant} (\"{name}\") is arbiter-grade and cannot run on `stella goal` \
-         (#3832): the goal loop is this door's own completion arbiter — Engine::assess decides \
-         met/unmet after every round already — and a wrapper that holds rounds open runs its \
-         own hold loop via WrapperDispatch, which would judge the same round twice. Run it at \
-         its designed home instead: `stella run --pipeline {variant}`. Steering and observer \
-         wrappers are unaffected and still run per round on `stella goal`.",
-        variant = resolved.variant(),
-        name = arbiter.name,
-    ))
-}
-
 /// Refuse a pipeline-only verification flag against a [`PipelineChoice`] that
 /// cannot honor it (#3696).
 ///
@@ -439,11 +390,11 @@ pub(crate) struct BoundWrapper {
 }
 
 impl BoundWrapper {
-    /// The variant id this wrapper runs under.
+    /// The `--pipeline` id this wrapper runs under.
     ///
-    /// Owned rather than borrowed since #3801: a composition's id is its
-    /// members' ids joined, which is assembled on demand rather than stored.
-    pub(crate) fn variant(&self) -> String {
+    /// Owned rather than borrowed since `#3801`: a composition's id is its
+    /// members' ids joined, assembled on demand rather than stored.
+    pub(crate) fn wrapper_id(&self) -> String {
         self.dispatch.variant()
     }
 
@@ -461,6 +412,31 @@ impl BoundWrapper {
         if let Some(allowance) = allowance {
             self.dispatch = self.dispatch.with_context_allowance(allowance);
         }
+        self
+    }
+
+    /// Fund `rounds` rounds of this wrapper's hold loop, whatever the manifest
+    /// asked for and whatever the host default is.
+    ///
+    /// The door answering, never the manifest. A plugin that could raise its
+    /// own ceiling by declaring a bigger number would be setting the user's
+    /// budget for them, which is why [`DEFAULT_HOST_MAX_HOLDS`] clamps the ask
+    /// and `warn_narrowed_ceilings` announces the narrowing rather than
+    /// widening it (`#3841`). What a door may do is fund the rounds its own
+    /// verb promises: `stella goal` runs up to
+    /// `stella_core::GoalConfig::default().max_rounds`, and funding fewer
+    /// would make its move onto this socket a loss its user can see
+    /// (`#3911`).
+    ///
+    /// `rounds` is rounds, not holds — the first one is the turn itself, so a
+    /// door funding N rounds funds `N - 1` holds. Saying it in rounds is what
+    /// lets the goal door pass the number its own default names without
+    /// restating the arithmetic at the call site.
+    #[must_use]
+    pub(crate) fn funding_rounds(mut self, rounds: u32) -> Self {
+        self.dispatch = self
+            .dispatch
+            .with_host_max_holds(rounds.saturating_sub(1).max(DEFAULT_HOST_MAX_HOLDS));
         self
     }
 
@@ -516,34 +492,6 @@ impl BoundWrapper {
         );
         &self.gates[0]
     }
-
-    /// Print what one round's dispatch concluded, exactly as [`run_wrapped`]
-    /// does for `stella run`'s one-shot report.
-    ///
-    /// A method rather than exposing `gate` — the field [`report_to`] reads
-    /// alongside `report` — because the gate outlives any single round and a
-    /// caller driving several rounds through this same [`BoundWrapper`] (the
-    /// goal loop) must never hold a second reference to it that could drift
-    /// from what [`Self::child_spends`] already reports honestly.
-    ///
-    /// `scope` is the lane these lines belong to, `None` on a door where there
-    /// is only one — see [`report_to`].
-    pub(crate) fn report(
-        &self,
-        scope: Option<&str>,
-        format: OutputFormat,
-        report: &DispatchReport,
-    ) {
-        report_to(
-            scope,
-            format,
-            report,
-            &self.gates,
-            &self.child_spends(),
-            &self.fanout_spends(),
-            &self.test_runs(),
-        );
-    }
 }
 
 /// An installed wrapper plugin, found and start-able, before this host has
@@ -584,16 +532,24 @@ impl std::fmt::Debug for ResolvedWrapper {
 
 impl ResolvedWrapper {
     /// The manifests a human consented to at install, in selection order.
+    ///
+    /// `#[cfg(test)]` since `#3911` deleted the one shipped reader, the
+    /// arbiter-grade refusal `stella goal` applied before binding. The
+    /// tests still read it to assert what a selection resolved to, and
+    /// `#[cfg(test)]` is what says so; an `#[allow(dead_code)]` would assert
+    /// the lint is wrong about a shipped item, and it is not (AGENTS.md
+    /// § "Code style").
+    #[cfg(test)]
     pub(crate) fn manifests(&self) -> impl Iterator<Item = &stella_plugin::PluginManifest> {
         self.members.iter().map(|member| &member.manifest)
     }
 
     /// The `--pipeline` value that resolved this wrapper — the same string
-    /// [`resolve`] was called with, kept for callers (like
-    /// [`reject_arbiter_wrapper_on_goal`]) that need to name it in a refusal
-    /// without re-deriving it from the manifest's own `[wrapper] id`, which
-    /// need not match what the user typed under every alias scheme #3512
-    /// leaves room for.
+    /// [`resolve`] was called with, kept because it need not match the
+    /// manifest's own `[wrapper] id` under every alias scheme #3512 leaves
+    /// room for. `#[cfg(test)]` for [`Self::manifests`]' reason: every shipped
+    /// caller names the variant off the [`BoundWrapper`] instead.
+    #[cfg(test)]
     pub(crate) fn variant(&self) -> &str {
         &self.variant
     }
@@ -1008,8 +964,17 @@ pub(crate) struct RawTurnDriver<'a> {
     pub(crate) prompt: &'a str,
     /// This session's presence id.
     pub(crate) session: &'a str,
-    /// The variant id recorded on every execution row this driver opens.
-    pub(crate) variant: &'a str,
+    /// Which door drove this run, recorded on every execution row this driver
+    /// opens — `"run"` for the one-shot, `"goal"` for `stella goal`.
+    ///
+    /// A field rather than a constant because two doors share this driver
+    /// now (#3911): `stella goal` binds a wrapper and hands it the turn
+    /// exactly as `stella run --pipeline <variant>` does, and a goal run whose
+    /// rows all said `run` would be unfindable in the store under the verb the
+    /// user typed.
+    pub(crate) door: &'a str,
+    /// The `--pipeline` id recorded on every execution row this driver opens.
+    pub(crate) wrapper_id: &'a str,
     /// This turn's opening recall: the `ContextRecall` event, spent on the
     /// first round only — recall runs once per session, and re-emitting it on
     /// a held-open round would claim a retrieval that never happened — and the
@@ -1027,9 +992,11 @@ pub(crate) struct RawTurnDriver<'a> {
     ///
     /// A field rather than something this driver derives, because a driver
     /// cannot invent the seam: it belongs to whichever surface has a human
-    /// behind it. `crate::agent::goal::run_raw_one_shot` supplies
-    /// [`TurnControls::none`] — that path is headless, publishes no pause gate
-    /// and installs no steering tap, so there is nothing there to honour. A
+    /// behind it. The two headless doors — `crate::agent::goal::run_raw_one_shot`
+    /// and `crate::agent::goal::run_goal_cmd` — each open a
+    /// `crate::whistle::SessionWhistle` and pass its controls, so `stella
+    /// whistle` steers a wrapped run over that session's own socket (#4769); a
+    /// whistle only ever steers, so neither publishes a pause gate. A
     /// controlled surface driving a wrapped turn (the deck, #3554) supplies its
     /// own, exactly as `command_deck::lead_control::turn_controls` already does
     /// for the turns it drives directly.
@@ -1084,8 +1051,12 @@ impl TurnDriver for RawTurnDriver<'_> {
         let facts = crate::turn_facts::TurnFacts::new();
         // One ledger per round, for `facts`' reason: friction is a fact about
         // *this* turn, and a fold shared across rounds would report the first
-        // round's retries as the third's (#3552, #3976).
-        let mut friction = crate::memory::TurnFriction::default();
+        // round's retries as the third's (#3552, #3976). Numbered from what
+        // this driver has already pushed, because reflection renders several
+        // ledgers side by side and an unlabelled one reads as "this turn"
+        // three times over (`#3962`).
+        let mut friction =
+            crate::memory::TurnFriction::default().in_round(self.friction.len().saturating_add(1));
         let outcome = crate::agent::run_turn(
             self.provider,
             self.base_tools,
@@ -1098,8 +1069,8 @@ impl TurnDriver for RawTurnDriver<'_> {
             self.cfg,
             self.format,
             self.store,
-            TurnDoor::new("run")
-                .wrapped_by(self.variant)
+            TurnDoor::new(self.door)
+                .wrapped_by(self.wrapper_id)
                 .reporting_to(facts.clone())
                 // Each round replaces the last, so what survives the dispatch
                 // is the final round's row — the round the verdict is about.
@@ -1222,7 +1193,7 @@ pub(crate) async fn run_wrapped(
         format,
         driver.prompt,
         driver.session,
-        driver.variant,
+        driver.wrapper_id,
     );
     let report = {
         // The decorator re-publishes the stream after every round, because a

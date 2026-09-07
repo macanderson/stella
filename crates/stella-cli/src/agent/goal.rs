@@ -1,16 +1,16 @@
 //! Goal-driven turns: judged rounds until a verifier confirms the goal is met.
 //!
-//! `run_goal_cmd` drives the raw `Engine::run_goal` step-loop (the default
-//! since #3381) or an installed wrapper plugin per round (`--pipeline
-//! <variant>`, [`goal_wrapped`], #3695 goal half) — the staged pipeline
-//! (`--pipeline classic`) is gone (#3865). The goal verifier is
-//! independent of the worker model and answers "does the whole effort meet
-//! the goal?" — distinct from a wrapper plugin's own oracle — and stays the
-//! same `Engine::assess` primitive on both arms.
+//! [`run_goal_cmd`] binds an installed wrapper plugin and hands it the turn
+//! (#3911, slice 7 of `doc:roleless-core`). The rounds, the verifier call and
+//! the verdict all belong to that plugin and to the host's own `judge`/`again`
+//! — this door resolves, funds and reports. The built-in loop it replaces
+//! (`Engine::run_goal` against `Engine::assess`) was the last stage core
+//! performed and the last multi-model path it shipped.
+//!
+//! [`run_raw_one_shot`] lives here beside it because the two doors are the
+//! same shape now: one prompt, one wrapper socket, one report.
 
 use super::*;
-
-mod goal_wrapped;
 
 #[cfg(test)]
 mod tests;
@@ -338,7 +338,7 @@ pub(crate) async fn run_raw_one_shot(
         (Some(bound), Some(candidate)) => {
             // Bound once: a composition's variant id is assembled on demand
             // (#3801), so the driver borrows this rather than a temporary.
-            let variant = bound.variant();
+            let wrapper_id = bound.wrapper_id();
             crate::wrapper_plugin::run_wrapped(
                 bound,
                 prompt,
@@ -362,7 +362,8 @@ pub(crate) async fn run_raw_one_shot(
                     store: &store,
                     prompt,
                     session: presence.id(),
-                    variant: variant.as_str(),
+                    door: "run",
+                    wrapper_id: wrapper_id.as_str(),
                     recall,
                     memory: memory.as_mut(),
                     watch: &candidate.watch,
@@ -491,146 +492,190 @@ pub(crate) async fn run_raw_one_shot(
     outcome
 }
 
-/// Run a one-shot goal loop (non-interactive): work in judged rounds until
-/// a verifier model assesses the goal as met (`stella goal "…"`, and `stella
-/// monitor` composed on top of it). The verifier is routed by a
-/// cross-family strategy, not a `Role`: when a second provider family is
-/// configured (BYOK), `run_goal_turn` builds a `Router` and resolves a
-/// provider in a DIFFERENT family than the worker for bias-resistant
-/// assessment (`Router::resolve_cross_family`); with a single family it
-/// stays the worker provider, identical to before. The worker turns get the
-/// full tool stack (built-ins + MCP + custom), same as `run_one_shot`.
+/// The wrapper plugin `stella goal` binds when the caller names none.
 ///
-/// `pipeline` selects the driver for each working round (#3381). It has two
-/// arms, both live: `--pipeline classic` is refused at
-/// [`crate::wrapper_plugin::PipelineChoice::resolve`] — the built-in staged
-/// pipeline is gone (#3865) and the variant that named it with it (#3867), so
-/// this door has no third case to handle. `Raw` — the default since #3381, with or
-/// without `--no-pipeline` — falls back to the raw `Engine::run_goal`
-/// step-loop; `Plugin(variant)` dispatches each round's worker turn through
-/// the named installed wrapper ([`goal_wrapped::run_goal_wrapped_turn`],
-/// #3695 goal half) while the goal verifier stays exactly what `Raw` uses —
-/// **provided the named wrapper is not arbiter-grade**: this door's own
-/// pre-flight rung refuses `participation = "arbiter"` before the provider
-/// is ever built (`wrapper_plugin::reject_arbiter_wrapper_on_goal`, #3832),
-/// because the goal loop is already this door's completion arbiter and a
-/// second one held open inside a judged round is the doubled-supervisor
-/// shape the wrapper design forbids; an arbiter-grade wrapper's designed
-/// home is `stella run --pipeline <variant>` instead. Steering and observer
-/// wrappers reach `Plugin(variant)` unaffected. `stella fleet` drives a named
-/// plugin per worker attempt now, on its own driver
-/// (`crate::fleet_cmd::wrapped`, #3695 fleet half) — and deliberately
-/// without this door's arbiter refusal, because a fleet attempt has no
-/// completion arbiter of its own for a hold loop to double.
+/// The verb keeps its meaning — work in judged rounds until an independent
+/// verifier assesses the goal as met — and stops carrying its own loop to mean
+/// it (#3911, `doc:roleless-core` §6). The rounds are held open by an installed
+/// arbiter-grade plugin's `again`, decided by the host's `judge` against that
+/// plugin's declared `[requirements]`/`[oracle]`, and assessed by the verifier
+/// turn its `after_turn` spends. `plugins/stella-goal` is the reference
+/// implementation and declares this id.
+pub(crate) const DEFAULT_GOAL_WRAPPER: &str = "goal-v1";
+
+/// How many judged rounds `stella goal` funds.
+///
+/// Read off `stella_core::GoalConfig`, which is the number the verb's own
+/// built-in loop ran before it moved onto the wrapper socket (#3911) and the
+/// number `stella-serve`'s goal route still runs — so the two surfaces cannot
+/// disagree about what the word "goal" buys. Read rather than restated,
+/// because a second copy of a default is how the first one drifts.
+fn goal_rounds() -> u32 {
+    u32::try_from(stella_core::GoalConfig::default().max_rounds).unwrap_or(u32::MAX)
+}
+
+/// The refusal `stella goal` owes when no wrapper plugin supplies the verb.
+///
+/// The shape [`crate::wrapper_plugin::classic_removed_message`] uses for the
+/// removed staged pipeline, and for the same reason: a verb whose built-in
+/// implementation is gone must name the install that restores it rather than
+/// fail as though the user mistyped something. `reason` is the resolver's own
+/// account — which variants *are* installed, or why the named one cannot run —
+/// so a typo and an empty roster stay distinguishable.
+pub(crate) fn goal_plugin_missing_message(variant: &str, reason: &str) -> String {
+    format!(
+        "`stella goal` runs an installed wrapper plugin: {reason}\nInstall the reference \
+         goal-supervision plugin and try again:\n    stella plugin install \
+         ./plugins/stella-goal\nOr pass `--pipeline <variant>` naming another installed \
+         arbiter-grade wrapper. This run asked for `{variant}`."
+    )
+}
+
+/// Resolve the wrapper plugin that supplies the goal verb, and pin the
+/// candidate grant its `[oracle]` observes.
+///
+/// Both happen before the provider is built and before a single paid call — a
+/// `--pipeline` naming nothing installed must fail as a typo, a workspace with
+/// nothing installed must fail as an install, and a `--test-command` the
+/// host's parser refuses must stop the run here rather than after it is paid
+/// for.
+///
+/// The grant is minted once for the arc, never per round. What the watch
+/// covers is the artifacts the test command names — the witness the flip is
+/// judged against — and those do not legitimately change while the loop runs.
+/// A baseline retaken at the top of round 3 would vouch for a witness the
+/// worker rewrote in round 2, which is the laundering the watch exists to
+/// refuse. So the finding is sticky: once a witness has moved under the run,
+/// no later round earns a `Clean` (#3835).
+pub(crate) fn resolve_goal_wrapper(
+    cfg: &Config,
+    variant: &str,
+    test_command: Option<&str>,
+) -> Result<
+    (
+        crate::wrapper_plugin::ResolvedWrapper,
+        crate::wrapper_candidate::GrantedCandidate,
+    ),
+    crate::failure::CliFailure,
+> {
+    let resolved = crate::wrapper_plugin::resolve(&cfg.workspace_root, variant, &mut |line| {
+        eprintln!("  ! {line}");
+    })
+    .map_err(|reason| {
+        crate::failure::CliFailure::error(goal_plugin_missing_message(variant, &reason))
+    })?;
+    let candidate = crate::wrapper_candidate::grant_shared_tree(&cfg.workspace_root, test_command)
+        .map_err(crate::failure::CliFailure::from)?;
+    Ok((resolved, candidate))
+}
+
+/// Bind a resolved goal wrapper to what this host will do for it: `recall`,
+/// `child_turn` and `run_test` (#3833, #4536).
+///
+/// Separate from [`resolve_goal_wrapper`] because a child-turn plane needs
+/// this session's dispatcher, which needs a provider — and the resolve above
+/// must happen before that provider exists. One host per member of the
+/// selection, built from that member's own manifest: the plane reads
+/// `[roles]` and `[loop] max_calls`, so a shared one would let a second plugin
+/// name the first's role intents (`ResolvedWrapper::serving`, #4094).
+///
+/// # What this door funds
+///
+/// [`goal_rounds`] rounds, on both ceilings that bound them: the hold loop's
+/// and the child-turn plane's. The host's defaults are lower, so a goal run
+/// bound to them would stop after three rounds where the built-in loop ran
+/// eight — a loss the user can see, in the one change that was supposed to
+/// leave the verb's meaning alone.
+pub(crate) fn bind_goal_wrapper(
+    cfg: &Config,
+    resolved: crate::wrapper_plugin::ResolvedWrapper,
+    sub_agents: &std::sync::Arc<crate::subagent::SessionSubAgents>,
+    candidate: &crate::wrapper_candidate::GrantedCandidate,
+) -> Result<crate::wrapper_plugin::BoundWrapper, crate::failure::CliFailure> {
+    Ok(resolved
+        .serving(|manifest| {
+            crate::wrapper_plugin::round_driver_host(
+                &cfg.workspace_root,
+                manifest,
+                std::sync::Arc::clone(sub_agents)
+                    as std::sync::Arc<dyn stella_core::subagent::SubAgentDispatcher>,
+                // The grant minted above, so a plugin's `run_test` re-runs the
+                // invocation this arc is judged against rather than being told
+                // the capability has nothing behind it (#4536).
+                Some(&candidate.grant),
+                // One verifier turn per round this door funds. A plugin
+                // holding N rounds open asks once in each, so a lower ceiling
+                // ends the arc `Undecided { MeasurementMissing }` rather than
+                // on a verdict.
+                Some(goal_rounds()),
+            )
+        })
+        .map_err(crate::failure::CliFailure::from)?
+        .funding_rounds(goal_rounds())
+        // The same allowance every other steering source spends.
+        .with_context_allowance(crate::plugin_steering::allowance(cfg)))
+}
+
+/// Run a goal to its verdict (non-interactive): `stella goal "…"`, and `stella
+/// monitor` composed on top of it.
+///
+/// # One loop, one arbiter
+///
+/// This door is a **resolver** (`#3911`, slice 7 of `doc:roleless-core`): it
+/// binds an installed wrapper plugin and hands it the turn, exactly as
+/// `stella run --pipeline <id>` does. The plugin's `again` decides whether a
+/// round holds open, its `after_turn` spends the verifier call, and the
+/// host's `judge` maps that evidence to a verdict against the plugin's own
+/// declared rule. What it replaces is a loop of its own —
+/// `stella_core::Engine::run_goal` driving working turns against
+/// `Engine::assess`, the last stage core performed on this door and the last
+/// multi-model path it reached.
+///
+/// `reject_arbiter_wrapper_on_goal` is gone with the loop it protected. That
+/// rung refused every arbiter-grade plugin here, because a wrapper's own
+/// hold loop would have judged a round the built-in arbiter was already
+/// judging. There is no first arbiter to collide with, so arbiter grade is
+/// what this door *wants* — the only grade that may hold a completion open
+/// past its first turn (`stella_runtime::wrapper::verdict`'s `again`, rule
+/// 1). A steering or observer wrapper still binds and still runs; it cannot
+/// ask for a second round, so the goal is judged once.
+///
+/// # What the caller's flags mean here
+///
+/// `pipeline` names the wrapper to bind. With none named it is
+/// [`DEFAULT_GOAL_WRAPPER`], so `stella goal "…"` stays a verb rather than
+/// becoming a flag exercise. `test_command` and `require_verdict` are always
+/// honoured now instead of being refused for want of a wrapper: every goal run
+/// has one.
+///
+/// The bind happens before the provider is built and before a single paid
+/// call — the ordering [`run_raw_one_shot`] documents, for the same reason. A
+/// `--pipeline` naming nothing installed must fail as a typo, and a goal run
+/// with nothing installed at all must fail as an install, not after the money
+/// is spent.
 pub async fn run_goal_cmd(
     cfg: &Config,
     goal: &str,
     budget_limit: Option<f64>,
     pipeline: crate::wrapper_plugin::PipelineChoice<'_>,
     // `--test-command`: the oracle a bound wrapper's `[oracle]` observes its
-    // flip with (#3835). Refused before this function on the raw arm, where
-    // there is no oracle to arm.
+    // flip with (#3835).
     test_command: Option<&str>,
-    // `--require-verdict` (#3554, this door #4543): the last round's wrapper
-    // verdict gates the exit status. Refused before this function on the raw
-    // arm, where nothing declares a verdict.
+    // `--require-verdict` (#3554, this door #4543): the wrapper's own
+    // conclusion gates the exit status.
     require_verdict: bool,
 ) -> Result<(), crate::failure::CliFailure> {
-    // `Plugin` reads as `Raw` for every branch below except the final
-    // dispatch: the wrapped arm builds the same system prompt, the same
-    // recall block and the same tool stack `Raw` does, and differs only in
-    // which function drives the round loop. The staged pipeline itself is
-    // gone (#3865) and so is the variant that named it (#3867), so `Raw` and
-    // `Plugin` are the whole space and this door runs those two arms
-    // unconditionally now.
     crate::enterprise_telemetry::authorize_execution_surface(
         crate::enterprise_telemetry::ExecutionSurface::Goal,
     )?;
-    // Resolved before the provider is built and before a single paid call —
-    // exactly the ordering `run_raw_one_shot` uses, and for the same reason:
-    // a `--pipeline` naming nothing installed must fail as a typo, not after
-    // the run it was meant to shape.
-    let resolved = match pipeline.plugin() {
-        Some(variant) => Some(
-            crate::wrapper_plugin::resolve(&cfg.workspace_root, variant, &mut |line| {
-                eprintln!("  ! {line}");
-            })
-            .map_err(crate::failure::CliFailure::from)?,
-        ),
-        None => None,
-    };
-    // Arbiter-grade wrappers are refused here, before binding and before any
-    // paid call — the goal loop is this door's own completion arbiter, and a
-    // wrapper that holds rounds open would run a second hold loop inside one
-    // judged round (#3832). See
-    // `crate::wrapper_plugin::reject_arbiter_wrapper_on_goal`'s doc comment.
-    if let Some(resolved) = &resolved {
-        crate::wrapper_plugin::reject_arbiter_wrapper_on_goal(resolved)
-            .map_err(crate::failure::CliFailure::from)?;
-    }
-    // Pinned *before* the first round, which is the whole content of the
-    // tamper claim, and pinned exactly once for the run rather than refreshed
-    // per round (#3835).
-    //
-    // Re-pinning would read as the more careful choice and is the unsafe one.
-    // What the watch covers is the artifacts the test command names — the
-    // witness the flip is observed against, not whatever files a round
-    // happened to touch — and those do not legitimately change while the loop
-    // runs. A baseline taken at the top of round 3 would vouch for a witness
-    // the worker rewrote in round 2, which is precisely the laundering the
-    // watch exists to refuse. So the finding is sticky by design: once a
-    // witness has moved under the run, no later round earns a `Clean`.
-    //
-    // The same breath as the resolve above, and for the same reason: a
-    // `--test-command` the host's parser refuses must stop the run here, not
-    // after it is paid for.
-    let candidate = match &resolved {
-        Some(_) => Some(
-            crate::wrapper_candidate::grant_shared_tree(&cfg.workspace_root, test_command)
-                .map_err(crate::failure::CliFailure::from)?,
-        ),
-        None => None,
-    };
+    let variant = pipeline.plugin().unwrap_or(DEFAULT_GOAL_WRAPPER);
+    let (resolved, candidate) = resolve_goal_wrapper(cfg, variant, test_command)?;
     let provider = build_provider(cfg)?;
     let registry: std::sync::Arc<ToolRegistry> =
         std::sync::Arc::new(crate::write_dirs::registry_for(cfg));
 
     let sub_agents = crate::subagent::install_for_session(cfg, &registry)?;
-    // The goal door serves `recall` and `child_turn` (#3833). The plane is
-    // built here rather than beside `resolve` above for the ordering
-    // `run_raw_one_shot` documents: a `--pipeline` naming nothing installed
-    // must fail as a typo before a paid call, while a child-turn plane needs
-    // this session's dispatcher, which needs the provider built above. It
-    // allocates its receipt slots through `stella_protocol::turn_slots`, whose
-    // lanes are what let a plane counting its own calls run beside a goal
-    // round's own worker/verifier pair without overwriting either.
-    let bound = match resolved {
-        Some(resolved) => Some(
-            resolved
-                // One host per member of the selection, built from that
-                // member's own manifest: `round_driver_host`'s child-turn
-                // plane reads the manifest's `[roles]` and `[loop] max_calls`,
-                // so a shared one would let a second plugin name the first's
-                // role intents (`ResolvedWrapper::serving`, #4094).
-                .serving(|manifest| {
-                    crate::wrapper_plugin::round_driver_host(
-                        &cfg.workspace_root,
-                        manifest,
-                        std::sync::Arc::clone(&sub_agents)
-                            as std::sync::Arc<dyn stella_core::subagent::SubAgentDispatcher>,
-                        // The grant minted above, so a plugin's `run_test`
-                        // re-runs the invocation this loop is judged against
-                        // rather than being told the capability has nothing
-                        // behind it (#4536).
-                        candidate.as_ref().map(|granted| &granted.grant),
-                    )
-                })
-                .map_err(crate::failure::CliFailure::from)?
-                // The same allowance every other steering source spends.
-                .with_context_allowance(crate::plugin_steering::allowance(cfg)),
-        ),
-        None => None,
-    };
+    let bound = bind_goal_wrapper(cfg, resolved, &sub_agents, &candidate)?;
     // Goal mode always renders human-readable output, so its half of the
     // fact is fixed at `true`; the stdio handles settle the rest.
     let ask = human_is_present(true);
@@ -665,27 +710,33 @@ pub async fn run_goal_cmd(
     let mut budget = build_budget_guard(budget_limit);
     let store = open_store(&cfg.workspace_root);
     let calibration = seed_calibration(&store, cfg);
+    // Breaker feedback for this arc's turns, shared by every round the
+    // wrapper holds open.
+    let router = session_router(cfg, &ModelRef::new(cfg.provider.id, cfg.model_id.clone()));
 
     plain::section_header("Stella — goal mode");
     println!("  {}\n", goal.dimmed());
 
-    let mut messages = vec![CompletionMessage::system(
-        with_session_hook_context(
-            build_system_prompt(cfg, &cfg.workspace_root, &active_rules),
-            cfg,
-        )
-        .await,
-    )];
+    let mut messages = vec![
+        CompletionMessage::system(
+            with_session_hook_context(
+                build_system_prompt(cfg, &cfg.workspace_root, &active_rules),
+                cfg,
+            )
+            .await,
+        ),
+        crate::attachments::user_message_in(goal, &cfg.workspace_root),
+    ];
     let mut memory =
         SessionMemory::open_for_session(&cfg.workspace_root, true, &cfg.authority, &active_rules);
     // Phase 2 (#713): carried to the turn runner, which owns the event channel
     // the events ride and assembles the tool stack the scopes narrow.
     let mut recall = crate::memory::OpeningRecall::default();
     if let Some(m) = &mut memory {
-        // One arm for the whole goal run (#1221): the judged rounds below are
-        // stages of one turn — they share this run's episode, so they must
-        // share its arm, and re-arming per round would count one prompt as N
-        // turns of the schedule.
+        // One arm for the whole goal run (#1221): the rounds a wrapper holds
+        // open are stages of one turn — they share this run's episode, so they
+        // must share its arm, and re-arming per round would count one prompt
+        // as N turns of the schedule.
         m.arm_recall_control();
         let touched = stella_core::driver::loop_evidence::turn_evidence(&messages).touched_paths;
         let recalled = m.recall_block_reported(goal, &touched).await;
@@ -697,55 +748,49 @@ pub async fn run_goal_cmd(
     // Machine-wide presence: a goal run is exactly the long-lived headless
     // session the SESSIONS overlay + replay exist for.
     let mut presence = SessionPresence::announce(cfg, goal);
-    // This arc's friction, one ledger per round, filled by whichever arm runs
-    // below and read by the reflection further down (#3962, #3976). Both arms
-    // fold it, from the same journal, at the same point: what differs is only
-    // who drove each round's working turn.
-    let mut rounds: Vec<TurnFriction> = Vec::new();
-    // Both are set together above, so the mismatched pairs are unreachable;
-    // matching the tuple keeps that visible rather than unwrapping a grant on
-    // the strength of having checked the wrapper — `run_raw_one_shot`'s shape.
-    let outcome = if let (Some(bound), Some(candidate)) = (&bound, &candidate) {
-        goal_wrapped::run_goal_wrapped_turn(
-            &*provider,
+    // Agent whistle (#4769): one listener for the whole arc rather than one
+    // per round. Held for the arc's duration; its `Drop` unbinds and removes
+    // the socket.
+    let whistle = crate::whistle::SessionWhistle::open(Some(presence.id()));
+    let controls = whistle.controls();
+    // This arc's friction, one ledger per round the wrapper held open (#3962,
+    // #3976), read by the reflection further down.
+    let mut friction: Vec<TurnFriction> = Vec::new();
+    // Bound once: a composition's variant id is assembled on demand (#3801),
+    // so the driver borrows this rather than a temporary.
+    let wrapper_id = bound.wrapper_id();
+    let outcome = crate::wrapper_plugin::run_wrapped(
+        &bound,
+        goal,
+        crate::wrapper_plugin::pre_turn_signals(test_command.is_some(), budget_limit.is_some()),
+        Some(candidate.grant.clone()),
+        require_verdict,
+        crate::wrapper_plugin::RawTurnDriver {
+            provider: &*provider,
             base_tools,
-            &custom_tools,
-            &registry,
-            &mut messages,
-            &mut budget,
-            &calibration,
+            custom_tools: &custom_tools,
+            registry: &registry,
+            messages: &mut messages,
+            budget: &mut budget,
+            calibration: &calibration,
+            router: &router,
             cfg,
-            &store,
-            goal,
-            Some(presence.id()),
-            budget_limit,
+            format: OutputFormat::Text,
+            store: &store,
+            prompt: goal,
+            session: presence.id(),
+            door: "goal",
+            wrapper_id: wrapper_id.as_str(),
             recall,
-            memory.as_mut(),
-            bound,
-            candidate,
-            require_verdict,
-            Some(&mut rounds),
-        )
-        .await
-    } else {
-        run_goal_turn(
-            &*provider,
-            base_tools,
-            &custom_tools,
-            &registry,
-            &mut messages,
-            &mut budget,
-            &calibration,
-            cfg,
-            &store,
-            goal,
-            Some(presence.id()),
-            recall,
-            memory.as_mut(),
-            Some(&mut rounds),
-        )
-        .await
-    };
+            memory: memory.as_mut(),
+            watch: &candidate.watch,
+            controls: controls.clone(),
+            results: Vec::new(),
+            friction: &mut friction,
+            rounds: crate::turn_row::TurnRow::new(),
+        },
+    )
+    .await;
     if let Some(m) = &memory
         && turn_warrants_reflection(&messages)
     {
@@ -776,7 +821,7 @@ pub async fn run_goal_cmd(
             m,
             cfg,
             &*provider,
-            crate::memory::TurnEvidence::with_rounds(&messages, &rounds, outcome.is_ok()),
+            crate::memory::TurnEvidence::with_rounds(&messages, &friction, outcome.is_ok()),
             false,
             crate::agent::remaining_budget(&budget),
         )
@@ -806,297 +851,4 @@ pub async fn run_goal_cmd(
         Some((notify, crate::command_deck::prompt_line(goal, 160))),
     );
     outcome
-}
-
-/// Put this session's withheld-steering notice on a goal run's stream, if
-/// there is one and no other door has already spent it (#4500).
-///
-/// `stella goal` reaches neither of the two openers that carry this —
-/// `agent::output::open_raw_turn` (the raw door) and
-/// `command_deck::steering::announce_withheld` (the deck's boot) — because it
-/// drives `Engine::run_goal` itself rather than `agent::run_turn`. So an
-/// untrusted checkout running `stella goal` had the refusal on stderr and on
-/// no event stream: nothing in the journal, nothing in `stella export`,
-/// nothing a harness could read.
-///
-/// Both arms call it, so a goal run announces once whichever pipeline it took,
-/// and it is claimed through the session latch rather than a local flag: a
-/// goal run is one process today, but a latch that is the same latch cannot
-/// disagree with the other doors about whether the session has been told.
-pub(super) fn announce_withheld_steering(tx: &mpsc::UnboundedSender<AgentEvent>, cfg: &Config) {
-    let Some(withheld) = cfg.authority.withheld.as_ref() else {
-        return;
-    };
-    if !crate::agent::claim_withheld_announcement() {
-        return;
-    }
-    let _ = tx.send(withheld.event());
-}
-
-/// Run one goal loop through `stella_core::Engine::run_goal`: working turns
-/// interleaved with verifier assessments until the verifier passes it (or a
-/// backstop — rounds, budget, abort — ends it with a named reason). The
-/// worker gets the full tool stack (MCP + custom + interactive + skills) and
-/// the verifier a read-only view of that same stack.
-///
-/// The verifier is routed by role (`resolve_cross_family_verifier`): when a second
-/// provider family is configured and the `Router` selects it, the verifier runs
-/// on a DIFFERENT model family than the worker (bias-resistant assessment)
-/// and a one-line notice is printed. With a single
-/// configured family — or on any discovery/build failure — the verifier is the
-/// worker provider itself, identical to before: no second provider is built
-/// and no extra cost is incurred. Text-mode rendering only — goal and
-/// monitor never take `--output-format`.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one of the crate's four turn entry points, which share their first eight \
-              parameters; `messages` and `budget` are `&mut` borrows of separate caller locals \
-              held for the turn, so the bundle is a struct of disjoint mutable borrows and is \
-              worth doing across all four at once rather than here alone (#4916)"
-)]
-pub(crate) async fn run_goal_turn(
-    provider: &dyn Provider,
-    base_tools: &dyn ToolExecutor,
-    custom_tools: &[CustomTool],
-    registry: &ToolRegistry,
-    messages: &mut Vec<CompletionMessage>,
-    budget: &mut BudgetGuard,
-    calibration: &CalibrationMap,
-    cfg: &Config,
-    store: &Option<Arc<Store>>,
-    goal: &str,
-    session: Option<&str>,
-    // Phase 2 (#713): what this turn's opening block left behind — the events
-    // to announce (its `ContextRecall`, then a `SkillInjected` per skill it
-    // carried (#5031), already in send order) and the turn scopes its
-    // directive-carrying skills ask for. Carried from the caller because
-    // recall necessarily precedes both the channel the events ride and the
-    // tool stack the scopes narrow. The whole `OpeningRecall` rather than its
-    // events alone: a goal door that took only the events dropped the scopes,
-    // so an auto-selected skill's `allowed-tools` grant and `effort` reached
-    // the prompt and governed nothing.
-    recall: crate::memory::OpeningRecall,
-    // The caller's session memory, so the execution seam can stamp this
-    // round's execution id and record its skill-version usage before the turn
-    // runs — reflection stores the self-review 1:1 with an execution, and an
-    // unstamped round files an id-less row.
-    session_memory: Option<&mut crate::memory::SessionMemory>,
-    // Where this arc's friction ledgers land, ONE PER ROUND, for a caller that
-    // reflects afterwards (#3962). An out-parameter for the same reason
-    // `run_turn`'s single-ledger slot is one: this function's return type says
-    // whether the goal was met, and reflection's evidence is not that. `None`
-    // for a caller that does not reflect.
-    rounds: Option<&mut Vec<TurnFriction>>,
-) -> Result<(), crate::failure::CliFailure> {
-    let turn_start = Instant::now();
-    // This function is the RAW arm — `run_goal_cmd` calls it only for
-    // `PipelineChoice::Raw` — so `variant: None` is the honest answer every
-    // time, not a placeholder (#3381, #3388): nothing wrapped this round.
-    let execution = begin_execution(store, "goal", goal, cfg, session, None);
-    // No invocation to record: a goal run is given a task, not a `/slug`.
-    stamp_and_record_skill_usage(&execution, session_memory, goal, &cfg.workspace_root, &[]);
-
-    // Route the VERIFIER role. `Some` only when a distinct-family verifier was
-    // selected AND built; the boxed provider must outlive the `run_goal`
-    // call below, so it is bound here. `None` → the verifier is the worker
-    // provider (single-family/failure fallback — the v1 behavior).
-    let configured = crate::config::discover_configured_providers();
-    let routed_verifier =
-        resolve_cross_family_verifier(cfg.provider.id, &cfg.model_id, &configured);
-    if let Some((_, verifier_id)) = &routed_verifier {
-        println!(
-            "  {} cross-family verifier: {} worker · {} verifier — independent, bias-resistant \
-             assessment\n",
-            "◆".bright_cyan(),
-            cfg.provider.id.bright_magenta(),
-            verifier_id.bright_green(),
-        );
-    }
-    let verifier: &dyn Provider = match &routed_verifier {
-        Some((boxed, _)) => &**boxed,
-        None => provider,
-    };
-
-    // Agent whistle (#4769): ONE listener for the whole arc, not one per
-    // round. This function is called once by `run_goal_cmd`, and every round
-    // `Engine::run_goal` drives is a `with_turn_instance` clone of the engine
-    // built below — which carries `steering` forward — so a single tap
-    // attached here is drained at every round's first step boundary.
-    //
-    // Held for the arc's duration; its `Drop` unbinds and removes the socket.
-    let whistle = crate::whistle::SessionWhistle::open(session);
-    let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
-    let events = stella_core::EventSender::new(tx.clone());
-    // The registry's own streams and this turn's per-call work-tree
-    // measurement, through the one seam (#4507). This door opened its channel
-    // and attached NOTHING to it: `stella goal` rendered no task board, no
-    // sub-agent lifecycle, and no diff under any mutating call for the whole
-    // of a run — the #4175 silence, on the one door where the loop can run
-    // dozens of rounds before a human sees the result.
-    persistence::attach_run_streams(registry, cfg, &events, execution.as_ref());
-    let renderer = spawn_renderer(
-        rx,
-        OutputFormat::Text,
-        execution.clone(),
-        cfg.provider.id.to_string(),
-        false,
-        Some(goal.to_string()),
-    );
-    // What this workspace's trust gate withheld, then what recall put in
-    // front of the model — the ordering `output::open_raw_turn` argues for on
-    // the raw door, and the door parity #4500 asks for: `stella goal` reached
-    // neither opener, so an untrusted checkout's refusal was on stderr and on
-    // no event stream at all.
-    announce_withheld_steering(&tx, cfg);
-    // This arc's directive-carrying skills, whether a human typed `/slug` or
-    // recall selected them: each span is live for every round the loop drives
-    // — the whole arc is one turn, and the guards drop with this function, so
-    // the narrowing lifts structurally. With no scope the plane is inert and
-    // the scoped view below is a pure pass-through, so every goal run takes
-    // one path. Read off the recall before its events are handed on.
-    let skill_plane = stella_tools::skill_plane::SkillInvocationPlane::new();
-    let _skill_spans = recall.mount_skill_spans(&skill_plane);
-    let skill_effort = recall.skill_effort();
-    for event in recall.events {
-        let _ = tx.send(event);
-    }
-
-    let outcome = {
-        let tools = super::tool_stack::session_stack(
-            base_tools,
-            custom_tools.to_vec(),
-            cfg,
-            Principal::User,
-            registry.hook_bus(),
-        );
-        // Above the assembled session chain, the position `skill_grant`'s
-        // module docs specify: the grant narrows customs and MCP with
-        // everything else, and can never widen past the operator surface.
-        let tools = stella_tools::skill_plane::SkillScopedTools::new(&tools, skill_plane.clone());
-        let hook_runner = HostHookRunner;
-        let mut config = engine_config_for(cfg);
-        if let Some(effort) = skill_effort {
-            // The skill's `effort:` override, for this arc.
-            config.effort = Some(effort);
-        }
-        // Assembled rather than built up by optional builders: this arc is
-        // the `GoalArc` lane and says so, and every seam it leaves alone is a
-        // written `None` in `lane_capabilities::goal_arc`.
-        //
-        // Every round's worker turn drains the steering tap, and only those.
-        // The verifier runs as a sub-agent off `Engine::assess`, which sees a
-        // parent's steering through `stella_core::subagent::ChildSteering` —
-        // soft stop forwarded, `drain_steering` refused — so a whistle cannot
-        // be eaten by the judge, and the person who sent it does not have to
-        // know a judge exists.
-        let engine = Engine::assemble(
-            provider,
-            &tools,
-            config,
-            &TokioSleeper,
-            crate::lane_capabilities::goal_arc(
-                cfg.hooks.as_ref(),
-                &hook_runner,
-                calibration,
-                whistle.steering(),
-            ),
-        );
-        engine
-            .run_goal(
-                verifier,
-                goal,
-                messages,
-                budget,
-                &tx,
-                &GoalConfig::default(),
-            )
-            .await
-    };
-    // What this arc changed, measured before the stream closes (#4159).
-    //
-    // Once for the run rather than once per round, and that is a limit of
-    // where this arm's loop lives rather than a choice: `Engine::run_goal`
-    // drives every round inside `stella-core`, so there is no round boundary
-    // in this function to measure at. What that costs is the *ordering* of
-    // these events and nothing else — a goal run is one execution row and one
-    // stream, so `files_touched`, the counts, and
-    // `finalize_execution_reflection`'s `wrote_files` flag are the same
-    // whichever boundary the reading is taken at; only "which round wrote it"
-    // is unavailable, and this arm never had it. The wrapped arm drives its
-    // own rounds and does measure per round (`goal_wrapped`).
-    crate::turn_files::emit_shared_tree_changes_raw(cfg, &tx, execution.as_ref());
-    // This goal loop owns the stream, so it — not any single round — emits the
-    // run's one ending (#3398). A goal that ends unmet still *ended*: the
-    // rounds ran, the money was spent, and the outcome is carried by the
-    // execution record, not by withholding the terminator.
-    let (GoalOutcome::Met { cost_usd, .. } | GoalOutcome::Unmet { cost_usd, .. }) = &outcome;
-    persistence::emit_run_complete_on_raw(&tx, &cfg.model_id, *cost_usd);
-    // The canonical teardown (#960): the registry now holds sender clones of
-    // this channel, so it is detached before the renderer is awaited or the
-    // run hangs on a channel that never closes.
-    drop(tx);
-    let rendered = persistence::close_event_stream(registry, events, renderer).await;
-    let persistence_complete = rendered.persistence_complete;
-    // The arc's friction, folded from the journal the renderer just finished
-    // draining — split at each round's own `GoalVerdict` so no round is
-    // credited with another's tools (#3962). Folded here for the same reason
-    // `run_turn` folds here: this is the first point at which the whole stream
-    // is both complete and still owned.
-    if let Some(slot) = rounds {
-        *slot = TurnFriction::per_goal_round(&rendered.events);
-    }
-
-    let (outcome_label, cost) = match &outcome {
-        GoalOutcome::Met { cost_usd, .. } => ("goal_met", *cost_usd),
-        GoalOutcome::Unmet { cost_usd, .. } => ("goal_unmet", *cost_usd),
-    };
-    crate::agent::turn_close::close_turn(
-        cfg,
-        store,
-        &execution,
-        registry,
-        session,
-        crate::agent::turn_close::TurnOutcomeRecord {
-            label: outcome_label,
-            cost_usd: cost,
-            persistence_complete,
-        },
-    );
-
-    match outcome {
-        GoalOutcome::Met {
-            rounds,
-            verdict,
-            cost_usd,
-        } => {
-            println!(
-                "\n  {} goal met after {rounds} round{}: {}",
-                "✓".green().bold(),
-                if rounds == 1 { "" } else { "s" },
-                verdict
-            );
-            plain::cost_summary(
-                cost_usd,
-                &format!("{}/{}", cfg.provider.id, cfg.model_id),
-                turn_start.elapsed(),
-            );
-            println!();
-            Ok(())
-        }
-        GoalOutcome::Unmet {
-            rounds,
-            reason,
-            cost_usd,
-            kind,
-        } => {
-            plain::cost_summary(
-                cost_usd,
-                &format!("{}/{}", cfg.provider.id, cfg.model_id),
-                turn_start.elapsed(),
-            );
-            // The typed kind survives the loop (#1862): a working turn's
-            // deliberate stop exits `3` and records `Stopped`.
-            Err(outcome::goal_unmet_failure(rounds, &reason, kind))
-        }
-    }
 }

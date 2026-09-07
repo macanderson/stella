@@ -14,10 +14,11 @@
 //! write a key nothing read — and `/profile` was printing a per-role table for
 //! models that would never run.
 //!
-//! The independence *idea* is not gone: `stella goal`'s
-//! `resolve_cross_family_verifier` still groups by family at the point of use.
-//! What went is the attempt to pre-commit that choice in a settings file, for
-//! a role core no longer has. A profile does not tune a plugin's seat either.
+//! The independence *idea* is not gone: a goal-supervision plugin's verifier
+//! runs as a child turn at the seat its manifest declared, and a person may
+//! assign that seat a model of their own. What went is the attempt to
+//! pre-commit that choice in a settings file, for a role core no longer has.
+//! A profile does not tune a plugin's seat either.
 //! Nothing reads a profile-picked seat model today. So the key that carried
 //! the idea (`auto_mode`) is retired, not reused.
 //!
@@ -56,12 +57,12 @@
 //!
 //! # Effort is clamped to what the provider actually exposes
 //!
-//! The five-rung ladder is Stella's vocabulary, not every provider's: Gemini
-//! and Vertex expose only `low`/`high`, the OpenAI shapes stop at `high`, and
-//! Z.ai has no effort knob at all (its thinking switch is on/off). A profile
-//! that wrote `max` onto a Gemini pick would be recording a level the request
-//! can never express, so each pick is clamped down to the highest rung its own
-//! provider supports.
+//! The five-rung ladder is Stella's vocabulary, not every provider's. Gemini
+//! and Vertex expose `low` and `high`. The OpenAI shapes stop at `high`. Z.ai
+//! has no effort knob at all, only an on/off thinking switch. A profile that
+//! wrote `max` onto a Gemini pick would record a level the request can never
+//! express, so each pick is clamped to the highest rung its own provider
+//! supports.
 //!
 //! Clamping alone would flatten the ladder, though: on a two-rung provider
 //! `fast` and `balanced` both land on `low`, and two of the four profiles stop

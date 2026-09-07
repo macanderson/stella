@@ -31,9 +31,10 @@ enums is something the compiler checks. Totality over a string is something a
 reviewer has to promise.
 
 So a plugin doing goal mode's job had a slot for `met` and no slot for the two
-strings. `crates/stella-cli/src/agent/goal/goal_wrapped.rs` said so in its
-module doc. `doc:turn-loop-wrappers` §9.2 named the gap and left it open.
-Slice 7 of the roleless-core epic (`#3911`) waits on the answer.
+strings. The goal door's own wrapped arm said so in its module doc.
+`doc:turn-loop-wrappers` §9.2 named the gap and left it open. Slice 7 of the
+roleless-core epic (`#3911`) waited on the answer, and moved `stella goal` onto
+the wrapper socket once it had one.
 
 ## Decision
 

@@ -189,19 +189,21 @@ fn the_deprecation_notice_fires_only_when_no_pipeline_was_passed() {
     assert!(notice.contains("--pipeline"), "{notice}");
 }
 
-/// **Witness (#3832, finding 1).** An arbiter-grade wrapper used to reach
-/// `stella goal`'s round loop and only discover it could not be driven
-/// after `WrapperDispatch::run` had already billed
-/// `1 + DEFAULT_HOST_MAX_HOLDS` worker turns inside one judged round
-/// (`report.rounds != 1`, `goal_wrapped::run_goal_wrapped_turn`) — every one
-/// of those turns paid for before the whole run was discarded. Without the
-/// fix, no such check exists: `reject_arbiter_wrapper_on_goal` is not even a
-/// name in scope, or it always returns `Ok`. With the fix, the arbiter grade
-/// is refused at resolve/bind time — before any provider is built and
-/// before a single paid call. `crates/stella-cli/tests/goal_arbiter_wrapper_refusal_cli.rs`
-/// mirrors it end to end: no cost, no provider reached.
+/// **Witness (#3911).** `stella goal` used to refuse an arbiter-grade wrapper
+/// outright (`reject_arbiter_wrapper_on_goal`, #3832), because the built-in
+/// goal loop was already that door's completion arbiter and a wrapper holding
+/// rounds open would have judged the same round twice. The loop is gone: the
+/// door binds a plugin and hands it the turn, so arbiter is the grade it
+/// wants — the only one `again` lets hold a completion open past its first
+/// turn.
+///
+/// Read as a resolve that succeeds rather than as the absence of a refusal,
+/// because absence is what a deleted function gives you for free. This binds
+/// the same manifest the old refusal was written against and asserts the
+/// wrapper is drivable: the composition holds one arbiter, and it is the one
+/// this selection named.
 #[test]
-fn an_arbiter_grade_wrapper_is_refused_on_goal() {
+fn an_arbiter_grade_wrapper_binds_on_goal_rather_than_being_refused() {
     let mut warn = |_: String| {};
     let roster = roster(vec![installed(
         ARBITER_WRAPPER_MANIFEST,
@@ -209,34 +211,14 @@ fn an_arbiter_grade_wrapper_is_refused_on_goal() {
     )]);
     let resolved =
         bind_installed(&roster, "arbiter-v1", &mut warn).expect("arbiter manifest must load");
-    let err = reject_arbiter_wrapper_on_goal(&resolved)
-        .expect_err("arbiter-grade wrappers cannot run on stella goal (#3832)");
-    assert!(err.contains("arbiter-v1"), "{err}");
-    assert!(err.contains("#3832"), "{err}");
-    assert!(
-        err.contains("stella run --pipeline arbiter-v1"),
-        "the refusal must name the remedy — the wrapper's designed home: {err}"
-    );
-    assert!(
-        err.contains("stella goal"),
-        "the refusal must name the door that refused it: {err}"
-    );
-}
 
-/// The companion half: steering (and, by the same ladder argument, observer)
-/// wrappers are unaffected by the arbiter refusal and keep running per round
-/// on `stella goal` exactly as before — `a_goal_run_dispatches_each_round_
-/// through_the_bound_wrapper` (`goal_wrapped_dispatch_cli.rs`) is the e2e
-/// witness that a steering wrapper's rounds still actually advance; this is
-/// the unit-level companion pinning the gate itself lets it through.
-#[test]
-fn a_steering_wrapper_is_not_refused_by_the_arbiter_gate() {
-    let mut warn = |_: String| {};
-    let roster = roster(vec![installed(WRAPPER_MANIFEST, "/plugins/budget-keeper")]);
-    let resolved =
-        bind_installed(&roster, "budget-v1", &mut warn).expect("steering manifest must load");
-    reject_arbiter_wrapper_on_goal(&resolved)
-        .expect("a steering-grade wrapper can never hold a round open — nothing to refuse");
+    assert_eq!(resolved.variant(), "arbiter-v1");
+    assert!(
+        resolved.manifests().any(|manifest| {
+            manifest.loop_grant.participation == stella_plugin::Participation::Arbiter
+        }),
+        "the selection this door now accepts is the arbiter-grade one",
+    );
 }
 
 // `a_resolved_raw_choice_is_never_refused_on_any_door` lived here, pinning
@@ -416,7 +398,7 @@ fn an_installed_wrapper_is_bound_by_its_variant_id() {
     let mut warnings = Vec::new();
     let wrapper = bound(&roster, "budget-v1", &mut |line| warnings.push(line))
         .expect("the installed plugin declares this variant");
-    assert_eq!(wrapper.variant(), "budget-v1");
+    assert_eq!(wrapper.wrapper_id(), "budget-v1");
     // `.manifests()` since #3801: a dispatch holds a composition, so there is
     // no one manifest to ask for. This door binds exactly one member, and the
     // count is asserted alongside the name so that stays true rather than

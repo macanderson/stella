@@ -350,9 +350,8 @@ agent runs at `xhigh` effort with reasoning on, driving `moonshotai/kimi-k3`,
 a long-context agentic model. Core has one role today, so that is the whole
 posture — no model is picked for a verifier or a triage role on your behalf.
 
-A second model still runs in one place: `stella goal`'s
-`resolve_cross_family_verifier`, which groups by family at the point of use
-and has never read this baseline.
+A second model still runs in one place: a wrapper plugin's declared seat, which
+a person assigns a model to and which has never read this baseline.
 
 This is a starting point, not a lock. It sits underneath the whole
 [`agent_engine_config`](/docs/configuration/agent-engine-config) scope chain, so any

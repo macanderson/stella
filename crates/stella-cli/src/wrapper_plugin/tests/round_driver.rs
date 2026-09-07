@@ -88,6 +88,7 @@ async fn a_round_driving_door_runs_the_tests_its_own_grant_names() {
                 manifest,
                 Arc::new(dispatcher.clone()) as Arc<dyn SubAgentDispatcher>,
                 Some(&granted.grant),
+                None,
             )
         })
         .expect("a found variant binds");
@@ -128,6 +129,7 @@ async fn a_handle_this_door_never_granted_reaches_no_tree() {
                 manifest,
                 Arc::new(dispatcher.clone()) as Arc<dyn SubAgentDispatcher>,
                 Some(&granted.grant),
+                None,
             )
         })
         .expect("a found variant binds");
@@ -167,6 +169,7 @@ async fn a_door_with_no_grant_installs_no_plane() {
                 workspace.path(),
                 manifest,
                 Arc::new(dispatcher.clone()) as Arc<dyn SubAgentDispatcher>,
+                None,
                 None,
             )
         })
@@ -216,6 +219,7 @@ async fn a_round_driving_door_serves_child_turns_clear_of_its_own_rounds() {
                 workspace.path(),
                 manifest,
                 Arc::new(dispatcher.clone()) as Arc<dyn SubAgentDispatcher>,
+                None,
                 None,
             )
         })

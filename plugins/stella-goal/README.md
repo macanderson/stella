@@ -8,39 +8,29 @@ yet a goal verifier genuinely *is* a model call. §9.2's answer, quoted
 verbatim in `plugin.toml`'s header: **"The model call belongs to `after_turn`,
 never to `judge`."** This plugin is that answer, built.
 
-**This runs via `stella run --pipeline goal-v1` — never via `stella goal`.**
-That is not a naming accident and `stella goal` will refuse to load it: this
-plugin declares `participation = "arbiter"`, and `stella goal`'s own
-pre-flight rung (`crates/stella-cli/src/wrapper_plugin.rs::
-reject_arbiter_wrapper_on_goal`, #3832) refuses every arbiter-grade wrapper on
-that door, before the provider is ever built, naming this exact invocation —
-`stella run --pipeline goal-v1` — as the remedy. The reason is **one loop, one
-arbiter**: `stella goal`'s round loop is *already* this door's completion
-arbiter (`stella_core::Engine::assess` decides met/unmet after every round,
-whether the working turn came from the raw loop, the classic pipeline, or an
-installed wrapper — see `crates/stella-cli/src/agent/goal/goal_wrapped.rs`).
-An arbiter-grade wrapper brings its *own* hold loop
-(`stella_runtime::wrapper::WrapperDispatch`'s `judge`/`again`), which wants to
-run *inside* one already-judged goal round — a second supervisor judging the
-same round the first one is already judging. Before #3832 that shape was only
+**`stella goal` runs this plugin, and so does `stella run --pipeline
+goal-v1`.** The verb resolves `goal-v1` when no `--pipeline` names anything
+else, binds it, and hands it the turn (#3911); the two invocations reach the
+same program with the same job.
+
+That is a reversal. `stella goal` once refused this plugin outright: it
+declares `participation = "arbiter"`, and the door's own pre-flight rung
+(`reject_arbiter_wrapper_on_goal`, #3832) rejected every arbiter-grade wrapper
+before the provider was built. The reason was **one loop, one arbiter**:
+`stella goal` carried a round loop of its own, with
+`stella_core::Engine::assess` deciding met/unmet after every round, and an
+arbiter-grade wrapper brings a *second* hold loop
+(`stella_runtime::wrapper::WrapperDispatch`'s `judge`/`again`) that wanted to
+run inside one already-judged round. Before #3832 that shape was only
 discovered after `WrapperDispatch` had already billed
-`1 + DEFAULT_HOST_MAX_HOLDS` worker turns holding the round open; the whole
-run was then discarded anyway (`run_goal_wrapped_turn`'s
-`DispatchReport::rounds != 1` check). `stella run`'s own door has no such
-second arbiter — `WrapperDispatch`'s hold loop is the *only* thing holding a
-turn open there — which is exactly why this plugin's designed home is `stella
-run --pipeline goal-v1` and not `stella goal --pipeline goal-v1`.
-`crates/stella-cli/src/agent/goal/goal_wrapped.rs` (landed for #3695's goal
-half in this same branch) is the *other* half of the design: it keeps
-`stella_core::Engine::assess` as the one thing that decides met/unmet on
-`stella goal`, for steering/observer wrappers, and its own module doc explains
-why moving that decision onto `judge`/`again` would itself be a rewrite of
-goal's verifier semantics — encoding `GoalVerifierVerdict`'s free-text
-feedback into `EvidenceSet`'s flip/measurement vocabulary is a real gap that
-slice ruled out of scope. `plugins/stella-goal` is a self-contained
-goal-supervision wrapper using nothing but the generic `WrapperDispatch` loop
-every arbiter-grade plugin already gets; it never touches `stella goal`'s own
-command, `Engine::run_goal`, or `Engine::assess`.
+`1 + DEFAULT_HOST_MAX_HOLDS` worker turns holding the round open.
+
+The built-in loop is gone from that door, so there is no first arbiter left to
+double — and arbiter is the grade the verb now needs, because it is the only
+one `again` lets hold a completion open past its first turn. What remains of
+the old arrangement lives in `stella-serve`, whose `drive_goal` re-expresses
+`Engine::run_goal` over its own cancellable turn driver; nothing in the CLI
+reaches it.
 
 ## What it does
 
@@ -149,13 +139,13 @@ stated here rather than discovered by a silent Undecided run.
 | --- | --- | --- |
 | ~~**No shipped host serves the `verifier` role intent**~~ **CLOSED** | Core held a table of four role words and this was not one of them, so the ask was refused everywhere. `stella run`'s door bound the word by hand (#3838); #3905 deleted the table and the binding with it. The answer now comes from the grant a person consented to. This manifest declares an `[oracle]`, so the plugin judges the turn, and its child turns are booked at `ModelCallRole::Plugin` with the seat it declared beside them on the child's `sub_agent` bracket — so a receipt says a plugin bought the call and which of its jobs bought it. Attribution only. Nothing branches on `ModelCallRole`, so the seat decides what a call is *called*, never what it may *do*. Witnessed against this manifest, read off disk, by `the_shipped_goal_plugins_verifier_intent_resolves_on_this_hosts_plane` in `crates/stella-cli/src/wrapper_plugin/tests.rs`. | #3838, #3905, #3906 |
 | ~~**`[loop] max_calls` is asked to mean two different things**~~ **CLOSED** | `max_calls` bounds calls per **point conversation** and is fresh on every `before_turn`/`after_turn` dispatch; the whole-run `ChildTurns` budget, which never resets between rounds, is now `[loop] max_child_turns` (#3839). This plugin declares the honest pair — `max_calls = 1`, because `main.py` asks the host for one thing once per `after_turn`, and `max_child_turns = 8`, because an arbiter holding `max_holds + 1` rounds open needs one verifier turn in each. Before the split it had to declare `max_calls = 8` to buy them, which made the per-point number answer a question it was not asked. Found empirically while writing `goal_plugin_dispatch.rs`: the first draft used `max_calls = 1` and round 2 came back `Undecided { MeasurementMissing }` instead of `Met`. | #3839 |
-| **The host's default ceilings are lower than goal mode's own defaults** | `stella run`'s door never calls `.with_host_max_holds` (default `DEFAULT_HOST_MAX_HOLDS = 2`) or raises `ChildTurns`' ceiling past `DEFAULT_HOST_MAX_CHILD_TURNS = 4`. `plugin.toml` asks for `max_holds = 7` / `max_child_turns = 8` (mirroring `GoalConfig::default().max_rounds = 8`) honestly, but a host running this plugin today caps it at 3 rounds (1 + 2 holds), not 8. | #3841 |
+| **`stella run`'s door still caps this plugin at three rounds** | The ceilings are the host's, never the manifest's ask (#3841). `stella goal` funds `GoalConfig::default().max_rounds` on both of them — the hold loop's and the child-turn plane's — because that is the number its own built-in loop ran before the verb moved onto this socket (#3911), so `plugin.toml`'s `max_holds` / `max_child_turns` are honoured there. `stella run --pipeline goal-v1` funds neither: it is a one-shot door with no round count of its own to promise, so it leaves the defaults (`DEFAULT_HOST_MAX_HOLDS = 2`, `DEFAULT_HOST_MAX_CHILD_TURNS = 4`) standing and announces the narrowing. Run it through `stella goal` for goal-mode parity. | #3841, #3911 |
 | ~~**The verifier's own words never reach the correction**~~ **CLOSED** | `ObservedEvidence` grew one advisory string, `detail` (#3840), and `main.py` sends `GoalVerifierVerdict`'s `feedback` there, falling back to `reasoning` — the mirror of `stella_core::goal::verifier_feedback_text`. It is not evidence and cannot decide anything: it never reaches `EvidenceSet`, which is the closed vocabulary `judge` is total over. The host attaches it to the unmet clauses *after* the verdict, and `correction_text` prints it under the static `[requirements]` statement. A round that *stopped* had no reader at all until `doc:adr/0033-free-text-is-not-evidence` gave `DispatchReport` a `note`, so a met verdict's `reasoning` — the sentence `stella goal` prints on success — reached nobody. Witnessed by `a_round_the_verifier_marks_unmet_holds_open_for_one_correction_round` and `the_verifiers_own_words_survive_a_met_verdict` in `crates/stella-runtime/tests/goal_plugin_dispatch.rs`. | #3840, ADR 0033 |
 | **The verifier judges from `TurnOutcome`, not the transcript** | `Engine::assess` renders the whole recent conversation, tail-biased, via `render_transcript_tail`. `AfterTurnRequest.turn` carries exactly `completed`, `answer` (final text only), and `tools`/`changed_files` (each `Option`, absent when the host does not report them). `main.py`'s `verifier_instruction` says so honestly in the text it sends rather than pretending to have seen more. | (documented here; not independently filed — same root as the gap below) |
 | ~~**`[roles]` requires `[subloop]`**~~ **CLOSED** | The rule is now "a role intent needs something that could resolve it" — a `[subloop]` **or** a `[wrapper]` (`ManifestError::RolesResolveNowhere`). This plugin declares a `[wrapper]`, so the `[subloop] stages = ["verify"]` it never used is gone from `plugin.toml`; `plugins/stella-plan` and the reference fixture in `crates/stella-runtime/tests/wrapper_socket.rs` shed the same workaround. | #3496 |
 | ~~**No `BLESS=1` regeneration path**~~ **CLOSED** | `BLESS=1 cargo test -p stella-runtime --test goal_plugin_conformance` rewrites the goldens from the same fixture the assertions run against, so the fixture has exactly one definition. Shared with `plugins/stella-plan` and `plugins/stella-research` through `crates/stella-runtime/tests/common/mod.rs`. `plugins/stella-witness` is deliberately not on it — its harness normalises the golden before comparing, so what it would write is not what it reads. | #3548 |
-| **`stella fleet` drives a wrapper per worker attempt now** (#3695, fleet half) and applies no arbiter refusal, so `goal-v1` *can* be named there — but a fleet attempt is one turn with no goal of its own beyond the task prompt, which is not the supervision loop this plugin was written for. `stella run --pipeline goal-v1` remains its designed home. | | (documented here; not a gap to close) |
-| **Nobody has benchmarked it against goal mode's own loop** | Which shape wins on task outcome is an empirical question this README does not settle. | (none yet — parallel to #3544/#3801-adjacent open questions for the sibling plugins) |
+| **`stella fleet` drives a wrapper per worker attempt now** (#3695, fleet half) and refuses no grade, so `goal-v1` *can* be named there — but a fleet attempt is one turn with no goal of its own beyond the task prompt, which is not the supervision loop this plugin was written for. `stella goal` is its home. | | (documented here; not a gap to close) |
+| **Nobody has benchmarked it against the loop it replaced** | Which shape wins on task outcome is an empirical question this README does not settle, and `stella goal` runs this plugin now — so the comparison has to be made against a build that predates #3911 rather than against a flag. | (none yet — parallel to #3544/#3801-adjacent open questions for the sibling plugins) |
 
 ## Installing it
 

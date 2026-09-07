@@ -231,15 +231,20 @@ pub const LANES: &[Lane] = &[
     },
     Lane {
         lane: BuiltinLane::GoalArc,
-        binding: LaneBinding::Bound {
-            site: "crates/stella-cli/src/lane_capabilities.rs",
-            how: "a judged goal arc, assembled in `agent::goal` and its wrapped arm from \
-                  `lane_capabilities::goal_arc`",
-            witness: "each_door_that_is_not_the_deck_assembles_through_its_lane",
+        binding: LaneBinding::NoProducer {
+            reason: "the built-in goal loop this case was named for is gone. \
+                     `stella goal` binds a wrapper plugin, and every round that plugin holds \
+                     open is a raw turn, so the rounds land on `RawTurn` above and there is \
+                     nothing left to re-home onto this case. It is kept for reading rather \
+                     than writing, on `PipelineStage`'s terms: `BuiltinLane` is closed with \
+                     no `serde(other)`, so deleting it would fail a recording made before \
+                     the removal outright instead of demoting it. Refs #3911",
         },
-        frame: FrameObligation::ResumesItself {
-            how: "a goal arc runs on the door's own session record, the same one the raw \
-                  turn above binds, and `stella resume` re-enters it",
+        frame: FrameObligation::Unframed {
+            reason: "no turn runs on this lane, so none can die on it. The row above says \
+                     why the case is kept for reading rather than writing, and a lane with \
+                     no producer owes nothing. The raw turns a goal's wrapper holds open owe \
+                     the obligation `RawTurn` above declares. Refs #3911",
         },
     },
 ];
@@ -397,9 +402,23 @@ mod tests {
     /// This is the check that could not exist before `ResumeAuthority` did.
     /// The three answers lived in prose — two doc comments naming a type the
     /// tree did not have — so nothing could disagree with anything.
+    ///
+    /// A `NoProducer` row is out of scope, and not as an exemption: nothing
+    /// stamps such a lane, so no turn of it can die, and an obligation over an
+    /// empty set is satisfied by every answer. The authority column keeps
+    /// describing the *concept* — `GoalArc` would still resume itself if
+    /// anything ran on it — while `a_lane_with_no_producer_says_why_and_has_none`
+    /// below holds the row to `Unframed` and to naming its decision. Both
+    /// halves were only ever compatible by luck: `PipelineStage` passed here
+    /// because its authority happens to be `Redispatch`, and `GoalArc` — the
+    /// second lane to lose its producer (`#3911`) — is `Own`, which made the
+    /// two checks contradict.
     #[test]
     fn every_lane_declares_the_frame_its_authority_obliges() {
         for row in LANES {
+            if matches!(row.binding, LaneBinding::NoProducer { .. }) {
+                continue;
+            }
             let authority = row.lane.resume_authority();
             let resumes_itself = matches!(row.frame, FrameObligation::ResumesItself { .. });
             assert_eq!(

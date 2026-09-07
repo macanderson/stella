@@ -436,16 +436,19 @@ pub(crate) struct EngineWiring {
     pub(crate) notices: Vec<String>,
 }
 
-/// Resolve one role's already-computed [`crate::engine_config::ModelSpec`] into a pin: find the
-/// credentialed provider, and build its adapter unless the pin names the
-/// exact same model the primary resolver entry already serves (`base_ref` —
-/// always the literal session-default `ModelRef` the pre-built primary
-/// provider is bound to, never an already-overridden ref, so this check
-/// stays "does this need a NEW adapter instance" regardless of which role is
-/// being pinned). Every failure here is soft — a missing credential or a
-/// build error pushes a notice and leaves `role` unpinned, degrading to
-/// `fallback` in the router, never a hard error. Returns the resolved
-/// [`ModelRef`] on success.
+/// Turn one role's [`crate::engine_config::ModelSpec`] into a pin.
+///
+/// Find the credentialed provider. Build its adapter, unless the pin names
+/// the model the primary resolver entry already serves.
+///
+/// `base_ref` is that model. It is always the session-default `ModelRef` the
+/// pre-built primary provider is bound to, never an already-overridden one.
+/// So the check asks "does this need a new adapter?" whichever role is being
+/// pinned.
+///
+/// Every failure here is soft. A missing credential or a build error pushes a
+/// notice and leaves `role` unpinned, which degrades to `fallback` in the
+/// router. Returns the resolved [`ModelRef`] on success.
 ///
 /// Takes one `role`, not a slice: `Role::Worker` is the only router role
 /// this session ever pins.
@@ -735,90 +738,6 @@ pub(crate) fn provider_family(provider_id: &str) -> String {
         "anthropic" | "bedrock" => "anthropic".to_string(),
         other => other.to_string(),
     }
-}
-
-/// A `ProviderProfile` for a discovered provider, using its `default_model`
-/// as both the worker and verifier model (the finest model this layer knows
-/// without a per-role catalog) and [`provider_family`] for cross-family
-/// grouping.
-fn profile_for(config: &crate::config::ProviderConfig) -> ProviderProfile {
-    let model = ModelRef::new(config.id, config.default_model);
-    ProviderProfile::new(config.id, model.clone(), model).with_family(provider_family(config.id))
-}
-
-/// Resolve the goal loop's verifier seat, and build the adapter that serves
-/// it — the session's whole answer to "does verification run on a model of
-/// its own?".
-///
-/// Builds a [`Router`] whose most-preferred provider is the active worker
-/// (`worker_id`/`worker_model`, so the `--model` pin is honored) followed by
-/// every OTHER configured provider, then asks it for a provider in a
-/// different family than the worker's
-/// ([`Router::resolve_cross_family`]).
-///
-/// - The router lands back on the worker's own provider → `None`, and no
-///   second adapter is built. This is the single-family case: a seat that
-///   cannot diverge says so by returning `None` rather than by building a
-///   duplicate adapter.
-/// - A distinct provider is selected → its concrete adapter and id.
-///
-/// Returns `None` on ANY failure — degradation to the worker, a resolve
-/// error, an unknown provider, or an adapter build failure — so this can
-/// never break the loop that asked for it. The caller's `None` arm is "use
-/// the worker's provider", which is what the session did before this seat
-/// existed.
-///
-/// Takes no `role` parameter: the strategy this asks for — "a provider in a
-/// different family than this one" — is fixed, not one of several roles
-/// core routes generically.
-pub(crate) fn resolve_cross_family_verifier(
-    worker_id: &str,
-    worker_model: &str,
-    configured: &[crate::config::ConfiguredProvider],
-) -> Option<(Box<dyn Provider>, String)> {
-    let worker_ref = ModelRef::new(worker_id, worker_model);
-    let worker_profile = ProviderProfile::new(worker_id, worker_ref.clone(), worker_ref)
-        .with_family(provider_family(worker_id));
-
-    let mut profiles = vec![worker_profile];
-    for entry in configured {
-        if entry.config.id == worker_id {
-            continue; // the worker is already the preferred profile
-        }
-        profiles.push(profile_for(&entry.config));
-    }
-
-    let router = Router::new(
-        RoleTable::new(),
-        profiles,
-        CircuitBreaker::new(Box::new(SystemClock::new())),
-    );
-    let decision = router.resolve_cross_family().ok()?;
-
-    // Same provider as the worker → single-family/degraded: reuse the worker
-    // provider directly, never build a duplicate.
-    if decision.model_ref.provider == worker_id {
-        return None;
-    }
-
-    // Build the concrete adapter from the discovered credential for the chosen
-    // provider. A missing entry or a build error falls back to the worker.
-    let entry = configured
-        .iter()
-        .find(|c| c.config.id == decision.model_ref.provider)?;
-    let seat = build_provider_parts(
-        &entry.config,
-        &decision.model_ref.model_id,
-        entry.api_key.clone(),
-        entry.config.base_url.to_string(),
-        None,
-        entry.aux.clone(),
-        // A routed seat's calls land in bursts within a run; the 5-minute
-        // window is the right ask regardless of surface (#1839).
-        stella_model::CacheTtl::default(),
-    )
-    .ok()?;
-    Some((seat, decision.model_ref.provider))
 }
 
 /// The session-scoped role [`Router`] for a bare (non-pipeline) loop — the

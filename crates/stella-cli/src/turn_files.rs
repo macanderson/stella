@@ -384,39 +384,6 @@ pub(crate) fn emit_shared_tree_changes(
     emit_measured_tree_changes(&cfg.durability, tx, execution, &[]).len()
 }
 
-/// [`emit_shared_tree_changes`] for a driver holding the raw channel sender
-/// rather than an [`EventSender`], at a boundary that is **not** the run's end
-/// (#4159).
-///
-/// The measurement half of [`close_turn_boundary_raw`] without the terminator
-/// beside it, and that separation is the opposite of the one
-/// `persistence::emit_run_complete_raw` made before it was deleted. That
-/// helper let a driver pay the *loud* debt alone — a terminated run with an
-/// empty file ledger, which renders as an honest-looking "this turn changed
-/// nothing". This one pays only the silent debt, which is what a multi-turn
-/// driver actually needs: `stella goal` and `stella daemon resume` drive
-/// several turns over one stream and must emit exactly one terminator for the
-/// whole run (`emit_run_complete`'s own doc), so swapping in
-/// `close_turn_boundary` at each of their boundaries would end the run at the
-/// first one.
-///
-/// The sender it wraps is a **temporary**, dropped when this call returns, for
-/// [`close_turn_boundary_raw`]'s reason: a clone left alive in the driver's
-/// scope keeps the channel open and wedges the renderer that is waiting for it
-/// to close (#960, #2290).
-///
-/// Call it **exactly once per boundary**. The snapshot consumes what it
-/// reports — `snapshot_worktree` commits the tree onto the session's snapshot
-/// ref and diffs against the previous commit — so a second caller at the same
-/// boundary reports an unchanged tree.
-pub(crate) fn emit_shared_tree_changes_raw(
-    cfg: &Config,
-    tx: &tokio::sync::mpsc::UnboundedSender<AgentEvent>,
-    execution: Option<&(Arc<Store>, i64)>,
-) {
-    emit_shared_tree_changes(cfg, &EventSender::new(tx.clone()), execution);
-}
-
 /// [`emit_shared_tree_changes`] over the durability handle alone.
 ///
 /// The whole of `cfg` this ever needed was `cfg.durability`, and taking the
@@ -592,19 +559,18 @@ mod tests {
             // In `command_deck/lead_turn.rs` since #4775 split the deck's
             // driver loop into sibling modules.
             ("command_deck/lead_turn.rs", "run_lead_turn", &closing),
-            // The three drivers of #4159, which own several turns over one
-            // stream and therefore pay the two debts at different points: the
-            // measurement at each turn boundary inside their loop, and the
-            // run's single terminator at the end (`emit_run_complete_on_raw`).
-            // They name the measuring seam rather than the closing one for
-            // that reason — `close_turn_boundary` at a mid-loop boundary would
-            // terminate the run on its first round.
-            ("agent/goal.rs", "run_goal_turn", &measuring),
-            (
-                "agent/goal/goal_wrapped.rs",
-                "run_goal_wrapped_turn",
-                &measuring,
-            ),
+            // The remaining driver of #4159, which owns several turns over
+            // one stream and therefore pays the two debts at different
+            // points: the measurement at each turn boundary inside its loop,
+            // and the run's single terminator at the end
+            // (`emit_run_complete_on_raw`). It names the measuring seam rather
+            // than the closing one for that reason — `close_turn_boundary` at
+            // a mid-loop boundary would terminate the run on its first round.
+            //
+            // The two goal doors were here beside it until #3911. Neither owns
+            // a turn any more: both bind a wrapper plugin and drive every
+            // round through `agent/turn.rs`'s `run_turn`, whose row above is
+            // what carries the debt for them.
             ("agent/resume.rs", "run_resume", &measuring),
         ] {
             let body = std::fs::read_to_string(src.join(file))
@@ -663,11 +629,6 @@ mod tests {
         ("agent/persistence.rs", "attach_run_streams"),
         // The interactive deck's lead turn (moved to its own module by #4775).
         ("command_deck/lead_turn.rs", "run_lead_turn"),
-        // `stella goal`'s raw arm — the loop over `Engine::run_goal`.
-        ("agent/goal.rs", "run_goal_turn"),
-        // `stella goal --pipeline <variant>`: one observed sender per round,
-        // republished so the round's fold sees the registry's own events.
-        ("agent/goal/goal_wrapped.rs", "GoalRoundDriver::run_turn"),
         // `stella resume`, driving one restored turn.
         ("agent/resume.rs", "run_resume"),
         // `stella run --pipeline <variant>`'s between-rounds stream, which a
@@ -746,8 +707,6 @@ mod tests {
         // `STREAM_OWNERS` names that file and this one names the driver's own.
         ("agent/turn.rs", DriverPosture::Owns),
         ("command_deck/lead_turn.rs", DriverPosture::Owns),
-        ("agent/goal.rs", DriverPosture::Owns),
-        ("agent/goal/goal_wrapped.rs", DriverPosture::Owns),
         ("agent/resume.rs", DriverPosture::Owns),
         (
             "subagent.rs",

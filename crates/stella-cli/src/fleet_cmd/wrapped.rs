@@ -184,12 +184,12 @@ pub(super) struct AttemptWrapper {
 }
 
 impl AttemptWrapper {
-    /// The variant id this attempt's execution row records.
+    /// The `--pipeline` id this attempt's execution row records.
     ///
-    /// Owned since #3801: a composition's id is its members' ids joined, so it
-    /// is assembled on demand rather than stored.
-    pub(super) fn variant(&self) -> String {
-        self.bound.variant()
+    /// Owned since `#3801`: a composition's id is its members' ids joined, so
+    /// it is assembled on demand rather than stored.
+    pub(super) fn wrapper_id(&self) -> String {
+        self.bound.wrapper_id()
     }
 
     /// What the wrapper is asked about this attempt.
@@ -285,8 +285,12 @@ impl AttemptWrapper {
         require_verdict: bool,
         held: Option<&HeldReports>,
     ) -> Result<TurnOutcome, String> {
-        let report = report
-            .map_err(|error| format!("wrapper \"{}\" cannot be driven: {error}", self.variant()))?;
+        let report = report.map_err(|error| {
+            format!(
+                "wrapper \"{}\" cannot be driven: {error}",
+                self.wrapper_id()
+            )
+        })?;
         // What the wrapper decided, onto this attempt's own channel. The
         // journal then holds the verdict and the board, not just the prose
         // the lines below print.
@@ -324,7 +328,7 @@ impl AttemptWrapper {
         let driven = driver.driven.ok_or_else(|| {
             format!(
                 "wrapper \"{}\" drove this attempt with no turn",
-                self.variant()
+                self.wrapper_id()
             )
         })?;
         if matches!(driven, TurnOutcome::Completed { .. })
@@ -517,6 +521,10 @@ impl ResolvedAttempt {
                 // invocation root, whose tree no attempt is judged against
                 // (#4536).
                 Some(&self.candidate.grant),
+                // The host default. A fleet attempt is one turn with no round
+                // count of its own to fund, so there is nothing here for a
+                // door to promise past what every wrapped turn gets.
+                None,
             )
         })?;
         Ok(AttemptWrapper {

@@ -19,10 +19,10 @@
 //! rather than silently doing nothing.
 //!
 //! Interactive mode reaches it too, through a relay rather than a tap
-//! (`crate::command_deck::whistle`, #4768): the deck mints a fresh
-//! `SteeringTap` per turn and has none at all between turns, so its socket is
-//! bound to a session-scoped publication point that forwards to whichever tap
-//! can currently drain one.
+//! (`crate::command_deck::whistle`, #4768). The deck mints a fresh
+//! `SteeringTap` per turn and has none between turns. So its socket binds to
+//! a session-scoped publication point, which forwards to whichever tap can
+//! drain one.
 //!
 //! `stella-serve` turns are out of scope: that surface is a separate binary
 //! with its own reach (`POST /v1/turns/{id}/steer`) over a different
@@ -106,12 +106,6 @@ impl SessionWhistle {
             tap,
             _listener: listener,
         }
-    }
-
-    /// What to hand a seam set's `steering` slot. The engine drains it once
-    /// a step, at the same boundary as the pause gate.
-    pub(crate) fn steering(&self) -> &dyn stella_core::ports::TurnSteering {
-        self.tap.as_ref()
     }
 
     /// What to hand a `stella_core::ports::TurnControls` builder, for a door

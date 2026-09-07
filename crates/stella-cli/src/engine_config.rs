@@ -258,11 +258,10 @@ pub fn model_supports_reasoning(provider: &str, model: &str) -> Option<bool> {
 /// quietly promising an instance two models it never bought.
 ///
 /// The cross-family *idea* survives at the one place a second model still
-/// runs — `stella goal`'s `resolve_cross_family_verifier`, which groups with
-/// `agent::engine::provider_family` and has never read these settings. What
-/// went with the keys is the separate `spec_family`/`auto_verifier_spec` pair
-/// that existed only to pre-commit that choice into a settings file, for a
-/// role core no longer has.
+/// runs: a wrapper plugin's declared seat, assigned by a person, which has
+/// never read these settings. What went with the keys is the separate
+/// `spec_family`/`auto_verifier_spec` pair that existed only to pre-commit
+/// that choice into a settings file, for a role core no longer has.
 ///
 /// Being a baseline is what keeps this honest: it composes UNDER the settings
 /// scope chain via [`AgentEngineConfig::layered_over`], so any of it that a
@@ -307,16 +306,18 @@ pub fn engine_with_provider_baseline(
 }
 
 /// The effort levels that DO something for a model served by `provider_id`.
-/// Two constraints intersect here:
-/// - the model: a catalog-confirmed non-reasoning model has no levels at
-///   all (sending one would either error or silently no-op);
-/// - the provider's wire vocabulary: Anthropic/Bedrock budgets give all
-///   five tiers distinct meaning; Gemini's `thinkingLevel` is low/high;
-///   the OpenAI shapes document low/medium/high (higher tiers collapse to
-///   `high` on the wire — offering them would promise a distinction the
-///   request can't express); GLM pairs its on/off `thinking` switch with a
-///   `reasoning_effort` of the same low/medium/high shape, so it takes the
-///   OpenAI-compatible vocabulary like any other member of that dialect.
+/// Two constraints intersect here.
+///
+/// The model. A catalog-confirmed non-reasoning model has no levels at all,
+/// and sending one would either error or silently do nothing.
+///
+/// The provider's wire vocabulary. Anthropic and Bedrock budgets give all five
+/// tiers distinct meaning. Gemini's `thinkingLevel` is low or high. The OpenAI
+/// shapes document low, medium and high; higher tiers collapse to `high` on
+/// the wire, so offering them would promise a distinction the request cannot
+/// express. GLM pairs its on/off `thinking` switch with a `reasoning_effort`
+/// of that same shape, so it takes the OpenAI-compatible vocabulary like every
+/// other member of that dialect.
 ///
 /// Unknown capability (`None`) keeps the provider's full vocabulary: an
 /// unknown must never *restrict*, only a confirmed "no" may.

@@ -51,13 +51,12 @@ way — see "Every way the ask can degrade" below.
 
 At the `execute` stage, `before_turn` contributes `goal_kickoff_text` from
 `crates/stella-core/src/goal.rs`, copied byte-for-byte, for the same reason
-`stella-plan/main.py` copies `PLANNER_INSTRUCTIONS`: `stella run --pipeline
-goal-v1` runs no separate "goal kickoff" step the way `stella goal`'s own CLI
-loop does (`stella_core::goal::goal_kickoff_text` is pushed once before that
-loop even starts, in `crates/stella-cli/src/agent/goal/goal_wrapped.rs` and
-its raw/classic siblings) — under this door the framing has to come from
-somewhere, and it comes from here, every round, so a worker turn started
-fresh sees the identical words either surface would have opened with.
+`stella-plan/main.py` copies `PLANNER_INSTRUCTIONS`: no host door runs a
+separate "goal kickoff" step, and `stella-serve`'s own goal route still pushes
+`stella_core::goal::goal_kickoff_text` once before its loop starts. The
+framing has to come from somewhere, and it comes from here, every round, so a
+worker turn started fresh sees the identical words either surface would have
+opened with.
 
 # The verifier call: what it asks, and what it honestly cannot ask
 
