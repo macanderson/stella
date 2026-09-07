@@ -1000,6 +1000,14 @@ issue-claim: ## Ask whether somebody is already implementing an issue: make issu
 issue-claim-test: ## Test the issue-claim pre-flight, standing-down branch included (hermetic; not part of `gate`)
 	./scripts/test-issue-claim.sh
 
+.PHONY: pr-claim
+pr-claim: ## Ask whether somebody is already sweeping a pull request: make pr-claim N=5835
+	@./scripts/pr-claim.sh check $(N)
+
+.PHONY: pr-claim-test
+pr-claim-test: ## Test the pull-request claim and the duplicate-finding gate (hermetic; not part of `gate`)
+	./scripts/test-pr-claim.sh
+
 # Not a GATE_STEPS member -- one file, one narrow shape (#3459). The real
 # enforcement is its self-test's own live-tree case (F in
 # test-dependabot-pip-dirs.sh, "this repository's real dependabot.yml

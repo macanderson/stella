@@ -296,6 +296,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-issue-claim.sh
 
+      - name: the pull-request claim and the duplicate-finding gate
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-pr-claim.sh
+
       - name: the CodeQL canary opens, refreshes and closes a codeql-red issue
         if: ${{ !cancelled() }}
         run: ./scripts/test-codeql-canary.sh
