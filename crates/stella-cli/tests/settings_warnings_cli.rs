@@ -220,6 +220,12 @@ fn an_untrusted_checkouts_withheld_steering_is_named_on_stderr() {
         "a notice that does not name the opt-in leaves the user stuck: {stderr}"
     );
     assert!(
+        stderr.contains("auto_trust_project"),
+        "the env var alone is a one-launch answer to a condition that recurs every \
+         launch; a reader told only about it concludes no standing remedy exists, \
+         which is how this notice got read as unfixable: {stderr}"
+    );
+    assert!(
         !stderr.contains("SECRET-MARKER-BODY") && !stderr.contains("00-marker"),
         "counts, never content or filenames — a refusal that echoed repository \
          text would be the exfiltration channel it exists to prevent: {stderr}"

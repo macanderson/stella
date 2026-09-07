@@ -688,7 +688,10 @@ impl SessionMemory {
         let loaded = self.load_skills();
         let origins: std::collections::HashMap<String, skills::SkillOrigin> =
             loaded.iter().map(|s| (s.name.clone(), s.origin)).collect();
-        let already_demoted = super::appraisals::demoted_skills(&self.store);
+        let already_demoted = super::appraisals::demoted_skills(
+            &self.store,
+            stella_learn::ledger::ArtifactKind::Skill,
+        );
         let threshold = super::tuning::skill_promotion(&self.workspace_root)
             .demote_after_consecutive_negatives as usize;
 
@@ -714,6 +717,7 @@ impl SessionMemory {
             }
             let negatives = super::appraisals::consecutive_negative_appraisals(
                 &self.workspace_root,
+                appraisal.kind,
                 &appraisal.skill,
             );
             if negatives < threshold {
@@ -732,6 +736,7 @@ impl SessionMemory {
             );
             match super::appraisals::record_demotion(
                 &self.store,
+                appraisal.kind,
                 &appraisal.skill,
                 &reason,
                 &self.clock.now_rfc3339(),
@@ -768,7 +773,10 @@ impl SessionMemory {
     /// be rendered from the queue alone; they wait for the miner's re-raise,
     /// which flows through the same gate with the same verdict.
     fn promote_measured_queued(&mut self, quiet: bool) {
-        let verdicts = super::appraisals::latest_verdicts(&self.workspace_root);
+        let verdicts = super::appraisals::latest_verdicts(
+            &self.workspace_root,
+            stella_learn::ledger::ArtifactKind::Skill,
+        );
         let promotable: Vec<skills::SkillCandidate> =
             super::appraisals::queued_candidates(&self.workspace_root)
                 .into_iter()
@@ -965,7 +973,10 @@ impl SessionMemory {
         // observation frequency alone, and the verdict comes from the appraisal
         // ledger rather than from this turn — one turn cannot measure a skill
         // that has never been injected.
-        let verdicts = super::appraisals::latest_verdicts(&self.workspace_root);
+        let verdicts = super::appraisals::latest_verdicts(
+            &self.workspace_root,
+            stella_learn::ledger::ArtifactKind::Skill,
+        );
         for candidate in candidates {
             let evidence = verdicts
                 .get(&candidate.name)

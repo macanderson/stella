@@ -436,6 +436,7 @@ fn toml_record_cards(path: &Path) -> Vec<Value> {
         return Vec::new();
     };
     let set_id = parsed.get("set_id").and_then(|v| v.as_str()).unwrap_or("");
+    let defaults = parsed.get("defaults").and_then(|d| d.as_table());
     let modified_unix = mtime_unix(path);
     let bytes = file_len(path);
     records
@@ -465,6 +466,38 @@ fn toml_record_cards(path: &Path) -> Vec<Value> {
                 .and_then(|e| e.get("mode"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
+            let steering = table.get("steering").and_then(|s| s.as_table());
+            let precedence = steering
+                .and_then(|s| s.get("precedence"))
+                .and_then(|v| v.as_integer());
+            // The scope a record applies under, as the three closed lists
+            // ADR 0012 names — each absent list reads as `[]`, so the page
+            // never has to tell a missing key from an empty one.
+            let applies_to = steering
+                .and_then(|s| s.get("applies_to"))
+                .and_then(|a| a.as_table());
+            let scope_list = |key: &str| -> Vec<String> {
+                applies_to
+                    .and_then(|a| a.get(key))
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|t| t.as_str().map(str::to_owned))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            // A record's own value, else the file's `[defaults]` — the same
+            // fallback `stella_records::records::resolve` applies when it
+            // loads the set, so `status` and `origin` read here as the engine
+            // reads them.
+            let text_field = |key: &str| {
+                table
+                    .get(key)
+                    .or_else(|| defaults.and_then(|d| d.get(key)))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+            };
             Some(json!({
                 "name": record_handle(&lineage_id, set_id),
                 "snippet": snippet(statement, 400),
@@ -476,6 +509,24 @@ fn toml_record_cards(path: &Path) -> Vec<Value> {
                 "tags": tags,
                 "steering_force": steering_force,
                 "enforcement_mode": enforcement_mode,
+                // The record's own identity and standing, for the drill-down
+                // (`crate::context_records`): the stamped id and hash that
+                // `stella context explain` prints, the stored status, and
+                // where the statement came from.
+                "record_id": text_field("record_id"),
+                "record_hash": text_field("record_hash"),
+                "status": text_field("status"),
+                "origin": text_field("origin"),
+                "precedence": precedence,
+                "applies_to": {
+                    "paths": scope_list("paths"),
+                    "tasks": scope_list("tasks"),
+                    "keywords": scope_list("keywords"),
+                },
+                // The file this `[[record]]` was read from. Discovered by the
+                // server's own directory walk, never taken from a request, so
+                // the drill-down can read the file back by this path alone.
+                "path": path.to_string_lossy(),
             }))
         })
         .collect()

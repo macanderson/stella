@@ -927,7 +927,7 @@ deleted-tests-test: ## Test the deleted-test guard's live-vs-stale PR body handl
 # reads a PR's description and commit messages, which a single local tree
 # does not carry (#6190).
 .PHONY: closing-keywords-test
-closing-keywords-test: ## Test the negated-closing-keyword guard (hermetic; not part of `gate`; #6190)
+closing-keywords-test: ## Test the closing-keywords guard (hermetic; not part of `gate`; #6190, #6347)
 	python3 ./scripts/test-closing-keywords.py
 
 # The canary's other half: it detects, this is what consumes the detection at

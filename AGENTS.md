@@ -273,6 +273,20 @@ failing run is a **verified** commit and stays the canary's business; this
 reports only the absence of an answer, and fails open at every unknown so it
 can never be the thing blocking a repair.
 
+**Both steps file, under different labels.** The first step's `--announce`
+opened an issue; the second printed its finding into the step's own log and
+exited 1, and the composition step above it can pass on the same run — so the
+finding never reached anything a person reads. That happened twice, both
+times on a `chore(release): sync versions` commit whose run concluded
+`failure` with no `main-red` issue open either day.
+`check-main-verified.sh --announce` now files on the same shape — one issue
+found by label, a comment while the condition recurs, closed on the next run
+that answers clean — under its own `main-unverified` label rather than
+`main-red`. "Nothing verified this commit" is a different state from "a check
+said no about this commit," and `main-red-hold.yml` reads only `main-red`, so
+an unverified-main issue never blocks a merge on an absence of information the
+way a known-broken `main` does.
+
 A third question sat unasked between the two above: `ci.yml` runs the whole
 test suite, on every push to `main`. It reports pass/fail on the commit and
 stops there — it neither files nor blocks anything. `main` failed the same
@@ -1563,6 +1577,21 @@ reads the body and every commit message. It fails when a negation word
 its issue number, in one sentence. Its fix is the safe spelling: put the
 issue number in backticks, or write "advances #N" instead of a closing
 keyword.
+
+**A `Refs` demotion is not complete while a commit still says `Closes`.**
+Editing the description from `Closes #N` down to `Refs #N` — the remedy this
+section already names for a PR that advances an issue without finishing it —
+only edits half of what closes the issue. Squash reads the commits, not the
+description, so a commit anywhere in the branch's history still saying
+`Closes #N` reaches `main` and closes it regardless. `#6333` demoted its
+description to `Refs #6308` while a later commit still said `Closes #6308`;
+the issue closed on merge, and only a separate sweep that had already
+reopened its members kept that from mattering. `check-closing-keywords.py`
+checks this too: it fails when the description names an issue only with
+`Refs` while any commit message carries a genuine `Closes`/`Fixes`/`Resolves`
+for that same issue. The fix is not a history rewrite — squash-merge with a
+hand-edited commit message, or push a follow-up commit spelling that
+trailer `Refs #N` instead.
 
 ---
 

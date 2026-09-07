@@ -262,6 +262,67 @@ holds_text "...and holds the write scope that a re-run needs" \
 holds_text "a person closing the issue by hand starts a sweep too" \
   main-red-clear.yml "types: \[closed, unlabeled\]"
 
+holds_text "the workflow carries a drill input to rehearse the re-run call" \
+  main-red-clear.yml "drill:"
+
+holds_text "...and passes it to the script rather than running blind" \
+  main-red-clear.yml "clear-main-red-holds.sh --drill"
+
+printf '\n\033[1mdrilling — the re-run call is rehearsed without an outage\033[0m\n'
+
+# The drill never asks whether main is broken and never sweeps a second pull
+# request, so its own fixtures are a one-line PR/head table and a bare run id
+# — the ordinary sweep's issue and multi-PR fixtures play no part here.
+drill_says() { # drill_says <name> <want-substring> <expect-rc> <pr> <prs> <run>
+  local name="$1" want_text="$2" expect_rc="$3" pr="$4" prs="$5" run="$6"
+  local out rc
+  out="$("$CLEAR" --drill "$pr" --fixture-open-prs "$prs" \
+    --fixture-drill-run "$run" 2>&1)"
+  rc=$?
+  if [ "$rc" -ne "$expect_rc" ]; then
+    bad "$name — expected exit $expect_rc, got $rc: $out"
+    return
+  fi
+  case "$out" in
+  *"$want_text"*) ok "$name" ;;
+  *) bad "$name — wanted '$want_text': $out" ;;
+  esac
+}
+
+# `#6051`'s own fixture: one pull request, and a run id the drill must name
+# back exactly, regardless of what that run's real conclusion was.
+drill_prs="5903 aaaaaaa"
+
+drill_says "a drill re-runs the named pull request's latest hold run" \
+  "5903 (head aaaaaaa, run 99999999)" 0 \
+  "5903" "$drill_prs" "99999999"
+
+# The point of the drill: a sweep would never touch a run that already
+# passed — nothing failed. The drill must rehearse it anyway, which is what
+# lets it run on an ordinary day with nothing broken.
+drill_says "...even when that run already passed" \
+  "5903 (head aaaaaaa, run 12345678)" 0 \
+  "5903" "$drill_prs" "12345678"
+
+# The one negative case the definition of done names by name: a pull request
+# that carries no hold run at all. Nothing to rehearse, and the drill says so
+# loudly rather than reporting a quiet, meaningless success.
+drill_says "a pull request with no hold run at all fails loudly" \
+  "no main-red-hold.yml run exists on the head of" 1 \
+  "5903" "$drill_prs" "none"
+
+# A pull request number the fixture does not know is a caller mistake, not a
+# silent no-op.
+drill_says "an unknown pull request number fails loudly, not silently" \
+  "could not find pull request" 1 \
+  "9999" "$drill_prs" ""
+
+out="$("$CLEAR" --drill 2>&1)"
+if [ $? -eq 2 ]; then ok "drilling: a flag missing its value exits 2, not 0"; else bad "drilling: a flag missing its value did not exit 2"; fi
+
+out="$("$CLEAR" --drill banana 2>&1)"
+if [ $? -eq 2 ]; then ok "drilling: --drill given a word exits 2, not 0"; else bad "drilling: --drill given a word did not exit 2"; fi
+
 printf '\n'
 if [ "$fail" -eq 0 ]; then
   printf '\033[32mmain-red-hold-test: OK\033[0m — %d checks passed\n' "$pass"
