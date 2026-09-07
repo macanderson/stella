@@ -111,10 +111,13 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + schema-tier-parity (a -schema step runs at the
                          #     same rung as its base step; #5139)
                          #   + guard-trigger-coverage (prose, hue-separation,
-                         #     transcript-surfaces and closing-keywords each
+                         #     transcript-surfaces, closing-keywords and
+                         #     cargo-flags each
                          #     run, in some workflow, from a job neither a
                          #     paths: filter nor a needs.*.outputs.*-gated
                          #     if: can skip)
+                         #   + cargo-flags (no Makefile recipe hands cargo a
+                         #     flag pair cargo refuses; #5992)
                          #   + priority-scheme (the issue priority scheme is
                          #     stated once, in SCR-005, and the triage guard's
                          #     regex covers exactly the levels it names)
@@ -185,8 +188,8 @@ leaving `main` red for everyone (#1883).
 
 CI enforces the same steps split across four workflows:
 `/.github/workflows/ci.yml`'s required job runs everything except `invariants`,
-`doc-links`, `prose`, `line-citations`, `hue-separation` and
-`transcript-surfaces`, and adds a
+`doc-links`, `prose`, `line-citations`, `hue-separation`,
+`transcript-surfaces` and `cargo-flags`, and adds a
 `Cargo.lock` sync check, `stella context
 validate`, a release smoke build (thin LTO), and the deleted-test guard
 (`scripts/check-deleted-tests.sh`);
@@ -205,10 +208,14 @@ of the other two (#1439) — and `doc-warnings-schema` beside it, because
 that describes the wire format sits behind an off-by-default `schema` one, so
 rustdoc compiled none of them anywhere (#4584); this workflow already builds
 those three crates with the feature on; and `guard-self-tests.yml` runs the
-gate steps ci.yml's job cannot — `prose`, `line-citations`, `hue-separation`
-and `transcript-surfaces`; it is skipped for a prose-only diff, which is the
-diff `prose` exists to judge — alongside the hermetic suites that prove a
-guard can still fail (#3820, #4427). Which workflow runs a step is a
+gate steps ci.yml's job cannot — `prose`, `line-citations`, `hue-separation`,
+`transcript-surfaces` and `cargo-flags`; it is skipped for a prose-only diff,
+which is the diff `prose` exists to judge — alongside the hermetic suites that
+prove a guard can still fail (#3820, #4427). `cargo-flags` is there for a
+sharper version of the same reason: it reads the `Makefile`, and no workflow
+that runs a Makefile recipe can be started by a Makefile edit, which is how
+`doc-warnings-schema` came to ship a first line cargo refuses and stay dead
+for seven hours with every run green. Which workflow runs a step is a
 judgement; *that* one does is checked, by `gate-parity` against every `run:`
 in `.github/workflows/`. That check stops at "does some workflow run it" — it
 says nothing about which files reach it, so a `paths:` filter narrowing

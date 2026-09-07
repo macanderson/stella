@@ -130,6 +130,17 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: python3 ./scripts/check-closing-keywords.py
 
+      # Here rather than in ci.yml, and for a sharper version of the reason
+      # the four above are: the only workflow that runs `doc-warnings-schema`
+      # is `wire-schema.yml`, and that workflow's `paths:` filter cannot be
+      # started by a `Makefile` edit. So the recipe's own runner never saw the
+      # recipe change, and `cargo clean --doc $(SCHEMA_CRATES)` merged green
+      # and stayed dead (#5947, #5992). This job has no `paths:` filter and no
+      # `needs`-gated `if:`, so a Makefile-only pull request reaches it.
+      - name: no recipe hands cargo a flag pair cargo refuses
+        if: ${{ !cancelled() }}
+        run: python3 ./scripts/check-cargo-flags.py
+
       # The steps above run here because this trigger carries no `paths:`
       # filter at all -- that is what lets them fire on a scripts-only pull
       # request. Nothing enforced that absence except a comment, so this reads
@@ -259,6 +270,10 @@ jobs:
       - name: dev-env setup script and its fmt-file hook
         if: ${{ !cancelled() }}
         run: ./scripts/test-dev-env.sh
+
+      - name: cargo-flags guard failure directions, variable expansion included
+        if: ${{ !cancelled() }}
+        run: python3 ./scripts/test-cargo-flags.py
 
       - name: gate-parity guard failure directions
         if: ${{ !cancelled() }}
