@@ -28,7 +28,8 @@
 //!
 //! The rules it applies:
 //!
-//! - a tool **absent** from the accepted list is denied;
+//! - a tool under a namespace the package's own MCP server owns is allowed;
+//! - a tool **absent** from the grant is denied;
 //! - a tool graded **above** what was accepted is denied.
 //!
 //! It does **not** match [`Capability::scope`]. That is #3482's third item,
@@ -110,8 +111,10 @@ const GATE_NAME: &str = "plugin-capability";
 
 /// The authority one installed plugin holds, as the rule that enforces it.
 ///
-/// Built from the capability list a human accepted at install. Nothing else:
-/// a plugin's authority is what was granted then and not one capability more.
+/// Built from the manifest a human accepted at install: the capability list it
+/// asked of the host, and the tools and MCP servers the package ships itself.
+/// Nothing else — a plugin's authority is what was declared then and not one
+/// capability more.
 #[derive(Debug, Clone)]
 pub(crate) struct PluginCapabilityGate {
     /// The manifest name this rule answers about — `Principal::Plugin`'s
