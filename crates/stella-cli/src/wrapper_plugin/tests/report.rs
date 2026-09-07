@@ -411,3 +411,41 @@ fn a_detached_launcher_owes_the_notice_and_an_attached_one_does_not() {
         );
     }
 }
+
+/// **Witness.** A finished wrapper run puts the round's verdict onto the
+/// stream, ahead of the board drawn from it.
+///
+/// The board alone says which gate went red. It carries no ladder snapshot,
+/// so a replay of a recorded run could read which requirement failed and
+/// still not say who decided it, against what, or whether a check was ever
+/// heard from. This door sent the board and nothing else, so the stamps a
+/// dispatch mints lived exactly as long as the process that minted them.
+#[test]
+fn a_finished_run_puts_the_verdict_on_the_stream_before_the_board() {
+    let report = faulted_report();
+    let events = super::super::report::run_events(&report);
+
+    let names: Vec<&str> = events
+        .iter()
+        .map(stella_protocol::AgentEvent::type_tag)
+        .collect();
+    assert_eq!(
+        names,
+        vec!["verdict", "gate_board"],
+        "the record rides ahead of the picture drawn from it"
+    );
+
+    let stella_protocol::AgentEvent::Verdict { passed, evidence } = &events[0] else {
+        unreachable!("the first event is the verdict");
+    };
+    assert!(!passed, "nothing decided this round either way");
+    let ladder = evidence
+        .ladder
+        .as_ref()
+        .expect("the verdict carries the round's ladder snapshot");
+    assert_eq!(
+        ladder.rung,
+        Some(stella_protocol::LadderRung::Unverifiable),
+        "no oracle ran, so nothing was in a position to look"
+    );
+}

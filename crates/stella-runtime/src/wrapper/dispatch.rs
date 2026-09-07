@@ -272,14 +272,19 @@ pub struct DispatchReport {
     /// It re-decides nothing: every row is read out of `verdict` above, so the
     /// two cannot disagree.
     pub board: GateBoard,
-    /// The final round as the ladder's own record, carrying one stamp.
+    /// The final round as the ladder's own record, carrying one stamp per
+    /// claim.
     ///
     /// The board above is for a person to look at. This is for a reader who
-    /// comes back later and asks who decided, against what, and when. The
-    /// stamp's name is read from the manifest the host loaded, never from
-    /// anything the plugin sends, and its hash covers this record with the
-    /// stamp list dropped — so a second observer can add a claim without
-    /// breaking the first one. See `super::stamp`.
+    /// comes back later and asks who decided, against what, and when. Each
+    /// name is read from the manifest the host loaded, never from anything
+    /// the plugin sends, and one hash covers this record with the stamp list
+    /// dropped — so a second observer can add a claim without breaking the
+    /// first one. See `super::stamp`.
+    ///
+    /// The same claims [`Self::arbitration`] folds, in the same order: every
+    /// check that stood aside, then the arbiter's own. That field answers for
+    /// the length of this process, and this one answers after it.
     ///
     /// It decides nothing. The rung here is the same rung the record would
     /// carry with no stamp on it at all.
@@ -775,7 +780,9 @@ impl WrapperDispatch {
                     // The record the gate leaves. Every claim this run
                     // stood aside on, in the order it happened. Then the
                     // arbiter's own claim, from the verdict that stopped the
-                    // loop.
+                    // loop. The stamp above carries the same aside claims,
+                    // read from the same list, so the record and the fold
+                    // cannot name different gaps.
                     let mut claims = faults.claims.clone();
                     claims.push(ArbiterClaim::from_verdict(
                         arbiter_id,
@@ -990,9 +997,16 @@ impl WrapperDispatch {
         merged
     }
 
-    /// The round as the ladder's own record, with one stamp on it.
+    /// The round as the ladder's own record, with a stamp for every claim.
     ///
-    /// A record that cannot be hashed keeps its answer and loses its stamp.
+    /// Every check that did not decide the round — one that broke, one the
+    /// clock cut short, one that looked and could not tell — gets a stamp
+    /// ahead of the arbiter's own, so the record names the gap rather than
+    /// reading like a run nothing went wrong in. They are read off `faults`,
+    /// the same list the fold is built from, so neither can name a gap the
+    /// other does not.
+    ///
+    /// A record that cannot be hashed keeps its answer and loses its stamps.
     /// The hash is taken after the verdict is settled and can change nothing
     /// about it, so failing the whole run over one would throw away a good
     /// answer. The failure joins `faults`, where every other silence here is
@@ -1013,7 +1027,14 @@ impl WrapperDispatch {
             .iter()
             .map(|grant| format!("candidate:{}", grant.handle))
             .collect();
-        match stamp::stamped(&self.rule, evidence, verdict, names.author, refs, timing) {
+        // Both hashes are taken over the same preimage — the record with
+        // its stamp list dropped — so the second call can only fail where
+        // the first already did. One arm covers them for that reason.
+        let decided_at_ms = timing.decided_at_ms;
+        let aside = faults.claims.clone();
+        let stamped = stamp::stamped(&self.rule, evidence, verdict, names.author, refs, timing)
+            .and_then(|record| stamp::stamp_claims(record, &aside, decided_at_ms));
+        match stamped {
             Ok(snapshot) => snapshot,
             Err(source) => {
                 faults.push_host(WrapperError::Unstampable {
