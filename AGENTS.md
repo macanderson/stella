@@ -251,9 +251,9 @@ confined to `website/**` is exactly a deck edit (#3573).
 A sixth, `main-canary.yml`, is the only one that runs **after** the merge, and
 it exists because some guards cannot be settled before one. A guard enforced
 against a *shared cell* — one thing every PR of a shape must write, like
-`Cargo.lock`, `scripts/file-size-baseline.txt` or the next free **ADR number**
-— can be satisfied correctly by
-two branches that still compose into a broken tree once both land. No pre-merge
+`Cargo.lock`, `scripts/file-size-baseline.txt` or the next free **ADR
+number** — can be satisfied correctly by two branches that still compose into
+a broken tree once both land. No pre-merge
 run can catch that: neither author's tree is wrong. So the canary re-asks the
 composition questions on `main` itself (push, plus a daily backstop for the
 breakage no commit caused, such as a yanked dependency), and reports by opening
