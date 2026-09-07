@@ -544,6 +544,14 @@ pub async fn run_deck_session(
     let _ = session_registry.upsert(&session_record);
     // One line when another live session already holds this checkout.
     shared_checkout::announce(&session_registry, &session_record, &cfg.workspace_root);
+    // The other half (`#5933`): a peer that joins this checkout LATER, once
+    // this deck's own channel exists to tell it through.
+    shared_checkout::spawn_late_arrival_monitor(
+        session_registry.clone(),
+        session_record.clone(),
+        cfg.workspace_root.clone(),
+        in_tx.clone(),
+    );
     // What the record's terminal status will be at exit (last turn wins);
     // quitting with a pending backlog overrides to Paused below — the work
     // is durable now, so an exit with prompts waiting is a pause, not loss.
@@ -1599,11 +1607,7 @@ pub async fn run_deck_session(
                             // cached: MCP servers join the session
                             // asynchronously, so the panel must ask what the
                             // stack holds now, not at boot.
-                            let mcp = mcp_slot.get().cloned();
-                            let base: &dyn ToolExecutor = match &mcp {
-                                Some(set) => set.as_ref(),
-                                None => &*registry,
-                            };
+                            let base = settings_io::live_tool_executor(&mcp_slot, &*registry);
                             let names =
                                 crate::tool_switches::session_tool_names(base, &custom_tools);
                             handle_tools_input(&other, cfg, &names, &mut settings_stale, &in_tx);
@@ -1663,6 +1667,7 @@ pub async fn run_deck_session(
             DeckCommand::Handled
                 | DeckCommand::InitCompleted
                 | DeckCommand::Reloaded
+                | DeckCommand::SettingsReloaded
                 | DeckCommand::SessionModel(_)
         ) {
             // A handled command emits its answer as `Text`, which flips the
@@ -1725,6 +1730,15 @@ pub async fn run_deck_session(
                 // request the deck raised against the old seats names a
                 // seating that no longer exists and starts nothing.
                 announce_panels(panels.reseat(&cfg.workspace_root), &deck_tx, &in_tx);
+                settings_io::refresh_tools_panel(cfg, &mcp_slot, &*registry, &custom_tools, &in_tx);
+                continue 'session;
+            }
+            // A settings write refreshed the ENGINE overlay inline and
+            // deferred the TOOLS panel here, the same reason `Reloaded`
+            // does: an accurate row list needs `mcp_slot`, only this loop's
+            // scope holds it (`#1990`).
+            DeckCommand::SettingsReloaded => {
+                settings_io::refresh_tools_panel(cfg, &mcp_slot, &*registry, &custom_tools, &in_tx);
                 continue 'session;
             }
             DeckCommand::InitCompleted => {

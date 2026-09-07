@@ -631,6 +631,9 @@ fn note_kind(event: &AgentEvent) -> NoteKind {
         | AgentEvent::Pr { .. }
         | AgentEvent::MediaProgress { .. }
         | AgentEvent::MediaComplete { .. } => NoteKind::Handoff,
+        // Same fix as `note_kind` in `stella_tui::transcript_build`
+        // (`#5748`). An error must not look like a budget tick.
+        AgentEvent::Error { .. } | AgentEvent::SteeringWithheld { .. } => NoteKind::Alert,
         _ => NoteKind::Other,
     }
 }

@@ -50,7 +50,7 @@ The source tier comes from the server's namespace:
 
 Install count shows how many people installed the server, or "installs unknown" if the registry doesn't publish that number. stella never shows a fake `0`.
 
-"Signed" means the registry has confirmed who published the entry, and that entry is marked active. It does **not** mean stella checked a signature on the actual files — no MCP registry publishes one to check yet. Anything the registry can't attribute to a publisher, or has withdrawn, shows as "blocked." `stella mcp install` refuses to install a blocked server.
+"Attributed" means the registry knows who published the entry, and marks it active. It does **not** mean stella checked a signature on the files. No registry publishes one yet. An entry the registry can't attribute, or has withdrawn, shows as "blocked." `stella mcp install` refuses a blocked server.
 
 ### `stella mcp install <name>`
 

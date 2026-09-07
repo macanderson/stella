@@ -641,6 +641,11 @@ pub enum NoteKind {
     Verdict,
     /// Work handed elsewhere: sub-agents, commits, pull requests, media.
     Handoff,
+    /// Something went wrong: a turn error, or withheld steering advice.
+    /// Louder than [`NoteKind::Verdict`] on purpose. This is not a
+    /// judgement about finished work. Do not read it as a budget tick
+    /// (`#5748`).
+    Alert,
     /// Anything this crate has never heard of.
     Other,
 }
@@ -656,6 +661,7 @@ impl NoteKind {
             NoteKind::Wait => "⏸",
             NoteKind::Verdict => "⚑",
             NoteKind::Handoff => "↳",
+            NoteKind::Alert => "✗",
             NoteKind::Other => "·",
         }
     }
@@ -670,6 +676,7 @@ impl NoteKind {
             NoteKind::Wait => "wait",
             NoteKind::Verdict => "verdict",
             NoteKind::Handoff => "handoff",
+            NoteKind::Alert => "alert",
             NoteKind::Other => "other",
         }
     }

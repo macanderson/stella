@@ -6,7 +6,6 @@
 //! checks — see `crates/stella-core/src/driver.rs`) and renders its
 //! `AgentEvent` stream live via a spawned draining task.
 
-use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::sync::Arc;
 use std::time::{Duration, Instant};

@@ -515,9 +515,9 @@ fn file_change_lines(
 ///
 /// `ToolStart`/`ToolResult` are intentionally a no-op here: `ToolResult`
 /// doesn't carry the tool's name (only `call_id`), so the call site keeps a
-/// small `call_id -> name` map and calls `tool_call_card`/`tool_result_card`
-/// directly instead of routing those two through this function — see
-/// `agent.rs`'s event-draining task. Every other event kind (including
+/// [`stella_tui::tool_call_index::ToolCallIndex`] (`#2450`, shared with the
+/// deck) and calls `tool_call_card`/`tool_result_card` directly instead —
+/// see `agent.rs`'s event-draining task. Every other event kind (including
 /// `Text` — the engine emits one per step, not just at turn-end, since a
 /// step with tool calls can still carry commentary text) is rendered here.
 ///

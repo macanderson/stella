@@ -358,6 +358,9 @@ details[open] > summary .chev { transform: rotate(90deg); }
 .note-wait .notegut, .note-verdict .notegut { color: var(--amber); }
 .note-handoff .notegut { color: var(--gold); }
 .note-meter .notegut { color: var(--gold); }
+.note-alert .notegut, .note-alert .note-summary, .note-alert .note-fold > summary {
+  color: var(--red);
+}
 
 /* The prompt-inspect control a metering note carries. Hidden by default so a
    standalone transcript — which has no script and no receipt store — never

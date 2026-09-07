@@ -22,18 +22,43 @@
 //! holds each session's pid and tree and already reads a dead pid as a
 //! crash. A second file with the same three facts would be a second answer
 //! to one question.
+//!
+//! # The late arrival (`#5933`)
+//!
+//! [`announce`] runs once, at boot, before the deck's screen exists. That is
+//! why it prints to stderr instead of sending an [`Inbound`]. It warns the
+//! SECOND session, never the first. That is backwards: the first session
+//! holds the uncommitted work, and it is the second session's `git checkout`
+//! that reverts it.
+//!
+//! [`spawn_late_arrival_monitor`] is the fix. It runs inside the deck, once
+//! the deck has a channel to send through. It checks the session registry on
+//! a timer, not every frame, and tells the first session when a new peer
+//! shows up. It never refuses to start a turn, the same as [`announce`].
 
-use std::path::Path;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use stella_store::{SessionRecord, SessionRegistry};
+use stella_tui::Inbound;
+use tokio::sync::mpsc::UnboundedSender;
 
 /// A live session that already holds this checkout.
+#[derive(Clone)]
 pub(super) struct Peer {
     /// The registry id, so the reader can find it in the SESSIONS view.
     id: String,
     /// The process that owns it.
     pid: u32,
+}
+
+impl Peer {
+    /// The registry id — what [`spawn_late_arrival_monitor`] diffs on.
+    pub(super) fn id(&self) -> &str {
+        &self.id
+    }
 }
 
 /// Every live session in `record`'s tree other than `record` itself.
@@ -106,6 +131,58 @@ pub(super) fn announce(registry: &SessionRegistry, record: &SessionRecord, root:
     if let Some(line) = notice(&peers, current_branch(root).as_deref()) {
         eprintln!("  ! {line}");
     }
+}
+
+/// Which of `current` were not in `previous`. Kept apart from the registry
+/// read so this can be tested on its own (`#5933`).
+fn newly_arrived<'a>(previous: &HashSet<String>, current: &'a [Peer]) -> Vec<&'a Peer> {
+    current
+        .iter()
+        .filter(|p| !previous.contains(p.id()))
+        .collect()
+}
+
+/// How often the deck checks the session registry for a new peer (`#5933`).
+/// The tab redraws about thirty times a second; the registry does not
+/// change that often, so this reads it on a slower timer instead.
+const LATE_ARRIVAL_POLL: Duration = Duration::from_secs(5);
+
+/// Watch for a peer that joins this checkout after this session started,
+/// and announce it through the deck's own channel.
+///
+/// Stops when the deck does: `in_tx` closes once the driver loop drops it.
+pub(super) fn spawn_late_arrival_monitor(
+    registry: SessionRegistry,
+    record: SessionRecord,
+    root: PathBuf,
+    in_tx: UnboundedSender<Inbound>,
+) {
+    tokio::spawn(async move {
+        // Start from the boot-time set, not empty. A peer `announce` already
+        // named must not get a second notice on the first tick.
+        let mut known: HashSet<String> = peers(&registry.list(), &record)
+            .iter()
+            .map(|p| p.id().to_string())
+            .collect();
+        let mut tick = tokio::time::interval(LATE_ARRIVAL_POLL);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tick.tick().await;
+            if in_tx.is_closed() {
+                break;
+            }
+            let records = registry.list();
+            let now = peers(&records, &record);
+            let arrived: Vec<Peer> = newly_arrived(&known, &now).into_iter().cloned().collect();
+            if !arrived.is_empty()
+                && let Some(line) = notice(&arrived, current_branch(&root).as_deref())
+                && in_tx.send(Inbound::Notice(line)).is_err()
+            {
+                break;
+            }
+            known = now.iter().map(|p| p.id().to_string()).collect();
+        }
+    });
 }
 
 #[cfg(test)]
@@ -196,5 +273,33 @@ mod tests {
     fn a_directory_that_is_not_a_repository_has_no_branch() {
         let dir = tempfile::tempdir().expect("tempdir");
         assert_eq!(current_branch(dir.path()), None);
+    }
+
+    /// **The witness (`#5933`).** Without `newly_arrived`, nothing tells a
+    /// session about a peer that starts later — `announce` runs once, at
+    /// boot. A peer already known is not named again. A new one is.
+    #[test]
+    fn newly_arrived_names_only_the_peer_the_last_check_did_not_see() {
+        let mine = live("ses-1", "/w/one");
+        let known_peer = live("ses-2", "/w/one");
+        let late_peer = live("ses-3", "/w/one");
+        let previous: HashSet<String> = [known_peer.id.clone()].into_iter().collect();
+        let now = peers(&[mine.clone(), known_peer, late_peer], &mine);
+
+        let arrived = newly_arrived(&previous, &now);
+        assert_eq!(arrived.len(), 1, "only the truly new peer is reported");
+        assert_eq!(arrived[0].id(), "ses-3");
+    }
+
+    /// With no prior check, every live peer counts as arrived. That is fine:
+    /// [`spawn_late_arrival_monitor`] fills `known` from `peers()` before
+    /// its first tick, so this case never fires and never repeats what
+    /// `announce` already said at boot.
+    #[test]
+    fn newly_arrived_with_no_prior_check_reports_everyone_live() {
+        let mine = live("ses-1", "/w/one");
+        let theirs = live("ses-2", "/w/one");
+        let now = peers(&[mine.clone(), theirs], &mine);
+        assert_eq!(newly_arrived(&HashSet::new(), &now).len(), 1);
     }
 }

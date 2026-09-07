@@ -114,14 +114,11 @@ impl InspectView {
     /// The overlay's mismatch line and whether it is a genuine integrity
     /// signal, or `None` when nothing mismatched.
     ///
-    /// The wording lives here rather than in the renderer for two reasons.
-    /// `deck_render.rs` is a god file at its ceiling, so a second branch there
-    /// costs lines it does not have; and the overlay **clips** rather than
-    /// wraps, so each variant has to be short enough to survive the right edge
-    /// intact — which is a property of the string, testable here, not of the
-    /// draw call. Both variants stay under 80 columns and put the *meaning*
-    /// before the detail, so the part that distinguishes them survives even on
-    /// the narrowest terminal the popup can be drawn in.
+    /// The wording lives here, not in the renderer, because it is about
+    /// meaning, not the draw call. `deck_render.rs` wraps every banner line
+    /// it draws (`#2029`), so this text can run past one row. It still puts
+    /// the meaning first, so a reader sees which kind of mismatch this is
+    /// before the wrap point.
     ///
     /// A legacy journal's mismatch stays the benign warning #1668 introduced,
     /// naming compaction as the cause. A journal that records every rewrite
@@ -149,17 +146,17 @@ impl InspectView {
 mod tests {
     use super::*;
 
-    /// The INSPECT overlay clips rather than wraps, and its popup is
-    /// `min(frame - 6, 120)` columns wide — so on an 80-column terminal a
-    /// banner line has about 72 to work with. Both variants are written to
-    /// that budget and put the meaning first; this pins it, because a wording
-    /// change that silently pushes the distinguishing half off the right edge
-    /// would undo #1981 without failing anything else (see #2029).
+    /// Each era's mismatch line names its own count and its own meaning
+    /// (compaction rewrite vs. unaccounted for), at any length. There is no
+    /// column budget to hold it to: `deck_render.rs` wraps every banner
+    /// line it draws (`#2029`). The old eighty-column check this test made
+    /// is gone with that limit, and named in this PR's description, the
+    /// same as `check-deleted-tests` asks.
     #[test]
-    fn both_mismatch_lines_survive_an_eighty_column_terminal() {
-        for era in [
-            JournalEra::CompactionUnjournaled,
-            JournalEra::CompactionJournaled,
+    fn each_era_names_its_own_count_and_meaning() {
+        for (era, meaning) in [
+            (JournalEra::CompactionUnjournaled, "compaction rewrite"),
+            (JournalEra::CompactionJournaled, "unaccounted for"),
         ] {
             let view = InspectView {
                 call: RecordedCallInfo {
@@ -178,7 +175,8 @@ mod tests {
                 journal_era: era,
             };
             let (line, _) = view.digest_mismatch_line().expect("a mismatch is reported");
-            assert!(line.chars().count() <= 72, "{} cols: {line}", line.len());
+            assert!(line.contains("999"), "{line}");
+            assert!(line.contains(meaning), "{line}");
         }
     }
 }
