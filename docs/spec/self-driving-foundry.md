@@ -53,7 +53,7 @@ each row is a dependency of a later section.
 
 | Primitive | Where | State |
 |---|---|---|
-| Self-driving cycle loop (plan, fix batch, audit aperture, tickets, bench, AIMD calibration) | `scripts/self-driving.sh`, `stella self-driving …`, pure core in `crates/stella-core/src/self_driving.rs` | Shipped. No manifest, no in-flight resume, env-var configured. |
+| Self-driving cycle loop (plan, fix batch, audit aperture, tickets, bench, AIMD calibration) | `scripts/self-driving.sh`, `stella self-driving …`, pure core in `crates/stella-autonomy/src/lib.rs` and its modules | Shipped. No manifest, no in-flight resume, env-var configured. |
 | Service supervision (launchd/systemd, `RunAtLoad`, opt-in `KeepAlive`, resolver shim, `resume-all`) | `stella daemon install/uninstall/resume-all`, `crates/stella-cli/src/daemon/service.rs` | Shipped (#1587). The self-driving shell loop still carries its own macOS-only duplicate installer. |
 | Branch-pinned SUT builds, cached by commit | `sut.py`, `sut_build.py` (detached worktree + zigbuild) in the [arenabench repo](https://github.com/macanderson/arenabench), GUI branch picker | Shipped. `sut_ref` is match-level only and does not round-trip TOML (§5.2). |
 | Match configuration and artifacts (seats, attempts, `stella-events.jsonl` per trial, `result.json`, reward at `verifier_result.rewards.reward`) | `{config,model,runner,telemetry}.py` in the arenabench repo | Shipped. |
@@ -98,13 +98,21 @@ emitter; no trainer port; no weights registry; two daemon surfaces.
 otherwise the loop skips from `HARVEST` to `MEASURE`.
 
 Placement follows the house rule (AGENTS.md #2 — no I/O in the
-engine):
+engine). The pure half goes in `stella-autonomy`, not `stella-core`.
+The engine's step path never reaches a campaign fold, and AGENTS.md's
+rule that `stella-core` holds only the step path keeps it out of the
+engine crate. `core-reachability` refuses to record a new resident
+there. `stella-autonomy` already holds the
+self-driving decision math, and it is the only home both `stella-cli`
+and `stella-observatory` may read — which is what Phase 5's Observatory
+campaign view needs, because the Observatory must not link
+`stella-core`.
 
-- **`stella-core/src/self_driving/campaign.rs`** — the pure half. Ledger
+- **`stella-autonomy/src/campaign.rs`** — the pure half. Ledger
   record types, the fold to a `CampaignPosition`, stage-transition
   legality, exit-predicate evaluation, suspension classification,
-  idempotency-key derivation. Property-tested like the rest of
-  `self_driving.rs`.
+  idempotency-key derivation. Property-tested like the rest of that
+  crate.
 - **`stella-cli/src/self_driving_cmd/campaign.rs`** — the I/O half.
   Manifest load/validate, ledger append (single writer, same discipline
   as `state.rs`), stage executors that shell out to arenabench, the

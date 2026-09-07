@@ -1,0 +1,74 @@
+# What Linear is, as a file.
+#
+# Nothing about Linear is compiled in. Which words mean open, how a close is
+# spelled, what Linear calls the body of an issue, and which labels mean which
+# class are all read from here.
+#
+# Stella builds this file into the binary, the way it builds `github.toml`
+# beside it. A file at `.stella/issues/linear.toml` takes its place. So a
+# workspace that wants to change one line changes one line.
+#
+# This file is the test of the format. Linear is the tracker whose quirks are
+# best known, so if Linear needs a special case in the loader, no other
+# tracker can be a file either. It needs none. The loader reads this file and
+# `github.toml` through the same code, and adding a third tracker is a third
+# file plus a row in one table.
+#
+# The schema is `doc:agent-native-delivery` §4.1.
+
+schema_version = 1
+name = "linear"
+
+# One of `github`, `jira`, `linear` or `exec`. This build runs one transport,
+# and it is `gh`. So binding a workspace to this provider prints a line that
+# says which adapter will actually run. The words below are already right; the
+# transport that speaks them is what is still owed.
+kind = "linear"
+
+# What a raw status means.
+#
+# These are Linear's workflow state *types*, not the names a team gives its
+# columns. Every Linear workflow state carries one of these five, so a team
+# that renames "In Progress" to "Cooking" changes nothing here. A team that
+# adds a state adds it under the type it already has.
+#
+# A status in neither list is reported. It is never guessed. A guess of open
+# fills the queue with work nobody offered. A guess of closed drops work.
+open = ["backlog", "unstarted", "started"]
+closed = ["completed", "canceled"]
+
+# How this tracker spells a close.
+#
+# Linear closes an issue two ways: it is done, or it is canceled. There is no
+# third. `duplicate` is a relation in Linear, not a close reason, so it is left
+# out here and Stella's own word passes through to the receipt unchanged.
+[resolutions]
+completed = "completed"
+not_planned = "canceled"
+
+# What this tracker calls each part of an issue.
+#
+# Linear calls the body a `description`. That one word is why this block
+# exists: a reader who greps for `body` against Linear finds nothing.
+[fields]
+title = "title"
+body = "description"
+labels = "labels"
+parent = "parent"
+
+# Which labels mean which class.
+#
+# Linear ships no issue-type field at all. A team says what an issue is by
+# labelling it. So the class has to come from labels, and a team that spells
+# them its own way edits three lines here instead of waiting for a release.
+#
+# Both cases are listed because Linear label names are free text and teams
+# write them either way. An issue in none of these lists is `Other`. A reader
+# can see that. A wrong class hides.
+#
+# An `Epic` label is not a class. It marks a container, and the ready queue
+# reads it through its own list of container labels.
+[classes]
+bug = ["Bug", "bug", "defect", "Defect"]
+feature = ["Feature", "feature", "Improvement", "improvement"]
+task = ["Chore", "chore", "Task", "task", "Migration", "migration"]

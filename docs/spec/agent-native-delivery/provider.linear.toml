@@ -1,23 +1,27 @@
 # =============================================================================
-# The SHIPPED Linear manifest — `include_str!`-embedded, shadowable by a
-# workspace `.stella/issues/linear.toml` of the same name.
+# The FULL Linear manifest §4.1 describes — every block, including the ones no
+# build reads yet. It is the target, not the shipped file.
+#
+# What ships is `crates/stella-cli/src/issue_provider/linear.toml`, embedded by
+# that module's `BUILT_IN` table and shadowed by a workspace
+# `.stella/issues/linear.toml` of the same name. It carries the vocabulary half
+# below — `open`, `closed`, `[resolutions]`, `[fields]`, `[classes]` — because
+# that is the half something reads. The blocks under `[connection]`,
+# `[states.write]`, `[capabilities]` and `[branch]` wait on a Linear transport;
+# this build ships one adapter and it runs `gh`.
 #
 # This file is the proof obligation of `docs/spec/agent-native-delivery.md`
 # §4.5: if Linear cannot be expressed as a manifest, no customer's tracker can
-# be either, and the extension surface is decorative. Stella ships no issue
-# toolset today, so none of what Linear needs is compiled in anywhere — the
-# GraphQL endpoint, that `ENG-123` is the identifier shape, that Linear
-# supplies a canonical branch name per issue, that a team scopes creation.
-# Every one of those facts appears below as data.
-#
-# Expressing Linear is therefore both the proof that the format is adequate
-# and the first provider onto it. It is filed as its own issue and is the
-# Phase 1 deliverable (§11).
+# be either, and the extension surface is decorative. So every Linear fact
+# appears here as data — the GraphQL endpoint, that `ENG-123` is the identifier
+# shape, that Linear supplies a canonical branch name per issue, that a team
+# scopes creation.
 #
 # WHAT THIS FILE MUST NOT NEED: a `linear = true` special case anywhere in the
 # loader. If the shipped Linear manifest requires one field no customer
 # manifest can set, the format has failed and the field belongs in the `Issue`
-# struct (§3) instead.
+# struct (§3) instead. The shipped file needs none: it and `github.toml` are
+# read by one function.
 # =============================================================================
 
 schema_version = 1

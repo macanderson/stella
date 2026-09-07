@@ -3,7 +3,7 @@
   "issue": "https://github.com/macanderson/stella/issues/6155",
   "epic": "https://github.com/macanderson/stella/issues/4029",
   "status": "plan_fixed_run_not_started",
-  "status_note": "The design, outcomes, seeds and decision rule below are fixed and were written before any data existed. The run has not been executed. It needs a benchmark host, a spend-capable credential, a build of a crate this workspace deleted, and the two adapter preconditions named under `preconditions`. The fields under `to_be_recorded_before_the_first_paid_call` are the run's identity and must be filled in — and this file committed — before the first paid call, not after.",
+  "status_note": "The design, outcomes, seeds and decision rule below are fixed and were written before any data existed. The run has not been executed. It needs a benchmark host, a spend-capable credential, a build of a crate this workspace deleted, and the run scripts named under `preconditions`. The two adapter preconditions are met. The fields under `to_be_recorded_before_the_first_paid_call` are the run's identity and must be filled in — and this file committed — before the first paid call, not after; the two `loop_mode_field_values` are filled in already, because the adapter decides them and no data is needed to read them off it.",
   "plan_fixed_at": "2026-09-05",
   "question": "Is the plugin verification path at least as good as the built-in staged pipeline it replaced?",
   "why_it_is_owed": "docs/spec/pipeline-as-plugins.md §7 set one bar for deleting the built-in path: a side-by-side benchmark. The deletion shipped ahead of that bar as a recorded maintainer call. This run is the late payment.",
@@ -53,7 +53,7 @@
   },
   "analysis": {
     "tool": "bench/evidence/compare_arms.py",
-    "mode": "--cross-sut <control-sha>:<treatment-sha> --treatment-fired loop_mode=<plugin path value>",
+    "mode": "--cross-sut <control-sha>:<treatment-sha> --treatment-fired loop_mode=PLUGIN:witness-v1",
     "why_a_declared_mode": "the default refuses two builds, and it is right to. The declaration names both commits so a build from the wrong tree is caught, and names the per-trial field proving the treatment arm ran the plugin path so a dropped selector is caught.",
     "reward_rule": "the external verifier's reward is authoritative; a trial that produced no reward scores 0 and stays in the denominator; a task absent from an arm scores 0 in that arm",
     "bootstrap_seed": 20260905,
@@ -72,22 +72,25 @@
   "refusals": {
     "wrong_build": "an arm whose trials report a commit other than the one declared for it",
     "one_binary": "two arms reporting one binary hash, whatever their commits say",
-    "path_not_exercised": "a treatment trial that cannot report which loop it ran, or a control trial reporting the plugin path",
+    "path_not_exercised": "a treatment trial that cannot report which loop it ran, or a control trial carrying the treatment arm's declared loop_mode value",
     "posture_moved": "the two arms declaring different assurance arms, which means more than the build changed"
   },
   "rules": "no reruns, no outcome-selected stops, no task excluded, no threshold moved after data. Operational aborts are named in the report and relaunch under a new job name. A provider 402 or a host failure is not a task failure and is listed separately from the per-task table.",
   "preconditions": {
     "adapter_cannot_select_a_pipeline": {
-      "what": "bench/harbor_adapter/stella_harbor/loop_mode.py's loop_argv emits no --pipeline flag at all, so neither arm can be launched by today's adapter",
-      "issue": "https://github.com/macanderson/stella/issues/6178"
+      "what": "bench/harbor_adapter/stella_harbor/loop_mode.py's loop_argv emitted no --pipeline flag at all, so neither arm could be launched by the adapter",
+      "issue": "https://github.com/macanderson/stella/issues/6178",
+      "state": "met. loop_argv emits `--pipeline <id>` when STELLA_PIPELINE names one, and loop_mode_name publishes the matching name."
     },
     "evidence_cannot_say_which_loop_ran": {
-      "what": "score_dev_baseline.py's extract_trial does not carry stella_loop_mode into trials.jsonl, so no committed field answers the question the analysis mode above must ask",
-      "issue": "https://github.com/macanderson/stella/issues/6179"
+      "what": "score_dev_baseline.py's extract_trial did not carry stella_loop_mode into trials.jsonl, so no committed field answered the question the analysis mode above must ask",
+      "issue": "https://github.com/macanderson/stella/issues/6179",
+      "state": "met. score_dev_baseline.py reads stella_loop_mode off the trial manifest and writes it to trials.jsonl as loop_mode, which is the field --treatment-fired names below."
     },
-    "control_arm_must_build": {
-      "what": "the control arm's crate is gone from this workspace, so the build is from an old checkout with its own lockfile and toolchain pin. Budget time for getting that binary to exist at all.",
-      "issue": null
+    "control_arm_must_build_and_the_run_scripts_hold_one_arm": {
+      "what": "the control arm's crate is gone from this workspace, so its build comes from an old checkout with its own lockfile and toolchain pin. build_sut.sh refuses any difference between the working tree and the commit it is handed. env.sh gives both arms one STELLA_BINARY path and one TB_ROOT, so the second build overwrites the first. The same variable puts $TB_REPO/bench/harbor_adapter on PYTHONPATH, so aiming TB_REPO at the old checkout swaps the adapter too, and only the binary may differ between the arms.",
+      "issue": "https://github.com/macanderson/stella/issues/6195",
+      "state": "open. It is tree-only and needs no rig."
     }
   },
   "to_be_recorded_before_the_first_paid_call": {
@@ -102,8 +105,10 @@
     "taskset_sha256": null,
     "denominator": 89,
     "loop_mode_field_values": {
-      "control": null,
-      "treatment": null
+      "control": "PLUGIN:classic",
+      "treatment": "PLUGIN:witness-v1",
+      "how_they_are_derived": "loop_mode_name in bench/harbor_adapter/stella_harbor/loop_mode.py, over each arm's STELLA_PIPELINE value. bench/harbor_adapter/tests/test_pipeline_ab_preregistration.py holds the two strings above to what that function returns, so an adapter change that moves the vocabulary reddens CI instead of leaving this plan's --treatment-fired argument matching nothing.",
+      "why_the_control_value_says_PLUGIN": "the adapter spells every `--pipeline <id>` arm PLUGIN:<id> and does not special-case classic, because which ids resolve to what is Stella's decision (PipelineChoice::resolve) and an adapter-side copy of it would be a second place to get it wrong. On the control arm's binary, classic is the built-in staged pipeline rather than a plugin. Read the string as the id the command line carried, which is what it is. The arm is the build."
     },
     "adapter_revision": null
   }

@@ -28,8 +28,13 @@
 //! which [`IssueClass`] are read from the shipped manifest beside this file
 //! (`issue_provider/github.toml`), which a workspace `.stella/issues/github.toml`
 //! shadows. GitHub therefore ships the way a third-party tracker would have to
-//! ship, and the built-in path and the manifest path are one path. See
-//! [`manifest`] for what the file carries and what `#1281` still owns.
+//! ship, and the built-in path and the manifest path are one path.
+//!
+//! Linear ships the same way, as `issue_provider/linear.toml`. Its words are
+//! read by this module's decode; its transport is not built, so a workspace
+//! bound to Linear gets Linear's vocabulary and a printed line saying this
+//! adapter is what runs. See [`manifest`] for the table both files sit in and
+//! for the §4.1 blocks nothing reads yet.
 
 mod manifest;
 

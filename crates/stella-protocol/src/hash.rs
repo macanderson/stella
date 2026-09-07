@@ -10,9 +10,16 @@
 //!    complements the `#[serde(skip_serializing_if = "Option::is_none")]`
 //!    absent-option omission on the record types);
 //! 4. **RFC 8785 JCS** — sort keys, minimal whitespace, canonical numbers, via
-//!    `serde_json_canonicalizer` (the same crate + version CGP uses, so the
-//!    preimage bytes are byte-identical to CGP's for export interop);
+//!    `serde_json_canonicalizer`, the crate and version CGP's own `record-hash`
+//!    feature pins;
 //! 5. sha256, lowercase hex, `sha256:` prefix.
+//!
+//! Step 3 has no counterpart in CGP, whose `record_hash_preimage` drops
+//! `record_hash` and canonicalizes. So the two preimages are byte-identical for
+//! a record whose objects carry no `null`-valued member, and differ for one
+//! that does. A `null` sitting in an array is outside that boundary: step 3
+//! recurses into arrays without removing their elements, so both sides keep it.
+//! `strip_nulls_is_the_only_divergence_from_cgps_preimage` pins all three cases.
 //!
 //! It lives here because two crates hash against it: `stella-records` seals a
 //! record, and `stella-core::receipts` derives a frame's `frame_hash`. Beside
@@ -149,6 +156,82 @@ mod tests {
         let absent = record_hash(&json!({"a": 1})).unwrap();
         let explicit_null = record_hash(&json!({"a": 1, "b": null})).unwrap();
         assert_eq!(absent, explicit_null);
+    }
+
+    /// The boundary of the export-interop claim in this module's header.
+    ///
+    /// CGP's `contextgraph_types::record_hash_preimage` drops the top-level
+    /// `record_hash` member and canonicalizes, and normalizes no nulls. Its
+    /// rule is reimplemented here rather than imported: this crate takes no
+    /// `contextgraph-types` dependency, and acquiring one so a test can quote
+    /// a rule this short would invert the crate's position in the graph.
+    #[test]
+    fn strip_nulls_is_the_only_divergence_from_cgps_preimage() {
+        // CGP profile LH1: JCS over the record with its `record_hash` removed.
+        fn cgp_preimage(record: &Value) -> String {
+            let mut value = record.clone();
+            value
+                .as_object_mut()
+                .expect("an object")
+                .remove("record_hash");
+            serde_json_canonicalizer::to_string(&value).expect("canonicalizes")
+        }
+
+        let null_free = json!({
+            "b": 2,
+            "a": 1,
+            "record_hash": "sha256:deadbeef"
+        });
+        assert_eq!(
+            canonical_preimage(&null_free).unwrap(),
+            cgp_preimage(&null_free),
+            "a record with no explicit null hashes the same bytes on both sides"
+        );
+
+        let with_null = json!({
+            "a": 1,
+            "b": null
+        });
+        assert_ne!(
+            canonical_preimage(&with_null).unwrap(),
+            cgp_preimage(&with_null),
+            "step 3 drops the null here and CGP keeps it, so the bytes differ"
+        );
+        assert_eq!(canonical_preimage(&with_null).unwrap(), r#"{"a":1}"#);
+        assert_eq!(cgp_preimage(&with_null), r#"{"a":1,"b":null}"#);
+
+        // Step 3 recurses, so the divergence reaches a nested member and a
+        // member of an object inside an array. Without these two the test
+        // would still pass with `strip_nulls` flattened to the top level.
+        let nested_null = json!({ "outer": { "a": 1, "b": null } });
+        assert_eq!(
+            canonical_preimage(&nested_null).unwrap(),
+            r#"{"outer":{"a":1}}"#
+        );
+        assert_eq!(cgp_preimage(&nested_null), r#"{"outer":{"a":1,"b":null}}"#);
+
+        let null_under_an_array = json!({ "items": [{ "a": 1, "b": null }] });
+        assert_eq!(
+            canonical_preimage(&null_under_an_array).unwrap(),
+            r#"{"items":[{"a":1}]}"#
+        );
+        assert_eq!(
+            cgp_preimage(&null_under_an_array),
+            r#"{"items":[{"a":1,"b":null}]}"#
+        );
+
+        // A null array *element* is not a member, so step 3 leaves it and the
+        // two sides still agree. This is the edge of the boundary above.
+        let null_array_element = json!({ "items": [null, 1] });
+        assert_eq!(
+            canonical_preimage(&null_array_element).unwrap(),
+            cgp_preimage(&null_array_element),
+            "a null array element is kept on both sides"
+        );
+        assert_eq!(
+            canonical_preimage(&null_array_element).unwrap(),
+            r#"{"items":[null,1]}"#
+        );
     }
 
     #[test]
