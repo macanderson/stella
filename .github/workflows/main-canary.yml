@@ -64,9 +64,10 @@ permissions:
   # label on first use.
   issues: write
   # To find the open pull requests whose hold this run has just made stale,
-  # and to re-run it for them (#5913). Closing the issue is what ends the
-  # outage; the hold that failed during it is still the last word on each of
-  # those commits until something re-runs it.
+  # and to re-run it for them (#5913, #5949). Filing or closing the issue is
+  # what moves the answer; the hold on each of those commits is still the old
+  # one until something re-runs it. `actions: write` is the narrowest scope
+  # that re-runs a workflow run, and one scope covers both directions.
   pull-requests: read
   actions: write
 
@@ -95,14 +96,19 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./scripts/main-canary.sh --announce
 
-      # Recovery has to clear the holds the outage caused, or every pull
-      # request that was blocked stays blocked with no push to it (#5913).
-      # This does nothing while a `main-red` issue is open, so a run that
-      # found the tree still broken pays one tracker query for it.
-      - name: Clear the hold on every open pull request
+      # Both transitions leave every open pull request holding a stale answer,
+      # and this step re-asks for them. A break has to turn the passing holds
+      # red, or a pull request that finished before the issue was filed merges
+      # onto the breakage with a green required check (#5949). A recovery has
+      # to turn the failed ones green, or every pull request the outage
+      # blocked stays blocked with no push to it (#5913).
+      #
+      # It runs after the step above either way, because that step is what
+      # files or closes the issue this one reads.
+      - name: Refresh the hold on every open pull request
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./scripts/clear-main-red-holds.sh
+        run: ./scripts/refresh-main-red-holds.sh
 
       # The other half of the same question, and the one nothing asked: is
       # there a commit on `main` that nothing VERIFIED — as distinct from one
