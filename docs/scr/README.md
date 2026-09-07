@@ -49,16 +49,17 @@ same directives, restated under a "## Standing decisions" heading, one bullet
 per record. That summary is part of the corpus contract too, and the same
 `scr-corpus-check` workflow checks it — but not byte-for-byte, because it is
 not meant to be byte-identical. At least SCR-001's compiled bullet names each
-repo's own toolchain command (`cargo test -p <crate>` in the Rust repos,
-`pnpm --filter <package> test` here, `uv run pytest` in arenabench), so a
-literal-bytes comparison would fail on correct, legitimately differing
-content.
+repo's own toolchain command, so a literal-bytes comparison would fail on
+correct, legitimately differing content. Each repo's own bullet carries the
+command it uses, and this document does not repeat them: a list copied into
+five files is four copies that can go stale.
 
 What the check compares instead is structure and titles: every repo's summary
-has exactly one bullet per `docs/scr/` record, and the short title naming that
-record — the text between the id link and the colon, e.g. "Tests/builds
-(inner loop)" — is expected to read the same in every repo, even where the
-sentence after it does not. A check of `docs/scr/` alone misses that drift.
+has one bullet per numbered record (`SCR-*.md`; this README carries none, and
+the check keys each bullet by the `SCR-NNN` id it names), and the short title
+naming that record — the text between the id link and the colon, e.g.
+"Tests/builds (inner loop)" — is expected to read the same in every repo, even
+where the sentence after it does not. A check of `docs/scr/` alone misses that drift.
 `docs/scr/SCR-004-residue-becomes-issues.md` was rewritten. The record and the
 corpus check went back in sync. One repo's `AGENTS.md` still gave the old
 directive, and nothing read the summary to catch it.
