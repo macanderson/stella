@@ -273,6 +273,25 @@ checks=(
   # never construct a hermetic prose failure — a fixture already red on
   # something else stayed red, but for the wrong row's reason.
   "prose|python3 ./scripts/check-prose.py --absolute${manifest_dir:+ $manifest_dir}"
+  # A fifth shared cell, and the only one with no file to conflict on: the ADR
+  # NUMBER. Two branches each read `docs/adr/`, each take the next free number,
+  # and each is correct against its own base — the shape every row above is
+  # here for, with one difference. `adr-numbering` is already a gate step, and
+  # a pull request's checkout is the merged tree, so it DOES ask the composed
+  # question before the merge. What it cannot do is ask it again: nothing
+  # re-runs a green check when `main` moves under it, so the second branch to
+  # merge carries a verdict taken while the number was still free.
+  #
+  # It has happened twice. 0027 was claimed by two open pull requests at once,
+  # and 0030 by two more — the second surfaced only as a git conflict in
+  # `docs/adr/README.md`, which is luck rather than a guard: two records whose
+  # numbers sort apart collide on no line. That renumber then cost seven prose
+  # citations repointed by hand across four crates and a spec, none of them
+  # caught by `check-doc-links` or `make line-citations` (`#5930`).
+  #
+  # The fixture path is `docs/adr` under `--manifest-dir`; the guard reports
+  # "nothing to check" and passes when a fixture has no such directory.
+  "adr-numbering|python3 ./scripts/check-adr-numbering.py${manifest_dir:+ $manifest_dir/docs/adr}"
   # A fourth shared surface: was the SUITE red on the commit `ci.yml` last
   # finished checking? Every row above asks whether the tree still COMPOSES.
   # None of them runs the test suite. The header above already argues
@@ -324,6 +343,15 @@ SH
 #   make prose-report
 # for the file, line and what to write instead. `make prose-update` refuses to
 # raise a count or add a file, so a red gate clears only by deleting prose.
+SH
+    ;;
+  adr-numbering)
+    cat <<'SH'
+# Two records claim one number. Renumber the newer one to the number the
+# failure names, and move its `id:`, its heading, its docs/manifest.json
+# entry, every `doc:adr/...` citation and every bare "ADR NNNN" in prose --
+# the failure lists the files carrying one, because no link check reads them.
+python3 ./scripts/check-adr-numbering.py
 SH
     ;;
   ci-tests)

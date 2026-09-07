@@ -181,3 +181,34 @@ names were each measured against 497 recorded trials and none of them
 separates it from the trials that succeeded, because what is wrong with it is
 not in its calls. The recorded trace is committed with a pin that no rung
 fires on it.
+
+## The number is a shared cell
+
+Take the number one past the highest in the table above. Two branches doing
+that at once both take the same one, and each is right against its own base —
+the shape AGENTS.md names for `Cargo.lock` and
+`scripts/file-size-baseline.txt`. It has happened twice: 0027 was claimed by
+two open pull requests at once, and 0030 by two more. The second one showed up
+as a git conflict in this file and in `docs/manifest.json`, which is luck
+rather than a guard — two records whose numbers sort apart share no line.
+
+`make adr-numbering` is what asks. A pull request's checkout is the merged
+tree, so it answers there; `scripts/main-canary.sh` runs it again after the
+merge, because nothing re-runs a green check when `main` moves under it and
+the second branch to merge carries a verdict taken while the number was still
+free (`#5930`).
+
+**Renumbering moves more than the file.** The `id:`, the heading, the
+`docs/manifest.json` key, every `doc:` id citation of the record, and every
+sentence anywhere in the tree that writes "ADR NNNN". That last set is the one
+nothing reads: `check-doc-links` follows ids and links, `make line-citations`
+reads line numbers, and a bare number in prose is invisible to both. 0031's
+renumber repointed seven of them by hand. So `check-adr-numbering.py` lists
+them itself when it fails, beside the number to renumber to.
+
+**Writing those prose citations as `doc:` ids instead is a stated non-goal
+here.** It would make `check-doc-links` catch a missed one, and it is the
+right end state, but it is not a guard change — it is an edit to every ADR
+citation in the tree and a rule for the next one, which belongs with the
+larger question of whether an ADR should be numbered at authoring time at
+all. Listing the citations costs nothing and answers the same need today.
