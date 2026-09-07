@@ -982,7 +982,7 @@ main-red-hold: ## Ask whether an open `main-red` issue should hold a PR (reads t
 	@./scripts/check-main-red-hold.sh
 
 .PHONY: main-red-hold-test
-main-red-hold-test: ## Test the red-main hold and its clean-up (hermetic; not part of `gate`)
+main-red-hold-test: ## Test the red-main hold and both refresh directions (hermetic; not part of `gate`)
 	./scripts/test-main-red-hold.sh
 
 # What either transition leaves behind: a check run that is still the last
