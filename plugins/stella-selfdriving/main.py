@@ -39,7 +39,7 @@ so. Never to go get the thing some other way.
 # What a cycle does now
 
 The host serves `backlog_next`, `backlog_claim`, the three `work` verbs and the
-four `deliver` verbs. So a cycle reads the ranked queue, claims the top of it,
+`deliver` verbs. So a cycle reads the ranked queue, claims the top of it,
 asks Stella to work that one issue in a checkout of its own, opens the pull
 request, reads the forge, and asks what to do next.
 
@@ -47,19 +47,22 @@ It will not work an issue it cannot know is free. Two loops on one issue is
 what a claim is for, and going ahead without one would trade a good refusal for
 a quiet race.
 
-A cycle ends when the machine says anything but "merge". Waiting on CI,
-pushing a fix and rebasing are all a later cycle's work. So this one says which
+A pull request is opened as a draft, so the first answer for a green one is
+"mark ready" rather than "merge". A cycle takes that step and reads again, once.
+That is the whole of what it does past a decision: waiting on CI, pushing a fix
+and rebasing are all a later cycle's work. So a cycle that ends short says which
 state it stopped in, and how long to wait.
 
-# Who decides a merge
+# Who decides a mark-ready and a merge
 
-`deliver_next` answers over facts this program sends it. `deliver_merge` takes
-no facts at all. That ask names a pull request and nothing else.
+`deliver_next` answers over facts this program sends it. `deliver_ready` and
+`deliver_merge` take no facts at all. Each ask names a pull request and nothing
+else.
 
 The host reads the forge itself. It runs the same machine over its own answer.
-So a cycle that reported a build nobody saw gets a refusal. This program asks
-for the merge when the decision it was given says to. The host is what makes
-that safe, not this file.
+So a cycle that reported a build nobody saw gets a refusal. This program makes
+each ask when the decision it was given says to. The host is what makes that
+safe, not this file.
 
 # Arguments
 
@@ -93,6 +96,7 @@ WORK_START = "work_start"
 DELIVER_OPEN = "deliver_open"
 DELIVER_OBSERVE = "deliver_observe"
 DELIVER_NEXT = "deliver_next"
+DELIVER_READY = "deliver_ready"
 DELIVER_MERGE = "deliver_merge"
 
 # How long to wait for the next cycle when there is nothing to do. Fifteen
@@ -208,6 +212,22 @@ def member(ok, name):
     return (ok or {}).get(name) or {}
 
 
+def decide(channel, number):
+    """One read of the forge and the machine's answer over it.
+
+    Returns the decision table, or `None` when either ask was refused.
+    """
+    observed = channel.ask(DELIVER_OBSERVE, {"deliver_observe": {"pr": number}})
+    if observed is None:
+        return None
+    decided = channel.ask(
+        DELIVER_NEXT, {"deliver_next": {"observation": member(observed, "observation")}}
+    )
+    if decided is None:
+        return None
+    return member(decided, "decision")
+
+
 def deliver(channel, key, report):
     """Take a worked branch as far as this cycle's own decision allows.
 
@@ -226,18 +246,31 @@ def deliver(channel, key, report):
     number = pull_request.get("pr", "?")
     sys.stderr.write("stella-selfdriving: opened %s for %s\n" % (number, key))
 
-    observed = channel.ask(DELIVER_OBSERVE, {"deliver_observe": {"pr": number}})
-    if observed is None:
+    decision = decide(channel, number)
+    if decision is None:
         return refused_halt(channel, "%s is open as %s" % (key, number))
-
-    decided = channel.ask(
-        DELIVER_NEXT, {"deliver_next": {"observation": member(observed, "observation")}}
-    )
-    if decided is None:
-        return refused_halt(channel, "%s was read on %s" % (number, key))
-    decision = member(decided, "decision")
     action = decision.get("action")
     state = decision.get("state", "?")
+
+    if action == "mark_ready":
+        # The pull request was opened as a draft. It is green, so the step
+        # between here and a merge is taking it out of draft. Asked once, then
+        # read again: a second mark-ready would be asking for a state the forge
+        # already holds.
+        readied = channel.ask(DELIVER_READY, {"deliver_ready": {"pr": number}})
+        if readied is None:
+            return refused_halt(
+                channel, "%s is %s and the machine said mark ready" % (number, state)
+            )
+        sys.stderr.write(
+            "stella-selfdriving: %s is out of draft\n"
+            % member(readied, "ready").get("pr", number)
+        )
+        decision = decide(channel, number)
+        if decision is None:
+            return refused_halt(channel, "%s is out of draft" % number)
+        action = decision.get("action")
+        state = decision.get("state", "?")
 
     if action != "merge":
         # Waiting, pushing a fix and rebasing are a later cycle's work. This

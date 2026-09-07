@@ -23,8 +23,9 @@
 //! arithmetic over facts the driver already holds. It buys no second read of
 //! the forge.
 //!
-//! The merge does not work that way. The host reads the forge itself first. A
-//! driver that reported a green build it never saw gets a refusal.
+//! Taking a pull request out of draft and merging it do not work that way. The
+//! host reads the forge itself first. A driver that reported a green build it
+//! never saw gets a refusal.
 
 use serde::{Deserialize, Serialize};
 
@@ -229,6 +230,18 @@ pub struct OpenReport {
     pub pr: String,
     /// The branch it carries.
     pub branch: String,
+}
+
+/// The pull request `deliver_ready` took out of draft.
+///
+/// One field, on [`MergeReport`]'s terms: the ask succeeding is the whole
+/// answer, and a pull request that stayed a draft comes back as a refusal
+/// naming what the host saw.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReadyReport {
+    /// The pull request that is now out of draft.
+    pub pr: String,
 }
 
 /// The pull request `deliver_merge` merged.

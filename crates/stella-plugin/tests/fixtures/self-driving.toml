@@ -18,7 +18,8 @@ description = "The autonomous delivery loop: picks work, ships it, and stewards 
 # says how much say a plugin has inside a turn; this says what it may do to the
 # repository between them — and the loop §10 describes does all five families:
 # it ranks and files issues, runs Stella against them in a worktree, opens and
-# merges pull requests, sweeps for findings, and proposes tools and records.
+# takes pull requests out of draft and merges them, sweeps for findings, and
+# proposes tools and records.
 [driver]
 calls = [
   "backlog_next",
@@ -32,6 +33,7 @@ calls = [
   "deliver_open",
   "deliver_observe",
   "deliver_next",
+  "deliver_ready",
   "deliver_merge",
   "sweep_audit",
   "sweep_regress",

@@ -119,8 +119,8 @@ scope = [
 # `IssueProvider` port the `stella self-driving` verbs use. `backlog_claim`
 # takes the same lease `stella self-driving drive` takes. The three `work`
 # verbs run one issue through one bounded `stella run`, in a checkout of its
-# own. The four `deliver` verbs push that branch, read the forge, decide, and
-# merge.
+# own. The `deliver` verbs push that branch, read the forge, decide, take the
+# pull request out of draft, and merge.
 #
 # Every other verb below comes back `unsupported` until the phase that builds
 # it lands. The loop degrades; it does not die. All of them are declared now
@@ -171,12 +171,12 @@ calls = [
   # computed, and a human approval. Never on the loop's own opinion of its
   # work.
   #
-  # THE HOST RE-READS THE FORGE BEFORE IT MERGES. `deliver_next` answers over
-  # facts this plugin sends; `deliver_merge` names a pull request and carries
-  # no facts at all, and Stella runs the same machine over its own reading
-  # before it merges anything. So granting `deliver_merge` grants "merge what
-  # the forge says is green and approved", never "merge what the plugin says
-  # is".
+  # THE HOST RE-READS THE FORGE BEFORE IT ACTS. `deliver_next` answers over
+  # facts this plugin sends; `deliver_ready` and `deliver_merge` each name a
+  # pull request and carry no facts at all, and Stella runs the same machine
+  # over its own reading before it acts. So granting `deliver_merge` grants
+  # "merge what the forge says is green and approved", never "merge what the
+  # plugin says is".
   #
   # The channel also offers no way to waive the human approval. An operator
   # who wants their own loop merging unreviewed work says so to
@@ -186,9 +186,16 @@ calls = [
   # A red build that reproduces on the base branch is `BaseBroken`, not
   # `CiRed`: the loop waits rather than spending this PR's budget fixing
   # somebody else's breakage.
+  #
+  # `deliver_ready` takes a pull request out of draft, and is held to the same
+  # rule as the merge: Stella re-reads the forge and runs the machine over its
+  # own answer, so a draft that is not green stays a draft. A pull request is
+  # opened as a draft precisely so one that never goes green never asks a human
+  # to look at it, and granting this on the plugin's word alone would spend that.
   "deliver_open",
   "deliver_observe",
   "deliver_next",
+  "deliver_ready",
   "deliver_merge",
   # sweep — where the next question comes from when the queue runs dry.
   "sweep_audit",

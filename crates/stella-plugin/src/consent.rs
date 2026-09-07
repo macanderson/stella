@@ -600,9 +600,9 @@ fn role_spend(manifest: &PluginManifest) -> Vec<String> {
 /// may do to your repository between them.
 ///
 /// Rendered by family rather than verb by verb — "pushes branches, opens pull
-/// requests, reads CI, and merges" is the sentence a human weighs, and
-/// `deliver_merge` on its own is not. The verbs are printed beside it so the
-/// declaration stays checkable against the block.
+/// requests, reads CI, takes them out of draft, and merges" is the sentence a
+/// human weighs, and `deliver_merge` on its own is not. The verbs are printed
+/// beside it so the declaration stays checkable against the block.
 /// The two bullets a declared process is worth: what runs, and what of the
 /// operator's environment it is handed.
 ///

@@ -501,6 +501,15 @@ impl DriverCapabilities for HostDriverCapabilities {
                     ..DriverOk::default()
                 })
             }
+            DriverCall::DeliverReady => {
+                let table = table_for(call, args.as_ref())?;
+                let named = table.deliver_ready.as_ref().ok_or_else(|| no_table(call))?;
+                self.may_shell()?;
+                Ok(DriverOk {
+                    ready: Some(self.deliver.ready(named_pr(named)?).await?),
+                    ..DriverOk::default()
+                })
+            }
             DriverCall::DeliverMerge => {
                 let table = table_for(call, args.as_ref())?;
                 let named = table.deliver_merge.as_ref().ok_or_else(|| no_table(call))?;
