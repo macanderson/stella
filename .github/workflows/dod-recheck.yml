@@ -1,62 +1,39 @@
+# DoD recheck (SCR-003) — caller stub.
+#
+# dod-check.yml fires on pull-request events. Its failure message tells the
+# author to tick the remaining boxes, and ticking one edits the ISSUE — an
+# event that workflow does not hear and cannot: a `workflow_call` file is
+# invoked by its caller's events, and the object being judged is not the object
+# those events are about. So the prescribed remedy fired nothing and the
+# required check stayed red at a verdict that was no longer true
+# (oxagen#2638).
+#
+# This file is the missing event. It subscribes to THIS repository's issue
+# edits and hands them to the shared implementation, which re-runs the failed
+# `dod` run on any open PR here that names the edited issue. Re-running the old
+# run rather than reporting a new check is what puts the new conclusion under
+# the same name on the same commit, which is what branch protection reads.
+#
+# There is no logic in this file, for the reason the dod-check stub gives:
+# ADR-039 keeps one implementation in oxagen rather than five that drift.
+#
+# The ref is a commit SHA, not `@main`: a cross-repo `uses:` resolved through a
+# moving ref both fails `action-pins` and lets another repository change what
+# runs here without a commit in this one.
 name: dod-recheck
-
-# Re-read a DoD checklist the moment the checklist changes (#6079).
-#
-# `dod-check` judges the linked issue's checklist, and fires on pull request
-# events. Those are two different objects. Ticking the last box on the issue —
-# the remedy the failure message names — raises no pull request event, so the
-# red `dod / dod` stands until someone touches the pull request.
-#
-# This workflow is the missing event. `scripts/dod-recheck.sh` finds the open
-# pull requests whose body names the edited issue and runs the failed check
-# again on each. The new run reports under the same name on the same commit,
-# which is all the branch rules read — so nothing here has to report a check
-# against a head this event does not own.
-#
-# Same shape as `main-red-clear.yml`, for the same bug one gate over: a check
-# that was right when it ran, on a commit with no event left to correct it.
 
 on:
   issues:
     types: [edited]
-  workflow_dispatch:
-    inputs:
-      issue:
-        description: The issue number whose pull requests should be re-checked
-        required: true
-        type: string
 
+# `actions: write` is what lets the implementation re-run a failed run. The
+# caller grants it: a reusable workflow's token is capped by ours, so declaring
+# it there is not enough.
 permissions:
-  contents: read
-  # To read each open pull request's body and head commit.
-  pull-requests: read
-  # To run the failed check again. This is the scope an agent session does not
-  # hold, which is why the re-run lives in a workflow rather than in the
-  # session that ticked the box.
   actions: write
-
-# One sweep per issue. A cancelled sweep costs nothing: the next one asks the
-# same questions and re-runs whatever is still failing.
-concurrency:
-  group: dod-recheck-${{ github.event.issue.number || inputs.issue }}
-  cancel-in-progress: true
+  contents: read
+  pull-requests: read
 
 jobs:
   recheck:
-    name: re-read the checklist the issue edit changed
-    # A title-only edit changes no checklist. GitHub sends `changes.body` only
-    # when the body moved, so this drops half the traffic before it starts a
-    # runner.
-    if: >-
-      github.event_name != 'issues'
-      || github.event.changes.body != null
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Re-run the dod check on every pull request naming this issue
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ISSUE: ${{ github.event.issue.number || inputs.issue }}
-        run: ./scripts/dod-recheck.sh "$ISSUE"
+    uses: macanderson/oxagen/.github/workflows/dod-recheck.yml@2dd72c9957f8520ee673862de894ed64f4b2380c # oxagen main, #2638
