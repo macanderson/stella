@@ -1182,6 +1182,42 @@ expect_grade_at_most "X5 the split's entry is written, capped at its source" \
   "$r" docs/tail.md 50.00
 expect_absolute_pass "X5 the merged tree survives the post-merge canary" "$r"
 
+# X6: the density ratchet needs no split carry, and this pins the arithmetic
+# so nobody wires `split_from` into the rebase and breaks it. A review of #6412
+# read the count and grade carrying a split, saw density carrying only a move,
+# and called the difference an omission. It is not. The mean is header lines
+# over file count, so a split that MOVES header text leaves the total alone,
+# raises the count, and lowers the mean — it cannot fail. The mean rises only
+# when a split ADDS header lines, and a header written during a split is new
+# prose, which is the thing this ratchet exists to catch.
+#
+# `crates/alpha` sits exactly at its 20.00 ceiling: (30 + 10) / 2. The split
+# sheds 15 of `long`'s header lines into a new module in the same crate, so
+# the crate still holds 40 header lines, now over three files: 13.33.
+r="$(new_root x6)"
+baseline "$r"
+density_baseline "$r" crates/alpha 20.00
+rs_with_header "$r" alpha 30 long
+rs_with_header "$r" alpha 10 short
+commit_all "$r"
+rs_with_header "$r" alpha 15 long
+mkdir -p "$r/crates/alpha/src/long"
+rs_with_header "$r" alpha 15 long/part
+expect_pass "X6 a split that moves header text lowers the mean" "$r"
+expect_absolute_pass "X6 and passes the post-merge canary too" "$r"
+
+# X7: the direction that must not change — a split that ADDS header lines is
+# new prose and still fails, at the plain check, before the merge.
+r="$(new_root x7)"
+baseline "$r"
+density_baseline "$r" crates/alpha 20.00
+rs_with_header "$r" alpha 30 long
+rs_with_header "$r" alpha 10 short
+commit_all "$r"
+mkdir -p "$r/crates/alpha/src/long"
+rs_with_header "$r" alpha 30 long/part
+expect_fail "X7 a split that writes a new header is judged as new prose" "$r"
+
 # ── U1: an unmerged index counts each path once, not once per stage ─────────
 # `git ls-files --cached` prints a conflicted path once for each of stages 1,
 # 2 and 3, so a merge resolved on disk but not yet `git add`ed used to make

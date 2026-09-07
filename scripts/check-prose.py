@@ -1192,6 +1192,10 @@ def main() -> int:
         # its own headers the first time anyone runs --update. A unit a move
         # touched is judged against the same files' lengths at HEAD instead --
         # see `base_tracked_paths` for why a set change is not a prose change.
+        # Density takes a move and not a split, by arithmetic rather than
+        # omission: the mean is header lines over file count, so a split that
+        # moves header text lowers it. It rises only when a split ADDS lines,
+        # and a header written during a split is new prose.
         rebased = {
             unit: density_at_commit(
                 root,

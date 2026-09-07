@@ -190,7 +190,8 @@
 
     **`make prose-update` carries; `make prose-retighten` reclaims.** All
     three ratchets take that split. `--update` writes only the entries a move
-    or a split re-based and leaves every other number where it stands, so a
+    re-based — or, for the count and grade, a file split — and leaves every
+    other number where it stands, so a
     branch cannot lower the ceiling of a file it never opened. Reclaiming the slack
     a rewrite earns is a pass of its own, and a PR of its own — safe exactly
     when nothing is blocked on it. An unconditional reclaim wrote `AGENTS.md`
@@ -207,7 +208,11 @@
     mean lines, so a new one cannot arrive carrying essays. A move is the
     one exception. When a file changes crates, `--update` re-bases both
     units on the old lengths of the files they hold now, and writes those
-    entries. Both means shift, and no one wrote a word. The plain check reads
+    entries. Both means shift, and no one wrote a word. A **file split needs
+    no exception here**, unlike the count and grade: the mean is header lines
+    over file count, so a split that moves header text lowers it. It rises
+    only when a split adds lines, and a header written during a split is new
+    prose. The plain check reads
     the same way, over the files a crate holds now, so a move out of a crate
     sitting at its ceiling costs the next author nothing.
 - **AGENTS.md is the orientation document.** Commands, architectural
