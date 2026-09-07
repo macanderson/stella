@@ -220,4 +220,57 @@ expect "main going green closes the open issue" 0 "gh issue close $open_issue" \
 expect "and says so on the way out" 0 "main recovered — closed #$open_issue" \
   --announce --dry-run --fixture-open-issue "$open_issue" --manifest-dir "$tmp/clean"
 
+# The `ci-tests` row.
+#
+# test-ci-tests.sh covers the row's own logic, case by case. These cases
+# prove the WIRING instead. A red verdict from that row must reach this
+# script's one issue-lifecycle, the same way `compile` or `prose` failing
+# does. The three non-answers must stay silent here too. `$tmp/clean` keeps
+# composition green throughout, so only `ci-tests` can cause a red verdict
+# below.
+A=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+ci_red_commits="$A abcdef1 a merge that broke a test"
+ci_red_runs="$A completed failure"
+
+expect "a red ci-tests fixture fails the canary" 1 "FAIL — main is red" \
+  --manifest-dir "$tmp/clean" --fixture-ci-commits "$ci_red_commits" --fixture-ci-runs "$ci_red_runs"
+expect "and names ci-tests as the failing check" 1 "ci-tests" \
+  --manifest-dir "$tmp/clean" --fixture-ci-commits "$ci_red_commits" --fixture-ci-runs "$ci_red_runs"
+expect "while composition itself still passes" 1 "ok   lockfile-sync" \
+  --manifest-dir "$tmp/clean" --fixture-ci-commits "$ci_red_commits" --fixture-ci-runs "$ci_red_runs"
+expect "a ci-tests failure opens an issue" 1 "gh issue create" \
+  --announce --dry-run --manifest-dir "$tmp/clean" \
+  --fixture-ci-commits "$ci_red_commits" --fixture-ci-runs "$ci_red_runs"
+expect "carrying the reproduce-narrowly remedy" 1 "cargo test -p <crate> <filter>" \
+  --announce --dry-run --manifest-dir "$tmp/clean" \
+  --fixture-ci-commits "$ci_red_commits" --fixture-ci-runs "$ci_red_runs"
+expect "and its own DoD box" 1 "- [ ] \`ci-tests\` passes on a fresh" \
+  --announce --dry-run --manifest-dir "$tmp/clean" \
+  --fixture-ci-commits "$ci_red_commits" --fixture-ci-runs "$ci_red_runs"
+
+# The three non-answers must stay silent. A cancelled run, a run that never
+# began, and a run nothing has finished yet must none of them fail this row.
+# check-ci-tests.sh's own suite already pins this in isolation. This proves
+# the same thing through main-canary.sh's wiring.
+expect "a cancelled ci run does not fail the canary" 0 "OK — main composes green" \
+  --manifest-dir "$tmp/clean" --fixture-ci-commits "$A abcdef1 cancelled" \
+  --fixture-ci-runs "$A completed cancelled"
+expect "a startup_failure does not fail the canary" 0 "OK — main composes green" \
+  --manifest-dir "$tmp/clean" --fixture-ci-commits "$A abcdef1 never began" \
+  --fixture-ci-runs "$A completed startup_failure"
+expect "no completed run yet does not fail the canary" 0 "OK — main composes green" \
+  --manifest-dir "$tmp/clean" --fixture-ci-commits "$A abcdef1 still running" \
+  --fixture-ci-runs "$A in_progress none"
+refute "and none of the three opens an issue" "gh issue create" \
+  --announce --dry-run --manifest-dir "$tmp/clean" --fixture-ci-commits "$A abcdef1 cancelled" \
+  --fixture-ci-runs "$A completed cancelled"
+
+# `--manifest-dir` alone, with no ci-tests fixture at all, must go just as
+# offline for this row as it already does for the other four. Every
+# "green"/"red" case above already relies on that, since none of them pass a
+# ci-tests fixture. This one pins it by name. A future change to the export
+# rule then fails here first, not as odd flakiness somewhere else.
+expect "--manifest-dir alone is hermetic for ci-tests too" 0 "ok   ci-tests" \
+  --manifest-dir "$tmp/clean"
+
 canary_tally test-main-canary

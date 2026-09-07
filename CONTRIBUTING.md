@@ -74,6 +74,7 @@ A red gate is an automatic "not yet":
 ./scripts/check-no-secrets.sh
 ./scripts/check-design-refs.sh
 ./scripts/check-action-pins.sh
+./scripts/check-untrusted-checkout.sh
 ./scripts/check-cargo-install-pins.sh
 ./scripts/check-license-allowlist-parity.sh
 ./scripts/check-repro-wiring.sh

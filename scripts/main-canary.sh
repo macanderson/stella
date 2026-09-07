@@ -56,6 +56,17 @@
 # accurately, fast". The issue body carries the exact commands instead. If that
 # tradeoff should change, change it, not by extending this script.
 #
+# ── Which question each workflow answers ─────────────────────────────────────
+#
+# `ci.yml` runs the test suite on every push. It reports pass or fail and
+# stops there. It files nothing. It blocks nothing. `main` failed the same
+# test three times in two days. The `main-red` chain stayed silent the whole
+# time, because nothing in it ever asked `ci.yml` what it found. This file's
+# `compile` row only asks whether the tree BUILDS. The `ci-tests` row is the
+# join: it reads the CONCLUSION `ci.yml` already produced, instead of running
+# the suite again. Now "is `main` green" has one answer, not two that never
+# met.
+#
 # Usage:
 #   scripts/main-canary.sh                      # check only; exit 1 if main is red
 #   scripts/main-canary.sh --announce           # ...and open/refresh/close the issue
@@ -78,6 +89,8 @@ announce=0
 dry_run=0
 manifest_dir=""
 fixture_open_issue=""
+fixture_ci_commits=""
+fixture_ci_runs=""
 label="main-red"
 
 while [ $# -gt 0 ]; do
@@ -116,6 +129,28 @@ while [ $# -gt 0 ]; do
       exit 2
     }
     fixture_open_issue="$2"
+    shift 2
+    ;;
+  # Test-only, paired: stand in for the `ci-tests` row's own `gh run list`
+  # read. `--manifest-dir` stands in the same way for the other rows' reads
+  # of the live tree. Threaded in as environment variables, not interpolated
+  # into that row's command string below. A fixture here spans several lines
+  # and carries spaces — a commit subject, more than one commit — and the
+  # `checks` array's `eval "$cmd"` cannot carry that safely.
+  --fixture-ci-commits)
+    [ $# -ge 2 ] || {
+      echo "main-canary: --fixture-ci-commits needs a value" >&2
+      exit 2
+    }
+    fixture_ci_commits="$2"
+    shift 2
+    ;;
+  --fixture-ci-runs)
+    [ $# -ge 2 ] || {
+      echo "main-canary: --fixture-ci-runs needs a value" >&2
+      exit 2
+    }
+    fixture_ci_runs="$2"
     shift 2
     ;;
   -h | --help)
@@ -238,6 +273,23 @@ checks=(
   # never construct a hermetic prose failure — a fixture already red on
   # something else stayed red, but for the wrong row's reason.
   "prose|python3 ./scripts/check-prose.py --absolute${manifest_dir:+ $manifest_dir}"
+  # A fourth shared surface: was the SUITE red on the commit `ci.yml` last
+  # finished checking? Every row above asks whether the tree still COMPOSES.
+  # None of them runs the test suite. The header above already argues
+  # against paying for that twice. `ci.yml` already pays it on every push.
+  # It kept the answer to itself: `main` failed the same test three times in
+  # two days and never tripped this chain, because nothing here ever asked
+  # what `ci.yml` found.
+  #
+  # `check-ci-tests.sh` does not run the suite again. It reads the
+  # CONCLUSION of the run `ci.yml` already made for the newest commit with a
+  # finished one. It reports "ok" on every non-answer: missing, still
+  # queued, cancelled, timed out, `startup_failure`. So this row can never be
+  # what blocks a repair. Landing it here, not as a fourth workflow step,
+  # means a green suite closes the SAME `main-red` issue a red one opened.
+  # It reuses the single-issue code below. No second actor races it to open
+  # or close that issue.
+  "ci-tests|./scripts/check-ci-tests.sh"
 )
 
 # The remediation for ONE failing check. Per-check on purpose: this block used
@@ -274,6 +326,15 @@ SH
 # raise a count or add a file, so a red gate clears only by deleting prose.
 SH
     ;;
+  ci-tests)
+    cat <<'SH'
+# ci.yml's suite failed on the merged tree. Find the failing test in that
+# run's log. Fix it:
+#   cargo test -p <crate> <filter>
+# This row re-checks on the next push, the daily schedule, or by hand:
+#   ./scripts/main-canary.sh --announce
+SH
+    ;;
   *)
     printf '# no recorded remedy for this check — see its output above\n'
     ;;
@@ -292,6 +353,22 @@ remedies=""
 dod=""
 
 cd "$repo_root"
+
+# Threaded to the `ci-tests` row as environment variables, not interpolated
+# into its command string above. See the flag comments near the top of this
+# file for why.
+#
+# Exported, even empty, whenever `--manifest-dir` was given, or a ci-tests
+# fixture was given by hand. Every other row already goes offline under
+# `--manifest-dir`. Without this, `ci-tests` would still read the live
+# repository's real run history. Every green fixture case would turn flaky
+# the moment this row joined the array. So `--manifest-dir` alone now reads
+# as "nothing to report" for this row too. A real run gets neither flag and
+# neither variable, so check-ci-tests.sh keeps its live `gh`/`git` path.
+if [ -n "$manifest_dir" ] || [ -n "$fixture_ci_commits" ] || [ -n "$fixture_ci_runs" ]; then
+  export CHECK_CI_TESTS_FIXTURE_COMMITS="$fixture_ci_commits"
+  export CHECK_CI_TESTS_FIXTURE_RUNS="$fixture_ci_runs"
+fi
 
 for row in "${checks[@]}"; do
   name="${row%%|*}"

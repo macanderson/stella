@@ -3,6 +3,7 @@ use proptest::prelude::*;
 use super::*;
 
 mod append;
+mod grind;
 mod origin;
 mod sweep;
 

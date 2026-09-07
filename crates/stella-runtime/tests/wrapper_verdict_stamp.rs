@@ -132,6 +132,28 @@ fn composed_dispatch(mode: &str) -> WrapperDispatch {
     .with_clock(Arc::new(PinnedClock))
 }
 
+/// The same arbiter, driven by a plugin that reads the request and dies
+/// without answering it. Its silence is the thing under test.
+fn dying_dispatch() -> WrapperDispatch {
+    let admitted = SubprocessWrapper::declare(
+        vec![
+            FIXTURE.to_string(),
+            "exit".to_string(),
+            "3".to_string(),
+            "the oracle could not start".to_string(),
+        ],
+        Vec::new(),
+        DEFAULT_WRAPPER_TIMEOUT,
+    )
+    .expect("the transport is declared with a program and a budget");
+    WrapperDispatch::bind(
+        PluginManifest::from_toml_str(MANIFEST).expect("the manifest loads"),
+        Arc::new(admitted.wrapper),
+    )
+    .expect("it declares a [wrapper]")
+    .with_clock(Arc::new(PinnedClock))
+}
+
 fn granted(root: &str) -> CandidateGrant {
     CandidateGrant::new(CandidateHandle::new("host-tree"), root).with_test(
         TestPlan::new("sh", vec!["tests/witness_flip.sh".to_string()])
@@ -287,4 +309,93 @@ async fn a_composed_stamp_names_the_arbiter_not_the_whole_composition() {
         stamp.author, arbiter_claim.author,
         "the stamp and the claim beside it on one report must name the same decider"
     );
+}
+
+/// **The witness.** A plugin that dies mid-turn leaves its silence on the
+/// stored record, and every stamp on that record adds up again from it.
+///
+/// The fold knows: `arbitration` carries a row reading `inconclusive` for a
+/// check that never answered. That row lives for the length of the process.
+/// The record carries the same claims past it, in the same order, so a
+/// reader coming back to a stored verdict can tell an arbiter that abstained
+/// from one that was never heard from — the thing a stamp exists to say.
+#[tokio::test]
+async fn a_plugin_that_dies_leaves_its_silence_on_the_record() {
+    let input = RoundInput {
+        goal: "make the flaky test deterministic".into(),
+        signals: signals(),
+        candidate: Some(granted("/tmp/workspace")),
+    };
+    let report = dying_dispatch()
+        .run(input, &mut Host)
+        .await
+        .expect("a validated manifest resolves even when the plugin dies");
+
+    assert!(
+        !report.faults.is_empty(),
+        "the plugin died at after_turn, so the run recorded a fault"
+    );
+    assert_eq!(
+        report.arbitration.unanswered().count(),
+        1,
+        "the fold recorded exactly one check that never answered"
+    );
+
+    let silence = report
+        .snapshot
+        .stamps
+        .first()
+        .expect("the silence is stamped ahead of the answer that followed it");
+    assert_eq!(
+        silence.author, "witness-v1",
+        "the name is the manifest's, not the composition's and not the payload's"
+    );
+    assert_eq!(
+        silence.assessment,
+        StampAssessment::Inconclusive,
+        "a check that broke found nothing; reading it as `not_done` would blame the worker"
+    );
+    assert!(
+        silence.summary.contains("did not answer"),
+        "the stamp says which check fell silent: {}",
+        silence.summary
+    );
+    assert_eq!(silence.decided_at_ms, 1_767_225_600_000);
+
+    // One stamp per row, and the silences ahead of the answer in both. The
+    // last pair is left out on purpose: a row names the arbiter whose rule
+    // was applied, while a stamp names who observed the evidence, and here
+    // nobody reported any — so the host signs its own reading `engine`
+    // (`stella_runtime::wrapper::stamp::author`).
+    assert_eq!(
+        report.snapshot.stamps.len(),
+        report.arbitration.rows.len(),
+        "the durable record carries one stamp per claim the fold weighed"
+    );
+    let stamped: Vec<(&str, StampAssessment)> = report.snapshot.stamps
+        [..report.snapshot.stamps.len() - 1]
+        .iter()
+        .map(|stamp| (stamp.author.as_str(), stamp.assessment))
+        .collect();
+    let folded: Vec<(&str, StampAssessment)> = report.arbitration.rows
+        [..report.arbitration.rows.len() - 1]
+        .iter()
+        .map(|row| (row.author.as_str(), row.assessment))
+        .collect();
+    assert_eq!(
+        stamped, folded,
+        "every check that stood aside reaches the record, in the order the fold read it"
+    );
+
+    let preimage = report
+        .snapshot
+        .stamp_preimage()
+        .expect("the record serializes");
+    let hash = record_hash(&preimage).expect("the record hashes");
+    for stamp in &report.snapshot.stamps {
+        assert_eq!(
+            stamp.preimage_hash, hash,
+            "every claim on one record is made against one preimage, so each re-derives"
+        );
+    }
 }

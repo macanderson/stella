@@ -36,6 +36,7 @@ CARGO_SCOPE ?= --workspace
 # compiles the workspace for clippy anyway, so excluding wire-schema there
 # saved nothing and let a GATE=fast push land stale generated wire artifacts.
 GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-pins \
+                    untrusted-checkout \
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
                     adr-numbering \
                     command-docs website-inputs brand-case file-size god-files gate-parity \
@@ -291,6 +292,10 @@ design-refs: ## Assert nothing outside docs/design cites it (docs/design is work
 .PHONY: action-pins
 action-pins: ## Assert every workflow `uses:` is pinned to a commit SHA (#648)
 	@./scripts/check-action-pins.sh
+
+.PHONY: untrusted-checkout
+untrusted-checkout: ## Assert no workflow_run job checks out a ref its trigger does not vouch for (#6367)
+	@./scripts/check-untrusted-checkout.sh
 
 .PHONY: cargo-install-pins
 cargo-install-pins: ## Assert every workflow `cargo install` names an exact version (#915)
@@ -942,6 +947,19 @@ main-verified: ## Ask whether every recent commit on main has a completed ci run
 main-verified-test: ## Test the unverified-main detector (hermetic; not part of `gate`)
 	./scripts/test-main-verified.sh
 
+# The join #5850 closes: main-canary.sh's `compile` row asks whether the tree
+# BUILDS; this asks whether the SUITE last passed, by reading the conclusion
+# ci.yml already produced rather than running it again. Not a gate step for
+# the same reason main-canary/main-verified are not — it reads the tracker's
+# run history, and `gate` is hermetic and offline by contract.
+.PHONY: ci-tests
+ci-tests: ## Ask whether ci.yml's most recently completed run on main failed its suite (#5850)
+	@./scripts/check-ci-tests.sh
+
+.PHONY: ci-tests-test
+ci-tests-test: ## Test the ci-tests verdict reader (hermetic; not part of `gate`)
+	./scripts/test-ci-tests.sh
+
 # The imperative half of the check above. A push made with the token a
 # workflow run holds raises no event, so the release version write-back landed
 # a commit on main that ci.yml and main-canary.yml never saw (#5817).
@@ -952,6 +970,17 @@ dispatch-main-verification: ## Start the ci and canary runs main's tip never got
 .PHONY: dispatch-main-verification-test
 dispatch-main-verification-test: ## Test the main-tip dispatcher (hermetic; not part of `gate`)
 	./scripts/test-dispatch-main-verification.sh
+
+# auto-tag.yml's last resort — the ordinary and admin merges both fail, so it
+# arms GitHub's native auto-merge and ends the job. That merge lands later,
+# asynchronously, still under the run's own token, so the resulting push
+# raises no workflow-triggering event either (#5857). This is the wait in
+# between: it holds the "check main's tip" step below until the armed PR
+# actually merges (or is closed), so the dispatcher above asks about the
+# right commit instead of the one from before the sync PR.
+.PHONY: wait-for-armed-merge-test
+wait-for-armed-merge-test: ## Test the armed-auto-merge wait (hermetic; not part of `gate`)
+	./scripts/test-wait-for-armed-merge.sh
 
 .PHONY: main-red-hold
 main-red-hold: ## Ask whether an open `main-red` issue should hold a PR (reads the tracker)

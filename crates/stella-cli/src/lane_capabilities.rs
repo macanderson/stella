@@ -90,16 +90,22 @@ pub(crate) fn resume<'a>(
 }
 
 /// A deck worker lane — `BuiltinLane::SubSession`.
+///
+/// A worker lane runs the session's hooks. The operator's
+/// `PreToolUse`/`PostToolUse` guards apply to a tool call regardless of
+/// which lane made it, and a guard that only ever saw the lead turn's calls
+/// would miss most of what a deck session actually does once work fans out
+/// to workers. `hooks` is an `Option` for the same reason [`lead`]'s is —
+/// bound only where the config declares hooks at all.
 pub(crate) fn sub_session<'a>(
+    hooks: Option<&'a Hooks>,
+    runner: &'a dyn HookRunner,
     calibration: &'a CalibrationMap,
     gate: &'a dyn TurnGate,
     steering: &'a dyn TurnSteering,
 ) -> TurnCapabilities<'a> {
     TurnCapabilities {
-        // Not bound, and not a new gap. A lane's hooks are the session's,
-        // and the lead turn that spawned it runs them. Wiring them onto a
-        // worker lane is its own decision.
-        hooks: None,
+        hooks: hooks.map(|hooks| (hooks, runner)),
         hook_approvals: None,
         calibration: Some(calibration),
         gate: Some(gate),
@@ -310,7 +316,7 @@ mod tests {
             ),
             (
                 "sub_session",
-                sub_session(&calibration, &gate, &steering).lane,
+                sub_session(None, &runner, &calibration, &gate, &steering).lane,
                 BuiltinLane::SubSession,
             ),
             (
@@ -398,9 +404,16 @@ mod tests {
             "a replayed turn must run the hooks its caller handed it",
         );
 
-        let worker = sub_session(&calibration, &gate, &steering);
+        let worker = sub_session(None, &runner, &calibration, &gate, &steering);
         assert!(worker.calibration.is_some() && worker.gate.is_some() && worker.steering.is_some(),);
+        assert!(worker.hooks.is_none(), "no hooks were given");
         assert_eq!(worker.call_role, ModelCallRole::Worker);
+        assert!(
+            sub_session(Some(&hooks), &runner, &calibration, &gate, &steering)
+                .hooks
+                .is_some(),
+            "a worker lane must run the hooks its caller handed it",
+        );
 
         let fleet = fleet_attempt(None, &runner, &calibration, &gate, None);
         assert!(fleet.calibration.is_some() && fleet.gate.is_some());

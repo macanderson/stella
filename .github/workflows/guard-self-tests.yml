@@ -320,9 +320,17 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-main-verified.sh
 
+      - name: the ci-tests verdict reader, and that it fails open on the same three non-answers
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-ci-tests.sh
+
       - name: the main-tip dispatcher, and that it starts nothing twice
         if: ${{ !cancelled() }}
         run: ./scripts/test-dispatch-main-verification.sh
+
+      - name: the armed-auto-merge wait, and its bounded timeout
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-wait-for-armed-merge.sh
 
       - name: the session-scratch boundary
         if: ${{ !cancelled() }}
