@@ -448,16 +448,14 @@ report_held() {
   echo "         reason rather than a collision." >&2
 }
 
-# ── post: has this finding already been published? ───────────────────────────
+# ── post: may this finding be published here? ────────────────────────────────
 #
-# This gate runs on its own. A sweep that means to publish asks this and
-# nothing else, because a finding that already stands is a duplicate whoever
-# holds the pull request.
+# Two questions, in this order. Does a peer hold the pull request, and does
+# this finding already stand? The claim is asked first because it is the one
+# that can turn a sweep back before it spends its diagnosis. The finding is
+# asked second because a published copy costs a reader whoever holds the claim,
+# so it stops a post that this session's own claim covers.
 if [ "$mode" = "post" ]; then
-  # The claim gate runs here too. A finding gate on its own can only see what
-  # is already published, so two sweeps that both begin before either posts
-  # each spend a full diagnosis, and only the second is turned away. A claim
-  # taken at the start turns the second one back before it spends anything.
   if [ "$ignore_claim" -eq 0 ]; then
     scan_claims
     if [ -n "$held_by" ]; then
