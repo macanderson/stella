@@ -27,7 +27,7 @@ fn observations(store: &ContextStore) -> Vec<ObservationRecord> {
 #[test]
 fn a_failed_tool_call_becomes_a_tool_outcome_observation() {
     let (_dir, store) = store();
-    let outcome = tool_outcome_observation(&store, "run_tests", "linker not found", "task1", AT);
+    let outcome = tool_outcome_observation(&store, "run_tests", "linker not found", 0, "task1", AT);
 
     assert_eq!(outcome, Some(AppendOutcome::Appended));
     let observations = observations(&store);
@@ -39,13 +39,14 @@ fn a_failed_tool_call_becomes_a_tool_outcome_observation() {
 #[test]
 fn repeated_failures_of_one_tool_cluster_under_one_candidate() {
     let (_dir, store) = store();
-    // Different tasks, same tool: the candidate id must be the tool so the
-    // miner sees recurrence rather than two unrelated singletons.
-    tool_outcome_observation(&store, "run_tests", "linker not found", "task1", AT);
+    // Different tasks, same tool. Clustering runs on the text, which is what
+    // both miners key on, so the two land in one candidate.
+    tool_outcome_observation(&store, "run_tests", "linker not found", 0, "task1", AT);
     tool_outcome_observation(
         &store,
         "run_tests",
         "linker not found",
+        0,
         "task2",
         "2026-07-27T00:00:00Z",
     );
@@ -53,8 +54,8 @@ fn repeated_failures_of_one_tool_cluster_under_one_candidate() {
     let observations = observations(&store);
     assert_eq!(observations.len(), 2);
     assert_eq!(
-        observations[0].source_ref, observations[1].source_ref,
-        "same tool must share a source ref so failures cluster"
+        observations[0].text, observations[1].text,
+        "the shared text is what clusters two failures into one candidate"
     );
     assert_ne!(
         observations[0].task_id, observations[1].task_id,
@@ -62,15 +63,46 @@ fn repeated_failures_of_one_tool_cluster_under_one_candidate() {
     );
 }
 
+/// A reference names the occurrence, so the miner can tell two failures apart.
+///
+/// Sharing one `tool:<name>` across every failure of a tool made
+/// `induce_rule_proposals` resolve five occurrences to the first observation it
+/// found, scoring one distinct task where there were five.
+#[test]
+fn two_failures_of_one_tool_carry_two_source_refs() {
+    let (_dir, store) = store();
+    tool_outcome_observation(&store, "run_tests", "linker not found", 0, "task1", AT);
+    tool_outcome_observation(&store, "run_tests", "linker not found", 1, "task1", AT);
+
+    let observations = observations(&store);
+    assert_eq!(observations.len(), 2);
+    assert_ne!(
+        observations[0].source_ref,
+        observations[1].source_ref,
+        "two failures are two references: {:?}",
+        observations
+            .iter()
+            .map(|o| o.source_ref.as_str())
+            .collect::<Vec<_>>()
+    );
+    for observation in &observations {
+        assert!(
+            observation.source_ref.starts_with("tool:run_tests#"),
+            "the shape ObservationRecord::source_ref documents: {}",
+            observation.source_ref
+        );
+    }
+}
+
 #[test]
 fn re_appending_the_same_evidence_is_a_replay() {
     let (_dir, store) = store();
     assert_eq!(
-        tool_outcome_observation(&store, "run_tests", "linker not found", "task1", AT),
+        tool_outcome_observation(&store, "run_tests", "linker not found", 0, "task1", AT),
         Some(AppendOutcome::Appended)
     );
     assert_eq!(
-        tool_outcome_observation(&store, "run_tests", "linker not found", "task1", AT),
+        tool_outcome_observation(&store, "run_tests", "linker not found", 0, "task1", AT),
         Some(AppendOutcome::AlreadyPresent),
         "content-derived ids must absorb a re-scan as a replay"
     );
@@ -86,6 +118,7 @@ fn a_secret_in_a_tool_error_is_redacted_before_it_is_stored() {
         &store,
         "shell",
         "curl failed: Authorization: Bearer sk-ant-api03-SECRETVALUE1234567890",
+        0,
         "task1",
         AT,
     );
@@ -104,7 +137,7 @@ fn a_secret_in_a_tool_error_is_redacted_before_it_is_stored() {
 fn an_unbounded_tool_error_is_truncated_visibly() {
     let (_dir, store) = store();
     let wall_of_text = "e".repeat(5_000);
-    tool_outcome_observation(&store, "build", &wall_of_text, "task1", AT);
+    tool_outcome_observation(&store, "build", &wall_of_text, 0, "task1", AT);
 
     let observations = observations(&store);
     let text = &observations[0].text;

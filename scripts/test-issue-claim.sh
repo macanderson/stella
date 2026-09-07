@@ -458,6 +458,81 @@ case "$rc,$out" in
   ;;
 esac
 
+# ── the tools the check itself needs ─────────────────────────────────────────
+#
+# The branch an agent container takes: it ships neither `gh` nor `jq`.
+#
+# A fixture cannot pin this one. Supplying a fixture is what skips the
+# lookup. An empty `PATH` is not the way either. That breaks the shebang and
+# exits 127, which is a broken test, not a missing tool. So: a `PATH` with
+# every program this script uses, minus the one under test.
+#
+# Both cases read the banner, not just the exit code. This script proceeds at
+# every unknown. An exit of 0 alone cannot tell a check that ran from a check
+# that never ran.
+tools_dir() { # tools_dir <dir> <tool>...
+  local dir="$1"
+  shift
+  mkdir -p "$dir"
+  local tool tool_path
+  for tool in "$@"; do
+    tool_path="$(command -v "$tool")"
+    if [ -z "$tool_path" ]; then
+      bad "the suite needs $tool on PATH to build its fixture"
+      continue
+    fi
+    ln -s "$tool_path" "$dir/$tool"
+  done
+}
+
+sandbox="$(mktemp -d)"
+trap 'rm -rf "$gh_colorish" "$sandbox"' EXIT
+
+tools_dir "$sandbox/gh-less" bash awk tr mktemp date jq
+out="$(PATH="$sandbox/gh-less" "$SCRIPT" check 5045 2>&1)"
+rc=$?
+case "$rc,$out" in
+0,*"gh: UNAVAILABLE — THIS CHECK DID NOT RUN"*)
+  ok "a missing gh proceeds, and says the check did not run"
+  ;;
+0,*)
+  bad "a missing gh proceeded without saying the check did not run: $out"
+  ;;
+*)
+  bad "a missing gh must proceed, got exit $rc: $out"
+  ;;
+esac
+
+# `jq` is the other half. `gh --jq` carries its own copy, so the tracker call
+# needs `gh` alone. A missing `jq` then reaches the comment read, and reads
+# there as unreadable comments — the tracker blamed for a missing tool.
+#
+# The stub `gh` here fails loudly if it is called. So this case also shows
+# that the pre-flight runs first, before anything is asked.
+tools_dir "$sandbox/jq-less" bash awk tr mktemp date
+cat >"$sandbox/jq-less/gh" <<'STUB'
+#!/usr/bin/env bash
+echo "gh stub: the tool pre-flight should have run before any gh call" >&2
+exit 1
+STUB
+chmod +x "$sandbox/jq-less/gh"
+out="$(PATH="$sandbox/jq-less" "$SCRIPT" check 5045 2>&1)"
+rc=$?
+case "$rc,$out" in
+0,*"gh stub"*)
+  bad "the tool pre-flight must run before any gh call: $out"
+  ;;
+0,*"jq: UNAVAILABLE — THIS CHECK DID NOT RUN"*)
+  ok "a missing jq names jq, rather than blaming the comments"
+  ;;
+0,*)
+  bad "a missing jq proceeded without saying the check did not run: $out"
+  ;;
+*)
+  bad "a missing jq must proceed, got exit $rc: $out"
+  ;;
+esac
+
 echo
 if [ "$fail" -eq 0 ]; then
   printf 'issue-claim: %d passed\n' "$pass"

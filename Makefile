@@ -41,7 +41,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     adr-numbering \
                     command-docs website-inputs brand-case file-size god-files gate-parity \
                     schema-tier-parity \
-                    guard-trigger-coverage priority-scheme left-behind \
+                    guard-trigger-coverage priority-scheme cargo-flags left-behind \
                     retired-model-keys \
                     stat-portability module-reachability core-reachability \
                     typed-errors \
@@ -836,6 +836,24 @@ guard-trigger-coverage: ## Assert prose/hue-separation/transcript-surfaces each 
 .PHONY: guard-trigger-coverage-test
 guard-trigger-coverage-test: ## Test the guard-trigger-coverage guard's failure directions (hermetic; not part of `gate`)
 	@python3 ./scripts/test-guard-trigger-coverage.py
+
+# The guard for the recipes in this file. `doc-warnings-schema` ran
+# `cargo clean --doc $(SCHEMA_CRATES)` for as long as that line stood, and
+# cargo refuses the pair before it does anything, so the step was dead and
+# nothing said so (#5947, repaired in #5993). It ran nowhere a Makefile edit
+# could reach: its only workflow is `wire-schema.yml`, whose `paths:` list
+# answers "can this diff have invalidated `docs/wire/`", which a Makefile edit
+# cannot -- and widening that list would misdirect the pre-push hook, which
+# derives its rung from it. So the cover comes from here instead: this needs
+# no toolchain, and `guard-self-tests.yml` runs it with no `paths:` filter at
+# all (#5992).
+.PHONY: cargo-flags
+cargo-flags: ## Assert no recipe hands cargo a flag pair cargo refuses (#5992)
+	@python3 ./scripts/check-cargo-flags.py
+
+.PHONY: cargo-flags-test
+cargo-flags-test: ## Test the cargo-flags guard's failure directions (hermetic; not part of `gate`)
+	@python3 ./scripts/test-cargo-flags.py
 
 .PHONY: priority-scheme
 priority-scheme: ## Assert the issue priority scheme is stated once, in SCR-005 (#5216)

@@ -388,6 +388,22 @@ def renamed_paths(root: Path, commit: str = "HEAD") -> dict[str, str]:
 
 
 def tracked_files(root: Path) -> list[str]:
+    """Every scanned path, each named once.
+
+    `git ls-files --cached` prints a conflicted path once per stage, so a
+    merge resolved on disk but not yet `git add`ed lists it three times and
+    every count over it triples. `docs/adr/README.md [issue-reference]: 11
+    allowed, 33 found` is what that reads like, on a resolution holding one
+    copy of everything -- a fictional number, against a ratchet whose whole
+    job is to be believed.
+
+    Deduplicating rather than refusing to run: the file this reads is the
+    working-tree copy, which during a resolution is the resolved text, so one
+    entry per path gives the true count. Refusing would take the guard away
+    at the moment its answer is wanted -- a conflict in prose is resolved by
+    reading prose -- and the count ratchet is whole-tree, so there is no
+    base-relative allowance an unmerged index could distort.
+    """
     out = subprocess.run(
         ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
         cwd=root,
@@ -395,7 +411,7 @@ def tracked_files(root: Path) -> list[str]:
         text=True,
         check=True,
     ).stdout.split("\n")
-    keep = []
+    seen: dict[str, None] = {}
     for path in out:
         if not path or not path.endswith(SCANNED):
             continue
@@ -403,8 +419,8 @@ def tracked_files(root: Path) -> list[str]:
             continue
         if any(s in path for s in EXCLUDED_SUBSTRINGS):
             continue
-        keep.append(path)
-    return keep
+        seen[path] = None
+    return list(seen)
 
 
 # A backticked span is a citation, not a use: a document that names a banned

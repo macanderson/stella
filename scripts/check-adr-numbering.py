@@ -6,7 +6,14 @@ and `scripts/file-size-baseline.txt`: two branches each pick "the next ADR
 number", both are correct against their own base, and they compose into a
 directory where a number no longer identifies a record. No pre-merge run can
 catch that from one side, because neither author's tree is wrong -- so the
-check has to be a property of the merged tree, run on every PR.
+check has to be a property of the merged tree.
+
+A pull request's checkout IS the merged tree (`refs/pull/N/merge`), so this
+answers the composition question there. What it cannot answer is a run that
+went stale: nothing re-runs a green check when `main` moves under it, and the
+second branch to merge carries a verdict taken before the first one landed.
+That is why `scripts/main-canary.sh` runs this again after the merge, beside
+`Cargo.lock` and `scripts/file-size-baseline.txt` (`#5930`).
 
 `main` carried two 0015 records before this guard existed (#5175), and PR
 #5165 had to renumber by hand twice while racing them.
@@ -43,6 +50,7 @@ is authored.
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -56,6 +64,41 @@ FILENAME = re.compile(r"^(\d{4})-[a-z0-9-]+\.md$")
 # `# ADR 0017: ...` or MADR's `# 16. ...` — the number is what matters.
 HEADING = re.compile(r"^#\s+(?:ADR\s+)?(\d{1,4})[.:\s]", re.MULTILINE)
 FRONTMATTER_ID = re.compile(r"^id:\s*(\S+)\s*$", re.MULTILINE)
+
+
+def next_free_number(by_number: dict[str, list[str]]) -> str:
+    """The number a renumber should take: one past the highest in use."""
+    return f"{max(int(n) for n in by_number) + 1:04d}"
+
+
+def bare_citations(number: str) -> list[str]:
+    """Files writing `ADR NNNN` in prose, outside `docs/adr/` itself.
+
+    A renumber has to move every citation with the record, and the two link
+    checks in this repository read neither of these: `check-doc-links.py`
+    follows `doc:` ids and markdown links, and `make line-citations` reads
+    line numbers. A bare number in a sentence is invisible to both, so
+    `#6240`'s renumber repointed seven of them by hand across four crates and
+    a spec after git had already reported the merge clean.
+
+    Best-effort and advisory: it never changes the verdict, and it is skipped
+    entirely when this guard is pointed at a fixture directory, so the
+    hermetic self-test greps no real tree.
+    """
+    if ADR_DIR != Path("docs/adr"):
+        return []
+    try:
+        proc = subprocess.run(
+            ["git", "grep", "-l", "-F", f"ADR {number}", "--", ":!docs/adr"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if proc.returncode != 0:
+        return []
+    return sorted(line for line in proc.stdout.splitlines() if line)
 
 
 def main() -> int:
@@ -76,15 +119,24 @@ def main() -> int:
         number = FILENAME.match(path.name).group(1)  # type: ignore[union-attr]
         by_number[number].append(path.name)
 
+    free = next_free_number(by_number)
     for number, names in sorted(by_number.items()):
         if len(names) > 1:
             joined = "\n      ".join(sorted(names))
-            failures.append(
+            message = (
                 f"  {number} identifies {len(names)} records:\n      {joined}\n"
-                f"      Renumber all but one to the next free number. Move its "
-                f"`id:`, its heading, its docs/manifest.json entry and every "
+                f"      Renumber all but one to {free}. Move its `id:`, its "
+                f"heading, its docs/manifest.json entry and every "
                 f"`doc:adr/...` citation with it."
             )
+            citations = bare_citations(number)
+            if citations:
+                listed = "\n      ".join(citations)
+                message += (
+                    "\n      These write the number in prose, where no link "
+                    f"check reads it:\n      {listed}"
+                )
+            failures.append(message)
 
     for path in records:
         number = FILENAME.match(path.name).group(1)  # type: ignore[union-attr]

@@ -111,10 +111,13 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + schema-tier-parity (a -schema step runs at the
                          #     same rung as its base step; #5139)
                          #   + guard-trigger-coverage (prose, hue-separation,
-                         #     transcript-surfaces and closing-keywords each
+                         #     transcript-surfaces, closing-keywords and
+                         #     cargo-flags each
                          #     run, in some workflow, from a job neither a
                          #     paths: filter nor a needs.*.outputs.*-gated
                          #     if: can skip)
+                         #   + cargo-flags (no Makefile recipe hands cargo a
+                         #     flag pair cargo refuses; #5992)
                          #   + priority-scheme (the issue priority scheme is
                          #     stated once, in SCR-005, and the triage guard's
                          #     regex covers exactly the levels it names)
@@ -185,8 +188,8 @@ leaving `main` red for everyone (#1883).
 
 CI enforces the same steps split across four workflows:
 `/.github/workflows/ci.yml`'s required job runs everything except `invariants`,
-`doc-links`, `prose`, `line-citations`, `hue-separation` and
-`transcript-surfaces`, and adds a
+`doc-links`, `prose`, `line-citations`, `hue-separation`,
+`transcript-surfaces` and `cargo-flags`, and adds a
 `Cargo.lock` sync check, `stella context
 validate`, a release smoke build (thin LTO), and the deleted-test guard
 (`scripts/check-deleted-tests.sh`);
@@ -205,10 +208,16 @@ of the other two (#1439) — and `doc-warnings-schema` beside it, because
 that describes the wire format sits behind an off-by-default `schema` one, so
 rustdoc compiled none of them anywhere (#4584); this workflow already builds
 those three crates with the feature on; and `guard-self-tests.yml` runs the
-gate steps ci.yml's job cannot — `prose`, `line-citations`, `hue-separation`
-and `transcript-surfaces`; it is skipped for a prose-only diff, which is the
-diff `prose` exists to judge — alongside the hermetic suites that prove a
-guard can still fail (#3820, #4427). Which workflow runs a step is a
+gate steps ci.yml's job cannot — `prose`, `line-citations`, `hue-separation`,
+`transcript-surfaces` and `cargo-flags`; it is skipped for a prose-only diff,
+which is the diff `prose` exists to judge — alongside the hermetic suites that
+prove a guard can still fail (#3820, #4427). `cargo-flags` is there for a
+sharper version of the same reason: it reads the `Makefile`, and the one
+workflow that runs `doc-warnings-schema` cannot be started by a `Makefile`
+edit at all — its `paths:` list asks whether the diff could have made
+`docs/wire/` stale, which a recipe edit cannot. That is how
+`doc-warnings-schema` came to ship a first line cargo refuses and stay dead
+for seven hours with every run green. Which workflow runs a step is a
 judgement; *that* one does is checked, by `gate-parity` against every `run:`
 in `.github/workflows/`. That check stops at "does some workflow run it" — it
 says nothing about which files reach it, so a `paths:` filter narrowing
@@ -250,9 +259,10 @@ confined to `website/**` is exactly a deck edit (#3573).
 
 A sixth, `main-canary.yml`, is the only one that runs **after** the merge, and
 it exists because some guards cannot be settled before one. A guard enforced
-against a *shared cell* — one file every PR of a shape must write, like
-`Cargo.lock` or `scripts/file-size-baseline.txt` — can be satisfied correctly by
-two branches that still compose into a broken tree once both land. No pre-merge
+against a *shared cell* — one thing every PR of a shape must write, like
+`Cargo.lock`, `scripts/file-size-baseline.txt` or the next free **ADR
+number** — can be satisfied correctly by two branches that still compose into
+a broken tree once both land. No pre-merge
 run can catch that: neither author's tree is wrong. So the canary re-asks the
 composition questions on `main` itself (push, plus a daily backstop for the
 breakage no commit caused, such as a yanked dependency), and reports by opening
@@ -261,6 +271,20 @@ that only ever files gets muted and is then worse than none (#1464 is what
 silent failure costs here). `make main-canary` runs the same check locally
 without filing anything; `scripts/main-canary.sh`'s header carries the full
 argument, including why it deliberately does not open a fix PR (#3332).
+
+The ADR number is the newest row there, and the only shared cell with no file
+to conflict on. `adr-numbering` is a gate step and a pull request's checkout is
+the merged tree, so it does ask the composed question — once. Nothing re-runs a
+green check when `main` moves, so the second branch to merge carries a verdict
+taken while the number was still free. 0027 was claimed by two open pull
+requests at once and 0030 by two more; 0030 showed up only as a git conflict in
+`docs/adr/README.md`, which two numbers sorting apart would not produce. The
+canary runs `adr-numbering` after the merge for that reason, and the guard's
+failure now names the next free number and every file writing the old one in
+prose — `check-doc-links` and `make line-citations` both read past a bare
+number, so 0031's renumber hunted seven of those by hand (`#5930`).
+`docs/adr/README.md` § "The number is a shared cell" carries the rest,
+including why id citations for ADRs are a stated non-goal today.
 
 It answers "is `main` **known broken**". A second step in the same workflow —
 `scripts/check-main-verified.sh` (`make main-verified`) — answers the question
@@ -506,6 +530,36 @@ to write. Each of those three sessions spent twenty minutes on the conflict
 before it had anything to say, so a claim taken at the end would have saved
 none of it. `make pr-claim N=5835` asks by hand; `make pr-claim-test` covers
 both gates, the blocking branches included.
+
+**None of the three claim checks can run in the agent container, and all
+three now say so.** They need `gh` to reach the tracker and `jq` to read the
+claims out of the reply, and that container ships neither. So the check every
+session is told to run printed `ok  proceed (could not ask)` — a line a reader
+takes for a clean check — and two sessions then implemented one issue twice,
+four repaired one red `main`, and two resolved one merge conflict, each pair
+paying for a full required-CI run as well as the work (`#5934`). Each script
+opens with a tool pre-flight now, in the `shellcheck: UNAVAILABLE` register
+above and for the same reason: a check that did not run must not read as a
+check that found nothing. The banner names the missing tool, says what went
+unasked, and lists the by-hand questions — the open pull requests, the
+issue's state, the claim comments. `scripts/lib/claim-tools.sh` holds it, so
+one message serves all three scripts, and each suite drives it with the tool
+masked off `PATH`.
+
+`pr-claim.sh` arrived (`#6377`) pre-flighting `gh` alone while its own claim
+reader ran a real `jq` filter, which is the half-checked state
+`claim-tools.sh` exists for: with `gh` there and `jq` gone, the script blamed
+the comments for a missing tool. It takes the shared pre-flight on the same
+terms as its two siblings, and `post` keeps its own answer — a mode that owes
+the caller a write exits non-zero rather than reporting a claim it never sent.
+
+**The image is out of this repository's reach, so the rule is best-effort
+there.** Nothing in this tree defines the container, exactly as with
+`shellcheck` above (`#3830`) — the two wants are the same want and are
+tracked together. Until the image carries them, a session without `gh` owes
+the by-hand check and, more importantly, the claim comment: posting one is
+the half such a session can still do, and it is what lets the next session
+stand down rather than collide.
 
 An eighth, `windows-check.yml`, is the only compiler in this project that
 looks at a `#[cfg(windows)]` arm: `ci.yml` runs on `ubuntu-latest` and

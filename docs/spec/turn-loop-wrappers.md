@@ -434,6 +434,19 @@ already satisfies that rule. It does not, it never did, and the spend is now
 visible on the receipt against a declared role instead of being described as a
 `judge`.
 
+**Settled (`doc:adr/0033-free-text-is-not-evidence`).** This subsection put
+the model call in `after_turn` and stopped. It left the shape of the evidence
+open. That is the half slice 7 (`#3911`) was blocked behind.
+
+The record answers it. The free text is not encoded into `EvidenceSet`, ever.
+`met` rides as a `0`/`1` measurement under a declared name. An
+`[[oracle.checks]]` rule decides it. The verifier's `feedback` rides as
+`ObservedEvidence::detail`, and the `reasoning` goes there when there is no
+feedback. `EvidenceSet::from_observed` drops that string, so `judge` stays
+total over closed fields. The note rejoins after the verdict. It lands on the
+unmet clauses, where the correction reads it, and on the round's report, where
+a met or undecided round reads it.
+
 ### 9.3 The child-engine constructor is the whole security story
 
 §4's "bug class this deletes" is right that one blessed constructor kills it.

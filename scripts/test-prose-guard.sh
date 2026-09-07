@@ -1134,5 +1134,45 @@ split_tail "$r" docs/big.md docs/moved.md 30
 hard_doc_varied "$r" docs/unrelated.md 40
 PROSE_BASE_REF=HEAD expect_fail "X4 an unrelated new file inherits nothing" "$r"
 
+# ── U1: an unmerged index counts each path once, not once per stage ─────────
+# `git ls-files --cached` prints a conflicted path once for each of stages 1,
+# 2 and 3, so a merge resolved on disk but not yet `git add`ed used to make
+# every count over that path triple. A single-copy resolution of
+# `docs/adr/README.md` reported `11 allowed, 33 found`, and the author sees a
+# ratchet failing on prose they did not write.
+r="$(new_root u1)"
+baseline "$r" docs/a.md enumerative-announcement 1
+doc "$r" docs/a.md <<'EOF'
+Two things follow from that.
+EOF
+commit_all "$r"
+(cd "$r" && git checkout -q -b other) >/dev/null 2>&1
+doc "$r" docs/a.md <<'EOF'
+Two things follow from that.
+
+The other branch wrote this line.
+EOF
+commit_all "$r"
+(cd "$r" && git checkout -q -) >/dev/null 2>&1
+doc "$r" docs/a.md <<'EOF'
+Two things follow from that.
+
+This branch wrote a different line.
+EOF
+commit_all "$r"
+(cd "$r" && git merge -q other) >/dev/null 2>&1
+# Resolved on disk and deliberately not staged, so the index still holds all
+# three stages for this path. One copy of the construction, one allowed.
+cat >"$r/docs/a.md" <<'EOF'
+Two things follow from that.
+
+Both branches wrote a line here.
+EOF
+if (cd "$r" && git ls-files --unmerged | grep -q .); then
+  expect_pass "U1 an unmerged index counts each path once" "$r"
+else
+  no "U1 an unmerged index counts each path once" "the fixture merge did not conflict"
+fi
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

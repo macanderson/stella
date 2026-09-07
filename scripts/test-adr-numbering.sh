@@ -65,6 +65,10 @@ expect_pass "$d" "A1 a clean directory passes"
 d="$(fixture dupe)"; record "$d" 0001 alpha; record "$d" 0001 beta
 expect_fail "$d" "A2 two records sharing a number fail" "identifies 2 records"
 
+# A2b — the message names the free number. `#6240` worked it out by hand in
+# the middle of a merge, then moved seven prose citations.
+expect_fail "$d" "A2b the duplicate names the next free number" "Renumber all but one to 0002"
+
 # A3 — a half-finished renumber: filename moved, heading did not (#5165).
 d="$(fixture heading)"; record "$d" 0001 alpha
 sed -i.bak 's/^# ADR 0001:/# ADR 0009:/' "$d/0001-alpha.md" && rm -f "$d"/*.bak

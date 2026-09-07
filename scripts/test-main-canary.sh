@@ -76,6 +76,23 @@ RS
 expect "a break confined to a test target is caught" 1 "compile" \
   --manifest-dir "$tmp/badtest"
 
+# ── red: two branches each took the next free ADR number (`#5930`) ────────
+# The shared cell with no file to conflict on. `adr-numbering` is a gate step
+# and a pull request's checkout is the merged tree, so it does ask the composed
+# question -- once. Nothing re-runs it when `main` moves, so the second branch
+# to merge carries a verdict taken while the number was still free. 0027 and
+# 0030 were each claimed twice; 0030 surfaced only as a git conflict in
+# `docs/adr/README.md`, which two numbers sorting apart would not produce.
+make_workspace "$tmp/adrdupe"
+make_adr_records "$tmp/adrdupe" 0030:the-wrapper-socket 0030:no-step-cap
+expect "two records claiming one ADR number fail" 1 "FAIL adr-numbering" \
+  --manifest-dir "$tmp/adrdupe"
+# The remedy has to name a number. Without one the reader works it out during a
+# merge, which is where `#6240`'s author was standing before repointing seven
+# citations by hand.
+expect "and the issue names the number to renumber to" 1 "Renumber all but one to 0031" \
+  --announce --dry-run --manifest-dir "$tmp/adrdupe"
+
 # ── red + announce ────────────────────────────────────────────────────────
 expect "a red run opens an issue" 1 "gh issue create" \
   --announce --dry-run --manifest-dir "$tmp/red"
@@ -191,6 +208,7 @@ fi
 # longer need `main` itself to be green, and belong in the hermetic suite CI
 # actually runs.
 make_workspace "$tmp/clean"
+make_adr_records "$tmp/clean" 0001:alpha 0002:beta
 expect "a composing tree passes" 0 "OK — main composes green" --manifest-dir "$tmp/clean"
 
 # A green run must not file anything. This is the case that keeps the canary
@@ -202,6 +220,11 @@ refute "a green run announces nothing" "gh issue create" \
 # (#4828) — now provably against the fixture, not against whatever `main`
 # happened to be doing when this suite ran.
 expect "the prose row runs and reports" 0 "ok   prose" --manifest-dir "$tmp/clean"
+
+# Same for the ADR row, against records the fixture holds rather than against
+# whatever `docs/adr/` this suite happens to be running in.
+expect "the adr-numbering row runs and reports" 0 "ok   adr-numbering" \
+  --manifest-dir "$tmp/clean"
 
 # ── one DoD box per FAILING check, and none for the rest ──────────────────
 # `$tmp/nocompile` already exists from the compile cases above; reused rather

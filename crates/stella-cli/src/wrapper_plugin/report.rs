@@ -123,6 +123,21 @@ pub(super) fn report_lines(
     if format == OutputFormat::Text || !report.met() {
         let tag = scope.map_or_else(String::new, |scope| format!("[{scope}] "));
         lines.push(format!("  ◇ {tag}{}", report.summary()));
+        // The wrapper's own account of the round, under the host's summary of
+        // it (ADR 0033). Its own line rather than folded into `summary()`,
+        // which is one line by contract and rides into
+        // `VerdictEvidence::summary` as a journal field. A held-open round
+        // already reads this string in its correction; this is what a round
+        // that stopped — met, or undecided — has instead, and without it a
+        // goal plugin cannot say why it passed.
+        if let Some(note) = report
+            .note
+            .as_deref()
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+        {
+            lines.push(format!("  ◇ {tag}{note}"));
+        }
     }
     lines
 }
@@ -143,7 +158,7 @@ pub(super) fn report_lines(
 ///
 /// A pure function so the events, like the lines, are assertable without a
 /// session behind them.
-pub(super) fn run_events(report: &DispatchReport) -> Vec<AgentEvent> {
+pub(crate) fn run_events(report: &DispatchReport) -> Vec<AgentEvent> {
     vec![
         AgentEvent::Verdict {
             passed: report.met(),

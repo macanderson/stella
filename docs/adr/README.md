@@ -99,7 +99,9 @@ open; nothing before Phase 3 forces it.
 | [0030](0030-the-wrapper-socket-is-the-plugin-sdk.md) | The Wrapper Socket Is the Plugin SDK | Accepted |
 | [0031](0031-a-turn-has-no-step-cap-by-default.md) | A Turn Has No Step Cap by Default | Accepted |
 | [0032](0032-a-loop-rung-reads-structure.md) | A Loop Rung Reads Structure, Not Progress | Accepted |
+| [0033](0033-free-text-is-not-evidence.md) | Free Text Is Not Evidence | Accepted |
 | [0034](0034-silence-is-not-a-grant.md) | Silence Is Not a Grant | Accepted |
+| [0035](0035-a-wrappers-verdict-lands-on-the-round-that-earned-it.md) | A Wrapper's Verdict Lands on the Round That Earned It | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible
@@ -183,9 +185,54 @@ separates it from the trials that succeeded, because what is wrong with it is
 not in its calls. The recorded trace is committed with a pin that no rung
 fires on it.
 
+ADR 0033 settles how a goal-mode verifier's free text reaches a wrapper
+plugin's host. It does not reach `EvidenceSet`: that type stays closed so
+`judge`'s totality is the compiler's job, `met` rides as a `0`/`1`
+measurement, and the verifier's own sentence rides as the advisory
+`ObservedEvidence::detail` that no verdict is decided from. The half the
+record adds is a reader for a passing verdict, which had none.
 ADR 0034 settles what a plugin with an empty `[[capabilities]]` list may call.
 It may call nothing of the host's. Its grant is what its manifest declared and
 a person took, which also covers the tools and MCP servers the package ships.
 A worker turn the host runs for a plugin gets a caller name of its own, so one
 list is not asked to bound both the plugin's reach and the tools a candidate's
 model picks.
+
+ADR 0035 settles where a wrapper plugin's judged verdict is recorded. Each
+round of `stella run --pipeline` closes its own execution row and its own
+channel before the verdict is decided, so the events reached no store at all.
+The row now travels back to the caller through the door it already threads in,
+and `Store::append_event` writes the verdict beside the file changes it is
+about, which is what the dataset export's one-execution fold needs. The wrapper
+socket's `DrivenTurn` is untouched.
+
+## The number is a shared cell
+
+Take the number one past the highest in the table above. Two branches doing
+that at once both take the same one, and each is right against its own base —
+the shape AGENTS.md names for `Cargo.lock` and
+`scripts/file-size-baseline.txt`. It has happened twice: 0027 was claimed by
+two open pull requests at once, and 0030 by two more. The second one showed up
+as a git conflict in this file and in `docs/manifest.json`, which is luck
+rather than a guard — two records whose numbers sort apart share no line.
+
+`make adr-numbering` is what asks. A pull request's checkout is the merged
+tree, so it answers there; `scripts/main-canary.sh` runs it again after the
+merge, because nothing re-runs a green check when `main` moves under it and
+the second branch to merge carries a verdict taken while the number was still
+free (`#5930`).
+
+**Renumbering moves more than the file.** The `id:`, the heading, the
+`docs/manifest.json` key, every `doc:` id citation of the record, and every
+sentence anywhere in the tree that writes "ADR NNNN". That last set is the one
+nothing reads: `check-doc-links` follows ids and links, `make line-citations`
+reads line numbers, and a bare number in prose is invisible to both. 0031's
+renumber repointed seven of them by hand. So `check-adr-numbering.py` lists
+them itself when it fails, beside the number to renumber to.
+
+**Writing those prose citations as `doc:` ids instead is a stated non-goal
+here.** It would make `check-doc-links` catch a missed one, and it is the
+right end state, but it is not a guard change — it is an edit to every ADR
+citation in the tree and a rule for the next one, which belongs with the
+larger question of whether an ADR should be numbered at authoring time at
+all. Listing the citations costs nothing and answers the same need today.

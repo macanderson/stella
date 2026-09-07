@@ -234,9 +234,14 @@ fn extract_one(store: &Store, context: &ContextStore, execution: &FinishedExecut
 
     // The third source. Declared in Phase 1, unwritten until now.
     if let Ok(failures) = store.failed_tool_calls_for_execution(execution.execution_id) {
-        for (tool, error) in &failures {
-            if super::evidence::tool_outcome_observation(context, tool, error, &task, &at)
-                == Some(AppendOutcome::Appended)
+        // The ordinal names the occurrence.
+        // `failed_tool_calls_for_execution` orders by `seq` over a finished
+        // execution. So a second pass over the same execution derives the same
+        // references, and the ledger takes it as a replay.
+        for (occurrence, (tool, error)) in failures.iter().enumerate() {
+            if super::evidence::tool_outcome_observation(
+                context, tool, error, occurrence, &task, &at,
+            ) == Some(AppendOutcome::Appended)
             {
                 appended += 1;
             }

@@ -64,6 +64,10 @@ WATCHED_GUARDS = (
     "check-hue-separation.py",
     "check-transcript-surfaces.py",
     "check-closing-keywords.py",
+    # Watched for its own reason. It reads the `Makefile`. No workflow that
+    # runs a Makefile recipe can be started by a Makefile edit. A `paths:`
+    # filter here would put this guard back in the hole it closes.
+    "check-cargo-flags.py",
 )
 
 WORKFLOWS_DIR = "workflows"

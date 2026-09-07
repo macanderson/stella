@@ -166,6 +166,7 @@ step_command() {
   light-clamp) echo 'check-light-clamp' ;;
   transcript-surfaces) echo 'check-transcript-surfaces' ;;
   guard-trigger-coverage) echo 'check-guard-trigger-coverage' ;;
+  cargo-flags) echo 'check-cargo-flags' ;;
   priority-scheme) echo 'check-priority-scheme' ;;
   prose) echo 'check-prose' ;;
   line-citations) echo 'check-line-citations' ;;

@@ -156,6 +156,7 @@ mod tune_cmd;
 mod turn_diff;
 mod turn_facts;
 mod turn_files;
+mod turn_row;
 mod usage_cmd;
 // The wrapper socket's first driver (#3494). Beside `agent.rs` rather than
 // inside it, because that file sits close to the 1500-line ratchet.

@@ -84,16 +84,19 @@ fn as_raw_observations(observations: &[ObservationRecord]) -> Vec<RawObservation
         .collect()
 }
 
-/// The `occurred_at` an observation was minted with, recovered from
-/// `source_ref` (`reflection:<unix secs>`) — the same recovery the skills path
-/// does, and for the same reason: this integer is quoted verbatim into the
-/// artifact's evidence lines.
+/// The instant an observation was minted, read from its `observed_at`.
+///
+/// [`ObservationRecord::source_ref`] is documented as an opaque back-reference,
+/// and one source spells it in a shape with no timestamp in it at all
+/// (`tool:<name>#<n>`), so parsing the reference recovers `0` for every
+/// tool-outcome observation and stamps the proposal at the epoch. `observed_at`
+/// is the field that carries the instant. A reflection observation is minted
+/// with `observed_at == format_rfc3339(occurred_at)`
+/// (`super::observations`'s `append_observation`), so this returns the same
+/// number for that source either way.
 fn occurred_at_of(observation: &ObservationRecord) -> u64 {
-    observation
-        .source_ref
-        .rsplit(':')
-        .next()
-        .and_then(|n| n.parse().ok())
+    stella_context::parse_rfc3339(&observation.observed_at)
+        .and_then(|secs| u64::try_from(secs).ok())
         .unwrap_or(0)
 }
 
@@ -131,11 +134,21 @@ pub(crate) fn induce_rule_proposals(
         // evidence grade is folded from them, and a grade cannot be folded
         // from an id (#2782).
         let mut supporting: Vec<&ObservationRecord> = Vec::new();
+        // Each evidence entry claims one observation and no other entry may
+        // claim it again. The miner emits one entry per occurrence in the
+        // cluster, so the counts line up — and a source that reuses a
+        // `source_ref` across occurrences then spreads over the observations
+        // behind it instead of collapsing onto the first match, which is what
+        // made five tool failures across five tasks score one distinct task.
+        let mut claimed = vec![false; observations.len()];
         for evidence in &candidate.evidence {
-            if let Some(observation) = observations.iter().find(|o| {
-                o.source_ref == evidence.reference
+            let matched = observations.iter().enumerate().find(|(index, o)| {
+                !claimed[*index]
+                    && o.source_ref == evidence.reference
                     && o.text.chars().take(160).collect::<String>() == evidence.snippet
-            }) {
+            });
+            if let Some((index, observation)) = matched {
+                claimed[index] = true;
                 tasks.insert(observation.task_id.as_str());
                 supporting.push(observation);
             }
