@@ -373,13 +373,19 @@ manifest of the same name shadows the shipped one.
 
 This is not tidiness. It is the only way to know the extension surface is
 adequate: if Linear cannot be expressed as a manifest, no customer's tracker
-can be either. No issue toolset ships today — there is no `IssueBackend` enum
-and no issue module in the tree — so Linear's semantics are not code to be
-extracted but the first thing the format has to carry from zero: that
-`ENG-123` is the identifier shape, that Linear supplies a canonical branch
-name, that a team id scopes creation. Expressing Linear is therefore both the
-proof and the first provider. **It is filed as its own issue and is the
-Phase 1 deliverable (§11).**
+can be either.
+
+GitHub and Linear both ship as manifests now
+(`crates/stella-cli/src/issue_provider/github.toml` and `linear.toml`,
+embedded by that module's `BUILT_IN` table). Adding a tracker is a `.toml`
+beside them and a row in that table; no code reads a provider name and
+branches on it. What each file carries is the vocabulary half of §4.1 — the
+open and closed words, the resolution spellings, the field names, and
+`[classes]`. Linear's `[connection]`, `[states.write]`, `[capabilities]` and
+`[branch]` blocks wait on a Linear transport: this build ships one adapter,
+which runs `gh`, so a workspace bound to Linear gets Linear's words and a
+printed line naming the adapter that will speak them. Jira has no shipped
+manifest and resolves GitHub's, with the same kind of notice.
 
 ### 4.6 Binding a workspace to a provider
 
