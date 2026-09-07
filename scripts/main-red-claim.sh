@@ -3,17 +3,17 @@
 # The pre-flight a session runs before it repairs a red `main`: is someone
 # already fixing this? See #4680, filed from the incident.
 #
-# On 2026-08-24 `main` was red from a single two-line composition break, and
-# three separate PRs fixed it independently, all merging inside 95 seconds:
+# On 2026-08-24 `main` was red from one two-line composition break. Three
+# separate PRs fixed it, each on its own, all merging inside 95 seconds:
 #
 #   18:13:22  #4672 — box the two AgentEvent literals the #4612 witness left bare
 #   18:13:—   #4673 — box the two FleetMsg::Event payloads #4663 added
 #   18:13:48  #4674 — box the two FleetMsg::Event values its own tests build
 #
 # All three changed the same two call sites in
-# `crates/stella-tui/src/fleet_dashboard/tests.rs` in the same way. The merges
-# happened to compose, because identical edits resolve cleanly, so it cost
-# duplicated work rather than correctness. It could as easily not have.
+# `crates/stella-tui/src/fleet_dashboard/tests.rs` the same way. The merges
+# happened to compose, because identical edits resolve cleanly. So it cost
+# duplicated work, not correctness. It could as easily not have.
 #
 # Nobody was wrong. `main-canary.yml` files one `main-red` issue and
 # `main-red-hold.yml` consumes it to hold merges — and with the hold in place
@@ -53,17 +53,9 @@
 #   main-red-claim: <login> <session>
 #
 # and a claim is this session's own only when both the login and the session
-# match. The word is the first of:
-#
-#   - `STELLA_CLAIM_SESSION`, for a fleet that already has a run id;
-#   - a random token minted on first use and kept in this clone's git dir, at
-#     `$(git rev-parse --git-dir)/main-red-claim-session`.
-#
-# `git rev-parse --git-dir` answers per **worktree**, which is what makes the
-# token tell three agent worktrees apart while a session that re-checks reads
-# back the one it minted. It lives inside the git dir, so it never enters the
-# work tree and cannot be committed. Two sessions sharing one worktree still
-# read one token and cannot be told apart — that is what the env var is for.
+# match. `scripts/lib/claim-session.sh` resolves the word and carries the whole
+# argument; `scripts/issue-claim.sh` reads the same one, so a fleet sets one
+# environment variable rather than two.
 #
 # The token is minted by `check`, not only by `claim`, because the second
 # session has to hold an identity before it claims anything or it cannot tell
@@ -228,44 +220,10 @@ proceed() {
   exit 0
 }
 
-# A session word is one plain word, so it survives a whitespace-split parse of
-# a comment's first line and cannot smuggle a second column into it.
-plain_word() {
-  case "$1" in
-  '' | *[!A-Za-z0-9._-]*) return 1 ;;
-  esac
-  return 0
-}
-
-# This session's own word, minted once and then read back.
-resolve_session() {
-  if [ -n "${STELLA_CLAIM_SESSION-}" ]; then
-    if plain_word "$STELLA_CLAIM_SESSION"; then
-      printf '%s' "$STELLA_CLAIM_SESSION"
-      return 0
-    fi
-    echo "note: STELLA_CLAIM_SESSION is not one plain word, so it cannot be a" >&2
-    echo "      session word. Falling back to this clone's own." >&2
-  fi
-
-  git_dir="$(git rev-parse --git-dir 2>/dev/null)" || return 1
-  [ -n "$git_dir" ] || return 1
-  session_file="$git_dir/main-red-claim-session"
-
-  if [ ! -f "$session_file" ]; then
-    token="$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')"
-    plain_word "$token" || token="$$-$(date +%s 2>/dev/null)"
-    plain_word "$token" || return 1
-    printf '%s\n' "$token" >"$session_file" 2>/dev/null || return 1
-  fi
-
-  # Read back rather than keep what was just minted, so two sessions racing to
-  # create the file in one worktree end up agreeing instead of each reading the
-  # other's claim as a stranger's.
-  token="$(tr -d ' \t\r\n' <"$session_file" 2>/dev/null)" || return 1
-  plain_word "$token" || return 1
-  printf '%s' "$token"
-}
+# `plain_word` and `resolve_session` — shared with scripts/issue-claim.sh, which
+# needs the same word or a fleet would have to set two environment variables.
+# shellcheck source=scripts/lib/claim-session.sh
+. "$(dirname "$0")/lib/claim-session.sh"
 
 # `session` asks nothing of the tracker: it prints the word this clone claims
 # under and exits. A diagnostic rather than a verdict, so an absent word is a

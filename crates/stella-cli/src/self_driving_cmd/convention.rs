@@ -309,4 +309,64 @@ jobs:
             vec!["bug", "chore", "documentation", "epic", "feature"]
         );
     }
+
+    /// **The drift guard.** Four places hand-mirror
+    /// `.github/workflows/issue-triage.yml`'s `TYPE_LABELS`: the
+    /// `REAL_WORKFLOW` fixture above, `stella_autonomy`'s `stella()` helper,
+    /// and `backlog.rs`'s and `residue.rs`'s `convention()` helpers. None of
+    /// them reads the workflow, so an edit to the real one can reach some and
+    /// miss the rest, leaving a fixture describing a convention this
+    /// repository does not enforce. `#6036` had to edit all four by hand in one
+    /// pull request, with nothing to catch a partial pass.
+    ///
+    /// The copies stay. Each proves something the others do not: the fixture
+    /// proves the parser, and the helpers give the axis a value to conform
+    /// against. What they cannot do any more is diverge in silence.
+    ///
+    /// `include_str!` across a crate boundary is the shape
+    /// `the_two_copies_of_this_policy_have_not_drifted` uses for `accept.rs`'s
+    /// twins, and it carries that shape's hazard: these files change
+    /// atomically, so a mechanical sweep must not split them across pull
+    /// requests (AGENTS.md, "A partition can also split something atomic").
+    #[test]
+    fn every_hand_written_copy_of_type_labels_matches_the_real_workflow() {
+        const AUTONOMY: &str = include_str!("../../../stella-autonomy/src/convention.rs");
+        const BACKLOG: &str = include_str!("backlog.rs");
+        const RESIDUE: &str = include_str!("residue.rs");
+        const WORKFLOW: &str = include_str!("../../../../.github/workflows/issue-triage.yml");
+
+        let declared = WORKFLOW
+            .lines()
+            .map(str::trim)
+            .find_map(|line| line.strip_prefix("TYPE_LABELS:"))
+            .expect("issue-triage.yml declares TYPE_LABELS");
+        let members: Vec<&str> = declared.split_whitespace().collect();
+        assert!(!members.is_empty(), "TYPE_LABELS names no type");
+
+        // The one spelling every Rust copy uses: `["bug", "feature", ...]`.
+        let rust_literal = format!(
+            "[{}]",
+            members
+                .iter()
+                .map(|m| format!("{m:?}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        for (path, text) in [
+            ("crates/stella-autonomy/src/convention.rs", AUTONOMY),
+            ("crates/stella-cli/src/self_driving_cmd/backlog.rs", BACKLOG),
+            ("crates/stella-cli/src/self_driving_cmd/residue.rs", RESIDUE),
+        ] {
+            assert!(
+                text.contains(&rust_literal),
+                "{path} does not carry {rust_literal}, which is what \
+                 .github/workflows/issue-triage.yml's TYPE_LABELS says today"
+            );
+        }
+
+        assert!(
+            REAL_WORKFLOW.contains(&format!("TYPE_LABELS: {}", members.join(" "))),
+            "the REAL_WORKFLOW fixture above has stopped quoting the real TYPE_LABELS line"
+        );
+    }
 }

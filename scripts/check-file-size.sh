@@ -507,7 +507,7 @@ raw_report="$(
         crowded = crowded sprintf("CROWDED %d %s %d %d\n", limit - n, path, n, limit)
       if (path in ceiling) {
         if (n <= limit)
-          obsolete = obsolete sprintf("  %s is now %d lines (<= %d) — drop its baseline entry\n", path, n, limit)
+          obsolete = obsolete sprintf("OBSCAND %s %d\n", path, n)
         else if (n > ceiling[path])
           grew = grew sprintf("GREWCAND %s %d %d\n", path, n, ceiling[path])
       } else if (n > limit) {
@@ -517,13 +517,13 @@ raw_report="$(
     END {
       for (p in ceiling)
         if (!(p in seen))
-          stale = stale sprintf("  %s (baseline entry, file no longer tracked)\n", p)
+          stale = stale sprintf("STALECAND %s\n", p)
       # First, so the report sections below keep the order they had.
       if (crowded) printf "%s", crowded
       if (newover) printf "%s", newover
       if (grew) printf "%s", grew
-      if (obsolete) printf "OBSOLETE\n%s", obsolete
-      if (stale) printf "STALE\n%s", stale
+      if (obsolete) printf "%s", obsolete
+      if (stale) printf "%s", stale
     }
   '
 )"
@@ -545,6 +545,29 @@ effective_limit() {
   printf '%s\n' "$own"
 }
 
+# Was this baseline entry ALREADY obsolete in the base tree — the file under
+# the limit there too? Then somebody else's split retired it and left the entry
+# behind, and failing this change for walking past it is `#2004`'s bug.
+#
+# A file absent at the base is one this change added, so its entry is this
+# change's business and the answer is no. Fail-closed, like `size_at_base`.
+obsolete_at_base() {
+  local at_base
+  [ -n "$base_commit" ] || return 1
+  git cat-file -e "$base_commit:$1" 2>/dev/null || return 1
+  at_base="$(size_at_base "$1")"
+  [ "$at_base" -le "$LIMIT" ]
+}
+
+# The same question for an entry whose file is gone from the tree: already gone
+# at the base means the base branch removed or renamed it and the entry
+# outlived it there. Gone only at the head means this change removed it, which
+# is this change's regeneration to run.
+stale_at_base() {
+  [ -n "$base_commit" ] || return 1
+  ! git cat-file -e "$base_commit:$1" 2>/dev/null
+}
+
 # Classify each candidate against the base tree, preserving the stream order so
 # the GREW section still lands between NEWOVER and OBSOLETE.
 report=""
@@ -552,6 +575,8 @@ drift=""
 crowded=""
 newover_header_emitted=0
 grew_header_emitted=0
+obsolete_header_emitted=0
+stale_header_emitted=0
 while IFS= read -r line; do
   case "$line" in
   "CROWDED "*)
@@ -605,6 +630,46 @@ while IFS= read -r line; do
 "
     fi
     ;;
+  "OBSCAND "*)
+    # Word split, as above.
+    # shellcheck disable=SC2086
+    set -- $line
+    cand_path="$2"
+    cand_now="$3"
+    if obsolete_at_base "$cand_path"; then
+      drift="$drift$(printf '  %s is %d lines (<= %d) and already was at the base — its baseline entry outlived the split that fixed it; retire it' \
+        "$cand_path" "$cand_now" "$LIMIT")
+"
+    else
+      if [ "$obsolete_header_emitted" -eq 0 ]; then
+        report="${report}OBSOLETE
+"
+        obsolete_header_emitted=1
+      fi
+      report="$report$(printf '  %s is now %d lines (<= %d) — drop its baseline entry' \
+        "$cand_path" "$cand_now" "$LIMIT")
+"
+    fi
+    ;;
+  "STALECAND "*)
+    # Word split, as above.
+    # shellcheck disable=SC2086
+    set -- $line
+    cand_path="$2"
+    if stale_at_base "$cand_path"; then
+      drift="$drift$(printf '  %s (baseline entry, its file is gone from the tree) — gone at the base too; the entry was already stale' \
+        "$cand_path")
+"
+    else
+      if [ "$stale_header_emitted" -eq 0 ]; then
+        report="${report}STALE
+"
+        stale_header_emitted=1
+      fi
+      report="$report$(printf '  %s (baseline entry, its file is gone from the tree)' "$cand_path")
+"
+    fi
+    ;;
   "") ;;
   *)
     report="${report}${line}
@@ -622,13 +687,14 @@ if [ -n "$drift" ]; then
     echo "check-file-size: baseline drift (not caused by this change, not fatal)"
     printf '%s' "$drift"
     echo ""
-    echo "These files were already over the line in the base tree, so another change"
-    echo "put them there and this one only inherited it. Each line above names its"
-    echo "own remedy, and they differ: \"regenerate\" is a grandfathered file whose"
-    echo "ceiling drifted below it, cleared by \"make file-size-update\"; \"split it\" is"
-    echo "a file that crossed the ${LIMIT}-line limit for the first time, which is never"
-    echo "given a baseline entry. Either way it is that file's own change, landed on"
-    echo "its own from a fresh main — not folded into this one."
+    echo "Every line above describes the base tree as well as this one, so another"
+    echo "change put it there and this one only inherited it. Each names its own"
+    echo "remedy, and they differ: \"regenerate\" is a grandfathered file whose ceiling"
+    echo "drifted below it; \"split it\" is a file that crossed the ${LIMIT}-line limit for"
+    echo "the first time, which is never given a baseline entry; \"retire it\" and \"the"
+    echo "entry was already stale\" are baseline entries that outlived their file, and"
+    echo "both are cleared by \"make file-size-update\". Either way it is that file's own"
+    echo "change, landed on its own from a fresh main — not folded into this one."
   } >&2
 fi
 

@@ -54,6 +54,13 @@
 # where keeping the pair is the better answer, so an acknowledgement would only
 # offer the wrong remedy in reviewable-looking clothes.
 #
+# ── The report names who did what ────────────────────────────────────────────
+#
+# Each flagged path lists its commits oldest first. The first is labelled
+# "introduced by" and the last "undone by". Without them, one shape covers two
+# findings: a real pair, and the inherited rename the filter below drops. Two
+# real Cargo.lock pairs were read as that false positive (`#5956`).
+#
 # ── NOT in `make gate` ───────────────────────────────────────────────────────
 #
 # `make gate` runs on a working tree; this asks about a range of commits, which
@@ -199,6 +206,11 @@ if [ -z "$suspects" ]; then
   exit 0
 fi
 
+# Each flagged path prints which commit introduced the edit and which undid it,
+# rather than a flat list. One shape covered two findings: a real pair, and the
+# inherited rename the filter above drops. Two real Cargo.lock pairs were read
+# as that false positive. Oldest first, so the labels fall in the order the
+# hazard happens in.
 found=0
 while IFS= read -r path; do
   [ -n "$path" ] || continue
@@ -207,10 +219,22 @@ while IFS= read -r path; do
   note "  $path"
   # Captured rather than piped into the loop: a pipeline's right-hand side runs
   # in a subshell, where `note`'s appends to `report` would be discarded.
-  commits="$(git_c log --no-merges --format='      %h  %s' "$base..$head" -- "$path")"
+  commits="$(git_c log --reverse --no-merges --format='%h  %s' "$base..$head" -- "$path")"
+  total="$(printf '%s\n' "$commits" | sed '/^$/d' | wc -l | tr -d ' ')"
+  seen=0
   while IFS= read -r line; do
     [ -n "$line" ] || continue
-    note "$line"
+    seen=$((seen + 1))
+    if [ "$total" -eq 1 ]; then
+      label="touched by   "
+    elif [ "$seen" -eq 1 ]; then
+      label="introduced by"
+    elif [ "$seen" -eq "$total" ]; then
+      label="undone by    "
+    else
+      label="also touched "
+    fi
+    note "      $label  $line"
   done <<COMMITS
 $commits
 COMMITS

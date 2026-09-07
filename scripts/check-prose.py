@@ -72,25 +72,27 @@ and compose into a red `main`. Two doors close that, mirroring
   exactly asking whether drift already reached `main`, and the base-relative
   reading would forgive the thing it exists to catch. A file the base tree
   does not have inherits nothing, so a first-time offender still fails.
-- `--update` alone leaves every unit's ceiling where it stands, except for a
-  unit a file move took a header out of or into: that entry is re-based
-  against the same files' lengths in the base tree, because a move changes a
-  mean with nobody having written a word, and without that a crate can never
-  be split out of another. Only `--update --retighten` lowers every ceiling
-  to its current mean, as a deliberate, separately-landed pass. Retightening
-  on every `--update` run is what put every unit at exactly its ceiling with
-  zero headroom in the first place.
+- `--update` alone leaves every count, grade and unit ceiling where it
+  stands, except for an entry a file move re-based: a moved file's count and
+  grade follow it to its new path, and a unit a move took a header out of or
+  into is re-based against the same files' lengths, because a move changes a
+  number with nobody having written a word. Only `--update --retighten`
+  lowers every ceiling to its current value, as a deliberate,
+  separately-landed pass. Retightening on every `--update` run is what put
+  every unit at exactly its ceiling with zero headroom, and it also let a
+  branch that never opened `AGENTS.md` write that file a lower grade ceiling
+  and fail the merge commit on it.
 
 Usage:
 
     ./scripts/check-prose.py [--update] [--adopt=NAME] [--report] [ROOT]
 
-    --update      lower the count baseline; leave every unit's header-length
-                  ceiling where it stands, apart from a unit a file move
-                  re-based (`make prose-update`)
-    --retighten   with --update, also lower every unit's header-length
-                  ceiling to its current mean -- a deliberate, separate pass
-                  (`make prose-retighten`)
+    --update      carry the count, grade and header-length entries a file
+                  move re-based, and leave every other one where it stands
+                  (`make prose-update`)
+    --retighten   with --update, also lower every count, grade and
+                  header-length ceiling to its current value -- a deliberate,
+                  separate pass (`make prose-retighten`)
     --adopt=NAME  record the pre-existing debt of a pattern added to PATTERNS
                   after the baseline was written, and nothing else. Once per
                   pattern: a pattern already in the baseline is refused
@@ -1006,7 +1008,20 @@ def main() -> int:
                 print(f"check-prose: carried {old} -> {new}")
         # A pair absent from the baseline is held to zero, so `.get(pair, 0)`
         # is what makes --update refuse to grandfather a first-time offender.
-        merged = {p: min(n, baseline.get(p, 0)) for p, n in per_pair.items()}
+        retighten = "--retighten" in flagset
+        moved_in = set(moved.values())
+        if retighten:
+            merged = {p: min(n, baseline.get(p, 0)) for p, n in per_pair.items()}
+        else:
+            # Every entry stays where it stands, apart from one a move carried.
+            # A global reclaim here lowers the ceiling of files the branch never
+            # opened, measured on whatever that checkout happens to hold, and the
+            # next merge with `main` then fails the branch on a number the branch
+            # itself wrote (`#6274`). `--retighten` is the deliberate pass.
+            merged = dict(baseline)
+            for pair, n in per_pair.items():
+                if pair[0] in moved_in:
+                    merged[pair] = min(n, baseline.get(pair, 0))
         raised = {
             p: (baseline.get(p, 0), n)
             for p, n in per_pair.items()
@@ -1096,15 +1111,28 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
-        merged_grades = {
-            path: min(grade, grade_baseline.get(path, NEW_FILE_GRADE))
-            for path, (grade, _) in per_grade.items()
-        }
+        # The grade ratchet takes the same split, for the same reason: #6266's
+        # branch never contained AGENTS.md and still wrote that file a lower
+        # ceiling, off a checkout cut before two AGENTS.md edits landed. CI then
+        # failed the merge commit on three sentences its author never opened.
+        if retighten:
+            merged_grades = {
+                path: min(grade, grade_baseline.get(path, NEW_FILE_GRADE))
+                for path, (grade, _) in per_grade.items()
+            }
+        else:
+            merged_grades = dict(grade_baseline)
+            for path, (grade, _) in per_grade.items():
+                if path in moved_in:
+                    merged_grades[path] = min(
+                        grade, grade_baseline.get(path, NEW_FILE_GRADE)
+                    )
         write_grade_baseline(grade_path, merged_grades)
-        # Pairs that reached zero drop out entirely; the ratchet retightens.
-        for pair in baseline:
-            if pair not in per_pair:
-                merged.pop(pair, None)
+        if retighten:
+            # Pairs that reached zero drop out entirely; the ratchet retightens.
+            for pair in baseline:
+                if pair not in per_pair:
+                    merged.pop(pair, None)
         write_baseline(baseline_path, merged)
         # Retightening every unit to its current mean on every `--update` run
         # is what left each crate sitting at exactly its ceiling with zero
@@ -1114,7 +1142,7 @@ def main() -> int:
         # `--update` alone touches only the units a move re-based, and
         # `--retighten` is the deliberate, separately-landed pass that reclaims
         # slack across every unit at once.
-        if "--retighten" in flagset:
+        if retighten:
             tightened = {
                 unit: min(mean, max(density_baseline.get(unit, NEW_UNIT_MEAN), rebased.get(unit, 0)))
                 for unit, mean in per_unit.items()
@@ -1135,7 +1163,13 @@ def main() -> int:
             density_msg = f"{DENSITY_BASELINE} re-based {len(rebased)} moved unit(s)."
         else:
             density_msg = f"{DENSITY_BASELINE} left alone -- pass --retighten to reclaim slack."
-        print(f"check-prose: {BASELINE} retightened to {sum(merged.values())}, {density_msg}")
+        if retighten:
+            count_msg = f"{BASELINE} retightened to {sum(merged.values())}"
+        else:
+            count_msg = (
+                f"{BASELINE} left alone -- pass --retighten to reclaim slack"
+            )
+        print(f"check-prose: {count_msg}, {density_msg}")
         return 0
 
     # All three ratchets are judged against max(the recorded ceiling, the same
