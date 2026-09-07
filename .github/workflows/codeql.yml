@@ -76,6 +76,51 @@
 # — `scripts/codeql-canary.sh`, modeled on `main-canary.yml`'s pattern but
 # scoped to the one fact this workflow already knows: did the analyze job
 # conclude success or failure.
+#
+# ── What `rust/cleartext-logging` gets wrong here (#6388) ────────────────────
+#
+# That rule had 52 open alerts, all high severity, none dismissed — a signal
+# firing often enough that nobody read it, so the next real one would land in
+# the pile and look the same. #6388 read every site against the code. Fifty
+# were still open by then and every one was wrong, in three shapes. They are
+# written down here so the next author dismisses by citing this and does not
+# read the same fifty sites again.
+#
+# The rule keys on the NAME of the taint source, not on what the value is, so
+# it is wrong three ways:
+#
+#   1. A correlation id read as a session token. `ZaiProvider::session_id`,
+#      `lane_journal_key`, the self-driving loop's `sd-<secs>-<pid>` and the
+#      driver's `drive-<secs>-<hex>` all read as credentials. None grants
+#      access. z.ai's is on the wire in every request body on purpose, so
+#      hiding it from a log protects nothing.
+#   2. A guard read as a leak. `validate_project_secrets`,
+#      `refuse_unless_trusted`, `no_api_key_error` and `api_key_refusal` are
+#      the functions that turn a credential DOWN. What they return is a
+#      refusal naming a flag, a path or an environment variable's name. The
+#      tests that pin those refusals assert the key is absent, and the string
+#      CodeQL flags is the assertion message that prints only when the assert
+#      fails.
+#   3. A keyboard key read as a cryptographic one. Every `stella-tui` alert
+#      traces to `handle_deck_key`, `handle_session_key` or
+#      `handle_mcp_auth_key`, whose `key: KeyEvent` is a keystroke. The one
+#      credential those handlers carry — what a user types into the MCP auth
+#      prompt — is wrapped in `Secret`, whose `Debug` prints `<redacted>`
+#      (`crates/stella-tui/src/envelope/workspace_input.rs`) and whose `Drop`
+#      zeroizes (`AuthPrompt` in `crates/stella-tui/src/views/mcp_tab.rs`).
+#      `deck_ui/tests/queue.rs` asserts a typed key never appears under
+#      `Debug`, and CodeQL flagged the panic arm of that very test.
+#
+# No query filter was added. CodeQL filters by query id, not by path, so the
+# only filter that clears these is `exclude: id: rust/cleartext-logging`,
+# which would hide the first true one too. A dismissal is per-alert and
+# carries a written reason, which is what a later reader needs.
+#
+# The advisory posture above is unchanged, for a reason #3260 did not have.
+# The backlog is empty now, so a required check would cost nothing today.
+# What argues against it is the hit rate: this query fired 52 times and was
+# right none of them. Make CodeQL required once a run produces an alert
+# somebody agrees with.
 name: CodeQL
 
 on:
