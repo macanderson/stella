@@ -30,7 +30,10 @@ use crate::query_format::{QueryFormat, Rows};
 use super::config::LoopConfig;
 use super::state::LoopState;
 
+mod emergency;
 mod record;
+
+pub(super) use emergency::{EmergencyRead, open_base_breakage, open_deploy_breakage};
 
 /// How many open issues cross the port to produce one cycle's batch.
 ///
@@ -51,6 +54,17 @@ mod record;
 /// pins.
 pub(super) const QUEUE_READ_LIMIT: usize = 1_000;
 
+/// Whether a read of `total` issues filled its page.
+///
+/// One predicate behind four answers, so they cannot drift: the warning an
+/// operator reads, the word the queue listing puts on its count, the flag in
+/// the snapshot, and whether an emergency read can answer at all. A filled
+/// page makes the count a floor. The tracker held at least that many. The
+/// loop cannot say how many more.
+pub(super) fn read_filled_the_page(total: usize) -> bool {
+    total >= QUEUE_READ_LIMIT
+}
+
 /// What an operator is told when the queue read filled its page.
 ///
 /// A full page means the tracker held at least this many open issues, so the
@@ -62,16 +76,6 @@ pub(super) const QUEUE_READ_LIMIT: usize = 1_000;
 ///
 /// A function rather than an inline print, so what an operator is told can be
 /// asserted without running a loop.
-/// Whether a read of `total` issues filled its page.
-///
-/// One predicate behind three answers, so they cannot drift: the warning an
-/// operator reads, the word the queue listing puts on its count, and the flag
-/// in the snapshot. A filled page makes the count a floor. The tracker held
-/// at least that many. The loop cannot say how many more.
-pub(super) fn read_filled_the_page(total: usize) -> bool {
-    total >= QUEUE_READ_LIMIT
-}
-
 fn truncation_notice(total: usize, provider: &str) -> Option<String> {
     read_filled_the_page(total).then(|| {
         format!(
@@ -339,34 +343,6 @@ pub(super) fn unassessed(
 /// discovers that the emergency is already filed instead of filing it again.
 pub(super) const BASE_BREAKAGE_LABEL: &str = "main-red";
 
-/// The open base-breakage issue, if one exists.
-///
-/// Read through the port like everything else, and matched on
-/// [`BASE_BREAKAGE_LABEL`] rather than on words in the title. An unreachable
-/// tracker answers `None`, which reads as *nobody has filed it* — the loop
-/// then tries to file, the filing fails too, and it waits. That is the right
-/// shape: a forge outage should make it wait, not make it act on a guess.
-#[must_use]
-pub(super) fn open_base_breakage(provider: &dyn IssueProvider) -> Option<String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .ok()?;
-    let issues = runtime
-        .block_on(provider.list_open(QUEUE_READ_LIMIT))
-        .ok()?;
-
-    issues
-        .into_iter()
-        .find(|issue| {
-            issue
-                .labels
-                .iter()
-                .any(|label| label.name == BASE_BREAKAGE_LABEL)
-        })
-        .map(|issue| issue.key.as_str().to_owned())
-}
-
 /// File the report that the base branch is broken.
 ///
 /// Deliberately **not** routed through [`file_finding`]. That path dedups on a
@@ -438,33 +414,6 @@ pub(super) fn file_base_breakage(
 /// emergency already filed instead of filing it again.
 pub(super) const DEPLOY_BREAKAGE_LABEL: &str = "release-red";
 
-/// The open deploy-breakage issue, if one exists.
-///
-/// Matched on [`DEPLOY_BREAKAGE_LABEL`] and read through the port. It
-/// degrades as [`open_base_breakage`] does. An unreachable tracker answers
-/// `None`, the filing that follows fails too, and the loop waits rather
-/// than acting on a guess.
-#[must_use]
-pub(super) fn open_deploy_breakage(provider: &dyn IssueProvider) -> Option<String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .ok()?;
-    let issues = runtime
-        .block_on(provider.list_open(QUEUE_READ_LIMIT))
-        .ok()?;
-
-    issues
-        .into_iter()
-        .find(|issue| {
-            issue
-                .labels
-                .iter()
-                .any(|label| label.name == DEPLOY_BREAKAGE_LABEL)
-        })
-        .map(|issue| issue.key.as_str().to_owned())
-}
-
 /// File the report that the release workflow is red — once.
 ///
 /// The dedup lives in this function, not in the caller. The property that
@@ -483,7 +432,7 @@ pub(super) fn file_deploy_breakage(
     run_url: &str,
     attribution: &stella_autonomy::Attribution,
 ) -> Result<Option<String>, String> {
-    if open_deploy_breakage(provider).is_some() {
+    if open_deploy_breakage(provider).filed().is_some() {
         return Ok(None);
     }
 
@@ -701,7 +650,9 @@ pub(super) async fn comment(
 /// being worked is still `Open` and still in this read.
 ///
 /// A key that is not in the open queue is a typed refusal naming the two
-/// reasons a caller can act on: it is closed, or it does not exist.
+/// reasons a caller can act on: it is closed, or it does not exist. A read
+/// that filled its page cannot claim either, and says the weaker thing it
+/// knows instead.
 pub(super) fn resolve(
     provider: &dyn IssueProvider,
     key: &str,
@@ -714,16 +665,31 @@ pub(super) fn resolve(
         .block_on(provider.list_open(QUEUE_READ_LIMIT))
         .map_err(|error| error.to_string())?;
 
+    let filled = read_filled_the_page(issues.len());
     issues
         .into_iter()
         .find(|issue| issue.key.as_str() == key)
-        .ok_or_else(|| {
-            format!(
-                "#{key} is not in the open queue — it is closed, or it does not exist \
-                 (read {QUEUE_READ_LIMIT} open issues from `{}`)",
-                provider.id()
-            )
-        })
+        .ok_or_else(|| not_in_the_open_queue(key, provider.id(), filled))
+}
+
+/// Why one key did not resolve.
+///
+/// Two different statements, because a bounded read cannot make the stronger
+/// one. On a page with room left, everything open crossed, so an absent key
+/// is closed or was never filed. On a filled page the loop knows only that it
+/// did not see it, and saying more would be a false statement rather than a
+/// visibly partial one.
+fn not_in_the_open_queue(key: &str, provider: &str, filled: bool) -> String {
+    if filled {
+        return format!(
+            "#{key} is not in the {QUEUE_READ_LIMIT} open issues read from `{provider}`, and \
+             that read filled its page — so this says nothing about whether #{key} is open"
+        );
+    }
+    format!(
+        "#{key} is not in the open queue — it is closed, or it does not exist \
+         (read {QUEUE_READ_LIMIT} open issues from `{provider}`)"
+    )
 }
 
 /// Explain a filing that did not happen.
@@ -1225,6 +1191,69 @@ mod tests {
             OLD_PAGE + 1,
             "the reported backlog size counts every open issue, not one page \
              of them"
+        );
+    }
+
+    /// **Witness.** A filled page cannot answer "is the emergency already
+    /// filed", and says so instead of saying no.
+    ///
+    /// Collapse the three answers into `Option` and this fails by
+    /// construction: the label sits behind the page, the read returns `None`,
+    /// and every pass files a second `main-red` issue for a breakage that was
+    /// already reported. The label match is the interlock against exactly
+    /// that, and a bounded read defeats it.
+    ///
+    /// The choice on `Unknown` is to file anyway — see [`EmergencyRead::filed`]
+    /// for the cost of the other one.
+    #[test]
+    fn a_filled_page_cannot_say_the_emergency_is_unfiled() {
+        let mut open: Vec<Issue> = (0..QUEUE_READ_LIMIT)
+            .map(|n| {
+                issue(
+                    &format!("{}", n + 100),
+                    &["bug", "P2"],
+                    "2026-08-01T00:00:00Z",
+                )
+            })
+            .collect();
+        // Behind the page, which is where a freshly-filed emergency lands on a
+        // tracker that hands back its oldest first.
+        open.push(issue("9", &[BASE_BREAKAGE_LABEL], "2020-01-01T00:00:00Z"));
+
+        let provider = FixtureProvider::with(open);
+        assert_eq!(
+            open_base_breakage(&provider),
+            EmergencyRead::Unknown("the read filled its page"),
+            "a page with no room left is not evidence that nothing is filed"
+        );
+    }
+
+    /// The two answers a complete read can give, and `resolve`'s two
+    /// refusals. A page with room left saw everything open, so it may say a
+    /// key is closed. A filled page may not.
+    #[test]
+    fn a_complete_read_answers_and_a_bounded_one_says_less() {
+        let none = FixtureProvider::with(vec![issue("1", &["bug"], "2026-08-01T00:00:00Z")]);
+        assert_eq!(open_base_breakage(&none), EmergencyRead::NotFiled);
+        assert_eq!(open_deploy_breakage(&none), EmergencyRead::NotFiled);
+
+        let filed = FixtureProvider::with(vec![
+            issue("42", &[BASE_BREAKAGE_LABEL], "2026-08-02T00:00:00Z"),
+            issue("43", &[DEPLOY_BREAKAGE_LABEL], "2026-08-02T00:00:00Z"),
+        ]);
+        assert_eq!(open_base_breakage(&filed).filed().as_deref(), Some("42"));
+        assert_eq!(open_deploy_breakage(&filed).filed().as_deref(), Some("43"));
+
+        let complete = not_in_the_open_queue("7", "fixture", false);
+        assert!(
+            complete.contains("closed, or it does not exist"),
+            "{complete}"
+        );
+        let bounded = not_in_the_open_queue("7", "fixture", true);
+        assert!(
+            !bounded.contains("closed, or it does not exist")
+                && bounded.contains("filled its page"),
+            "a bounded read cannot claim the key is closed: {bounded}"
         );
     }
 

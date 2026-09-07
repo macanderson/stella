@@ -1439,7 +1439,7 @@ fn observe(
         };
     }
 
-    let filed = super::backlog::open_base_breakage(provider);
+    let filed = super::backlog::open_base_breakage(provider).filed();
     let contention = filed
         .as_ref()
         .map(|key| super::contention::for_base_fix(root, key))
