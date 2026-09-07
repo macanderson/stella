@@ -114,29 +114,51 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./scripts/refresh-main-red-holds.sh
 
-      # The other half of the same question, and the one nothing asked: is
-      # there a commit on `main` that nothing VERIFIED — as distinct from one
-      # a check said no about (#5027)?
-      #
-      # This canary only files when its own job runs and fails, so a
-      # `startup_failure`, a cancellation, or a run that was never created
-      # produces no issue at all. On 2026-08-26 four commits landed during a
-      # runner outage and `main` sat unchecked for 85 minutes with every
-      # surface reading green.
-      #
-      # `!cancelled()` so it still reports when the reconciliation above
-      # failed: a red `main` that ALSO carries unverified commits is worse
-      # than either, and the reader should see both. It fails open at every
-      # unknown, so it cannot itself become the thing blocking a repair.
+  # The other half of the same question, and the one nothing asked: is there a
+  # commit on `main` that nothing VERIFIED — as distinct from one a check said
+  # no about (#5027)?
+  #
+  # The canary above files only when its own job runs and fails, so a
+  # `startup_failure`, a cancellation, or a run that was never created produces
+  # no issue at all. On 2026-08-26 four commits landed during a runner outage
+  # and `main` sat unchecked for 85 minutes with every surface reading green.
+  #
+  # ── Its own job, because it must not queue behind the compile (#5964) ───────
+  #
+  # This was the third step of the job above, so the answer about whether main
+  # has been checked arrived only after a toolchain install, a cache restore
+  # and `cargo check --workspace` — minutes, on a run that a busy tree has
+  # already held for twenty-five. It also died with that job: a 15-minute
+  # timeout on the compile took the report with it, and the report is the half
+  # that costs seconds.
+  #
+  # Nothing here compiles, so it takes neither the toolchain nor the cache.
+  # This does not make the answer immune to a full Actions queue — hosted
+  # runners have no priority lane, and nothing in this repository can give it
+  # one — but it does stop the answer waiting on this repository's own
+  # slowest job once a runner is free.
+  verified:
+    name: main carries no unverified commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # `--limit 10` reads ten commits, and the default shallow checkout gives
+      # it one. Every CI run of this script has reported on the tip alone —
+      # "each of the last 1 commit(s)" — while the outage it was written for
+      # buried four in a row (#5964). Thirty is depth enough for the window the
+      # script asks about, and cheap next to a full history.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 30
+
       - name: Every recent commit on main has a completed ci run
-        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # `--announce` opens/refreshes/closes a `main-unverified`-labelled
-        # issue on the same shape as the reconciliation step above — before
-        # this the finding printed into this step's log and reached nobody
-        # (#5731, #5811, #5856). Its own label, not `main-red`: "nothing
-        # verified this commit" is a different state from "a check said no
-        # about this commit", and main-red-hold.yml reads only `main-red`, so
-        # this never blocks a merge on an absence of information.
+        # issue on the same shape as the reconciliation job above — before
+        # this the finding printed into a step log and reached nobody (#5731,
+        # #5811, #5856). Its own label, not `main-red`: "nothing verified this
+        # commit" is a different state from "a check said no about this
+        # commit", and main-red-hold.yml reads only `main-red`, so this never
+        # blocks a merge on an absence of information.
         run: ./scripts/check-main-verified.sh --announce
