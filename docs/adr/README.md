@@ -103,6 +103,7 @@ open; nothing before Phase 3 forces it.
 | [0034](0034-silence-is-not-a-grant.md) | Silence Is Not a Grant | Accepted |
 | [0035](0035-a-wrappers-verdict-lands-on-the-round-that-earned-it.md) | A Wrapper's Verdict Lands on the Round That Earned It | Accepted |
 | [0036](0036-a-driver-takes-a-pull-request-out-of-draft.md) | A Driver Takes a Pull Request Out of Draft | Accepted |
+| [0037](0037-a-credit-balance-lives-outside-the-engine.md) | A Credit Balance Lives Outside the Engine | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible
@@ -213,6 +214,12 @@ one, and the loop had no ask to follow that with, so a person took every pull
 request it opened out of draft by hand. The host reads the forge and runs the
 machine over its own answer before it acts, on the rule the merge already
 followed. The draft still holds back a pull request that never goes green.
+
+ADR 0037 settles who holds a customer's credit balance and support tier. The
+seller does. A user owns the disk, so a file there cannot be the record of what
+a customer owes, and this repository grows no ledger for money. The engine's
+part is to report what a turn cost, which the enterprise export path already
+does under the content-free rule.
 
 ## The number is a shared cell
 

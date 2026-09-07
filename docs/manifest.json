@@ -185,6 +185,11 @@
       "status": "implemented",
       "title": "ADR 0036: A driver takes a pull request out of draft"
     },
+    "adr/0037-a-credit-balance-lives-outside-the-engine": {
+      "path": "docs/adr/0037-a-credit-balance-lives-outside-the-engine.md",
+      "status": "implemented",
+      "title": "ADR 0037: A credit balance lives outside the engine"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",
