@@ -19,8 +19,11 @@ answer to changing arguments. One call coming back with other work between.
 A sweep that ran off the end and started again.
 
 One recorded turn has none of those shapes and still got nowhere. It made 62
-shell calls and no other kind of call. Every command differs. Every answer
-differs. It produced no result. `#3292` opened on it as a gap in this module.
+shell calls and no other kind of call. 59 of the commands are distinct, and
+all 62 answers are. It produced no result. `#3292` opened on it as a gap in
+this module. Its own census says 62 distinct commands; the committed fixture
+says 59, and the input-keyed rungs stay silent either way, because each of
+them also needs an answer to come back unchanged.
 
 Three signals were then measured against the same corpus of recorded trials:
 497 of them, 264 that scored zero and 233 that scored one.
