@@ -292,14 +292,13 @@ pub struct DispatchReport {
     /// How the loop ended.
     pub outcome: Outcome,
     /// The final round's advisory note, in the wrapper's own words —
-    /// [`ObservedEvidence::detail`],
-    /// carried verbatim whatever the verdict was (ADR 0033).
+    /// [`ObservedEvidence::detail`], carried verbatim whatever the verdict
+    /// was (ADR 0033).
     ///
     /// **Never an input to anything.** `judge` reads [`EvidenceSet`], whose
-    /// fields are closed so that totality is the compiler's job, and this
-    /// string is dropped on the way in by
-    /// [`EvidenceSet::from_observed`].
-    /// It rejoins here, after every decision has been made.
+    /// fields are closed so that totality is the compiler's job, and
+    /// [`EvidenceSet::from_observed`] drops this string on the way in. It
+    /// rejoins here, after every decision has been made.
     ///
     /// It is here rather than on a [`Verdict`] arm because that is what it is:
     /// one observation about the round, not a claim about a requirement.
