@@ -263,7 +263,13 @@ mod tests {
         // real server would advertise): the answer switches to the MCP set,
         // which never claims the registry-only tool by name.
         let mcp = stella_mcp::McpToolSet::connect(&[], std::time::Duration::from_secs(1)).await;
-        slot.set(std::sync::Arc::new(mcp)).unwrap();
+        // `is_ok()` rather than `unwrap()`: `OnceCell::set` hands back the
+        // value it refused, and `McpToolSet` is not `Debug`, so the unwrap
+        // does not compile.
+        assert!(
+            slot.set(std::sync::Arc::new(mcp)).is_ok(),
+            "the slot was empty a line ago, so this set cannot be refused"
+        );
         assert!(
             !names_of(live_tool_executor(&slot, &registry))
                 .contains(&"registry_only_tool".to_string()),
