@@ -384,9 +384,7 @@ fn episode_rows(conn: &Connection) -> Result<Vec<Value>, DbError> {
 /// record and then keeps them to list each use beside its verdict. One reader,
 /// so the health table on the Self-improve tab and the standing on a record's
 /// own page cannot be folded from two different windows.
-pub(crate) fn use_ledger(
-    conn: &Connection,
-) -> Result<(Vec<(String, ContextUse)>, Vec<ContextUseFeedback>), DbError> {
+pub(crate) fn use_ledger(conn: &Connection) -> Result<UseLedger, DbError> {
     let uses: Vec<(String, ContextUse)> = kind_rows(conn, "context_use", USE_READ_LIMIT)?
         .into_iter()
         .filter_map(|(record_id, body)| {
@@ -400,13 +398,23 @@ pub(crate) fn use_ledger(
             .into_iter()
             .filter_map(|(_, body)| serde_json::from_str::<ContextUseFeedback>(&body).ok())
             .collect();
-    Ok((uses, feedback))
+    Ok(UseLedger { uses, feedback })
+}
+
+/// The two halves of the use ledger, as [`use_ledger`] reads them. Empty
+/// when there is no `context.db` to read.
+#[derive(Default)]
+pub(crate) struct UseLedger {
+    /// Every `context_use` in the window, each with its ledger id.
+    pub(crate) uses: Vec<(String, ContextUse)>,
+    /// Every `context_use_feedback` in the window.
+    pub(crate) feedback: Vec<ContextUseFeedback>,
 }
 
 /// Selection health, folded from the ledger's use/feedback records through the
 /// same pure fold the CLI runs, worst standing first.
 fn health_rows(conn: &Connection, policy: SelectionHealthPolicy) -> Result<Vec<Value>, DbError> {
-    let (uses, feedback) = use_ledger(conn)?;
+    let UseLedger { uses, feedback } = use_ledger(conn)?;
     let mut health = fold_selection_health(&uses, &feedback, policy);
     health.sort_by(|a, b| {
         b.failing

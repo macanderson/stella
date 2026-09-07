@@ -44,6 +44,7 @@ use stella_records::context_record::{
     ContextUse, ContextUseFeedback, SelectionHealth, SelectionHealthPolicy, fold_selection_health,
 };
 
+use crate::context_db::UseLedger;
 use crate::db::{DbError, collect_rows, is_missing_schema, open_read_only, truncate};
 use crate::fsview::PluginContributions;
 
@@ -84,9 +85,9 @@ pub(crate) fn list(root: &Path, plugins: &dyn PluginContributions) -> Result<Val
     let policy = crate::fsview::selection_health_policy(root);
     let published = published_records(root, plugins);
     let context = open_read_only(&root.join(".stella/private/context.db"));
-    let (uses, feedback) = match &context {
+    let UseLedger { uses, feedback } = match &context {
         Some(conn) => crate::context_db::use_ledger(conn)?,
-        None => (Vec::new(), Vec::new()),
+        None => UseLedger::default(),
     };
     let health = fold_selection_health(&uses, &feedback, policy);
     let last_used = last_used_by_record(&uses);
@@ -171,9 +172,9 @@ pub(crate) fn detail(
     let policy = crate::fsview::selection_health_policy(root);
     let published = published_records(root, plugins);
     let context = open_read_only(&root.join(".stella/private/context.db"));
-    let (uses, feedback) = match &context {
+    let UseLedger { uses, feedback } = match &context {
         Some(conn) => crate::context_db::use_ledger(conn)?,
-        None => (Vec::new(), Vec::new()),
+        None => UseLedger::default(),
     };
     let node = match &context {
         Some(conn) => node_by_id(conn, id)?,

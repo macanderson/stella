@@ -82,7 +82,7 @@ fn seeded(root: &Path) {
     )
     .unwrap();
 
-    let mut append = |id: &str, kind: &str, body: serde_json::Value| {
+    let append = |id: &str, kind: &str, body: serde_json::Value| {
         ctx.execute(
             "INSERT INTO context_records (record_id, record_kind, body) VALUES (?1, ?2, ?3)",
             rusqlite::params![id, kind, body.to_string()],
