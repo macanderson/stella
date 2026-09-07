@@ -12,7 +12,7 @@
 //! # The forge is a port
 //!
 //! Every function here takes a
-//! [`PullRequestProvider`](stella_protocol::pull_request::PullRequestProvider).
+//! [`stella_protocol::pull_request::PullRequestProvider`].
 //! Nothing in this module spells `gh`: the shipping adapter is
 //! `crate::pull_request_provider`, GitHub's two check dialects are its
 //! business, and a test hands over a fixture forge and runs the same code that
