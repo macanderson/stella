@@ -25,6 +25,16 @@
 //! credential-less run printed nothing and reported nine passes in 0.01s
 //! having contacted nothing (#3856).
 //!
+//! **A provider is armed, or a row says why it is not.** `arming::UNARMED`
+//! is that list, and the reason on each row is checked against the
+//! environment on every run — see [`arm`]. Six providers have no credential
+//! in this repository's Actions secrets and two sit behind an empty account,
+//! so the scheduled job was red every week for two causes a reader had to
+//! separate by hand (`#5595`). A declared row is not a skip: it holds a
+//! `NoCredential` provider to having no credential, and it still calls an
+//! `Unfunded` provider's endpoint and still fails it on anything but a
+//! refusal that names the balance.
+//!
 //! **What is NOT gated**: the drift guards over [`LIVE_PROVIDERS`] — the
 //! table this suite drives — run on every `cargo test`, with no credential
 //! and no network call. The gate above is right for spending money; it was
@@ -78,12 +88,22 @@
 //! a real cache write is exercised, not just accepted-but-inert) and asserting
 //! the call succeeds.
 
+// `#[path]` because an integration test file is its own crate root, so a bare
+// `mod arming;` would look for `tests/arming.rs` — a sibling of this file, and
+// a name that says nothing about which suite it belongs to. Cargo compiles
+// only the top-level files in `tests/` as test binaries, so the child sits in
+// a folder named for its parent, which is the layout AGENTS.md prescribes
+// under `src/`.
+#[path = "live_smoke/arming.rs"]
+mod arming;
+
+use arming::UnarmedReason;
 use stella_model::AuxCredentials;
 use stella_model::catalog::Catalog;
 use stella_model::credential::{ApiKey, CredentialsFile};
 use stella_model::factory::{Dialect, ProviderSpec, build_provider};
 use stella_model::provider::Provider;
-use stella_protocol::{CompletionMessage, CompletionRequest, ProviderError};
+use stella_protocol::{CompletionMessage, CompletionRequest, CompletionResult, ProviderError};
 
 /// Serializes the tests in this file that mutate `STELLA_LIVE_SMOKE` (the
 /// gate-behavior witnesses below) against every test that reads it
@@ -698,6 +718,62 @@ fn armed_provider(provider: &LiveProvider) -> Box<dyn Provider> {
     }
 }
 
+/// The adapter a `*_smoke` test calls, or `None` when the matrix declares
+/// this provider unarmed and there is nothing to call.
+///
+/// The staleness check comes first, so a row that stopped matching the
+/// environment fails the run before the row can excuse anything. It reads
+/// [`resolve_key`] rather than [`armed_key`] on purpose: whether a secret is
+/// configured is a fact about the job, and an unset `STELLA_LIVE_SMOKE`
+/// must not read as a secret going missing.
+fn arm(provider: &LiveProvider) -> Option<Box<dyn Provider>> {
+    if let Some(entry) = arming::unarmed(provider.id) {
+        let resolves = {
+            let _guard = env_lock();
+            resolve_key(provider.id, provider.env_var, provider.aliases).is_some()
+        };
+        if let Some(stale) = arming::stale_declaration(entry, resolves) {
+            panic!("{stale}");
+        }
+        if entry.reason == UnarmedReason::NoCredential {
+            eprintln!(
+                "[live_smoke] {}: unarmed by declaration (#{}) — {}",
+                provider.id, entry.issue, entry.note
+            );
+            return None;
+        }
+    }
+    Some(armed_provider(provider))
+}
+
+/// Judge a completed live call. `on_success` writes the provider's own
+/// success line, which is the one part that differs between adapters.
+///
+/// Shared by [`smoke`] and [`anthropic_smoke`], so neither the failure arm
+/// nor the declaration check can drift between them.
+fn settle(
+    provider: &LiveProvider,
+    outcome: Result<CompletionResult, ProviderError>,
+    on_success: impl FnOnce(&CompletionResult),
+) {
+    match outcome {
+        Ok(result) => {
+            if let Some(stale) = arming::success_contradicts(provider.id) {
+                panic!("{stale}");
+            }
+            on_success(&result);
+        }
+        // What this can no longer be is an unknown slug: the factory's seed
+        // floor rejects those before any wire call, and
+        // `every_live_smoke_slug_resolves_against_the_catalog_seed` catches
+        // them offline before that.
+        Err(error) => match arming::failure_settles(provider.id, &error) {
+            Ok(confirmed) => eprintln!("{confirmed}"),
+            Err(report) => panic!("{report}"),
+        },
+    }
+}
+
 // ---- failure diagnosis: what a red smoke actually establishes ------------
 
 /// Longest prefix (in characters) of the provider's own error text a failed
@@ -1219,17 +1295,12 @@ fn status_recovery_declines_rather_than_guesses() {
 /// Send `request` and report. Shared by every provider so the success log and
 /// the failure wording stay identical across adapters.
 async fn smoke(provider: &LiveProvider, built: Box<dyn Provider>, request: CompletionRequest) {
-    match built.complete(request).await {
-        Ok(r) => eprintln!(
+    settle(provider, built.complete(request).await, |r| {
+        eprintln!(
             "[live_smoke] {}: OK — model={} finish={:?} usage={:?} cost_usd={} text={:?}",
             provider.id, r.model, r.finish_reason, r.usage, r.cost_usd, r.text
-        ),
-        // What this can no longer be is an unknown slug: the factory's seed
-        // floor rejects those before any wire call, and
-        // `every_live_smoke_slug_resolves_against_the_catalog_seed` catches
-        // them offline before that.
-        Err(e) => panic!("{}", failure_report(provider.id, &e)),
-    }
+        );
+    });
 }
 
 /// Anthropic Messages API. Also the `cache_control` settlement: every
@@ -1254,11 +1325,14 @@ async fn smoke(provider: &LiveProvider, built: Box<dyn Provider>, request: Compl
 #[ignore = "live provider call — run with `-- --ignored`, STELLA_LIVE_SMOKE=1 and a credential"]
 async fn anthropic_smoke() {
     let provider = row("anthropic");
-    let built = armed_provider(provider);
+    let Some(built) = arm(provider) else { return };
     // The one provider whose system prompt is not tiny — see the probe's doc.
     let request = tiny_request(anthropic_cache_probe_system_prompt());
-    match built.complete(request).await {
-        Ok(r) => eprintln!(
+    // This test hand-rolls only its SUCCESS arm, to print the two cache
+    // counters. Everything else — the declaration check and the failure
+    // report — is [`settle`]'s, shared with every other provider.
+    settle(provider, built.complete(request).await, |r| {
+        eprintln!(
             "[live_smoke] anthropic: OK — model={} finish={:?} usage={:?} \
              cache_write_tokens={} cached_input_tokens={} text={:?}",
             r.model,
@@ -1267,12 +1341,8 @@ async fn anthropic_smoke() {
             r.usage.cache_write_tokens,
             r.usage.cached_input_tokens,
             r.text
-        ),
-        // Same report as every other provider's — see [`failure_report`].
-        // This test hand-rolls only its SUCCESS arm (to print the two cache
-        // counters); the failure arm must not drift from the shared one.
-        Err(e) => panic!("{}", failure_report(provider.id, &e)),
-    }
+        );
+    });
 }
 
 /// OpenAI Responses API.
@@ -1280,7 +1350,7 @@ async fn anthropic_smoke() {
 #[ignore = "live provider call — run with `-- --ignored`, STELLA_LIVE_SMOKE=1 and a credential"]
 async fn openai_smoke() {
     let provider = row("openai");
-    let built = armed_provider(provider);
+    let Some(built) = arm(provider) else { return };
     smoke(provider, built, tiny_request(TINY_SYSTEM_PROMPT)).await;
 }
 
@@ -1290,7 +1360,7 @@ async fn openai_smoke() {
 #[ignore = "live provider call — run with `-- --ignored`, STELLA_LIVE_SMOKE=1 and a credential"]
 async fn gemini_smoke() {
     let provider = row("gemini");
-    let built = armed_provider(provider);
+    let Some(built) = arm(provider) else { return };
     smoke(provider, built, tiny_request(TINY_SYSTEM_PROMPT)).await;
 }
 
@@ -1306,7 +1376,7 @@ async fn gemini_smoke() {
 #[ignore = "live provider call — run with `-- --ignored`, STELLA_LIVE_SMOKE=1 and a credential"]
 async fn vertex_smoke() {
     let provider = row("vertex");
-    let built = armed_provider(provider);
+    let Some(built) = arm(provider) else { return };
     smoke(provider, built, tiny_request(TINY_SYSTEM_PROMPT)).await;
 }
 
@@ -1319,7 +1389,7 @@ async fn vertex_smoke() {
 #[ignore = "live provider call — run with `-- --ignored`, STELLA_LIVE_SMOKE=1 and a credential"]
 async fn bedrock_smoke() {
     let provider = row("bedrock");
-    let built = armed_provider(provider);
+    let Some(built) = arm(provider) else { return };
     smoke(provider, built, tiny_request(TINY_SYSTEM_PROMPT)).await;
 }
 
@@ -1334,7 +1404,7 @@ async fn bedrock_smoke() {
 #[ignore = "live provider call — run with `-- --ignored`, STELLA_LIVE_SMOKE=1 and a credential"]
 async fn openrouter_smoke() {
     let provider = row("openrouter");
-    let built = armed_provider(provider);
+    let Some(built) = arm(provider) else { return };
     smoke(provider, built, tiny_request(TINY_SYSTEM_PROMPT)).await;
 }
 
@@ -1343,7 +1413,7 @@ async fn openrouter_smoke() {
 #[ignore = "live provider call — run with `-- --ignored`, STELLA_LIVE_SMOKE=1 and a credential"]
 async fn zai_smoke() {
     let provider = row("zai");
-    let built = armed_provider(provider);
+    let Some(built) = arm(provider) else { return };
     smoke(provider, built, tiny_request(TINY_SYSTEM_PROMPT)).await;
 }
 
@@ -1352,7 +1422,7 @@ async fn zai_smoke() {
 #[ignore = "live provider call — run with `-- --ignored`, STELLA_LIVE_SMOKE=1 and a credential"]
 async fn deepseek_smoke() {
     let provider = row("deepseek");
-    let built = armed_provider(provider);
+    let Some(built) = arm(provider) else { return };
     smoke(provider, built, tiny_request(TINY_SYSTEM_PROMPT)).await;
 }
 
@@ -1361,6 +1431,6 @@ async fn deepseek_smoke() {
 #[ignore = "live provider call — run with `-- --ignored`, STELLA_LIVE_SMOKE=1 and a credential"]
 async fn xai_smoke() {
     let provider = row("xai");
-    let built = armed_provider(provider);
+    let Some(built) = arm(provider) else { return };
     smoke(provider, built, tiny_request(TINY_SYSTEM_PROMPT)).await;
 }
