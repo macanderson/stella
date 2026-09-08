@@ -1087,6 +1087,20 @@ impl ToolExecutor for McpToolSet {
         self.native.as_ref().and_then(|n| n.tool_origin(name))
     }
 
+    /// A server's tool carries no time limit this crate arms — the call is
+    /// bounded by the transport, not by an argument — so a namespaced name
+    /// answers `None` and the engine starts it as it always has. Everything
+    /// else is the native layer's to answer, and forwarding is what keeps the
+    /// wall-clock clamp alive for the built-ins underneath.
+    fn declared_timeout(&self, name: &str, input: &Value) -> Option<std::time::Duration> {
+        if name.starts_with(NS_PREFIX) {
+            return None;
+        }
+        self.native
+            .as_ref()
+            .and_then(|n| n.declared_timeout(name, input))
+    }
+
     /// Forwarded: this is a decorator, and a decorator that let the default
     /// `0.0` stand would silently drop sub-agent spend out of the parent's
     /// budget (see the port's contract).
@@ -1208,6 +1222,15 @@ impl ToolExecutor for CandidateMcpView {
             return self.inner.tool_origin(name);
         }
         self.native.tool_origin(name)
+    }
+
+    /// Split the same way, and forwarded on both arms: whichever layer
+    /// dispatches the name is the layer that knows what bounds it.
+    fn declared_timeout(&self, name: &str, input: &Value) -> Option<std::time::Duration> {
+        if name.starts_with(NS_PREFIX) {
+            return self.inner.declared_timeout(name, input);
+        }
+        self.native.declared_timeout(name, input)
     }
 
     /// Forwarded: this is a decorator, and a decorator that let the default

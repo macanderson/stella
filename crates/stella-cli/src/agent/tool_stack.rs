@@ -645,6 +645,74 @@ mod tests {
         );
     }
 
+    /// **The declared-timeout witness, through the shipped composition
+    /// (`#6460`).** The engine refuses to start a call that declares more wall
+    /// clock than the turn has left, and it learns the declared bound from
+    /// `ToolExecutor::declared_timeout`. Only the registry can answer — it
+    /// owns `bash` — and the answer has to survive every decorator above it.
+    /// The port's default is `None`, so a layer that forgets to forward turns
+    /// the clamp off for every session mounted through it, silently, and the
+    /// ten-minute call starts again on a turn with four minutes left.
+    ///
+    /// Asserted through the same chain as the origin witness above, and for
+    /// the same reason: a future decorator that forgets to forward fails
+    /// here, and nowhere else.
+    #[tokio::test]
+    async fn the_production_tool_stack_forwards_declared_timeouts() {
+        use stella_tools::skill_plane::{SkillInvocationPlane, SkillScopedTools};
+
+        let dir = tempfile::tempdir().unwrap();
+        let registry = Arc::new(stella_tools::registry::ToolRegistry::new(
+            dir.path().to_path_buf(),
+        ));
+        let mut client = stella_mcp::McpClient::new(
+            "vendor",
+            Box::new(CannedTransport {
+                called: Arc::new(std::sync::Mutex::new(false)),
+            }),
+        );
+        client.initialize().await.unwrap();
+        let mcp = stella_mcp::McpToolSet::from_clients(vec![client])
+            .wrapping(registry.clone() as Arc<dyn ToolExecutor>);
+
+        let stack = session_stack_with_gate(
+            &mcp,
+            vec![script_tool(dir.path())],
+            dir.path().to_path_buf(),
+            ToolPolicy::allow_all(),
+            ToolAllowance::new(ToolAdvertisement::Full, &SteeringLedger::default()),
+            session_gate(dir.path()),
+            Principal::User,
+        );
+        let view = SkillScopedTools::new(&stack, SkillInvocationPlane::new());
+
+        assert_eq!(
+            view.declared_timeout("bash", &serde_json::json!({"timeout_secs": 600})),
+            Some(std::time::Duration::from_secs(600)),
+            "the shell's own limit must reach the engine through every layer"
+        );
+        assert_eq!(
+            view.declared_timeout("bash", &serde_json::json!({"command": "ls"})),
+            Some(std::time::Duration::from_secs(120)),
+            "a call that names no limit still runs under the tool's default"
+        );
+        assert_eq!(
+            view.declared_timeout("task_list", &serde_json::json!({})),
+            None,
+            "a built-in with no time limit of its own declares none"
+        );
+        assert_eq!(
+            view.declared_timeout("mcp__vendor__deploy", &serde_json::json!({})),
+            None,
+            "a server's tool is bounded by the transport, not by an argument"
+        );
+        assert_eq!(
+            view.declared_timeout("my_tool", &serde_json::json!({})),
+            None,
+            "a .stella/tools script carries no model-supplied limit"
+        );
+    }
+
     /// **The skill-invocation witness, through the shipped composition.**
     /// The skill invocation plane composed over the assembled session chain — the
     /// position every turn driver mounts it at — is exactly the

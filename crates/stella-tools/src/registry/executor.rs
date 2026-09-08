@@ -59,6 +59,14 @@ impl ToolExecutor for ToolRegistry {
         crate::catalog::get(name).map(|_| stella_core::loop_detect::ToolOrigin::Builtin)
     }
 
+    /// `bash` is the one built-in that takes a time limit from the model, so
+    /// it is the one this can answer for. Every other name returns `None` —
+    /// the engine then starts the call as it always has, because a bound
+    /// nobody enforces is worse than no bound (the port's own contract).
+    fn declared_timeout(&self, name: &str, input: &Value) -> Option<std::time::Duration> {
+        crate::bash::declared_timeout(name, input)
+    }
+
     /// Take what the `delegate` tool's children cost since the last step
     /// boundary. Destructive by the port's contract: the engine charges
     /// whatever this returns, so reporting twice would bill twice.

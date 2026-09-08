@@ -249,6 +249,42 @@ pub trait ToolExecutor: Send + Sync {
     fn tool_origin(&self, _name: &str) -> Option<crate::loop_detect::ToolOrigin> {
         None
     }
+
+    /// The longest this call may run, as this executor's own timeout policy
+    /// would apply it to `input`. `None` means this executor cannot say.
+    ///
+    /// The engine asks before it starts the call, so that a call declaring
+    /// more wall clock than the turn has left is refused rather than started
+    /// and killed from outside (`crate::driver::turn_clock`, ADR 0041). A
+    /// `bash` call may ask for ten minutes; a turn with four minutes left
+    /// cannot pay for it, and the harness that kills the process on the way
+    /// past the deadline throws away everything the turn had already done.
+    ///
+    /// # Why the executor and not the engine
+    ///
+    /// The number lives in the call's arguments under a name only the tool
+    /// layer knows — `bash` reads `timeout_secs` and clamps it. An engine
+    /// that reached into the JSON for that key would be encoding one tool's
+    /// vocabulary into the port boundary, which AGENTS.md #1 exists to stop.
+    /// The layer that will enforce the timeout is the layer that can say
+    /// what it is.
+    ///
+    /// An answer is a promise: return `Some` only when the call really is
+    /// bounded by that long. A tool with no timeout of its own answers
+    /// `None`, and the engine starts it exactly as it does today — this
+    /// clamp narrows a declared bound and invents none.
+    ///
+    /// # Decorators MUST forward this
+    ///
+    /// The default `None` reads as "unknown", which is what every executor
+    /// answered before this method existed: the engine starts the call. So a
+    /// missed forward costs the clamp and causes no regression, the same
+    /// direction [`Self::tool_origin`]'s default takes. The shipped
+    /// composition is pinned by `stella-cli`'s
+    /// `the_production_tool_stack_forwards_declared_timeouts`.
+    fn declared_timeout(&self, _name: &str, _input: &Value) -> Option<std::time::Duration> {
+        None
+    }
 }
 
 /// The one entry every tool dispatch passes through before it runs: the
@@ -416,6 +452,14 @@ impl ToolExecutor for ReadOnlyTools<'_> {
         self.inner.tool_origin(name)
     }
 
+    /// Forwarded unfiltered, like `tool_origin` above: a name this view
+    /// refuses is answered by `execute` before any clock is consulted, and
+    /// the wall-clock clamp must read the same bound the inner executor
+    /// would actually enforce.
+    fn declared_timeout(&self, name: &str, input: &Value) -> Option<std::time::Duration> {
+        self.inner.declared_timeout(name, input)
+    }
+
     /// Forwarded, not zeroed. A sub-agent runs behind this view, so a
     /// *grandchild* it dispatched settles here first — into the child's own
     /// carve — and only then into the parent as part of the child's total.
@@ -528,6 +572,13 @@ impl ToolExecutor for GrantedTools<'_> {
     /// where a call already in the window came from.
     fn tool_origin(&self, name: &str) -> Option<crate::loop_detect::ToolOrigin> {
         self.inner.tool_origin(name)
+    }
+
+    /// Forwarded for the same reason [`ReadOnlyTools`] forwards it: the
+    /// bound the inner executor would enforce is the one the wall-clock
+    /// clamp has to weigh.
+    fn declared_timeout(&self, name: &str, input: &Value) -> Option<std::time::Duration> {
+        self.inner.declared_timeout(name, input)
     }
 
     /// Forwarded, not zeroed, for the same reason as [`ReadOnlyTools`]: a

@@ -149,6 +149,13 @@ impl ToolExecutor for PolicyToolSet<'_> {
     fn tool_origin(&self, name: &str) -> Option<stella_core::loop_detect::ToolOrigin> {
         self.inner.get().tool_origin(name)
     }
+
+    /// Forwarded. This layer sets no time limit of its own. Let the `None`
+    /// default stand and the clamp on tool time goes off for every session
+    /// built through here.
+    fn declared_timeout(&self, name: &str, input: &Value) -> Option<std::time::Duration> {
+        self.inner.get().declared_timeout(name, input)
+    }
 }
 
 /// Which `"tools"` key withheld `name` — the exact name, its group, or the

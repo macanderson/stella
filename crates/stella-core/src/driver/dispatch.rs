@@ -9,6 +9,7 @@ use std::collections::HashSet;
 use futures_util::StreamExt;
 use stella_protocol::{AgentEvent, ToolCall, ToolOutput, ToolResult};
 
+use super::turn_clock::{self, ToolAdmission, TurnClock};
 use super::{Engine, MAX_CONCURRENT_TOOL_CALLS, SPECULATION_DISCARD_HARVEST_MISMATCH};
 use crate::event_sender::EventSender;
 use crate::speculation::SpeculationPool;
@@ -20,7 +21,7 @@ use crate::speculation::SpeculationPool;
 /// per turn) may ride here; and [`crate::step::close_open_tool_calls`] set the
 /// precedent that a synthetic closure is an `Error` output with a steady
 /// message, mirrored onto the event stream with no `ToolStart`.
-const HALTED_TOOL_RESULT: &str = "not executed — the goal was proven met (turn halt fired) while this call \
+pub(super) const HALTED_TOOL_RESULT: &str = "not executed — the goal was proven met (turn halt fired) while this call \
      was pending; its work is not needed and any process it started was killed";
 
 impl<'a> Engine<'a> {
@@ -88,12 +89,31 @@ impl<'a> Engine<'a> {
     /// `parallel_safe_names`): it feeds each call's advertised `read_only`
     /// bit into the hook payload (#2684), so it must mean what the schema
     /// said.
+    ///
+    /// # The wall-clock clamp (`#6460`, ADR 0041)
+    ///
+    /// A call that declares its own time limit —
+    /// [`ToolExecutor::declared_timeout`](crate::ports::ToolExecutor::declared_timeout)
+    /// answers with it — is weighed against `clock` before it starts. One
+    /// that cannot finish and still leave room to report back never runs: it
+    /// is answered with [`turn_clock::refused_for_time`], naming what it may
+    /// ask for instead. Before this clamp a ten-minute `bash` call started on
+    /// a turn with four minutes left, and the harness killed the whole process
+    /// on the way past the deadline, throwing away every edit the turn made.
+    ///
+    /// Nothing in flight is interrupted, so this keeps the "aborts at safe
+    /// boundaries" discipline (AGENTS.md #6) the same way the halt above
+    /// does. The clock is re-read once per barrier group, because the groups
+    /// before it have already spent it — a pair of five-minute calls in one
+    /// step is affordable at the top of the step and is not by the time the
+    /// second is reached.
     pub(super) async fn execute_tool_calls(
         &self,
         calls: &[ToolCall],
         dispatch_safe_tools: &HashSet<String>,
         read_only_tools: &HashSet<String>,
         mut speculation: SpeculationPool,
+        clock: TurnClock,
         events: &EventSender,
     ) -> Vec<ToolResult> {
         let mut indexed: Vec<(usize, ToolResult)> = Vec::with_capacity(calls.len());
@@ -119,49 +139,75 @@ impl<'a> Engine<'a> {
             // Plain copy for the closures: borrowing the loop variable
             // itself would conflict with advancing it below (E0506).
             let group_start = i;
-            let speculation = &mut speculation;
-            let group_futures =
-                calls[group_start..group_end]
-                    .iter()
-                    .enumerate()
-                    .map(|(offset, call)| {
-                        let _ = events.send(AgentEvent::ToolStart {
-                            call: call.clone(),
+            // The clamp, asked once for the group about to start and never
+            // for a call already running (AGENTS.md #6). Settled here rather
+            // than inside the futures below so a refusal lands before any
+            // `ToolStart` fires, which is the shape `close_open_tool_calls`
+            // established for a synthetic closure.
+            let now = std::time::Instant::now();
+            let mut admitted: Vec<(usize, &ToolCall)> = Vec::with_capacity(group_end - group_start);
+            for (offset, call) in calls[group_start..group_end].iter().enumerate() {
+                let index = group_start + offset;
+                match self.refuse_for_time(call, &speculation, clock, now) {
+                    Some(output) => {
+                        let _ = events.send(AgentEvent::ToolResult {
+                            call_id: call.call_id.clone(),
+                            output: output.clone(),
+                            duration_ms: 0,
+                            speculated: false,
                             sub_agent_id: None,
                             task_id: None,
                         });
-                        let index = group_start + offset;
-                        let harvested = match speculation.remove(&call.call_id) {
-                            Some(s) if s.name == call.name && s.input == call.input => Some(s),
-                            Some(stale) => {
-                                // The committed call diverged from what was
-                                // announced: reject the pooled result and
-                                // re-execute below. The speculative execution
-                                // still ran real I/O — record it (#370).
-                                let _ = events.send(AgentEvent::SpeculationDiscarded {
-                                    call_id: call.call_id.clone(),
-                                    name: stale.name,
-                                    reason: SPECULATION_DISCARD_HARVEST_MISMATCH.to_string(),
-                                });
-                                None
-                            }
-                            None => None,
-                        };
-                        let read_only = read_only_tools.contains(&call.name);
-                        async move {
-                            match harvested {
-                                Some(s) => (index, call, s.output, s.duration_ms, true),
-                                None => {
-                                    let started = std::time::Instant::now();
-                                    let output = self
-                                        .execute_with_repair(call, read_only, Some(events))
-                                        .await;
-                                    let duration_ms = started.elapsed().as_millis() as u64;
-                                    (index, call, output, duration_ms, false)
-                                }
-                            }
+                        indexed.push((
+                            index,
+                            ToolResult {
+                                call_id: call.call_id.clone(),
+                                output,
+                            },
+                        ));
+                    }
+                    None => admitted.push((index, call)),
+                }
+            }
+
+            let speculation = &mut speculation;
+            let group_futures = admitted.into_iter().map(|(index, call)| {
+                let _ = events.send(AgentEvent::ToolStart {
+                    call: call.clone(),
+                    sub_agent_id: None,
+                    task_id: None,
+                });
+                let harvested = match speculation.remove(&call.call_id) {
+                    Some(s) if s.name == call.name && s.input == call.input => Some(s),
+                    Some(stale) => {
+                        // The committed call diverged from what was
+                        // announced: reject the pooled result and
+                        // re-execute below. The speculative execution
+                        // still ran real I/O — record it (#370).
+                        let _ = events.send(AgentEvent::SpeculationDiscarded {
+                            call_id: call.call_id.clone(),
+                            name: stale.name,
+                            reason: SPECULATION_DISCARD_HARVEST_MISMATCH.to_string(),
+                        });
+                        None
+                    }
+                    None => None,
+                };
+                let read_only = read_only_tools.contains(&call.name);
+                async move {
+                    match harvested {
+                        Some(s) => (index, call, s.output, s.duration_ms, true),
+                        None => {
+                            let started = std::time::Instant::now();
+                            let output = self
+                                .execute_with_repair(call, read_only, Some(events))
+                                .await;
+                            let duration_ms = started.elapsed().as_millis() as u64;
+                            (index, call, output, duration_ms, false)
                         }
-                    });
+                    }
+                }
+            });
             let mut in_flight = futures_util::stream::iter(group_futures)
                 .buffer_unordered(MAX_CONCURRENT_TOOL_CALLS);
             while let Some((index, call, output, duration_ms, speculated)) = in_flight.next().await
@@ -245,6 +291,36 @@ impl<'a> Engine<'a> {
         self.discard_speculation_pool(speculation, SPECULATION_DISCARD_HARVEST_MISMATCH, events);
         indexed.sort_by_key(|(index, _)| *index);
         indexed.into_iter().map(|(_, result)| result).collect()
+    }
+
+    /// The refusal a call earns when it declares more wall clock than the
+    /// turn has left, or `None` when it may run.
+    ///
+    /// A pooled speculative result is a call that has already finished, so it
+    /// is admitted whatever it declared: refusing it would throw away work
+    /// the turn has already paid for. The pool is only peeked at here — the
+    /// harvest that consumes the entry happens once, in the group futures.
+    fn refuse_for_time(
+        &self,
+        call: &ToolCall,
+        speculation: &SpeculationPool,
+        clock: TurnClock,
+        now: std::time::Instant,
+    ) -> Option<ToolOutput> {
+        let already_run = speculation
+            .get(&call.call_id)
+            .is_some_and(|s| s.name == call.name && s.input == call.input);
+        if already_run {
+            return None;
+        }
+        let declared = self.tools.declared_timeout(&call.name, &call.input)?;
+        let ToolAdmission::Decline { affordable } = clock.admit_tool(declared, now) else {
+            return None;
+        };
+        Some(ToolOutput::classified_error(
+            stella_protocol::ErrorClass::RefusedByPolicy,
+            turn_clock::refused_for_time(declared, affordable),
+        ))
     }
 
     /// Whether [`crate::EngineConfig::turn_halt`] has fired, asked from inside

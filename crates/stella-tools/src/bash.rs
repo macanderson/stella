@@ -73,6 +73,9 @@ use stella_core::shell_text::blocking_sleep_seconds;
 use words::{cd_escape_target, shell_words};
 
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
+/// The name this tool is registered under, spelled once so the schema below
+/// and [`declared_timeout`] cannot answer for two different tools.
+pub(crate) const NAME: &str = "bash";
 /// Byte cap on one `bash` result before head+tail elision
 /// ([`crate::exec::truncate_middle_capped`]). [`crate::custom`] aliases this
 /// constant, so the two shell-shaped surfaces cannot drift apart (#1889).
@@ -426,6 +429,30 @@ fn sleep_advisory(command: &str) -> Option<String> {
     ))
 }
 
+/// How long this call may run: the model's `timeout_secs`, clamped to
+/// [`crate::exec::MAX_TIMEOUT_SECS`], or the default when it asked for
+/// nothing usable.
+///
+/// One function for two readers — the spawn below arms this duration, and
+/// [`declared_timeout`] reports it to the engine's wall-clock clamp. A
+/// declaration the tool then failed to honour would be worse than none, so
+/// the two cannot be allowed to drift.
+fn effective_timeout(input: &Value) -> Duration {
+    Duration::from_secs(crate::exec::timeout_from(input, DEFAULT_TIMEOUT_SECS))
+}
+
+/// The bound this call will actually run under, for the engine's
+/// [`ToolExecutor::declared_timeout`](stella_core::ports::ToolExecutor::declared_timeout)
+/// answer, or `None` for any other tool.
+///
+/// Keyed on the name rather than reading `timeout_secs` out of whatever
+/// arrives, because that key belongs to this tool: another tool is free to
+/// mean something else by it, and answering for one would tell the engine a
+/// bound nothing enforces.
+pub(crate) fn declared_timeout(name: &str, input: &Value) -> Option<Duration> {
+    (name == NAME).then(|| effective_timeout(input))
+}
+
 /// `bash`: one shell command in the workspace root, with a timeout backstop
 /// and a process-group kill that reaches the children it spawned.
 pub struct Bash {
@@ -477,7 +504,7 @@ impl Tool for Bash {
             ""
         };
         ToolSchema {
-            name: "bash".into(),
+            name: NAME.into(),
             description: format!(
                 "Run a shell command in the workspace root. Returns stdout+stderr with a \
                 timeout backstop. You can READ anything on this machine — system headers, the \
@@ -526,7 +553,7 @@ impl Tool for Bash {
             );
         }
 
-        let timeout_secs = crate::exec::timeout_from(input, DEFAULT_TIMEOUT_SECS);
+        let timeout_secs = effective_timeout(input).as_secs();
         // trace: true prefixes `set -x` so every executed line echoes to
         // stderr — an execution trace a verifier can demand as evidence.
         // A wrong-typed `trace` is refused, never silently read as false:
@@ -1227,6 +1254,36 @@ mod tests {
     /// injected into a bash *result* is re-sent as input on every later turn,
     /// and it named the schema and the system prompt as the two places it
     /// belongs. The system prompt took its half; this is the other one.
+    /// **The declared-bound witness (`#6460`).** The engine refuses to start a
+    /// call declaring more wall clock than the turn has left, and it trusts
+    /// this answer to be the bound the spawn will actually arm. A declaration
+    /// the tool then failed to honour would be worse than none, so both
+    /// readers go through [`effective_timeout`] and this pins what it says:
+    /// the model's number, the default when it named none, and the ceiling
+    /// when it named more than the ceiling allows.
+    #[test]
+    fn the_declared_bound_is_the_one_the_spawn_would_arm() {
+        assert_eq!(
+            declared_timeout(NAME, &serde_json::json!({"timeout_secs": 300})),
+            Some(Duration::from_secs(300))
+        );
+        assert_eq!(
+            declared_timeout(NAME, &serde_json::json!({"command": "ls"})),
+            Some(Duration::from_secs(DEFAULT_TIMEOUT_SECS)),
+            "a call naming no limit still runs under the backstop"
+        );
+        assert_eq!(
+            declared_timeout(NAME, &serde_json::json!({"timeout_secs": u64::MAX})),
+            Some(Duration::from_secs(crate::exec::MAX_TIMEOUT_SECS)),
+            "the clamp binds the declaration exactly as it binds the spawn"
+        );
+        assert_eq!(
+            declared_timeout("read_file", &serde_json::json!({"timeout_secs": 300})),
+            None,
+            "`timeout_secs` means what this tool means by it and nothing else"
+        );
+    }
+
     #[test]
     fn the_bash_schema_steers_reads_the_way_it_steers_writes() {
         let described = Bash::new(None).schema().description;

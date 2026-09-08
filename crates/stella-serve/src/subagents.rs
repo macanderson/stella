@@ -564,6 +564,13 @@ impl ToolExecutor for DelegatingTools<'_> {
     fn tool_origin(&self, name: &str) -> Option<stella_core::loop_detect::ToolOrigin> {
         self.inner.tool_origin(name)
     }
+
+    /// Forwarded. This layer sets no time limit of its own. Let the `None`
+    /// default stand and the clamp on tool time goes off for every session
+    /// built through here.
+    fn declared_timeout(&self, name: &str, input: &Value) -> Option<std::time::Duration> {
+        self.inner.declared_timeout(name, input)
+    }
 }
 
 /// Turn a child's outcome into a model-visible result.

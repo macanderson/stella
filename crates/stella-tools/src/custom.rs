@@ -1352,6 +1352,14 @@ impl ToolExecutor for CustomToolSet<'_> {
         self.inner.get().tool_origin(name)
     }
 
+    /// Forwarded for a name this set does not own. A manifest tool carries
+    /// no model-supplied time limit of its own, so there is nothing extra to
+    /// declare here — and letting the default stand would turn the engine's
+    /// wall-clock clamp off for the built-ins underneath.
+    fn declared_timeout(&self, name: &str, input: &Value) -> Option<std::time::Duration> {
+        self.inner.get().declared_timeout(name, input)
+    }
+
     /// Forwarded: this is a decorator, and a decorator that let the default
     /// `0.0` stand would silently drop sub-agent spend out of the parent's
     /// budget (see the port's contract).
