@@ -477,6 +477,97 @@ async fn a_holdout_turn_writes_a_control_arm_trial_for_the_skill_it_withheld() {
     );
 }
 
+/// A workspace with two hand-authored skills, both worded to match
+/// [`MATCHING_PROMPT`], named so the alphabetically first one is the one the
+/// unaimed rotation would reach for.
+fn workspace_with_two_skills() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("tempdir");
+    for name in ["alpha-notes", "zulu-notes"] {
+        let skill_dir = dir.path().join(".stella").join("skills").join(name);
+        std::fs::create_dir_all(&skill_dir).expect("skill dir");
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: {LESSON}\n---\n\n{LESSON}\n"),
+        )
+        .expect("write skill");
+    }
+    dir
+}
+
+/// Seed `count` control-arm trials for `skill` — turns it matched and was not
+/// injected — straight into the ledger the holdout reads.
+fn seed_control_arm(root: &Path, skill: &str, count: usize) {
+    for _ in 0..count {
+        appraisals::record_turn(
+            root,
+            ArtifactKind::Skill,
+            &[skill.to_string()],
+            &[],
+            &SkillTrial {
+                task: appraisals::LIVE_WINDOW_TASK.to_string(),
+                selected: false,
+                outcome: TaskOutcome {
+                    succeeded: true,
+                    cost_usd: 0.0,
+                    tokens: 0,
+                    retries: 0,
+                },
+                turns: 1,
+            },
+        );
+    }
+}
+
+/// **The holdout aims at the skill that needs the sample.**
+///
+/// A skill holdout comes round once in `artifact_holdout_rate` × the number of
+/// holdout arms, and rotating it over the whole catalog divides that again by
+/// the number of skills. Spent evenly, most of those turns go to skills whose
+/// control arm is already full, while the skill waiting on one keeps missing
+/// its slot — and a skill with no control arm can never be judged at all.
+///
+/// Here `alpha-notes` already carries a full arm and `zulu-notes` carries
+/// none. The unaimed rotation picks the alphabetically first name, so it would
+/// spend this turn on `alpha-notes` and leave `zulu-notes` no closer to a
+/// verdict. Sorting is what makes the negative control exact: `alpha-notes` is
+/// what `holdout::pick` returns for this ordinal over the full catalog.
+#[tokio::test]
+async fn the_holdout_picks_the_skill_whose_control_arm_is_short() {
+    let dir = workspace_with_two_skills();
+    let bar = AppraisalConfig::default().selection.min_samples_per_arm;
+    seed_control_arm(dir.path(), "alpha-notes", bar);
+
+    let mut memory = session(dir.path());
+    // Turn 1 is not a holdout turn at rate 2; turn 2 is holdout ordinal 0,
+    // which the arm rotation points at skills.
+    assert!(
+        !memory.arm_controls_at(0, 2),
+        "the plane control is off here"
+    );
+    let both = memory.note_turn_skills(MATCHING_PROMPT);
+    assert_eq!(
+        both.len(),
+        2,
+        "both skills must match, or the pick has nothing to choose between: {both:?}"
+    );
+    memory
+        .record_episode(MATCHING_PROMPT, EpisodeOutcome::Success, &[], 1_000, None)
+        .await;
+
+    assert!(!memory.arm_controls_at(0, 2), "still no plane control");
+    let injected: Vec<String> = memory
+        .note_turn_skills(MATCHING_PROMPT)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+
+    assert_eq!(
+        injected,
+        vec!["alpha-notes".to_string()],
+        "the holdout must withhold the starved skill and leave the measured one in"
+    );
+}
+
 /// **The two schedules cannot land on the same turn.** A turn the plane
 /// control already took claims no holdout number, so the holdout's counter
 /// advances only over the turns it could act on.
