@@ -318,6 +318,30 @@ pub fn sweep(
     out
 }
 
+/// How many **control-arm** trials the ledger holds for each id of `kind` —
+/// turns the artifact's trigger matched and it was not injected.
+///
+/// The scarce half of every appraisal. A with-skill trial is written by any
+/// ordinary turn, so that arm fills on its own; the control arm is written
+/// only when something withheld the artifact on a turn that matched it. The
+/// holdout schedule reads this to aim itself: an id already carrying a full
+/// arm does not need the next holdout turn, and one carrying none cannot be
+/// judged without it.
+///
+/// An id with no trials at all is absent rather than zero. A caller asking
+/// about a whole catalog reads a missing entry as zero, which is what it
+/// means — nothing has been recorded about it yet.
+pub fn control_arm_counts(workspace_root: &Path, kind: ArtifactKind) -> HashMap<String, usize> {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for stored in stored_trials(workspace_root) {
+        if stored.kind != kind || stored.trial.selected {
+            continue;
+        }
+        *counts.entry(stored.id).or_default() += 1;
+    }
+    counts
+}
+
 /// How many of the newest appraisals of `skill` under `kind` are demotable
 /// verdicts (`Harms` or `Inert`), counted back from the ledger's end until the
 /// first verdict that is not.

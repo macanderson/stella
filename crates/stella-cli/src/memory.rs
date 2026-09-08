@@ -852,6 +852,20 @@ impl SessionMemory {
     /// that costs the experiment samples and cannot cost it correctness. The
     /// catalog is read only on a turn the schedule armed and pointed at
     /// skills, which is one holdout in the length of `trials::HOLDOUT_ARMS`.
+    ///
+    /// **The catalog is then narrowed to the skills that still need a control
+    /// sample.** The budget is small. One skill holdout comes round every
+    /// `artifact_holdout_rate` × `trials::HOLDOUT_ARMS` turns. Rotating over
+    /// the whole catalog divides that again by the number of skills. A
+    /// workspace with a dozen skills gives each one a turn every few hundred,
+    /// and most of those go to skills already measured. Each verdict needs
+    /// `min_samples_per_arm` of them.
+    ///
+    /// The narrowing reads the ledger, not the shortlist. So every site still
+    /// computes the same set: trials are written at turn end, and the file
+    /// cannot change under a turn. When no skill is short, the whole catalog
+    /// comes back. That is what keeps a skill that decays later in the
+    /// rotation.
     fn apply_holdout(&self, selection: &mut skills::SkillSelection) -> Option<String> {
         let ordinal = self.holdout_ordinal?;
         // One item goes per turn, and three kinds share the schedule
@@ -861,7 +875,23 @@ impl SessionMemory {
             return None;
         }
         let loaded = self.load_skills();
-        let names: Vec<&str> = loaded.iter().map(|s| s.name.as_str()).collect();
+        let counts = appraisals::control_arm_counts(
+            &self.workspace_root,
+            stella_learn::ledger::ArtifactKind::Skill,
+        );
+        let bar = stella_learn::skills::appraisal::AppraisalConfig::default()
+            .selection
+            .min_samples_per_arm;
+        let starved: Vec<&str> = loaded
+            .iter()
+            .map(|s| s.name.as_str())
+            .filter(|name| counts.get(*name).copied().unwrap_or(0) < bar)
+            .collect();
+        let names: Vec<&str> = if starved.is_empty() {
+            loaded.iter().map(|s| s.name.as_str()).collect()
+        } else {
+            starved
+        };
         let held = stella_learn::holdout::pick(ordinal, &names)?;
         let before = selection.selected.len();
         selection.selected.retain(|s| s.skill.name != held);

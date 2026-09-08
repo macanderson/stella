@@ -636,7 +636,10 @@ what confirmation a blocking directive needs. Confidence values are on a `0`–`
     plane, and the per-artifact holdout (`context.retrieval.artifact_holdout_rate`), which
     withholds one matched artifact and leaves the rest of the turn alone. That holdout
     serves memories, skills and records in turn, so a skill's own arm comes round every
-    third time it fires. Set both to `0` and
+    third time it fires. When it does, it picks a skill whose control arm is still short.
+    Those turns then go to the skills that cannot be judged without them. Once every skill
+    has been measured, it rotates over all of them again, so a skill that decays later is
+    still caught. Set both to `0` and
     there is no baseline to measure against: appraisals stay `Insufficient`, and nothing is
     promoted or retired on measurement.
   </OptionCard>
