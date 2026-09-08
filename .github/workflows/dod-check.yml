@@ -32,4 +32,4 @@ permissions:
 
 jobs:
   dod:
-    uses: macanderson/oxagen/.github/workflows/dod-check.yml@2dd72c9957f8520ee673862de894ed64f4b2380c # oxagen main, #2664
+    uses: macanderson/oxagen/.github/workflows/dod-check.yml@587435a133e3c8ac8fb6473ca5212939f5f064aa # oxagen main, #2551
