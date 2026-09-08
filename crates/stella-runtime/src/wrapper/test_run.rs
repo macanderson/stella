@@ -13,6 +13,15 @@
 //! program, no argv, no timeout. The plan is the one the grant already carried,
 //! so a plugin that wanted to know what ran already knows.
 //!
+//! The absent argv is a decision rather than a slice boundary (ADR 0040). A
+//! plugin choosing which tests decide "done" and the host running them is the
+//! host crediting a proof whose red half it never watched, and the field would
+//! turn a capability consented to as "re-run my tests" into an ungated shell in
+//! the granted root. A plugin that wants a narrower suite runs it in its own
+//! process, against the root its grant names, and reports it as its own claim.
+//! `stella_plugin`'s `a_run_test_ask_cannot_carry_its_own_invocation` is what
+//! fails when the refusal is dropped.
+//!
 //! # The handle is re-resolved host-side, every time
 //!
 //! That is the whole security shape of this capability and it is one sentence:

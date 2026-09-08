@@ -200,6 +200,11 @@
       "status": "implemented",
       "title": "ADR 0039: A live smoke provider is armed or declared unarmed"
     },
+    "adr/0040-host-does-not-pick-the-tests": {
+      "path": "docs/adr/0040-host-does-not-pick-the-tests.md",
+      "status": "implemented",
+      "title": "ADR 0040: The host does not pick the tests"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",

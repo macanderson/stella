@@ -1133,6 +1133,39 @@ mod tests {
         }
     }
 
+    /// `run_test` runs the command the grant carried. A plugin cannot swap in
+    /// one of its own.
+    ///
+    /// [`RunTestArgs`] has one field for that reason (ADR 0040). Picking the
+    /// tests that decide "done" is authoring the proof. A `program` or `args`
+    /// key here would turn a capability consented to as "re-run my tests" into
+    /// an ungated shell in the granted root.
+    ///
+    /// A field added to the struct fails to compile in `wire_corpus.rs`, which
+    /// builds its `run_test` example as a struct literal. The *refusal* was
+    /// held by nothing: `RunTestArgs` derives no JSON schema, so
+    /// `docs/wire/wrapper.wire.json` carries an example and no shape the
+    /// `wire-schema` gate can check. Drop `deny_unknown_fields` and a narrowed
+    /// command is silently ignored instead of refused.
+    #[test]
+    fn a_run_test_ask_cannot_carry_its_own_invocation() {
+        assert!(
+            decode(r#"{"call":"run_test","id":1,"args":{"candidate":"cand-1"}}"#).is_ok(),
+            "the handle alone is the whole ask"
+        );
+        for (extra, key) in [
+            (r#""program":"pytest""#, "program"),
+            (r#""args":["-k","impacted"]"#, "args"),
+            (r#""command":"cargo test -p stella-core""#, "command"),
+        ] {
+            let error = decode(&format!(
+                r#"{{"call":"run_test","id":1,"args":{{"candidate":"cand-1",{extra}}}}}"#
+            ))
+            .expect_err("a narrowed invocation is refused, never ignored");
+            assert!(error.to_string().contains(key), "{key}: {error}");
+        }
+    }
+
     /// The #3500 rule, on the union: an unknown key is a typo, and a typo that
     /// decodes cleanly is a plugin author debugging a silence.
     #[test]

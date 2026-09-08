@@ -145,21 +145,23 @@ Lint/typecheck are rightly excluded from the flip oracle. But they can still
   the pre-submit audit — lint before the confirmation run, since a veto
   makes the confirmation moot — and degrades open on every unavailable
   path.
-- **Impacted-test scope for Rust.** No shipping surface exposes impacted-test
-  selection today. The design (#443, #862) resolves Rust `use`/`mod` edges
-  through the workspace module tree — including cross-crate paths — and
-  narrows to the owning cargo packages; an unrelated crate is left out, and a
-  missing or stale index stands down loudly. What remains is **using** impacted
-  selection as ladder evidence, and the constraint that shapes it: the oracle's identity
-  is the *normalized command*, and the impacted selection is derived from
-  the diff — which does not exist when the baseline pre-run fires. A
-  per-turn narrowed command would differ between baseline and candidate and
-  the oracle would rightly ignore the pass. The viable route is the
-  isolated-candidate path, where the session tree stays pristine through
-  execution: both halves of the flip can be observed at verify time with
-  the *same* diff-derived `cargo test -p …` invocation. That is a
-  restructuring of when the baseline is observed, not a bolt-on — design
-  first, then build.
+- **Impacted-test scope for Rust.** *Settled — the host does not select
+  (ADR 0040).* The selector this item described is gone: #3236 deleted
+  `CodeGraph::importer_paths` when the tool purge took its consumer, and
+  `run_tests` is a retired name in `crates/stella-tool-facts/src/catalog.rs`.
+  The raw relation `store::importers_of` is still indexed.
+
+  The constraint that shaped the item survives and is why it is settled rather
+  than pending. The flip's identity is the *normalized command*, and an
+  impacted selection is derived from the diff, which does not exist when the
+  baseline pre-run fires. A per-turn narrowed command would differ between
+  baseline and candidate and the flip would rightly ignore the pass. The
+  isolated-candidate route this item named would observe both halves at verify
+  time with the same diff-derived invocation — and it asks the host to derive a
+  command, run it, and credit the pair, which is the host authoring the proof it
+  then evaluates. A verification plugin holding the granted root may narrow for
+  itself; what it reports is its own claim, graded
+  `EvidenceProvenance::PluginReported`.
 - **Touched-tests set widening.** *Superseded.* The ladder runs exactly one
   typed invocation per iteration (the configured `--test-command`, else the
   witness command) and re-runs it after every revise turn, so there is no
@@ -229,7 +231,8 @@ verifier-pass never beats a warned deterministic pass.
 | 2 | §1 assertion-density check (#863), §4 structured verifier evidence (#864), §6 verdict provenance (#865) | **Done** — #863 earlier; PR #1035 |
 | 3 | §2 failure fingerprints (#867), §4 early distress guidance (#868, already satisfied), §5 score refinement (#869) | **Done** — PR #1049 |
 | 4 | §1 mutation check (#870), §4 calibration telemetry (#871) | **Done** — PRs #1052, #1055 |
-| — | §1 diff-coverage (needs a coverage-tooling decision), §3 impacted selection as ladder evidence (see the design constraint above) | Remaining |
+| — | §1 diff-coverage (needs a coverage-tooling decision) | Remaining |
+| — | §3 impacted selection as verification evidence | **Settled** — ADR 0040 |
 
 The per-PR degradation gate (`pipeline/tests/degradation_gate.rs`, PR #1038,
 `docs/spec/verification-gate.md`) now pins every decision and its spend, so each
