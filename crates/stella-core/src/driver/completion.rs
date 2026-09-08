@@ -5,7 +5,8 @@
 
 use stella_protocol::{AgentEvent, CompletionMessage, FinishReason, MessageRole};
 
-use super::truncation::{self, ContinuationBudget, ContinuationPlan, TIME_EXHAUSTED_PARTIAL};
+use super::truncation::{self, ContinuationPlan, TIME_EXHAUSTED_PARTIAL};
+use super::turn_clock::TurnClock;
 use super::user_hooks::STOP_HOOK_MARKER_PREFIX;
 use super::{
     CommittedStep, Engine, SPECULATION_DISCARD_HARVEST_MISMATCH, TurnOutcome, confident_zero,
@@ -34,6 +35,12 @@ impl<'a> Engine<'a> {
     /// injects the hook's reason as a marked tail user message and returns
     /// `None`, holding the turn open for another round. `stop_consults` is
     /// the bounded consultation counter (`driver::user_hooks` module docs).
+    ///
+    /// `clock` is the turn's wall clock as the step boundary read it
+    /// (`driver::turn_clock`). Both of this function's time-aware decisions
+    /// weigh against it: whether a length continuation can finish, and —
+    /// through [`Engine::execute_tool_calls`] — whether a tool call
+    /// declaring its own limit can.
     #[expect(
         clippy::too_many_arguments,
         reason = "threaded turn-state fields, same shape as its siblings"
@@ -45,7 +52,7 @@ impl<'a> Engine<'a> {
         messages: &mut Vec<CompletionMessage>,
         length_continuations: &mut u32,
         stop_consults: &mut u32,
-        continuation_budget: Option<ContinuationBudget>,
+        clock: TurnClock,
         events: &EventSender,
     ) -> Option<TurnOutcome> {
         let CommittedStep {
@@ -85,7 +92,7 @@ impl<'a> Engine<'a> {
                     &result.text,
                     result.usage.output_tokens,
                     *length_continuations,
-                    continuation_budget,
+                    clock.continuation_budget(std::time::Instant::now()),
                 ) {
                     ContinuationPlan::Continue(plan) => {
                         *length_continuations += 1;
@@ -252,6 +259,7 @@ impl<'a> Engine<'a> {
                 &dispatch_safe_tools,
                 &read_only_tools,
                 speculation,
+                clock,
                 events,
             )
             .await;

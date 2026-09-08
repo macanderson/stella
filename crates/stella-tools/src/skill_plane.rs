@@ -215,6 +215,12 @@ impl ToolExecutor for SkillScopedTools<'_> {
         self.inner.tool_origin(name)
     }
 
+    /// Forwarded, like every other question this view only passes through:
+    /// the bound the base enforces is what the wall-clock clamp weighs.
+    fn declared_timeout(&self, name: &str, input: &Value) -> Option<std::time::Duration> {
+        self.inner.declared_timeout(name, input)
+    }
+
     /// Forwarded, not zeroed — a grandchild dispatched behind this view
     /// still settles into the carve that bounds it (see `ReadOnlyTools`).
     fn drain_sub_agent_spend_usd(&self) -> f64 {

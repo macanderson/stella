@@ -107,6 +107,7 @@ open; nothing before Phase 3 forces it.
 | [0038](0038-a-night-that-mostly-died-is-not-a-run.md) | A Night That Mostly Died Is Not a Run | Accepted |
 | [0039](0039-a-live-smoke-provider-is-armed-or-declared-unarmed.md) | A Live Smoke Provider Is Armed or Declared Unarmed | Accepted |
 | [0040](0040-host-does-not-pick-the-tests.md) | The Host Does Not Pick the Tests | Accepted |
+| [0041](0041-the-turn-clock-reaches-dispatch-by-value.md) | The Turn Clock Reaches Dispatch by Value | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible
@@ -245,6 +246,15 @@ a runner's convention. A verification plugin holding the granted root may narrow
 for itself, and what it reports is graded as its own claim. `run_test` keeps
 running the invocation the grant carried, which is why its ask carries a
 workspace handle and nothing else.
+
+ADR 0041 decides how the wall clock reaches a tool call. A `bash` call carries
+its own time limit, and nothing weighed it against the time the turn had left,
+so a ten-minute call could start with four minutes to go and be killed from
+outside with every edit lost. The clock is read once per step boundary and
+passed down by value; the executor declares the bound it would enforce through
+a defaulted port method, because the key that carries it belongs to one tool.
+A call that cannot finish and still leave room to report back is refused before
+it starts, which is the only moment AGENTS.md #6 leaves.
 
 ## The number is a shared cell
 

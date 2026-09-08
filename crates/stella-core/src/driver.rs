@@ -115,7 +115,7 @@ use crate::step::{
     SummarizerHealth, TurnState, deadline_bounded_generation,
 };
 pub(crate) use truncation::CONTINUATION_MARKER_PREFIX;
-use truncation::ContinuationBudget;
+use turn_clock::TurnClock;
 // Named only by the tests that pin the nudge's exact body; the production path
 // reaches it through `Continuation::into_parts`.
 #[cfg(test)]
@@ -152,6 +152,8 @@ mod restore;
 mod settlement;
 mod step_boundary;
 pub(crate) mod step_pace;
+// The turn's wall clock, read once per step boundary (ADR 0041).
+mod turn_clock;
 pub(crate) mod usage_anchor;
 pub(crate) mod user_hooks;
 mod waiting;
@@ -808,17 +810,11 @@ impl<'a> Engine<'a> {
             return aborted.into();
         }
 
-        // Only meaningful once a call has been timed and a budget configured:
-        // a continuation re-runs a tool-less step, so the model call is the
-        // whole forecast (`step_pace::StepPace::model`).
-        let continuation_budget =
-            self.config
-                .turn_budget
-                .zip(state.pace.model())
-                .map(|(budget, last_step)| ContinuationBudget {
-                    remaining: budget.saturating_sub(state.started_at.elapsed()),
-                    last_step,
-                });
+        // Both of the turn's wall-clock ceilings, folded into one value the
+        // decisions below read (`driver::turn_clock`, ADR 0041): whether a
+        // length continuation is affordable, and whether a tool call
+        // declaring its own limit can finish before the deadline.
+        let clock = TurnClock::read(&self.config, state);
 
         if let Some(completed) = self
             .dispatch_completion(
@@ -827,7 +823,7 @@ impl<'a> Engine<'a> {
                 &mut state.messages,
                 &mut state.length_continuations,
                 &mut state.stop_hook_consults,
-                continuation_budget,
+                clock,
                 events,
             )
             .await

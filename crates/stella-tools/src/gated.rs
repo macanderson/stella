@@ -504,6 +504,13 @@ impl ToolExecutor for GatedToolSet<'_> {
     fn tool_origin(&self, name: &str) -> Option<stella_core::loop_detect::ToolOrigin> {
         self.inner.get().tool_origin(name)
     }
+
+    /// Forwarded: the engine's wall-clock clamp has to read the bound the
+    /// base will actually enforce, and a wrapper that let the `None` default
+    /// stand would turn the clamp off for every surface composed through it.
+    fn declared_timeout(&self, name: &str, input: &Value) -> Option<std::time::Duration> {
+        self.inner.get().declared_timeout(name, input)
+    }
 }
 
 #[cfg(test)]

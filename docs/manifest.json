@@ -205,6 +205,11 @@
       "status": "implemented",
       "title": "ADR 0040: The host does not pick the tests"
     },
+    "adr/0041-the-turn-clock-reaches-dispatch-by-value": {
+      "path": "docs/adr/0041-the-turn-clock-reaches-dispatch-by-value.md",
+      "status": "implemented",
+      "title": "ADR 0041: The turn clock reaches dispatch by value"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",

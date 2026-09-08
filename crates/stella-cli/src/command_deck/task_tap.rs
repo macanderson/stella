@@ -195,6 +195,13 @@ impl ToolExecutor for TaskTap<'_> {
         self.inner.tool_origin(name)
     }
 
+    /// Forwarded. This layer sets no time limit of its own. Let the `None`
+    /// default stand and the clamp on tool time goes off for every session
+    /// built through here.
+    fn declared_timeout(&self, name: &str, input: &Value) -> Option<std::time::Duration> {
+        self.inner.declared_timeout(name, input)
+    }
+
     /// Forwarded: the deck's lead lane wraps the discovery mount (which owns
     /// the invocation plane) in this tap, so a tap that let the empty default
     /// stand would silently stop active skill bodies surviving summarization
