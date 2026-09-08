@@ -53,8 +53,16 @@ pub(super) struct TurnClock {
 
 impl TurnClock {
     /// Read both bounds and keep the earlier one.
+    ///
+    /// A `turn_budget` so large that the clock cannot name its end is dropped
+    /// rather than added. `Instant + Duration` panics on overflow, and
+    /// `--turn-timeout` is a number a person types, so the sum is runtime
+    /// data (AGENTS.md #5). A budget no clock can reach could never bind a
+    /// call anyway, so `None` is also the right answer.
     pub(super) fn read(config: &crate::EngineConfig, state: &crate::step::TurnState) -> Self {
-        let from_turn_budget = config.turn_budget.map(|budget| state.started_at + budget);
+        let from_turn_budget = config
+            .turn_budget
+            .and_then(|budget| state.started_at.checked_add(budget));
         let deadline = match (from_turn_budget, state.budget.task_deadline()) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (only, None) | (None, only) => only,
@@ -275,6 +283,29 @@ mod tests {
             clock.admit_tool(declared, start + declared),
             ToolAdmission::Decline { .. }
         ));
+    }
+
+    /// A budget the clock cannot reach the end of is dropped, not added. The
+    /// sum would panic, and a deadline that far out binds nothing in any case.
+    #[test]
+    fn an_unreachable_turn_budget_is_no_deadline_at_all() {
+        let now = Instant::now();
+        let config = crate::EngineConfig {
+            turn_budget: Some(Duration::MAX),
+            ..crate::EngineConfig::default()
+        };
+        let state = crate::step::TurnState::new(
+            Vec::new(),
+            crate::budget::BudgetGuard::new(stella_protocol::BudgetMode::Off, None, None),
+            &config,
+        );
+
+        let clock = TurnClock::read(&config, &state);
+
+        assert_eq!(
+            clock.admit_tool(Duration::from_secs(600), now),
+            ToolAdmission::Start
+        );
     }
 
     /// The earlier of the two ceilings wins, whichever it is. Nothing makes
