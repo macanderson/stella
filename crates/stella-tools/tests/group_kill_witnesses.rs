@@ -58,6 +58,22 @@ use stella_tools::registry::Tool;
 /// bytes here and a killed one by none.
 const OBSERVATION: Duration = Duration::from_millis(200);
 
+/// Witness 3's hook budget. It is also the time its grandchild has to appear.
+///
+/// Witnesses 1 and 2 wait on [`started_beating`], then kill. Spawn time costs
+/// them nothing. Witness 3 cannot wait, because the hook's own timeout is what
+/// kills. Its grandchild has to write a first byte before the budget runs out.
+/// If it does not, the test fails its own premise, not the thing it checks.
+///
+/// At 300ms that is what happened, on `windows-latest`. Windows has to find a
+/// shell and then start two processes. That does not fit in 300ms. A `fork`
+/// and an `exec` do, which is why Linux never saw it.
+///
+/// A longer budget costs the test nothing. The command in
+/// [`backgrounding_command`] ends in `sleep 30`, so the hook still times out.
+/// Only the grandchild's head start grows.
+const HOOK_BUDGET_MS: u64 = 3_000;
+
 /// Bytes written to a heartbeat file so far; `0` for one that does not exist
 /// yet.
 fn beats(path: &Path) -> u64 {
@@ -223,7 +239,7 @@ async fn a_timed_out_hook_leaves_no_surviving_grandchild() {
     let dir = tempfile::tempdir().expect("tempdir");
     let pulse = dir.path().join("hook.pulse");
     let mut hung = HookAction::new(backgrounding_command(&pulse));
-    hung.timeout_ms = Some(300);
+    hung.timeout_ms = Some(HOOK_BUDGET_MS);
 
     let err = HostHookRunner
         .run(&hung, "{}", &dir.path().display().to_string())
