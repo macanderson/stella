@@ -20,7 +20,7 @@
 //! the granted root. A plugin that wants a narrower suite runs it in its own
 //! process, against the root its grant names, and reports it as its own claim.
 //! `stella_plugin`'s `a_run_test_ask_cannot_carry_its_own_invocation` is what
-//! fails when the shape is widened.
+//! fails when the refusal is dropped.
 //!
 //! # The handle is re-resolved host-side, every time
 //!

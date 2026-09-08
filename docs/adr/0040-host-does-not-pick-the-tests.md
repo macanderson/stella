@@ -97,12 +97,16 @@ should be that loose. The tight door is the one to refuse.
 again. It looks like a small additive field. It turns a capability a human
 consented to as `calls = ["run_test"]` into an ungated shell. That shell runs at
 the host's authority, in the granted root. This workspace has one shell, `bash`,
-and the user approves what it runs. Nothing held the shape:
-`RunTestArgs` derives no JSON schema, so `docs/wire/wrapper.wire.json` never
-described it, and the `wire-schema` gate cannot see a field added to it. Delete
-its `deny_unknown_fields` today and the host quietly drops a narrowed command a
-plugin sends. No test in the tree fails.
-`a_run_test_ask_cannot_carry_its_own_invocation` is that test.
+and the user approves what it runs.
+
+Adding a field to the struct does redden something: `wire_corpus.rs` builds its
+`run_test` example as a Rust struct literal, so a new field fails to compile
+there. The *refusal* was held by nothing. `RunTestArgs` derives no JSON schema,
+so `docs/wire/wrapper.wire.json` carries an example message and no shape the
+`wire-schema` gate can check. Delete its `deny_unknown_fields` and the host
+quietly drops a narrowed command a plugin sends, rather than refusing it. Before
+`a_run_test_ask_cannot_carry_its_own_invocation`, no test in the tree failed on
+that — measured, with the attribute removed.
 
 **Run the narrowed set at both moments in an isolated candidate.** Sound, and
 `ROADMAP.md` §3 named it. The session tree stays clean through the turn, so the
