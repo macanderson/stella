@@ -109,7 +109,18 @@ jobs:
       #
       # It runs after the step above either way, because that step is what
       # files or closes the issue this one reads.
+      #
+      # `if: always()` is what makes "either way" true. A step with no
+      # condition defaults to `success()`, and the step above exits non-zero
+      # precisely when `main` is broken — so the break path, the only one that
+      # can strand a green hold on a red tree, was the one path that never
+      # swept. #6408 was filed at 14:56:59Z by a run whose sweep step is
+      # recorded as `skipped` at the same second, and #6371's hold still read
+      # the answer it was given at 04:22Z through the whole 84-minute outage.
+      # That is `#5949` again, with the sweep built and wired and never
+      # reached.
       - name: Refresh the hold on every open pull request
+        if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./scripts/refresh-main-red-holds.sh

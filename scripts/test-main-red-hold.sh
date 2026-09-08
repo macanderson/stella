@@ -430,6 +430,31 @@ else
   bad "the canary sweeps before it writes the issue the sweep reads"
 fi
 
+# Ordering alone was the whole of that check, and ordering is not the hazard.
+# A step with no `if:` defaults to `success()`, and the announce step exits
+# non-zero exactly when `main` is broken — so the sweep was skipped on the one
+# transition it exists for. Read the sweep step's own block: from its `- name:`
+# line to the next step at the same indent, it has to carry a condition that
+# survives a failed predecessor.
+sweep_name_line="$(grep -n 'name: Refresh the hold on every open pull request' \
+  "$canary" | head -1 | cut -d: -f1)"
+if [ -z "$sweep_name_line" ]; then
+  bad "the canary has no step named for the sweep, so its condition cannot be read"
+else
+  sweep_block="$(awk -v start="$sweep_name_line" '
+    NR < start { next }
+    NR > start && /^      - / { exit }
+    { print }' "$canary")"
+  case "$sweep_block" in
+  *"if: always()"*)
+    ok "the sweep still runs when the announce step fails, which is the break path"
+    ;;
+  *)
+    bad "the sweep step has no \`if: always()\`, so a failed announce skips it and a red main sweeps nothing"
+    ;;
+  esac
+fi
+
 printf '\n\033[1mdrilling — the re-run call is rehearsed without an outage\033[0m\n'
 
 # The drill asks the tracker nothing, and it sweeps no second pull request.
