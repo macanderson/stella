@@ -86,9 +86,12 @@ guess. The code graph is an import index over tree-sitter parses. It cannot see
 reflection, dynamic imports, fixtures, data files, or a test that drives a built
 binary. A call with that name hands back a list the plugin cannot check and has
 every reason to trust. The guess is still the host's. `recall` is the door to
-the same index that says what it is: importer frames among its results, scored,
+the same index that says what it is. It fans out over `codegraph.db`, and the
+code-graph provider renders importer frames among what comes back — scored,
 budget-packed, labelled as retrieval. A plugin asks it for material rather than
-for a verdict.
+for a verdict. It is a loose door: `RecallArgs` carries a goal and a limit, so a
+plugin cannot anchor a query on the exact file it cares about. A heuristic
+should be that loose. The tight door is the one to refuse.
 
 **A `program` and `args` pair on `RunTestArgs`.** Someone will propose this
 again. It looks like a small additive field. It turns a capability a human
