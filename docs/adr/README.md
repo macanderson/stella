@@ -106,6 +106,7 @@ open; nothing before Phase 3 forces it.
 | [0037](0037-a-credit-balance-lives-outside-the-engine.md) | A Credit Balance Lives Outside the Engine | Accepted |
 | [0038](0038-a-night-that-mostly-died-is-not-a-run.md) | A Night That Mostly Died Is Not a Run | Accepted |
 | [0039](0039-a-live-smoke-provider-is-armed-or-declared-unarmed.md) | A Live Smoke Provider Is Armed or Declared Unarmed | Accepted |
+| [0040](0040-host-does-not-pick-the-tests.md) | The Host Does Not Pick the Tests | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible
@@ -236,6 +237,14 @@ re-asked on every run, so a row goes red the moment it stops being true — a
 credential that appears, one that vanishes, or an empty account that gets
 funded. A provider declared unfunded still calls its endpoint, because an empty
 account is refused for free and only a refusal naming the balance passes.
+
+ADR 0040 answers who may choose the tests that verify a change. Not the host:
+picking which tests decide "done" is authoring the proof the host then
+evaluates, and the same refusal already covers deriving a witness artifact from
+a runner's convention. A verification plugin holding the granted root may narrow
+for itself, and what it reports is graded as its own claim. `run_test` keeps
+running the invocation the grant carried, which is why its ask carries a
+workspace handle and nothing else.
 
 ## The number is a shared cell
 
