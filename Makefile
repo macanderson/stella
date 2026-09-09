@@ -352,8 +352,8 @@ brand-case: ## Assert docs prose spells the wordmark lowercase (#1500)
 	@./scripts/check-brand-case.sh
 
 .PHONY: brand-sync
-brand-sync: ## Mirror docs/brand/ outputs into website/ — the copy brand-parity.test.ts checks (#3983)
-	@python3 docs/brand/sync_site.py
+brand-sync: ## Pull the Oxagen house brand kit into docs/brand/ and website/
+	@node scripts/sync-brand-assets.mjs
 
 # The generated per-tool reference. Deliberately NOT scoped by CARGO_SCOPE:
 # the artifact is derived from stella-tools' catalog and stella-cli's session

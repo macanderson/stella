@@ -1,49 +1,62 @@
 /**
- * The stella marks — brand kit v5.0, "the comet": a four-point star moving
- * fast enough to leave a trail. Drawn inline so they paint from CSS rather
- * than from a per-mode asset file; the geometry is copied from
- * docs/brand/logo/svg/ (the normative source) and the SVG copies in
- * public/brand/ are the same files — the two must move together.
+ * The stella marks — the Oxagen house brand system.
  *
- * Colour rules (docs/brand/BRAND.md):
- *  - The comet takes `--stella-mark-shape`: full Gold on a dark ground, kit
- *    `brand-700` on a light one. v3.0 retired the kit's "full strength on
- *    both grounds" rule because Ion measured 1.61:1 on paper, a logotype
- *    nobody can see; v4.0 keeps the split because gold, at 2.63:1, is still
- *    under the 3:1 graphical floor that brand-700 clears at 4.99:1 — and the
- *    committed light lockups under
- *    docs/brand/logo/svg/ are cut to the same value, so this component and
- *    those files still agree.
- *  - The wordmark letters take `currentColor`, so the name inverts with the
- *    theme (Paper on ink, Ink on paper).
- *  - The sparkle — the `*` in "stella*" — takes the same token, same law.
- *  - The comet flies left→right. Never mirror it; assemble, don't spin.
+ * Geometry comes from `./brand-marks.generated.ts`, extracted by
+ * `scripts/sync-brand-assets.mjs` from the house kit
+ * (macanderson/oxagen-house-brand). Nothing here is drawn: the wordmark is
+ * Space Grotesk's own outlines at the kit's logo weight, which is the face this
+ * site is set in, so the name in the nav and the name in a sentence are the same
+ * design. To change a mark, change the kit and re-run the sync.
  *
- * The trails are exported as filled rounded rects rather than stroked lines
- * because the OG card renders through Satori, which is only reliable with
- * plain path/rect fills. Same geometry: a 7-unit round-capped stroke from
- * x1→x2 is a rect from x1−3.5 to x2+3.5, 7 tall, rx 3.5.
+ * ## The comet is retired
+ *
+ * v5.0's mark was a four-point star with a trail, drawn by
+ * `docs/brand/cometkit.py`. The house system retires it along with Oxagen's own
+ * o+cursor mark. Stella's mark is the ASTERISK, and it is already inside the
+ * word — `stella*` — so:
+ *
+ *  - **The wordmark IS the lockup.** There is no separate one and nothing is
+ *    ever placed to the left of the word. `sparkle={false}` is gone with the
+ *    comet: it existed so the star would not double up beside a mark that no
+ *    longer exists, and dropping the asterisk now would remove the only mark
+ *    the word has.
+ *  - **The icon is the asterisk alone.** Unlike Oxagen's one-colour `Ox`
+ *    lettermark it ships GOLD, because a lone asterisk in ink reads as
+ *    punctuation rather than as a mark. That is the kit's own exception, not
+ *    this file's.
+ *  - **One glyph is gold, never two.** The asterisk in the word; nothing else.
+ *    It keeps the metal in both themes — the kit's "gold becomes its deep shade
+ *    on paper" rule governs gold WORDS, not the mark, and the kit's own light
+ *    and dark files both fill the accent with the metal.
+ *
+ * The letters take `currentColor`, so the name inverts with the theme.
  */
 
-/** Gold. Inline fallback for contexts with no cascade (Satori). */
-export const BRAND = "#d6962c";
+import {
+  BRAND_GOLD,
+  MARK_PATH,
+  MARK_TRANSFORM,
+  MARK_VIEW_BOX,
+  WORDMARK_LETTERS_PATH,
+  WORDMARK_SPARKLE_PATH,
+  WORDMARK_VIEW_BOX,
+} from "./brand-marks.generated";
 
-/** The comet on its own — docs/brand/logo/svg/logomark-color.svg. */
-export const MARK_VIEW_BOX = "0 0 96 96";
-export const STAR_PATH =
-  "M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z";
-export const TRAIL_RECTS = [
-  { x: 6.5, y: 44.5, width: 27, height: 7, rx: 3.5 },
-  { x: 14.5, y: 30.5, width: 19, height: 7, rx: 3.5 },
-  { x: 14.5, y: 58.5, width: 19, height: 7, rx: 3.5 },
-];
+export {
+  BRAND_GOLD,
+  MARK_PATH,
+  MARK_TRANSFORM,
+  MARK_VIEW_BOX,
+  WORDMARK_LETTERS_PATH,
+  WORDMARK_SPARKLE_PATH,
+  WORDMARK_VIEW_BOX,
+};
 
-/** "stella" outlined, plus the gold sparkle — docs/brand/logo/svg/wordmark-*. */
-export const WORDMARK_VIEW_BOX = "0 0 264 96";
-export const WORDMARK_LETTERS_PATH =
-  "M22.62 70.5Q18.54 70.5 15.48 69.21000000000001Q12.42 67.92 10.71 65.64Q9.0 63.36000000000001 9.0 60.300000000000004H18.0Q18.0 61.74000000000001 19.29 62.61000000000001Q20.58 63.480000000000004 22.62 63.480000000000004H25.259999999999998Q27.72 63.480000000000004 29.009999999999998 62.580000000000005Q30.3 61.68000000000001 30.3 60.06Q30.3 58.56 29.16 57.75Q28.02 56.940000000000005 25.62 56.64000000000001L21.78 56.160000000000004Q15.6 55.38000000000001 12.780000000000001 53.16000000000001Q9.96 50.940000000000005 9.96 46.38000000000001Q9.96 41.580000000000005 13.26 38.940000000000005Q16.56 36.300000000000004 22.919999999999998 36.300000000000004H25.2Q31.259999999999998 36.300000000000004 34.86 38.940000000000005Q38.46 41.580000000000005 38.46 46.02000000000001H29.46Q29.46 44.82000000000001 28.29 44.07000000000001Q27.119999999999997 43.32000000000001 25.2 43.32000000000001H22.919999999999998Q20.7 43.32000000000001 19.68 44.07000000000001Q18.66 44.82000000000001 18.66 46.32000000000001Q18.66 47.7 19.59 48.42Q20.52 49.14000000000001 22.56 49.440000000000005L26.7 49.980000000000004Q32.94 50.760000000000005 35.97 53.10000000000001Q39.0 55.440000000000005 39.0 60.06Q39.0 65.10000000000001 35.519999999999996 67.80000000000001Q32.04 70.5 25.259999999999998 70.5Z M63.599999999999994 69.9Q58.56 69.9 55.68 67.02000000000001Q52.8 64.14 52.8 59.10000000000001V45.00000000000001H44.1V36.900000000000006H52.8V27.60000000000001H61.8V36.900000000000006H74.1V45.00000000000001H61.8V59.10000000000001Q61.8 61.800000000000004 64.5 61.800000000000004H73.5V69.9Z M96.06 70.5Q91.68 70.5 88.41 68.85Q85.14 67.2 83.37 64.23Q81.6 61.260000000000005 81.6 57.300000000000004V49.50000000000001Q81.6 45.540000000000006 83.37 42.57000000000001Q85.14 39.60000000000001 88.41 37.95Q91.68 36.300000000000004 96.06 36.300000000000004Q100.44 36.300000000000004 103.65 37.95Q106.86 39.60000000000001 108.63 42.57000000000001Q110.4 45.540000000000006 110.4 49.50000000000001V55.50000000000001H90.18V57.300000000000004Q90.18 60.42 91.68 62.010000000000005Q93.18 63.60000000000001 96.18 63.60000000000001Q98.28 63.60000000000001 99.57 62.88000000000001Q100.86 62.160000000000004 101.28 60.900000000000006H110.1Q109.02 65.22 105.21000000000001 67.86Q101.4 70.5 96.06 70.5ZM101.82 50.88000000000001V49.38000000000001Q101.82 46.32000000000001 100.41 44.7Q99.0 43.080000000000005 96.06 43.080000000000005Q93.12 43.080000000000005 91.65 44.760000000000005Q90.18 46.440000000000005 90.18 49.50000000000001V50.400000000000006L102.42 50.28Z M137.4 69.9Q133.92 69.9 131.27999999999997 68.43Q128.64 66.96000000000001 127.16999999999999 64.32000000000001Q125.7 61.68000000000001 125.7 58.2V34.20000000000001H115.5V26.10000000000001H134.7V58.2Q134.7 59.82000000000001 135.69 60.81Q136.68 61.800000000000004 138.3 61.800000000000004H147.9V69.9Z M173.4 69.9Q169.92 69.9 167.27999999999997 68.43Q164.64 66.96000000000001 163.17 64.32000000000001Q161.7 61.68000000000001 161.7 58.2V34.20000000000001H151.5V26.10000000000001H170.7V58.2Q170.7 59.82000000000001 171.69 60.81Q172.68 61.800000000000004 174.3 61.800000000000004H183.9V69.9Z M199.74 70.5Q194.76 70.5 191.85 67.80000000000001Q188.94 65.10000000000001 188.94 60.480000000000004Q188.94 55.50000000000001 192.39 52.83000000000001Q195.84 50.16000000000001 202.32 50.16000000000001H209.16V47.7Q209.16 45.78000000000001 207.81 44.64000000000001Q206.46 43.50000000000001 204.18 43.50000000000001Q202.07999999999998 43.50000000000001 200.7 44.46000000000001Q199.32 45.42 199.02 47.10000000000001H190.32Q190.86 42.120000000000005 194.67000000000002 39.21000000000001Q198.48 36.300000000000004 204.48 36.300000000000004Q210.78 36.300000000000004 214.47 39.39Q218.16 42.480000000000004 218.16 47.7V69.9H209.46V64.5H208.02L209.52 62.400000000000006Q209.52 66.12 206.85000000000002 68.31Q204.18 70.5 199.74 70.5ZM203.1 63.900000000000006Q205.74 63.900000000000006 207.45 62.49000000000001Q209.16 61.080000000000005 209.16 58.800000000000004V55.260000000000005H202.5Q200.46 55.260000000000005 199.2 56.43000000000001Q197.94 57.60000000000001 197.94 59.52000000000001Q197.94 61.56 199.32 62.730000000000004Q200.7 63.900000000000006 203.1 63.900000000000006Z";
-export const WORDMARK_SPARKLE_PATH =
-  "M233.82 64.98 227.46 60.540000000000006 229.32 57.84Q230.34 56.400000000000006 231.84 55.02000000000001Q233.34 53.64000000000001 234.87 52.47000000000001Q236.4 51.30000000000001 237.48 50.580000000000005L237.36 50.34Q236.04 50.34 234.12 50.25000000000001Q232.2 50.16000000000001 230.22 49.86000000000001Q228.24 49.56 226.68 49.02000000000001L223.62 47.88000000000001L226.26 40.56L229.38 41.7Q230.94 42.24000000000001 232.62 43.32000000000001Q234.3 44.400000000000006 235.83 45.57000000000001Q237.36 46.74000000000001 238.38 47.64000000000001L238.68 47.400000000000006Q238.26 46.14000000000001 237.63 44.28Q237.0 42.42 236.55 40.38Q236.1 38.34 236.1 36.60000000000001V33.300000000000004H243.9V36.60000000000001Q243.9 38.34 243.45 40.38Q243.0 42.42 242.4 44.28Q241.8 46.14000000000001 241.32 47.400000000000006L241.56 47.580000000000005Q242.57999999999998 46.68000000000001 244.10999999999999 45.540000000000006Q245.64 44.400000000000006 247.32 43.32000000000001Q249.0 42.24000000000001 250.56 41.7L253.68 40.56L256.38 47.88000000000001L253.26 49.02000000000001Q251.7 49.56 249.75 49.86000000000001Q247.8 50.16000000000001 245.91000000000003 50.25000000000001Q244.02 50.34 242.64 50.34L242.52 50.580000000000005Q243.6 51.30000000000001 245.13 52.47000000000001Q246.66 53.64000000000001 248.19 55.02000000000001Q249.72 56.400000000000006 250.68 57.78000000000001L252.54 60.540000000000006L246.18 64.98L244.26 62.28000000000001Q243.3 60.84 242.49 58.92Q241.68 57.00000000000001 241.11 55.11000000000001Q240.54 53.220000000000006 240.18 51.96000000000001H239.82Q239.52 53.220000000000006 238.92000000000002 55.11000000000001Q238.32 57.00000000000001 237.54 58.92Q236.76 60.84 235.74 62.28000000000001Z";
+/**
+ * Gold, as an inline literal for contexts with no cascade (Satori renders the
+ * OG card with no stylesheet). Prefer the token everywhere a cascade exists.
+ */
+export const BRAND = BRAND_GOLD;
 
 /**
  * The GitHub mark. Used wherever the site links out to the repo — the nav,
@@ -70,8 +83,13 @@ export function GitHubMark({
 }
 
 /**
- * The comet. Decorative by default (`aria-hidden`) because every place it
- * appears is beside the name in text; pass a `label` where it stands alone.
+ * The asterisk on its own. Decorative by default (`aria-hidden`) because every
+ * place it appears is beside the name in text; pass a `label` where it stands
+ * alone.
+ *
+ * Square slots only — a favicon, an avatar, a tight piece of chrome. Setting it
+ * beside the wordmark would put two asterisks on one line, since the word
+ * already carries one.
  */
 export function Mark({
   className,
@@ -85,41 +103,34 @@ export function Mark({
     : { "aria-hidden": true };
   return (
     <svg viewBox={MARK_VIEW_BOX} className={className} {...a11y}>
-      {TRAIL_RECTS.map((r) => (
-        <rect key={r.y} {...r} fill={`var(--stella-mark-shape, ${BRAND})`} />
-      ))}
-      <path d={STAR_PATH} fill={`var(--stella-mark-shape, ${BRAND})`} />
+      <g transform={MARK_TRANSFORM}>
+        <path d={MARK_PATH} fill={`var(--stella-mark-shape, ${BRAND})`} />
+      </g>
     </svg>
   );
 }
 
 /**
- * The name — "stella" outlined (no font needed), letters in `currentColor`,
- * the closing sparkle in gold. `sparkle={false}` drops the star for runs
- * where it would double up with an adjacent comet.
+ * THE stella logo — `stella*`, letters in `currentColor`, the asterisk in gold.
+ *
+ * This is the lockup; there is no other. The asterisk is not optional, which is
+ * why the old `sparkle` prop is gone: it existed so the star would not double
+ * up beside the retired comet, and without it the word carries no mark at all.
  */
-export function Wordmark({
-  className,
-  sparkle = true,
-}: {
-  className?: string;
-  sparkle?: boolean;
-}) {
+export function Wordmark({ className }: { className?: string }) {
   return (
     <svg
-      viewBox={sparkle ? WORDMARK_VIEW_BOX : "0 0 228 96"}
+      viewBox={WORDMARK_VIEW_BOX}
       fill="currentColor"
       className={className}
       role="img"
       aria-label="stella"
     >
       <path d={WORDMARK_LETTERS_PATH} />
-      {sparkle ? (
-        <path
-          d={WORDMARK_SPARKLE_PATH}
-          fill={`var(--stella-mark-shape, ${BRAND})`}
-        />
-      ) : null}
+      <path
+        d={WORDMARK_SPARKLE_PATH}
+        fill={`var(--stella-mark-shape, ${BRAND})`}
+      />
     </svg>
   );
 }

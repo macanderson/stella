@@ -1,5 +1,5 @@
 import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
-import { GitHubMark, Mark, Wordmark } from "@/components/brand";
+import { GitHubMark, Wordmark } from "@/components/brand";
 import { REPO_URL, SPONSOR_URL } from "@/lib/site";
 
 /**
@@ -37,10 +37,13 @@ export function baseOptions({
 }: { docsLink?: boolean } = {}): BaseLayoutProps {
   return {
     nav: {
+      // The wordmark alone. `stella*` already carries the asterisk, so the mark
+      // is not set beside it — two asterisks on one line is what the retired
+      // `sparkle={false}` escape hatch existed to avoid, and the house system
+      // removes the need for it by having one mark rather than two.
       title: (
         <span className="inline-flex items-center gap-2.5">
-          <Mark className="h-7 w-auto" />
-          <Wordmark className="h-6 w-auto text-fd-foreground" sparkle={false} />
+          <Wordmark className="h-6 w-auto text-fd-foreground" />
           <span className="text-sm text-fd-muted-foreground">docs</span>
         </span>
       ),

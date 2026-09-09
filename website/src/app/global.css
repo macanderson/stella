@@ -35,16 +35,21 @@
 /* Let Tailwind see Fumadocs' compiled utility classes. */
 @source "../../node_modules/fumadocs-ui/dist/**/*.js";
 
-/* JetBrains Mono (loaded by src/app/layout.tsx from the kit's own woff2s) is
- * both faces. 800 display, 700 headings, 500 UI, 400 body & code. */
+/* Two faces, loaded by src/app/layout.tsx. Space Grotesk is the house brand
+ * face and carries everything a person reads — 700 display, 600 headings,
+ * 500 UI, 400 body. JetBrains Mono carries code and terminal transcripts only,
+ * where column alignment is load-bearing; the house rule is that Space Grotesk
+ * is not a code face. Until the house system these were one family. */
 @theme {
-  --font-sans: var(--font-stella-mono), ui-monospace, "SF Mono", Menlo,
-    Consolas, "Liberation Mono", monospace;
+  --font-sans: var(--font-stella-sans), "Helvetica Neue", Arial, sans-serif;
   --font-mono: var(--font-stella-mono), ui-monospace, "SF Mono", Menlo,
     Consolas, "Liberation Mono", monospace;
 
-  /* The kit's type scale. 14px is the terminal-native default; mono runs wide,
-   * so everything is one notch smaller than a sans site would set. */
+  /* The kit's type scale, unchanged. It was cut one notch small because mono
+   * runs wide; Space Grotesk does not, so the scale now reads a little tighter
+   * than it did rather than a little cramped. Left as it is deliberately — the
+   * numbers are the kit's, and re-cutting a type scale is a separate decision
+   * from changing the face. */
   --stella-type-2xs: 0.6875rem; /* 11px — meta, badges */
   --stella-type-xs: 0.75rem; /* 12px — captions, overlines */
   --stella-type-sm: 0.8125rem; /* 13px — secondary UI, card body */
@@ -1013,218 +1018,40 @@ article .deck-shot {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
- * Animated lockup — the kit's typing lockup, played once.
+ * Animated lockup — the house motion.
  *
- * Timeline, percentages, and easings are copied from
- * docs/brand/brand-guidelines.html § motion (the 3.6s variant) — assemble,
- * don't spin. The kit loops it; here every track runs once and holds its
- * 100% state (`forwards`), which is each element's resting state, so the
- * lockup finishes assembled and stays. The cursor's resting state is
- * hidden — with animation off (reduced motion) it must be hidden explicitly,
- * because its base style is visible.
+ * The kit's shimmer: a skewed band of gold-bright swept once across the
+ * letters, clipped to them. Every number driving it — the travel, the period,
+ * the easing, the hold — comes from the kit's own
+ * spinners/stella-spinner-wordmark.svg via SWEEP in
+ * `src/components/brand-marks.generated.ts`, and the component sets them as
+ * custom properties here, so re-running the brand sync re-times this without
+ * anyone editing a stylesheet.
+ *
+ * It replaces the comet's typing lockup: trails arriving, a star popping, six
+ * letters typing on behind a gold cursor. All of that was choreography for a
+ * mark the house system retired. The kit loops its shimmer; here it runs once
+ * and rests, because a landing page is read, not watched.
  * ═════════════════════════════════════════════════════════════════════════ */
 
-.lp-lk-t0 {
-  animation: lp-lk-t0 3.6s linear 1 forwards;
+.lp-lk-sweep {
+  animation: lp-lk-sweep var(--lk-duration) var(--lk-easing) 1 forwards;
 }
-@keyframes lp-lk-t0 {
-  0%,
-  4.5% {
-    opacity: 0;
-    transform: translateX(-14px);
-    animation-timing-function: var(--stella-ease-arrive);
+@keyframes lp-lk-sweep {
+  0% {
+    transform: skewX(var(--lk-skew)) translateX(0);
   }
-  11.5%,
-  100% {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-.lp-lk-t1 {
-  animation: lp-lk-t1 3.6s linear 1 forwards;
-}
-@keyframes lp-lk-t1 {
-  0%,
-  1% {
-    opacity: 0;
-    transform: translateX(-14px);
-    animation-timing-function: var(--stella-ease-arrive);
-  }
-  8%,
-  100% {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-.lp-lk-t2 {
-  animation: lp-lk-t2 3.6s linear 1 forwards;
-}
-@keyframes lp-lk-t2 {
-  0%,
-  8% {
-    opacity: 0;
-    transform: translateX(-14px);
-    animation-timing-function: var(--stella-ease-arrive);
-  }
-  15%,
-  100% {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
+  /* The kit finishes the travel partway through the period and rests for what
+     is left, which is what makes a looping shimmer read as a pulse rather than
+     a scroll. Held here so the once-through version keeps the same feel.
 
-.lp-lk-star {
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: lp-lk-star 3.6s linear 1 forwards;
-}
-@keyframes lp-lk-star {
-  0%,
-  16% {
-    opacity: 0;
-    transform: scale(0);
-    animation-timing-function: var(--stella-ease-pop);
-  }
-  26%,
+     55% is the one number on this side that cannot be a custom property — a
+     keyframe SELECTOR is not a place var() resolves. It is the kit's
+     SWEEP.holdPct, and `animated-lockup.tsx` fails to compile if the kit ever
+     moves it, which is the closest thing to a var() this position allows. */
+  55%,
   100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-/* The letters type on; steps(1,end) snaps each one in with no fade. */
-.lp-lk-l0 {
-  animation: lp-lk-l0 3.6s steps(1, end) 1 forwards;
-}
-@keyframes lp-lk-l0 {
-  0% {
-    opacity: 0;
-  }
-  28%,
-  100% {
-    opacity: 1;
-  }
-}
-.lp-lk-l1 {
-  animation: lp-lk-l1 3.6s steps(1, end) 1 forwards;
-}
-@keyframes lp-lk-l1 {
-  0% {
-    opacity: 0;
-  }
-  33%,
-  100% {
-    opacity: 1;
-  }
-}
-.lp-lk-l2 {
-  animation: lp-lk-l2 3.6s steps(1, end) 1 forwards;
-}
-@keyframes lp-lk-l2 {
-  0% {
-    opacity: 0;
-  }
-  38%,
-  100% {
-    opacity: 1;
-  }
-}
-.lp-lk-l3 {
-  animation: lp-lk-l3 3.6s steps(1, end) 1 forwards;
-}
-@keyframes lp-lk-l3 {
-  0% {
-    opacity: 0;
-  }
-  43%,
-  100% {
-    opacity: 1;
-  }
-}
-.lp-lk-l4 {
-  animation: lp-lk-l4 3.6s steps(1, end) 1 forwards;
-}
-@keyframes lp-lk-l4 {
-  0% {
-    opacity: 0;
-  }
-  48%,
-  100% {
-    opacity: 1;
-  }
-}
-.lp-lk-l5 {
-  animation: lp-lk-l5 3.6s steps(1, end) 1 forwards;
-}
-@keyframes lp-lk-l5 {
-  0% {
-    opacity: 0;
-  }
-  53%,
-  100% {
-    opacity: 1;
-  }
-}
-
-/* The cursor advances a letter-width per typed letter, blinks, and rests
- * hidden. */
-.lp-lk-cur {
-  animation: lp-lk-cur 3.6s steps(1, end) 1 forwards;
-}
-@keyframes lp-lk-cur {
-  0%,
-  24% {
-    opacity: 0;
-    transform: translateX(0);
-  }
-  28% {
-    opacity: 1;
-    transform: translateX(0);
-  }
-  33% {
-    transform: translateX(36px);
-  }
-  38% {
-    transform: translateX(72px);
-  }
-  43% {
-    transform: translateX(108px);
-  }
-  48% {
-    transform: translateX(144px);
-  }
-  53% {
-    transform: translateX(180px);
-  }
-  58% {
-    opacity: 0;
-    transform: translateX(216px);
-  }
-  62.5% {
-    opacity: 1;
-  }
-  67% {
-    opacity: 0;
-  }
-  71.5% {
-    opacity: 1;
-  }
-  76% {
-    opacity: 0;
-  }
-  80.5% {
-    opacity: 1;
-  }
-  85% {
-    opacity: 0;
-  }
-  89.5% {
-    opacity: 1;
-  }
-  90%,
-  100% {
-    opacity: 0;
-    transform: translateX(216px);
+    transform: skewX(var(--lk-skew)) translateX(var(--lk-travel));
   }
 }
 
@@ -1233,7 +1060,9 @@ article .deck-shot {
   [class*=" lp-lk-"] {
     animation: none;
   }
-  .lp-lk-cur {
+  /* The kit's own reduced-motion rule: the shimmer is decoration over a mark
+     that is already legible, so it is removed rather than frozen mid-sweep. */
+  .lp-lk-sweep {
     opacity: 0;
   }
 }

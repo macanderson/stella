@@ -108,8 +108,8 @@
    *  - The **mark** — the wordmark, the logomark, the favicon, the PWA
    *    icons — takes the kit ramp above. Those are cut assets: thirteen SVGs,
    *    eight PWA icons and a favicon.ico, byte-parity-checked against
-   *    docs/brand/ by brand_parity, rebuilt by docs/brand/build_marks.py and
-   *    mirrored here by scripts/mirror-brand-icons.py. Repointing a CSS
+   *    docs/brand/ by brand_parity, rebuilt by the house kit and
+   *    mirrored here by scripts/sync-brand-assets.mjs. Repointing a CSS
    *    variable cannot recolour a PNG, which is why the mark moves as its own
    *    step rather than with this file.
    *

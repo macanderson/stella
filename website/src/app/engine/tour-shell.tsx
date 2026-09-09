@@ -137,7 +137,7 @@ export function TourShell({ children }: { children: ReactNode }) {
       <header className="eng-hud-top">
         <Link href="/" className="eng-hud-lockup" aria-label="stella home">
           <Mark className="eng-hud-mark" />
-          <Wordmark className="eng-hud-wordmark" sparkle={false} />
+          <Wordmark className="eng-hud-wordmark" />
           <span className="eng-hud-qualifier">engine tour</span>
         </Link>
         <nav aria-label="Leave the tour" className="eng-hud-exit">

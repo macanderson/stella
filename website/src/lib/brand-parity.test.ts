@@ -96,9 +96,8 @@ function icoImage(ico: Buffer, i: number): Buffer {
  * equal.
  *
  * Minimal — 8-bit, non-interlaced, colour type 2 or 6, which is
- * every PNG `docs/brand/` produces (see cometkit.py: "PNG needs only zlib and
- * four chunk headers, no imaging library"). Anything else throws rather than
- * being silently accepted, because a guard that quietly skips is the failure
+ * every PNG the house kit and this repo's rasteriser produce. Anything else
+ * throws rather than being silently accepted, because a guard that quietly skips is the failure
  * this whole file exists to prevent. No dependency: `node:zlib` is built in,
  * and adding an image library to run one assertion is not worth it.
  */
@@ -354,12 +353,13 @@ test("no retired brand value survives anywhere in the site", () => {
     "255 176 0",
     "255,176,0",
     "255, 176, 0",
-    // v2.0 — the WARM page the bronze gold used to sit on. The gold itself is
-    // live again under v4.0 and is absent from this block; what
-    // v3.0 actually retired, and v4.0 did not restore, was the warm ink, the
-    // warm papers and the warm neutral ramp.
-    "#10100f",
-    "#f2eee5",
+    // v2.0 — the WARM page the bronze gold used to sit on.
+    //
+    // Two of its values LEFT this list at v6.0, on the rule stated at the top:
+    // #10100f and #f2eee5 are the house system's ink and its off-white, so
+    // they are live again on every surface. That is the second time this has
+    // happened to them and it is the same mechanism both times — a warm kit
+    // returning — which is why the rule is a rule rather than a one-off.
     "#f5f0e6",
     "#a19a8e",
     "#6f675b",
@@ -384,6 +384,24 @@ test("no retired brand value survives anywhere in the site", () => {
     "0,209,249",
     "0, 209, 249",
     "--stella-gold",
+    // v5.0 — "black and gold", superseded by the Oxagen house system at v6.0.
+    //
+    // Its gold was the second in a row to be rejected for the same reason the
+    // house gold answers: v4.0's bronze read brown, and v5.0 over-corrected
+    // into a lemon that Oxagen never carried, so the two brands sat on two
+    // metals. The anchors and both derived stops are listed because a
+    // half-applied recolour is what this whole block exists to catch, and
+    // #3968 is the precedent — the site sat a whole version behind the kit.
+    "#efc53f",
+    "#f7d96b",
+    "#725a00",
+    "#0a0a0c",
+    // The channel triples, both spellings. The OG card's washes are written
+    // out by hand for Satori, which has no cascade, so a hex sweep cannot see
+    // them — the lesson the v1.0 entry above records, applied ahead of time.
+    "239 197 63",
+    "239,197,63",
+    "239, 197, 63",
   ];
 
   const offenders: string[] = [];
@@ -420,12 +438,24 @@ test("no retired brand value survives anywhere in the site", () => {
   assert.deepEqual(offenders, [], offenders.join("\n"));
 });
 
+/**
+ * `stella-favicon.svg` is the one mark that does not land in `public/brand/`:
+ * Next takes the tab icon from `src/app/icon.svg` by file convention, so it is
+ * asserted on its own below. The spinner is not a logo and lives beside them
+ * rather than in `logo/svg/`. Everything else is a straight copy.
+ */
+const FAVICON_SVG = "stella-favicon.svg";
+
 test("the site's logo SVGs are byte-identical to the kit's", () => {
   const kitDir = join(KIT, "logo", "svg");
   const siteDir = join(SITE, "..", "public", "brand");
 
-  const expected = readdirSync(kitDir).filter((f) => f.endsWith(".svg")).sort();
-  const actual = readdirSync(siteDir).filter((f) => f.endsWith(".svg")).sort();
+  const expected = readdirSync(kitDir)
+    .filter((f) => f.endsWith(".svg") && f !== FAVICON_SVG)
+    .sort();
+  const actual = readdirSync(siteDir)
+    .filter((f) => f.endsWith(".svg") && !f.includes("spinner"))
+    .sort();
   assert.deepEqual(
     actual,
     expected,
@@ -442,18 +472,45 @@ test("the site's logo SVGs are byte-identical to the kit's", () => {
   }
 });
 
-test("the app icon is the kit's logomark", () => {
+test("the app icon is the kit's favicon mark", () => {
   assert.equal(
     read(join(SITE, "app", "icon.svg")),
-    read(join(KIT, "logo", "svg", "logomark-color.svg")),
-    "src/app/icon.svg must be docs/brand/logo/svg/logomark-color.svg",
+    read(join(KIT, "logo", "svg", FAVICON_SVG)),
+    `src/app/icon.svg must be docs/brand/logo/svg/${FAVICON_SVG}`,
   );
+});
+
+test("the animated lockup's motion is the kit's spinner", () => {
+  // The shimmer on the landing page and the shimmer in the kit's own spinner
+  // are one animation, which is only true while the numbers come from the
+  // file. `SWEEP` is generated from it; this is the assertion that the file
+  // the generator read is the one the site ships.
+  const spinner = read(join(KIT, "spinners", "stella-spinner-wordmark.svg"));
+  const generated = read(join(SITE, "components", "brand-marks.generated.ts"));
+  for (const [label, key, pattern] of [
+    ["duration", "durationSec", /animation:sweep-[^ ]+ ([\d.]+)s/],
+    ["travel", "travelPx", /translateX\(([\d.]+)px\)/],
+  ] as const) {
+    const stated = spinner.match(pattern)?.[1];
+    assert.ok(stated, `the kit's spinner states its ${label}`);
+    const mirrored = generated.match(new RegExp(`${key}: ([\\d.]+)`))?.[1];
+    assert.ok(mirrored, `SWEEP declares ${key}`);
+    // Numeric, not textual: the generator writes these through `Number`, so
+    // the kit's "137.90" is mirrored as `137.9`. Same value, and comparing the
+    // spellings would fail on a trailing zero.
+    assert.equal(
+      Number(mirrored),
+      Number(stated),
+      `SWEEP has drifted from the kit's ${label} (${stated}) — run ` +
+        `\`node scripts/sync-brand-assets.mjs\``,
+    );
+  }
 });
 
 test("the PWA icons are byte-identical to the kit's", () => {
   // The site renames the kit's two maskables; every other file keeps its name.
-  // `docs/brand/sync_site.py` performs this exact mapping; this table is the
-  // check on its work.
+  // `scripts/sync-brand-assets.mjs` performs this exact mapping; this table is
+  // the check on its work.
   const PAIRS: Array<[site: string, kit: string]> = [
     ["favicon-16.png", "favicon-16.png"],
     ["favicon-32.png", "favicon-32.png"],
@@ -471,7 +528,7 @@ test("the PWA icons are byte-identical to the kit's", () => {
     assert.ok(
       mine.equals(theirs),
       `public/icons/${siteName} has drifted from docs/brand/pwa/${kitName} — ` +
-        `run \`make brand-sync\` when the kit regenerates`,
+        `run \`node scripts/sync-brand-assets.mjs\` when the kit regenerates`,
     );
   }
 });
@@ -536,7 +593,7 @@ test("favicon.ico carries the kit's art in an RGBA encoding", () => {
     assert.ok(
       mine.pixels.equals(theirs.pixels),
       `favicon.ico entry ${i} (${mine.width}×${mine.height}) does not carry ` +
-        `the kit's art — re-run docs/brand/build_marks.py, then ` +
+        `the kit's art — re-run \`node scripts/sync-brand-assets.mjs\`, ` +
         `\`make brand-sync\` (the RGBA re-encode lives in the sync)`,
     );
   }
