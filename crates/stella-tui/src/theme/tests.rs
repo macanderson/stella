@@ -593,7 +593,7 @@ fn every_stated_hue_angle_matches_the_computation() {
 /// longer required for telling a warning from the mark.
 ///
 /// What must hold now:
-///   1. The accent is `#EFC53F`, exactly; the canvas is `#0A0A0C`, exactly.
+///   1. The accent is `#D6962C`, exactly; the canvas is `#10100F`, exactly.
 ///      Brand and gold are one family (the collapse IS the identity).
 ///   2. Every retired hue is gone — the electric-blue family, every gold
 ///      this palette replaced, and the whole warm neutral ramp with them.
@@ -669,7 +669,7 @@ fn palette_law_gold_is_the_brand() {
     const RETIRED_WARM_SURFACE: Color = Color::Rgb(0x13, 0x13, 0x15);
     const RETIRED_WARM_RAISED: Color = Color::Rgb(0x1B, 0x1B, 0x1E);
     const RETIRED_WARM_HAIRLINE: Color = Color::Rgb(0x23, 0x23, 0x27);
-    const RETIRED_WARM_TEXT: Color = Color::Rgb(0xF4, 0xF1, 0xEA);
+    const RETIRED_WARM_TEXT: Color = Color::Rgb(0xF2, 0xEE, 0xE5);
     const RETIRED_WARM_TEXT_2: Color = Color::Rgb(0x9B, 0x98, 0x90);
     const RETIRED_WARM_TEXT_3: Color = Color::Rgb(0x8D, 0x8A, 0x82);
     const RETIRED_WARM_PAPER: Color = Color::Rgb(0xF6, 0xF2, 0xE9);
@@ -682,16 +682,16 @@ fn palette_law_gold_is_the_brand() {
 
     // 1. The accent is the gold and the ground is the canvas — pinned by
     //    hex so the identity cannot silently drift. This is the one clause
-    //    that names numbers: `#EFC53F` on `#0A0A0C`.
+    //    that names numbers: `#D6962C` on `#10100F`.
     assert_eq!(
         ACCENT,
-        Color::Rgb(0xEF, 0xC5, 0x3F),
-        "the accent must be gold #EFC53F, exactly"
+        Color::Rgb(0xD6, 0x96, 0x2C),
+        "the accent must be gold #D6962C, exactly"
     );
     assert_eq!(
         GROUND,
-        Color::Rgb(0x0A, 0x0A, 0x0C),
-        "the ground must be the canvas #0A0A0C, exactly"
+        Color::Rgb(0x10, 0x10, 0x0F),
+        "the ground must be the canvas #10100F, exactly"
     );
     assert_eq!(ACCENT, palette::BRAND, "the accent comes from the palette");
     assert_eq!(GOLD, ACCENT, "brand and gold are one value");

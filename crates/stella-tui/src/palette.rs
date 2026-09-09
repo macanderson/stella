@@ -34,7 +34,7 @@
 //!   `BRAND_INK_DEEP`, `GOLD_INK`), and the three status inks (`SUCCESS_INK`,
 //!   `WARNING_INK`, `DANGER_INK`). The JSON's `web-light` stops disagree with
 //!   these: its `paper` is pure white where the deck paints `#F4F4F6`, and
-//!   its `ink` is `#141413` where this file means the dark ground.
+//!   its `ink` is `#10100F` where this file means the dark ground.
 //!   Reconciling them is a design call about what the paper theme *is*, not
 //!   a remap. The three status inks wait on that same call.
 //! - **`VOID` and `HAIRLINE_STRONG`,** derived steps either side of the
@@ -50,9 +50,9 @@
 //! finishing it.
 //!
 //! The identity is **Gold on a cool near-black**: one colour, owned. Gold
-//! `#EFC53F` is the signal -- the mark, the prompt, active/selected, focus --
+//! `#D6962C` is the signal -- the mark, the prompt, active/selected, focus --
 //! and never the surface; the ground is a four-step neutral ramp from
-//! `#0A0A0C`, and text is a cool neutral ramp above it.
+//! `#10100F`, and text is a cool neutral ramp above it.
 //!
 //! **Every ground is neutral with blue one or two points above red.** That is
 //! the whole reason the ramp is specified by hex rather than derived: a
@@ -116,9 +116,9 @@ use stella_tui_theme::token;
 /// The four specified blacks start at [`GROUND`]; this is the derived fifth,
 /// and exists because a full-bleed backdrop behind a canvas needs somewhere
 /// to be.
-pub const VOID: Color = Color::Rgb(0x05, 0x05, 0x07);
+pub const VOID: Color = Color::Rgb(0x0A, 0x0A, 0x09);
 
-/// App background -- the canvas `#0A0A0C`, painted as a real frame fill by
+/// App background -- the canvas `#10100F`, painted as a real frame fill by
 /// the deck, so every contrast figure below is measured against it.
 pub const GROUND: Color = token::BG;
 
@@ -147,12 +147,12 @@ pub const HAIRLINE_STRONG: Color = Color::Rgb(0x35, 0x35, 0x3D);
 // is the signal, never the surface. A gold fill always carries GROUND-dark
 // text; white on this gold is 1.35:1 and illegible.
 
-/// Gold `#EFC53F` -- the mark. 11.99:1 on ground, 11.60:1 on surface,
+/// Gold `#D6962C` -- the mark. 11.99:1 on ground, 11.60:1 on surface,
 /// 10.83:1 on raised, so the same value is safe on a glyph, a one-cell rule
 /// and a fill on every dark ground. OKLCH hue 90.8.
 pub const BRAND: Color = token::GOLD;
 
-/// The live stop `#F7D96B` -- **reserved for small things that are moving**:
+/// The live stop `#F1C364` -- **reserved for small things that are moving**:
 /// the running spinner, the progress fill's leading edge. 14.22:1 on ground,
 /// 3.5 deg from [`BRAND`] in hue, so it reads as the same gold lit up rather
 /// than as a second colour. Never a resting mark: chrome that is not moving
@@ -162,13 +162,13 @@ pub const BRAND_LIVE: Color = token::GOLD_BRIGHT;
 // -- Brand (light: gold on paper) --------------------------------
 //
 // The `stella-light` primary. Gold cannot hold a text edge on paper at full
-// strength -- `#EFC53F` measures 1.32:1 on [`PAPER`] -- so the light accent
+// strength -- `#D6962C` measures 1.32:1 on [`PAPER`] -- so the light accent
 // walks the same hue down until it clears AA. Applied by the per-frame theme
 // remap in [`crate::theme`], truecolor only.
 
 /// The light-theme brand hue -- OKLCH hue 90.6 (0.1 deg from [`BRAND`]),
 /// 6.02:1 on [`PAPER`], 5.31:1 on [`PAPER_RAISED`]. Gold *text* on paper.
-pub const BRAND_INK: Color = Color::Rgb(0x72, 0x5A, 0x00);
+pub const BRAND_INK: Color = Color::Rgb(0x8B, 0x5E, 0x1A);
 
 /// Pressed stop / trailing progress stop on paper -- 9.60:1 on [`PAPER`],
 /// so even the fill's tail clears AA.
@@ -269,10 +269,10 @@ pub const DANGER: Color = token::RED;
 pub const SUCCESS_INK: Color = Color::Rgb(0x00, 0x69, 0x33);
 
 /// Warning on a light ground -- 6.85:1 on [`PAPER`].
-pub const WARNING_INK: Color = Color::Rgb(0x8A, 0x3F, 0x00);
+pub const WARNING_INK: Color = Color::Rgb(0x8D, 0x3B, 0x19);
 
 /// Error on a light ground -- 7.41:1 on [`PAPER`].
-pub const DANGER_INK: Color = Color::Rgb(0x96, 0x21, 0x3C);
+pub const DANGER_INK: Color = Color::Rgb(0x95, 0x21, 0x41);
 
 // -- Ground (light) ----------------------------------------------
 //

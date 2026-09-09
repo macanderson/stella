@@ -27,41 +27,44 @@ fn gold_is_gold_and_not_orange() {
     assert!(
         clamp::is_resting_gold(r, g, b),
         "gold #{r:02X}{g:02X}{b:02X} fails SPEC 3.2: needs r > g > b, \
-         g >= 0.78r (>= {}), b <= 0.35r (<= {})",
+         g >= {}% of r (>= {}), b <= {}% of r (<= {})",
+        clamp::GOLD_GREEN_PCT,
         clamp::GOLD_GREEN_PCT * u32::from(r) / 100,
+        clamp::GOLD_BLUE_PCT,
         clamp::GOLD_BLUE_PCT * u32::from(r) / 100,
     );
 }
 
+/// Every neutral in the system, ink to paper, under one predicate.
+///
+/// This test used to be three — a blue-tipped dark ramp, two cool silvers, and
+/// a warm paper ramp — because v5.0 had three neutral families. The house
+/// system has one, so the three collapse here. The direction reversed with it:
+/// v5.0's neutrals were neutral-or-cool, and these are neutral-or-warm.
 #[test]
-fn every_gray_token_is_neutral_or_blue_tipped() {
+fn every_neutral_token_is_warm_or_neutral() {
+    let mut seen = 0;
     for &(name, color, clamp) in token::ALL {
-        if clamp != Clamp::NeutralGray {
+        if clamp != Clamp::WarmNeutral {
             continue;
         }
+        seen += 1;
         let (r, g, b) = rgb(name, color);
         assert!(
-            clamp::is_neutral_gray(r, g, b),
-            "gray token `{name}` #{r:02X}{g:02X}{b:02X} fails SPEC 3.2: \
-             needs r == g and b >= g. A gray one point warm is what makes \
-             black-and-gold read as sepia."
+            clamp::is_warm_neutral(r, g, b),
+            "neutral token `{name}` #{r:02X}{g:02X}{b:02X} is outside the \
+             house ramp: needs r >= g >= b, g >= {}% of r and b >= {}% of r. \
+             Below the floors a grey reads as sepia and the gold stops \
+             reading as a separate colour.",
+            clamp::NEUTRAL_GREEN_PCT,
+            clamp::NEUTRAL_BLUE_PCT,
         );
     }
-}
-
-#[test]
-fn both_silvers_stay_cool() {
-    for &(name, color, clamp) in token::ALL {
-        if clamp != Clamp::CoolSilver {
-            continue;
-        }
-        let (r, g, b) = rgb(name, color);
-        assert!(
-            clamp::is_cool_silver(r, g, b),
-            "silver token `{name}` #{r:02X}{g:02X}{b:02X} has drifted warm: \
-             needs b > r and g >= r"
-        );
-    }
+    assert!(
+        seen > 0,
+        "no token carries Clamp::WarmNeutral — the neutral ramp has lost its \
+         clamp, which is how a palette drifts without anything going red"
+    );
 }
 
 /// The clamp is only worth having if it rejects the thing it was written
@@ -69,8 +72,8 @@ fn both_silvers_stay_cool() {
 /// behaviour so a future "simplification" of the predicate is caught.
 #[test]
 fn the_clamp_rejects_what_it_was_written_against() {
-    // Orange: r > g > b holds and blue is low, but green sits under 0.78r.
-    // This is the drift that reads brown on a cheap panel.
+    // Orange: r > g > b holds and blue is low, but green sits under the green
+    // ratio. This is the drift that reads brown on a cheap panel.
     assert!(
         !clamp::is_resting_gold(0xEF, 0x8A, 0x1F),
         "an orange must not pass as gold"
@@ -80,23 +83,73 @@ fn the_clamp_rejects_what_it_was_written_against() {
         !clamp::is_resting_gold(0xEF, 0xC5, 0xA0),
         "a cream must not pass as gold"
     );
-    // Warm gray: one point of red over green is the whole failure mode.
+    // A COOL gray. The direction the neutral clamp forbids reversed with the
+    // house system: v5.0 rejected warm greys, and this rejects cool ones,
+    // because the ramp it guards is warm end to end.
     assert!(
-        !clamp::is_neutral_gray(0x78, 0x77, 0x82),
-        "a warm gray must not pass as neutral"
+        !clamp::is_warm_neutral(0x77, 0x78, 0x7F),
+        "a cool gray must not pass as a house neutral"
     );
-    // A warm gray that is *also* blue-tipped is still warm.
+    // A blue-tipped near-black — the SHAPE of the ground this system
+    // supersedes, which is what made the two palettes read as different brands
+    // on facing pages. The retired value itself cannot be written here: it is
+    // on the ban list, and `check-tokens.py` fails on a banned hex wherever it
+    // appears outside the token JSON. A neighbour of the same shape carries the
+    // assertion without smuggling the value back into the tree.
     assert!(
-        !clamp::is_neutral_gray(0x79, 0x77, 0xFF),
-        "red above green is warm however blue the colour is"
+        !clamp::is_warm_neutral(0x0B, 0x0B, 0x0D),
+        "a blue-tipped near-black must not pass as a house neutral"
     );
-    // The repo's own v1 gold (`stella-tui::palette::BRAND`, #FFB81A) is the
-    // concrete warm hex this palette exists to replace: green clears the
-    // ratio, but it is the value the v2 spec cut a new gold away from, and
-    // the neutral clamp rejects the v1 warm text ramp it travelled with.
+    // Sepia: warm in the right direction, but past the floor. This is the
+    // failure the floors exist for — a grey creeping warm one reasonable step
+    // at a time until the gold stops reading as a separate colour.
     assert!(
-        !clamp::is_neutral_gray(0xF4, 0xF1, 0xEA),
-        "the v1 warm-paper text tone must not pass as a v2 neutral"
+        !clamp::is_warm_neutral(0x78, 0x70, 0x6B),
+        "a sepia grey must not pass as a house neutral"
+    );
+}
+
+/// `gold_ink` is not a second authored gold either — it is [`token::GOLD`],
+/// darker, and the mirror of the lift below.
+///
+/// It used to be held by the green ratio alone, which is the wrong instrument:
+/// darkening compresses the channels unevenly, so a shade's `g/r` drifts from
+/// its parent's for reasons that have nothing to do with hue. That is what
+/// dragged the ratio down to fit the darkest token in the palette. Anchored, it
+/// answers the question that matters — is this the same gold, darker?
+#[test]
+fn gold_ink_is_a_shade_of_gold() {
+    let gold = rgb("gold", token::GOLD);
+    // A literal rather than `token::GOLD_INK`, which does not exist: `gold-ink`
+    // is one of the stops the TUI does not paint yet, so it carries no `rust`
+    // name and never enters `ALL`. The value is the JSON's, and the Python
+    // guard walks the real token — this exercises the predicate the Rust side
+    // will hold it to the day it does reach a cell.
+    let shade = (0x8B, 0x5E, 0x1A);
+    assert!(
+        clamp::is_shade_of(shade, gold),
+        "gold-ink #{:02X}{:02X}{:02X} is no longer a shade of gold \
+         #{:02X}{:02X}{:02X}: needs the same hue within {}° and lower \
+         lightness",
+        shade.0,
+        shade.1,
+        shade.2,
+        gold.0,
+        gold.1,
+        gold.2,
+        clamp::SHADE_HUE_TOLERANCE_DEG,
+    );
+    // Same hue, but not darker, is not a shade — it is a second gold.
+    assert!(
+        !clamp::is_shade_of(gold, gold),
+        "a colour is not a shade of itself"
+    );
+    // A dark yellow 9.3° off the gold's hue: darker, gold-shaped, and still not
+    // this gold. That distance is the shape of the retired ink this replaces,
+    // whose own value is on the ban list and so cannot be spelled here.
+    assert!(
+        !clamp::is_shade_of((0x6B, 0x55, 0x08), gold),
+        "a dark yellow at another hue must not pass as a shade of the house gold"
     );
 }
 
@@ -126,11 +179,23 @@ fn gold_bright_is_a_lift_of_gold() {
         clamp::LIFT_HUE_TOLERANCE_DEG,
     );
     // The anchor is the constraint, so it has to be tight enough to reject a
-    // near neighbour. The v1 palette's own gold is 4.3° away and is exactly
-    // the colour this whole crate exists to not become.
+    // near neighbour. The example here changed with the house gold, and the
+    // reason is worth stating so nobody restores the old one: this used to
+    // name the v1 gold #FFB81A, 4.3° from the gold of the day. It sits 3.99°
+    // from the house gold — INSIDE the 4° the repository itself calls
+    // indistinguishable — so asserting a reader can tell them apart would be
+    // asserting something untrue. The examples below sit 8.8° and 6.6° away
+    // and are outside the bound on their own merits.
+    // A brighter yellow 8.8° off the gold's hue — the distance the superseded
+    // gold sits at, which is on the ban list and cannot be written here.
     assert!(
-        !clamp::is_lift_of((0xFF, 0xB8, 0x1A), gold),
-        "the v1 gold #FFB81A must not pass as a lift of the v2 gold"
+        !clamp::is_lift_of((0xF2, 0xCE, 0x55), gold),
+        "a brighter yellow at another hue must not pass as a lift of the house gold"
+    );
+    // And the orange the green ratio was written against, 6.6° away.
+    assert!(
+        !clamp::is_lift_of((0xEF, 0x8A, 0x1F), gold),
+        "an orange must not pass as a lift of the house gold"
     );
     // Same hue, but not lighter, is not a lift — it is a second gold, and this
     // palette authors one.
@@ -189,15 +254,23 @@ fn the_resting_blue_ceiling_is_unsatisfiable_above_this_lightness() {
         witness.1,
     );
 
+    // The geometry above is a property of the ceiling and holds whatever gold
+    // ships. What it USED to prove — that the lift role is unavoidable because
+    // the ceiling is unsatisfiable at gold_bright's lightness — no longer
+    // applies: the house lift sits at 0.6686, just under the line, where the
+    // ceiling is satisfiable in principle. The lift role survives on the
+    // simpler fact below, so this is asserted directly rather than inferred
+    // from a lightness that has stopped implying it.
     let (r, g, b) = rgb("gold_bright", token::GOLD_BRIGHT);
     assert!(
-        clamp::lightness(r, g, b) > CEILING,
-        "gold_bright now sits at or below {CEILING:.4}, where the resting \
-         ceiling IS satisfiable. If it has come down that far, hold it to \
-         `is_resting_gold` like every other gold and delete the lift role."
+        !clamp::is_resting_gold(r, g, b),
+        "gold_bright #{r:02X}{g:02X}{b:02X} now satisfies the RESTING clamp. \
+         If a lift has come down far enough to clear the saturation clause, \
+         hold it to `is_resting_gold` like every other gold and delete the \
+         lift role — an anchor that nothing needs is a bound nobody maintains."
     );
-    // And the resting gold is comfortably below it, which is what makes the
-    // saturation clause meaningful where it does apply.
+    // And the resting gold is comfortably below the line, which is what makes
+    // the saturation clause meaningful where it does apply.
     let (r, g, b) = rgb("gold", token::GOLD);
     assert!(clamp::lightness(r, g, b) < CEILING);
 }

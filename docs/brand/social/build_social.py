@@ -138,7 +138,7 @@ class Theme:
     image in a feed rather than an operable control.
     `tokens.css` is where that reasoning is normative;
     `scripts/check-contrast.py` carries the same pairing on the token
-    system's warm `paper` (#FFFCF5, 1.61:1) and prints the measurement with
+    system's warm `paper` (#FBFAF6, 1.61:1) and prints the measurement with
     the verdict `exempt`, so the number is on the record beside the reason it
     does not fail.
 
@@ -177,7 +177,7 @@ DARK = Theme(
     brand_text=BRAND,
     surface="#0D1319",
     surface_top="#141B22",
-    border="#26262C",
+    border="#292722",
     grid="#FFFFFF",
     grid_op=0.045,
     sweep_dark="#000000",
@@ -193,10 +193,10 @@ LIGHT = Theme(
     fg=INK,
     muted=MUTED_ON_LIGHT,
     brand_text=BRAND_DEEP,
-    surface="#F9F6EF",
+    surface="#F5F2EA",
     surface_top="#E3E8EE",
-    border="#E6E3DD",
-    grid="#0A0A0C",
+    border="#DED5C7",
+    grid="#10100F",
     grid_op=0.05,
     sweep_dark="#B4BCC6",
     sweep_dark_op=0.22,

@@ -26,8 +26,23 @@ use ratatui::style::Color;
 
 /// The green ratio a gold must clear, as a percentage of red.
 ///
-/// The green ratio is the decisive half: below it the hue is orange, and orange on a near-black ground reads brown on cheap panels.
-pub const GOLD_GREEN_PCT: u32 = 78;
+/// The green ratio is the hue clause: below it the hue is orange, and orange
+/// on a near-black ground reads brown on cheap panels. It moved from 78 to
+/// 70 with the house gold, and the honest account of that is that 78 was
+/// never measured -- it was the ratio v5.0's own gold happened to sit at,
+/// written down as a law. #D6962C is at 0.701 and is unmistakably gold, so
+/// 78 was excluding golds, not oranges.
+///
+/// 70 is a floor with an argument behind it: sRGB hue 30 deg is the orange
+/// the clause exists to exclude, and a colour at r > g > b with g = 0.70 r
+/// sits at or above sRGB hue 36 deg, six degrees clear of it. Anything below
+/// 0.70 crosses into that band.
+///
+/// The ratio is also no longer carrying two roles. It used to be the only
+/// thing holding `gold-ink` -- a dark SHADE of the gold, which a hue ratio
+/// polices badly because darkening a colour moves its channel ratios. The
+/// shade is anchored now; see `gold-shade`.
+pub const GOLD_GREEN_PCT: u32 = 70;
 
 /// The blue ceiling a resting gold must stay under, as a percentage of red.
 ///
@@ -38,35 +53,33 @@ pub const GOLD_BLUE_PCT: u32 = 35;
 /// How far a lift's hue may sit from the gold it lifts, in degrees.
 ///
 /// A lift is anchored to the gold it lifts, never held to a second blue
-/// ceiling. An earlier revision of this file carried `lifted-gold` with
-/// blue_pct 44 -- a bound reverse-engineered from the one token it had to
-/// admit, which can say no to nothing in principle. It was answering the
-/// wrong question: in a gold, lightness is (r + b) / 510, so the resting
-/// ceiling 100*b <= 35*r caps lightness at (255 + 89) / 510 = 0.6745 for
-/// ANY colour, and gold_bright sits at 0.6941. Above that line the resting
-/// ceiling is not strict, it is unsatisfiable -- so a lift could never have
-/// been held to it, and a looser ceiling repeats the category error one
-/// notch down.
+/// ceiling. An earlier revision carried `lifted-gold` with blue_pct 44 -- a
+/// bound reverse-engineered from the one token it had to admit, which can say
+/// no to nothing in principle. It was answering the wrong question: in a
+/// gold, lightness is (r + b) / 510, so the resting ceiling 100*b <= 35*r
+/// caps lightness for ANY colour, and a lift sits above that line. There the
+/// ceiling is not strict, it is unsatisfiable.
 ///
-/// So the two clauses are stated where each is coherent. `100*g >= 78*r` is
-/// the HUE rule -- gold versus orange, the argument SPEC 3.2 actually makes
-/// -- and it holds at every lightness, so every gold carries it. The blue
-/// ceiling is the SATURATION rule and governs only the resting gold, which
-/// is not lightened. A lift is then pinned to the anchor: same hue within
-/// hue_tolerance_deg, strictly lighter.
+/// So the two clauses are stated where each is coherent. The green ratio is
+/// the HUE rule -- gold versus orange -- and it holds at every lightness, so
+/// every gold carries it. The blue ceiling is the SATURATION rule and governs
+/// only the resting gold, which is not lightened. A lift is then pinned to
+/// the anchor: same hue within hue_tolerance_deg, strictly lighter.
 ///
-/// An anchor is the stronger constraint, not the looser one. A ceiling
-/// admits every colour beneath it and keeps passing after the gold it was
-/// cut for is gone; an anchor admits only the authored gold, brighter.
-/// Recolour `gold` and leave `gold-bright` behind and the check fails,
-/// naming the hue distance.
+/// An anchor is the stronger constraint, not the looser one. A ceiling admits
+/// every colour beneath it and keeps passing after the gold it was cut for is
+/// gone; an anchor admits only the authored gold, brighter. Recolour `gold`
+/// and leave `gold-bright` behind and the check fails, naming the hue
+/// distance.
 ///
 /// hue_tolerance_deg is derived, not chosen: stella-tui's v1 theme records
-/// that its warning amber sits 4.0 deg from gold 'so an outcome may never
-/// be told from chrome by hue alone'. 4 deg is the distance this repository
+/// that its warning amber sat 4.0 deg from gold 'so an outcome may never be
+/// told from chrome by hue alone'. 4 deg is the distance this repository
 /// already treats as indistinguishable, so a lift -- which must be the SAME
-/// hue -- sits inside it.
-pub const GOLD_LIFT_HUE_TOLERANCE_DEG: f64 = 3.0;
+/// hue -- sits inside it. It was written as 3 while the only lift on file
+/// happened to sit at 2.9; the house pair sits at 3.0, which is what exposed
+/// the number as a measurement of one sample rather than a law.
+pub const GOLD_LIFT_HUE_TOLERANCE_DEG: f64 = 4.0;
 
 /// The name, in [`ALL`], of the token a lift is anchored to.
 ///
@@ -76,57 +89,96 @@ pub const GOLD_LIFT_HUE_TOLERANCE_DEG: f64 = 3.0;
 /// mismatch.
 pub const GOLD_LIFT_ANCHOR: &str = "gold";
 
-/// The green floor warm paper must clear, as a percentage of red.
+/// How far a shade's hue may sit from the gold it darkens, in degrees.
 ///
-/// The light ground's clamp: warm or neutral, never blue. The floors keep paper from becoming tan, and are taken from brand v1.0's own light neutrals, which sit at g = 0.988 r and b = 0.960 r.
-pub const PAPER_GREEN_PCT: u32 = 97;
+/// The mirror of `gold-lift`, and new in v6.0. `gold-ink` is the gold as it
+/// appears where the metal itself is illegible -- as text or a hairline on
+/// paper, where #D6962C is 2.2:1. It is the same hue, darkened.
+///
+/// It used to be held by the resting-gold ratio, which is the wrong
+/// instrument: darkening a colour compresses its channels unevenly, so a
+/// shade's g/r ratio drifts away from its parent's for reasons that have
+/// nothing to do with hue. Holding a shade to a ratio therefore forces the
+/// ratio down until it admits the shade -- and a ratio loosened to fit one
+/// dark token has stopped policing the hue of the bright one.
+///
+/// An anchor asks the question that actually matters: is this the SAME gold,
+/// darker? Recolour `gold` and `gold-ink` fails by name, which the ratio
+/// could never do.
+pub const GOLD_SHADE_HUE_TOLERANCE_DEG: f64 = 4.0;
 
-/// The blue floor warm paper must clear, as a percentage of red.
-pub const PAPER_BLUE_PCT: u32 = 93;
+/// The name, in [`ALL`], of the token a shade is anchored to.
+pub const GOLD_SHADE_ANCHOR: &str = "gold";
+
+/// The green floor every neutral must clear, as a percentage of red.
+///
+/// One neutral clamp for the whole system, replacing v5.0's `neutral-gray`,
+/// `cool-silver` and `warm-paper`. Those were three clamps because v5.0 had
+/// three neutral families: a blue-tipped dark ramp, two silvers that sat off
+/// neutral in the same direction, and a warm paper ramp. The house system has
+/// ONE: every neutral, from #0A0A09 to #FBFAF6, is warm or exactly neutral,
+/// never blue. Three predicates over one family is three places for it to
+/// drift.
+///
+/// `r >= g >= b` is the direction: warm or neutral, never cool. The floors
+/// keep it from becoming tan or sepia, which is the failure mode a
+/// black-and-gold scheme actually has -- the greys creeping warm one
+/// reasonable step at a time until the gold stops reading as a separate
+/// colour. 94 and 82 are the tightest integer floors the house ramp clears,
+/// measured against its two extremes: the hairline on ink (#292722, g/r
+/// 0.951) and the hairline on paper (#D8CDBD, b/r 0.875).
+///
+/// Equality is admitted on both sides because the darkest stops are neutral
+/// to the byte -- #10100F is r == g -- and rounding at that lightness has
+/// nowhere else to land.
+pub const NEUTRAL_GREEN_PCT: u32 = 94;
+
+/// The blue floor every neutral must clear, as a percentage of red.
+pub const NEUTRAL_BLUE_PCT: u32 = 82;
 
 // ── Tokens ─────────────────────────────────────────────────────────
 
-/// Canvas. `#0A0A0C`
-pub const BG: Color = Color::Rgb(0x0A, 0x0A, 0x0C);
+/// Canvas. `#10100F`
+pub const BG: Color = Color::Rgb(0x10, 0x10, 0x0F);
 
-/// Panels, cards, code blocks. `#0F0F12`
-pub const PANEL: Color = Color::Rgb(0x0F, 0x0F, 0x12);
+/// Panels, cards, code blocks. `#181715`
+pub const PANEL: Color = Color::Rgb(0x18, 0x17, 0x15);
 
-/// Selected and hover rows. `#17171B`
-pub const HL: Color = Color::Rgb(0x17, 0x17, 0x1B);
+/// Selected and hover rows. `#201F1C`
+pub const HL: Color = Color::Rgb(0x20, 0x1F, 0x1C);
 
-/// Hairlines, dividers, unfilled meter track. `#26262C`
-pub const BORDER: Color = Color::Rgb(0x26, 0x26, 0x2C);
+/// Hairlines, dividers, unfilled meter track. `#292722`
+pub const BORDER: Color = Color::Rgb(0x29, 0x27, 0x22);
 
-/// Section rules, turn boundaries. `#2C2C33`
-pub const RULE: Color = Color::Rgb(0x2C, 0x2C, 0x33);
+/// Section rules, turn boundaries. `#34322D`
+pub const RULE: Color = Color::Rgb(0x34, 0x32, 0x2D);
 
-/// The brand metal: actions, active states, money, the mark. `#EFC53F`
-pub const GOLD: Color = Color::Rgb(0xEF, 0xC5, 0x3F);
+/// The brand metal: actions, active states, money, the mark. `#D6962C`
+pub const GOLD: Color = Color::Rgb(0xD6, 0x96, 0x2C);
 
-/// Tiny live indicators only: spinner, hot marker, drift glyph. `#F7D96B`
-pub const GOLD_BRIGHT: Color = Color::Rgb(0xF7, 0xD9, 0x6B);
+/// Tiny live indicators only: spinner, hot marker, drift glyph. `#F1C364`
+pub const GOLD_BRIGHT: Color = Color::Rgb(0xF1, 0xC3, 0x64);
 
-/// Secondary emphasis, incoming context, syntax strings. `#A9AAB5`
-pub const SILVER: Color = Color::Rgb(0xA9, 0xAA, 0xB5);
+/// Secondary emphasis, incoming context, syntax strings. `#9B958A`
+pub const SILVER: Color = Color::Rgb(0x9B, 0x95, 0x8A);
 
-/// Syntax types, tertiary labels. `#BFC1CC`
-pub const SILVER_TYPE: Color = Color::Rgb(0xBF, 0xC1, 0xCC);
+/// Syntax types, tertiary labels. `#DDD8CD`
+pub const SILVER_TYPE: Color = Color::Rgb(0xDD, 0xD8, 0xCD);
 
-/// Primary text on dark, in the deck. `#E8E8EC`
-pub const TEXT: Color = Color::Rgb(0xE8, 0xE8, 0xEC);
+/// Primary text on the dark canvas, in the deck and off it. `#F2EEE5`
+pub const TEXT: Color = Color::Rgb(0xF2, 0xEE, 0xE5);
 
-/// Secondary text. `#7C7C87`
-pub const MUTED: Color = Color::Rgb(0x7C, 0x7C, 0x87);
+/// Secondary text. `#8C877C`
+pub const MUTED: Color = Color::Rgb(0x8C, 0x87, 0x7C);
 
-/// Hints, captions, line numbers. `#5F5F6A`
-pub const DIM: Color = Color::Rgb(0x5F, 0x5F, 0x6A);
+/// Hints, captions, line numbers. `#6E6A62`
+pub const DIM: Color = Color::Rgb(0x6E, 0x6A, 0x62);
 
 /// Pass, additive diff sign. `#74C991`
 pub const GREEN: Color = Color::Rgb(0x74, 0xC9, 0x91);
 
-/// Fail, destructive, removal diff sign. `#E0687A`
-pub const RED: Color = Color::Rgb(0xE0, 0x68, 0x7A);
+/// Fail, destructive, removal diff sign. `#E0687D`
+pub const RED: Color = Color::Rgb(0xE0, 0x68, 0x7D);
 
 /// Added diff row background. `#10201A`
 pub const DIFF_ADD_BG: Color = Color::Rgb(0x10, 0x20, 0x1A);
@@ -134,20 +186,20 @@ pub const DIFF_ADD_BG: Color = Color::Rgb(0x10, 0x20, 0x1A);
 /// Removed diff row background. `#241019`
 pub const DIFF_DEL_BG: Color = Color::Rgb(0x24, 0x10, 0x19);
 
-/// Primary text on light surfaces (web light mode only). `#141413`
-pub const INK: Color = Color::Rgb(0x14, 0x14, 0x13);
+/// Primary text on light surfaces (web light mode only). `#10100F`
+pub const INK: Color = Color::Rgb(0x10, 0x10, 0x0F);
 
-/// The warm light canvas. `#FFFCF5`
-pub const PAPER: Color = Color::Rgb(0xFF, 0xFC, 0xF5);
+/// The warm light canvas. `#FBFAF6`
+pub const PAPER: Color = Color::Rgb(0xFB, 0xFA, 0xF6);
 
-/// Light panel. `#F9F6EF`
-pub const PAPER_PANEL: Color = Color::Rgb(0xF9, 0xF6, 0xEF);
+/// Light panel. `#F5F2EA`
+pub const PAPER_PANEL: Color = Color::Rgb(0xF5, 0xF2, 0xEA);
 
-/// Light border. `#E6E3DD`
-pub const PAPER_BORDER: Color = Color::Rgb(0xE6, 0xE3, 0xDD);
+/// Light border. `#DED5C7`
+pub const PAPER_BORDER: Color = Color::Rgb(0xDE, 0xD5, 0xC7);
 
-/// Warning: the one status the core palette does not name. `#E78D54`
-pub const WARNING: Color = Color::Rgb(0xE7, 0x8D, 0x54);
+/// Warning: the one status the core palette does not name. `#EB8960`
+pub const WARNING: Color = Color::Rgb(0xEB, 0x89, 0x60);
 
 // ── The walkable table ─────────────────────────────────────────────
 
@@ -163,13 +215,15 @@ pub enum Clamp {
     /// [`GOLD_LIFT_HUE_TOLERANCE_DEG`], strictly lighter. Never a second blue
     /// ceiling -- `crate::clamp` carries the argument.
     GoldLift,
-    /// `b > r` and `g >= r` -- the second metal, never warm.
-    CoolSilver,
-    /// `r == g` and `b >= g` -- neutral, or tipped toward blue, never toward red.
-    NeutralGray,
-    /// `r >= g >= b`, `100 g >= PAPER_GREEN_PCT r`, `100 b >= PAPER_BLUE_PCT r`
-    /// -- the light ground, warm or neutral, never blue.
-    WarmPaper,
+    /// Anchored to the resting gold: the same hue within
+    /// [`GOLD_SHADE_HUE_TOLERANCE_DEG`], strictly darker. The mirror of
+    /// [`Clamp::GoldLift`], and the reason the green ratio no longer has to
+    /// police a value that darkening moved off it.
+    GoldShade,
+    /// `r >= g >= b`, `100 g >= NEUTRAL_GREEN_PCT r`,
+    /// `100 b >= NEUTRAL_BLUE_PCT r` -- every neutral in the system, ink to
+    /// paper. Warm or exactly neutral, never cool.
+    WarmNeutral,
     /// Pass and fail. Neither metal nor gray; no channel predicate.
     Verdict,
     /// A tint carrying a sign column, not a hue in a role; no channel predicate.
@@ -178,26 +232,26 @@ pub enum Clamp {
 
 /// Every token, paired with its name and the clamp it must satisfy.
 pub const ALL: &[(&str, Color, Clamp)] = &[
-    ("bg", BG, Clamp::NeutralGray),
-    ("panel", PANEL, Clamp::NeutralGray),
-    ("hl", HL, Clamp::NeutralGray),
-    ("border", BORDER, Clamp::NeutralGray),
-    ("rule", RULE, Clamp::NeutralGray),
+    ("bg", BG, Clamp::WarmNeutral),
+    ("panel", PANEL, Clamp::WarmNeutral),
+    ("hl", HL, Clamp::WarmNeutral),
+    ("border", BORDER, Clamp::WarmNeutral),
+    ("rule", RULE, Clamp::WarmNeutral),
     ("gold", GOLD, Clamp::RestingGold),
     ("gold-bright", GOLD_BRIGHT, Clamp::GoldLift),
-    ("silver", SILVER, Clamp::CoolSilver),
-    ("silver-type", SILVER_TYPE, Clamp::CoolSilver),
-    ("text", TEXT, Clamp::NeutralGray),
-    ("muted", MUTED, Clamp::NeutralGray),
-    ("dim", DIM, Clamp::NeutralGray),
+    ("silver", SILVER, Clamp::WarmNeutral),
+    ("silver-type", SILVER_TYPE, Clamp::WarmNeutral),
+    ("text", TEXT, Clamp::WarmNeutral),
+    ("muted", MUTED, Clamp::WarmNeutral),
+    ("dim", DIM, Clamp::WarmNeutral),
     ("green", GREEN, Clamp::Verdict),
     ("red", RED, Clamp::Verdict),
     ("diff-add-bg", DIFF_ADD_BG, Clamp::Surface),
     ("diff-del-bg", DIFF_DEL_BG, Clamp::Surface),
-    ("ink", INK, Clamp::WarmPaper),
-    ("paper", PAPER, Clamp::WarmPaper),
-    ("paper-panel", PAPER_PANEL, Clamp::WarmPaper),
-    ("paper-border", PAPER_BORDER, Clamp::WarmPaper),
+    ("ink", INK, Clamp::WarmNeutral),
+    ("paper", PAPER, Clamp::WarmNeutral),
+    ("paper-panel", PAPER_PANEL, Clamp::WarmNeutral),
+    ("paper-border", PAPER_BORDER, Clamp::WarmNeutral),
     ("amber", WARNING, Clamp::Verdict),
 ];
 
@@ -211,5 +265,14 @@ pub const ALL: &[(&str, Color, Clamp)] = &[
 pub fn lift_anchor() -> Option<Color> {
     ALL.iter()
         .find(|(name, _, _)| *name == GOLD_LIFT_ANCHOR)
+        .map(|(_, color, _)| *color)
+}
+
+/// The colour [`GOLD_SHADE_ANCHOR`] names, or `None` if [`ALL`] has no
+/// such entry.
+#[must_use]
+pub fn shade_anchor() -> Option<Color> {
+    ALL.iter()
+        .find(|(name, _, _)| *name == GOLD_SHADE_ANCHOR)
         .map(|(_, color, _)| *color)
 }

@@ -21,8 +21,8 @@ import {
  * double up — the kit's own lockup SVG omits it for the same reason.
  *
  * Colours are literals or imported constants rather than CSS vars because
- * Satori resolves no cascade: the canvas #0a0a0c, text #f4f1ea, gold
- * #efc53f (6.4:1 on ink), muted #777782 (6.8:1 on ink). Keep the markup inside Satori's
+ * Satori resolves no cascade: the canvas #10100f, text #f2eee5, gold
+ * #d6962c (6.4:1 on ink), muted #777782 (6.8:1 on ink). Keep the markup inside Satori's
  * supported subset — plain <path>/<rect> fills only, no gradients, masks, or
  * filters (the trails are pre-flattened rounded rects for exactly this
  * reason), and every element with children carries an explicit `display`.
@@ -39,12 +39,12 @@ export const alt =
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
-const INK = "#0a0a0c";
-const PAPER = "#f4f1ea";
+const INK = "#10100f";
+const PAPER = "#f2eee5";
 const MUTED = "#777782";
-const SURFACE = "#0f0f12";
+const SURFACE = "#181715";
 const SURFACE_TOP = "#141b22";
-const BORDER = "#26262c";
+const BORDER = "#292722";
 
 /** The repo this card advertises, and the one command that installs it. */
 const REPO_SLUG = "macanderson/stella";
@@ -246,7 +246,7 @@ export default function OpengraphImage() {
               // The one thing on the card a reader is meant to act on. The
               // wash is the accent at 12%, written out because Satori has no
               // cascade and cannot resolve a custom property.
-              background: "rgba(239,197,63,0.12)",
+              background: "rgba(214,150,44,0.12)",
               color: BRAND,
             }}
           >

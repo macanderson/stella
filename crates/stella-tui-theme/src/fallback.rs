@@ -72,6 +72,12 @@ pub fn detect_truecolor() -> bool {
 #[must_use]
 pub fn ansi16(color: Color) -> Color {
     match color {
+        // `INK` is deliberately absent from this list and from an arm of its
+        // own. Under the house system it IS `BG` — the dark canvas and the ink
+        // on paper are one colour — so it is matched by this arm's first
+        // pattern, and naming it again anywhere is a pattern the compiler can
+        // prove no value reaches. It still degrades to black, which is what
+        // `every_token_has_a_fallback` checks.
         token::BG | token::PANEL | token::DIFF_ADD_BG | token::DIFF_DEL_BG => Color::Black,
         token::HL | token::BORDER | token::RULE => Color::DarkGray,
         token::GOLD | token::GOLD_BRIGHT => Color::LightYellow,
@@ -85,8 +91,8 @@ pub fn ansi16(color: Color) -> Color {
         // theme is active, and at sixteen colours a paper ground *is* white —
         // there is no lighter tier to distinguish panel from canvas, so they
         // collapse together and `paper_border` takes the one gray that is
-        // left. `ink` is a dark ground like `bg` and degrades the same way.
-        token::INK => Color::Black,
+        // left. `ink` is a dark ground like `bg`, degrades the same way, and
+        // now literally is that value — see the first arm.
         token::PAPER | token::PAPER_PANEL => Color::White,
         token::PAPER_BORDER => Color::Gray,
         // Not a palette token — a caller's own colour, or one this crate does

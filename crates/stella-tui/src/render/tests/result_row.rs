@@ -79,8 +79,8 @@ fn rail_metals(entries: &[TranscriptEntry], expanded: bool) -> Vec<Color> {
 ///
 /// It did not. The head rendered through the projection and took its event's gold
 /// ([`source::head_metal`]); the result under it took a fixed muted tone from
-/// `Rail::style`, so an `edit_file` block drew `Rgb(239, 197, 63)` on its first
-/// row and `Rgb(169, 170, 181)` on every row after it — a rail that changed
+/// `Rail::style`, so an `edit_file` block drew `Rgb(214, 150, 44)` on its first
+/// row and `Rgb(155, 149, 138)` on every row after it — a rail that changed
 /// colour one row into the block it exists to hold together. SPEC 6.2 makes the
 /// rail a property of the *event*, and a call and its result are one event.
 ///

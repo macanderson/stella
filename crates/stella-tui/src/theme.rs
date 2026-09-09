@@ -12,7 +12,7 @@ use crate::palette;
 
 // ── stella palette — "Gold on a cool near-black" ────────────────────────────
 //
-// One colour, owned. The ground is a four-step neutral ramp from `#0A0A0C`,
+// One colour, owned. The ground is a four-step neutral ramp from `#10100F`,
 // every step of it blue-above-red so the screen never reads warm on a cheap
 // panel; Gold is the signal — reserved for brand, the prompt, active/running,
 // selection and focus, and for nothing else. Gold is the signal, never the
@@ -83,7 +83,7 @@ pub const TEXT_PRIMARY: Color = palette::TEXT_PRIMARY;
 ///
 /// This tier is `silver`, and it used to answer to a second name — `MUTED`,
 /// with [`text_secondary`] spelled `muted()`. That name was one tier off its
-/// own value: it resolved here, to `stella_tui_theme::token::SILVER` `#A9AAB5`,
+/// own value: it resolved here, to `stella_tui_theme::token::SILVER` `#9B958A`,
 /// while `token::MUTED` is the tier below and the paper theme's secondary ink
 /// `#5E5E69` was a third colour again — three constants, one word, until
 /// #4966 removed this one and #5001 renamed the paper stop to
@@ -175,7 +175,7 @@ pub const ORCHID: Color = palette::DATA_5;
 // Role names remap onto the palette so call sites read as intent (accent,
 // ink, rule) rather than as a hue that a future recolor would falsify.
 
-/// stella's brand accent — Gold `#EFC53F` (11.99:1 on [`GROUND`]). Brand,
+/// stella's brand accent — Gold `#D6962C` (11.99:1 on [`GROUND`]). Brand,
 /// active/running, focus, selection, and progress only. In the transcript,
 /// the tool name and nothing else. The active theme's actual hue is applied
 /// per-frame by [`apply_theme`]; this is the canonical dark value every call
@@ -521,7 +521,7 @@ const FALLBACKS: &[(Color, u8, u8)] = &[
     (TEXT_SECONDARY, 145, 7),
     (TEXT_TERTIARY, 243, 8),
     (TEXT_DIM, 239, 8),
-    // The two golds. `#EFC53F` sits on cube entry 221 (255,215,95) almost
+    // The two golds. `#D6962C` sits on cube entry 221 (255,215,95) almost
     // exactly; the live stop takes 222 (255,215,135) rather than sharing it,
     // because the whole point of that value is being visibly lit. At 16
     // colours both collapse to bright yellow (11): there is no second yellow

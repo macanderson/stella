@@ -19,7 +19,7 @@ So this guard reads **surfaces**. Every light-scheme declaration on the five
 web surfaces and the command deck's paper ramp is classified and judged:
 
   1. A value that IS a kit token is held to **that token's own declared
-     clamp**. `--text: #0A0A0C` on a light page is the dark canvas token being
+     clamp**. `--text: #10100F` on a light page is the dark canvas token being
      reused; whether that is the right value is #4072's question, and it is
      not this guard's. Whether it satisfies the clamp it declares is.
   2. A value that is NOT a token is held to the clamp of the **family its

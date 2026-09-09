@@ -311,7 +311,7 @@ class Rasteriser:
             x = 0
             for fg_hex, bg_hex, mods, text in row:
                 width = len(text)
-                fg = hexrgb(fg_hex, (0xF4, 0xF1, 0xEA))
+                fg = hexrgb(fg_hex, (0xF2, 0xEE, 0xE5))
                 bg = hexrgb(bg_hex, ground)
                 left = x * self.cell_w
                 span = width * self.cell_w

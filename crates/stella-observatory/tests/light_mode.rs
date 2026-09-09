@@ -31,7 +31,7 @@
 //!    accent is now the *text* colour, so "selected" is an inversion of the
 //!    page rather than a hue: the fill takes `--accent` and `--ink` is
 //!    whatever the page's ground is, which necessarily flips with the theme
-//!    (`#0A0A0C` on the dark page, `#FFFFFF` on the paper one).
+//!    (`#10100F` on the dark page, `#FFFFFF` on the paper one).
 //!    Pinning the old literal here would pin the old design, so this now
 //!    asserts the *rule* the literal was standing in for: `--ink` is
 //!    declared in the dark root and re-pointed in both light gates, and the
@@ -115,7 +115,7 @@ fn declarations(block: &str) -> BTreeMap<String, String> {
 /// `--text-3 #828C97`, `--hairline #E7EBF0`, a gold `--identity` — against
 /// the attribute gate's product neutrals, seventeen roles apart. The worst of
 /// them was an *absence*: the media query never re-pointed `--text-emph`, so
-/// an OS-light reader got the dark scheme's `#BFC1CC` on white — 1.68:1 on
+/// an OS-light reader got the dark scheme's `#DDD8CD` on white — 1.68:1 on
 /// `--surface`, which is not a contrast failure so much as invisible ink.
 ///
 /// This asserts the rule `crates/stella-cli/src/export.rs` states for
@@ -189,7 +189,7 @@ fn both_wordmark_cuts_are_served_and_referenced() {
     // older kits conflated, so the value here is `ink` (text on a light ground)
     // and NOT `bg` (the dark canvas). They were one hex before, which is
     // exactly why asserting the wrong one would still have looked plausible.
-    assert!(light_body.contains("#141413"));
+    assert!(light_body.contains("#10100F"));
 
     let page = String::from_utf8(respond(ws.path(), "/").body).unwrap();
     for needle in [
@@ -221,7 +221,7 @@ fn no_selector_recolors_the_page_background_as_text() {
         // would paint dark text on the dark selected fill, which is the same
         // unreadable pair this test was written to catch, arrived at from the
         // other direction.
-        "--ink:#0A0A0C",
+        "--ink:#10100F",
         "--ink:#FFFFFF",
         ".tf button[aria-checked=\"true\"]{color:var(--ink)",
         // Was .ctx-row button.on before the call inspector replaced each

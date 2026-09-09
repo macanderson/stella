@@ -407,7 +407,7 @@ fn every_panel_vocabulary_is_pinned_on_both_sides() {
         round_trip(&ink);
     }
     assert!(
-        serde_json::from_str::<PanelInk>("\"#EFC53F\"").is_err(),
+        serde_json::from_str::<PanelInk>("\"#D6962C\"").is_err(),
         "a panel names a token and never a colour of its own, so the hue clamp \
          holds over plugin pixels too"
     );

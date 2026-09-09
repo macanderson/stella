@@ -69,7 +69,7 @@ import { inflateSync } from "node:zlib";
  * about a copy rather than about a design.
  *
  * The comparison is textual and case-insensitive because the kit writes
- * `#EFC53F` and CSS convention here writes `#efc53f`. That is the one
+ * `#D6962C` and CSS convention here writes `#d6962c`. That is the one
  * difference allowed between the two files.
  */
 
@@ -233,7 +233,7 @@ const MIRRORED_CORE = [
  * One level of `var(--x)` indirection, resolved against the file's own map.
  *
  * The site writes `--stella-brand: var(--st-gold)` where the kit writes
- * `#EFC53F`, and that difference is not drift — it is the site declining to
+ * `#D6962C`, and that difference is not drift — it is the site declining to
  * repeat a value the generated ramp above it already carries. Comparing the
  * raw declarations would fail on it, and "fixing" that by pasting the hex back
  * into the site is precisely the duplication `design/tokens/` exists to end.
@@ -321,7 +321,7 @@ test("no retired brand value survives anywhere in the site", () => {
   //
   // A value leaves this list only when a later version makes it **live
   // again**, which is not hypothetical: v4.0 took the brand hue back to v2.0's
-  // the gold ramp value-for-value, so #efc53f and its stops moved from this
+  // the gold ramp value-for-value, so #d6962c and its stops moved from this
   // list into `tokens.css`. What v4.0 did *not* take back is the warm neutral
   // page those stops used to sit on — v3.0's cool graphite ramp and Obsidian
   // ground are kept — so the warm values stay retired and are what this block
@@ -330,14 +330,14 @@ test("no retired brand value survives anywhere in the site", () => {
   const RETIRED = [
     // v1.0 — phosphor gold on ink
     //
-    // These two were swept into `#efc53f`/`#0a0a0c` — the *live* v5.0 gold and
+    // These two were swept into `#d6962c`/`#10100f` — the *live* v5.0 gold and
     // canvas — by the v5.0 hex migration (#4066), which turned this block into
     // a ban on the current brand and made every correct surface an offender.
     // `scripts/check-tokens.py` now lists this file as a ban site so a sweep
     // skips it; the values below are the v1.0 ones they were before.
     "#ffb000",
     "#0b0b0c",
-    // #f4f1ea — v1.0's warm Paper — is **live again** as v5.1's `paper-text`,
+    // #f2eee5 — v1.0's warm Paper — is **live again** as v5.1's `text`,
     // the white every surface off the deck draws on dark. It leaves this list
     // on the rule stated above. The gold and the ground beside it do not: v1.0's
     // phosphor gold fails the resting-gold clamp and its ink is superseded, so
@@ -348,7 +348,7 @@ test("no retired brand value survives anywhere in the site", () => {
     // modern CSS `rgb(r g b / a)`; the comma form is what an `rgba()` literal
     // and Satori (which has no cascade, so the OG card writes its washes out
     // by hand) actually use. Only the first was listed, and the OG card's CTA
-    // shipped an `rgba(239,197,63,0.12)` wash straight through the v3.0
+    // shipped an `rgba(214,150,44,0.12)` wash straight through the v3.0
     // recolour because a hex sweep cannot see a channel triple and this guard
     // was not looking for one.
     "255 176 0",
@@ -404,7 +404,7 @@ test("no retired brand value survives anywhere in the site", () => {
       // inline favicons. Normalising rather than listing every encoded twin
       // keeps one entry per retired value: `vision.html` sat on v1.0's
       // `%23FFB000` on `%230B0B0C` through three rebrands because a sweep for
-      // `#efc53f` cannot see it, the same blind spot the channel-triple
+      // `#d6962c` cannot see it, the same blind spot the channel-triple
       // entries above exist for.
       const text = read(path).toLowerCase().replaceAll("%23", "#");
       for (const value of RETIRED) {

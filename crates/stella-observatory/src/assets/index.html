@@ -67,29 +67,29 @@
      0.004–0.011), which is what keeps a large field of near-black from
      reading warm on a cheap panel — and matters doubly here because the
      identity is a yellow, so a warm ground would sit in the identity's own
-     family. The surfaces step #0A0A0C → #0F0F12 → #17171B so a card reads as
+     family. The surfaces step #10100F → #181715 → #201F1C so a card reads as
      raised by a value step rather than by a shadow. Shared with the terminal
      (crates/stella-tui/src/palette.rs), which carries the full derivation for
      each value. Do not prune this block to the tokens currently referenced;
      it carries the full set. */
-  --void:#050507; --ground:#0A0A0C; --surface:#0F0F12; --raised:#17171B;
-  --hairline:#26262C; --hairline-strong:#35353D;
+  --void:#0A0A09; --ground:#10100F; --surface:#181715; --raised:#201F1C;
+  --hairline:#292722; --hairline-strong:#35353D;
   /* The accent ramp is the text ramp: "active" is an inversion, not a hue.
      These were `--mark*` until the v3.0 recolour, which is the naming bug the
      brand kit warns about — a hue in a token name, on tokens that had not
      been a hue for two releases. */
-  --mark:#E8E8EC; --mark-bright:#FFFFFF; --mark-deep:#A9AAB5;
+  --mark:#F2EEE5; --mark-bright:#FFFFFF; --mark-deep:#9B958A;
   /* The text ramp, and the one caveat worth stating rather than rounding
      away: --text-3 measures 4.79:1 on --ground, clearing the 4.5:1 AA body
      floor, and 4.33:1 on --raised, just under it. It is still the
      caption/label/UI tier — anything a reader must actually read at 13px on
      a raised row takes --text-2 (8.58:1). */
-  --text:#E8E8EC; --text-2:#A9AAB5; --text-3:#7C7C87;
+  --text:#F2EEE5; --text-2:#9B958A; --text-3:#8C877C;
   /* The one neutral above --text-2, and it has exactly one job: the token
      classes in a code body (see highlightCode() below). The palette names it
      for syntax types, and putting code tokens on a neutral rather than a hue
      is the same rule this page already applies to its chart series. */
-  --text-emph:#BFC1CC;
+  --text-emph:#DDD8CD;
   /* Identity. The one hue outside --ok/--warn/--bad, and the header comment's
      carve-out: wordmark, favicon mark, one primary action. Never a state.
      Both values come from the product palette (crates/stella-tui's `brand`
@@ -102,7 +102,7 @@
      ground. The dark value measures 11.99:1 on --ground and 11.60:1 on
      --surface; the light one 6.61:1 on white, 6.18:1 on --surface, and
      6.61:1 as the fill pair against --identity-ink. */
-  --identity:#EFC53F; --identity-ink:#0A0A0C;
+  --identity:#D6962C; --identity-ink:#10100F;
   /* The three semantic colours, and the only colour anywhere besides the
      identity. Held in the reference's own register so they read as marks on
      an instrument rather than as UI chrome — but lifted with the rest of the
@@ -123,13 +123,13 @@
      raised). --ok and --bad come straight from the palette (9.90:1 and
      6.06:1 on ground, 63.1° and 78.0° from the identity), both pulled cool
      so they sit inside the scheme rather than fighting it. */
-  --ok:#74C991; --warn:#E78D54; --bad:#E0687A;
+  --ok:#74C991; --warn:#EB8960; --bad:#E0687D;
   /* Categorical data marks — a value ramp, not a hue wheel. Series are
      separated by lightness alone, which is the one channel that survives
      greyscale printing, colour-vision deficiency, and a projector. Ordered
      light → dark so --c1 is the most prominent series. */
-  --c1:#E8E8EC; --c2:#A9AAB5; --c3:#7C7C87; --c4:#5F5F6A;
-  --neutral-mark:#5F5F6A;          /* the "everything else" mark — recedes */
+  --c1:#F2EEE5; --c2:#9B958A; --c3:#8C877C; --c4:#6E6A62;
+  --neutral-mark:#6E6A62;          /* the "everything else" mark — recedes */
   /* END palette */
 
   /* Semantic alias. One alias, for accent/active/focus. The accent is the
@@ -140,17 +140,17 @@
      stays a token of its own rather than reusing --ground: a selector that
      paints text in the page-background token is the coupling
      tests/light_mode.rs exists to forbid. */
-  --ink:#0A0A0C;
+  --ink:#10100F;
   --accent:var(--mark);
-  --accent-wash:rgba(232,232,236,.08); /* text @8%  — hover / selected fill   */
-  --accent-edge:rgba(232,232,236,.38); /* text @38% — chip + badge edges      */
+  --accent-wash:rgba(242,238,229,.08); /* text @8%  — hover / selected fill   */
+  --accent-edge:rgba(242,238,229,.38); /* text @38% — chip + badge edges      */
   /* Inset wells return to the canvas rather than taking a step of their own.
      The palette ships four blacks and names the second one "code blocks",
      which is --surface here — the card a code block sits in — so a well
      *inside* that card has to recede below it, not above. Every consumer
      (pre.cfg, #gwrap, .jrnl-body, .dx) carries a --hairline border, so the
      well is delimited by its edge even where it sits directly on --ground. */
-  --sunken:#0A0A0C;
+  --sunken:#10100F;
   /* Control outlines. WCAG 1.4.11 wants 3:1 for the boundary that identifies
      an interactive component; no token in the ground ramp reaches it —
      --hairline-strong measures 1.48:1 on --surface. --text-3 does, so every
@@ -246,7 +246,7 @@
    --hairline #E7EBF0, a gold --identity) against the attribute gate's
    product neutrals, seventeen roles apart, the worst of them an *absence*:
    nothing re-pointed --text-emph, so an OS-light reader got the ink page's
-   #BFC1CC on paper at 1.68:1, which is not a contrast failure so much as
+   #DDD8CD on paper at 1.68:1, which is not a contrast failure so much as
    invisible ink. tests/light_mode.rs's `the_two_light_gates_declare_one_scheme`
    is what holds them together now; edit one block and it names the other.
 
@@ -275,9 +275,9 @@
 
      --text 19.78 / 18.50   --text-2  6.30 /  5.89   --text-3 4.13 / 3.86
      --ok    6.84 /  6.40   --warn    7.52 /  7.04   --bad    8.14 / 7.61
-     --identity 6.61 / 6.18 (#725A00)   --text-emph 10.90 / 10.19
+     --identity 6.61 / 6.18 (#8B5E1A)   --text-emph 10.90 / 10.19
 
-   and on the dark side against --raised (#17171B):
+   and on the dark side against --raised (#201F1C):
 
      --text 14.63   --text-2 7.75   --text-3 4.33   --text-emph 9.97
      --ok    8.94   --warn   7.10   --bad    5.47   --identity 10.83
@@ -302,35 +302,35 @@
 @media (prefers-color-scheme:light){
   :root:not([data-theme="dark"]){
     color-scheme:light;
-    --void:#E8E8EC; --ground:#FFFFFF; --surface:#F7F7FA; --raised:#FFFFFF;
+    --void:#F2EEE5; --ground:#FFFFFF; --surface:#F7F7FA; --raised:#FFFFFF;
     --hairline:#E9E9EE; --hairline-strong:#D0D0D8;
-    --mark:#0A0A0C; --mark-bright:#000000; --mark-deep:#5F5F6A;
-    --identity:#725A00; --identity-ink:#FFFFFF;
-    --text:#0A0A0C; --text-2:#5F5F6A; --text-3:#7C7C87;
+    --mark:#10100F; --mark-bright:#000000; --mark-deep:#6E6A62;
+    --identity:#8B5E1A; --identity-ink:#FFFFFF;
+    --text:#10100F; --text-2:#6E6A62; --text-3:#8C877C;
     --text-emph:#3C3C46;
-    --ok:#006933; --warn:#8A3F00; --bad:#96213C;
-    --c1:#0A0A0C; --c2:#5F5F6A; --c3:#7C7C87; --c4:#A9AAB5;
-    --neutral-mark:#A9AAB5;
+    --ok:#006933; --warn:#8D3B19; --bad:#952141;
+    --c1:#10100F; --c2:#6E6A62; --c3:#8C877C; --c4:#9B958A;
+    --neutral-mark:#9B958A;
     --ink:#FFFFFF;
-    --accent-wash:rgba(10,10,12,.06);
-    --accent-edge:rgba(10,10,12,.28);
+    --accent-wash:rgba(16,16,15,.06);
+    --accent-edge:rgba(16,16,15,.28);
     --sunken:#F7F7FA;
   }
 }
 :root[data-theme="light"]{
   color-scheme:light;
-  --void:#E8E8EC; --ground:#FFFFFF; --surface:#F7F7FA; --raised:#FFFFFF;
+  --void:#F2EEE5; --ground:#FFFFFF; --surface:#F7F7FA; --raised:#FFFFFF;
   --hairline:#E9E9EE; --hairline-strong:#D0D0D8;
-  --mark:#0A0A0C; --mark-bright:#000000; --mark-deep:#5F5F6A;
-  --identity:#725A00; --identity-ink:#FFFFFF;
-  --text:#0A0A0C; --text-2:#5F5F6A; --text-3:#7C7C87;
+  --mark:#10100F; --mark-bright:#000000; --mark-deep:#6E6A62;
+  --identity:#8B5E1A; --identity-ink:#FFFFFF;
+  --text:#10100F; --text-2:#6E6A62; --text-3:#8C877C;
   --text-emph:#3C3C46;
-  --ok:#006933; --warn:#8A3F00; --bad:#96213C;
-  --c1:#0A0A0C; --c2:#5F5F6A; --c3:#7C7C87; --c4:#A9AAB5;
-  --neutral-mark:#A9AAB5;
+  --ok:#006933; --warn:#8D3B19; --bad:#952141;
+  --c1:#10100F; --c2:#6E6A62; --c3:#8C877C; --c4:#9B958A;
+  --neutral-mark:#9B958A;
   --ink:#FFFFFF;
-  --accent-wash:rgba(10,10,12,.06);
-  --accent-edge:rgba(10,10,12,.28);
+  --accent-wash:rgba(16,16,15,.06);
+  --accent-edge:rgba(16,16,15,.28);
   --sunken:#F7F7FA;
 }
 
@@ -389,11 +389,11 @@ header .bword{height:45px;width:auto;display:block;align-self:center}
    docs/brand/logo/svg/wordmark-color-{dark,light}.svg, served at
    /assets/wordmark{,-light}.svg (src/lib.rs). They were byte copies until
    the 2026-08-11 rebrand; the v3.0 ion recolour brought them back into step,
-   so both halves of each cut carry the current kit values (Obsidian #0A0A0C,
-   Paper #E8E8EC) rather than only the brand hue (#2921).
+   so both halves of each cut carry the current kit values (Obsidian #10100F,
+   Paper #F2EEE5) rather than only the brand hue (#2921).
 
-   These are the *color* cuts. The comet star is the gold `brand-500` #EFC53F
-   on the dark cut and `brand-700` #141413 on the light one. The two-stop rule
+   These are the *color* cuts. The comet star is the gold `brand-500` #D6962C
+   on the dark cut and `brand-700` #10100F on the light one. The two-stop rule
    arrived with v3.0 — the rule before it was "shapes and marks stay full
    brand on both grounds" — and v4.0's return to gold keeps it rather than
    reverting it, because the rule was never really about ion: brand-500 holds

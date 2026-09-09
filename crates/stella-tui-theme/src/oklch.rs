@@ -21,13 +21,18 @@
 //!
 //! sRGB hue in turn breaks against a *yellow* brand, because sRGB's hue circle
 //! is badly non-uniform through the warm quadrant. Measured on this palette's
-//! own values: the accent and the success green are 63.1° apart in OKLCH but
-//! 94.8° in sRGB, while the accent and the danger rose are 78.0° in OKLCH but
-//! 54.7° in sRGB — sRGB stretches yellow→green and compresses yellow→red by
-//! roughly 30° each. The consequence is not academic. It makes the 54.7° sRGB
+//! own values: the accent and the success green are 79.0° apart in OKLCH but
+//! 103.1° in sRGB, while the accent and the danger rose are 63.7° in OKLCH but
+//! 47.9° in sRGB — sRGB stretches yellow→green and compresses yellow→red by
+//! roughly 20° each. The consequence is not academic. It makes the 47.9° sRGB
 //! arc between the accent and danger too narrow to hold a warning at 30° from
-//! both, so the metric would have rejected the one hue that is *actually* 39.1°
+//! both, so the metric would have rejected the one hue that is *actually* 31.8°
 //! from each — an unbuildable law, not a strict one.
+//!
+//! The house gold narrowed that arc rather than widening it, which is what
+//! makes the choice of metric load-bearing now instead of merely correct: the
+//! sRGB reading leaves 47.9° for a warning that needs 60°, so under that ruler
+//! this palette has no legal warning at all.
 //!
 //! Do not re-derive the metric a third time without stating why, here, in this
 //! chain.
@@ -35,8 +40,8 @@
 //! ## Not [`crate::clamp::srgb_hue_degrees`]
 //!
 //! That function is sRGB hue and stays sRGB hue: it serves the gold-lift
-//! anchor, whose 3° tolerance was cut in that space against the gold this
-//! palette actually ships. Two hue functions in one crate is a hazard only
+//! anchor and the shade anchor beside it, whose 4° tolerance was cut in that
+//! space against the gold this palette actually ships. Two hue functions in one crate is a hazard only
 //! while either one is named for the job instead of the space, which is how
 //! this module and that one are named.
 
@@ -46,7 +51,13 @@
 /// the instrument-surface parity test — one law with two numbers, which means
 /// the stricter one was never the law and the looser one was never enforced
 /// (#4071). Every shipped pair clears 30° on both web schemes; the tightest is
-/// `--warn` to `--bad` at 38.9° dark and 37.6° light.
+/// `--identity` to `--warn` at 31.8° dark and 31.4° light.
+///
+/// That pair is tight on purpose and not by luck. The house gold sits 16°
+/// closer to the warning than the gold it replaced, so the warning was re-cut
+/// to the hue that maximises its smallest gap — to the identity on one side and
+/// the danger rose on the other. There is roughly two degrees of room in the
+/// whole arc; a warning placed anywhere else in it fails this floor.
 pub const SEPARATION_FLOOR_DEG: f64 = 30.0;
 
 /// OKLCH hue in degrees `[0, 360)` for an 8-bit sRGB triple.

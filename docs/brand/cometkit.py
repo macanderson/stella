@@ -51,7 +51,7 @@ REPO = HERE.parents[1]
 # upstream of this file and of `css/tokens.css` alike. `check-tokens.py` fails
 # the gate on any hex here that is not one, so the "mirror" this block used to
 # promise is now a checked property.
-BRAND = "#EFC53F"  # gold — the comet, on either ground
+BRAND = "#D6962C"  # gold — the comet, on either ground
 # The mark on a LIGHT ground is the SAME gold. v3.0 and v4.0 each kept a
 # separate darker stop here so the mark could clear the 3:1 graphical floor on
 # paper, and v5.0 retires that split for two reasons. The first is the system's
@@ -65,27 +65,27 @@ BRAND = "#EFC53F"  # gold — the comet, on either ground
 #
 # Every ratio in this block names its ground, because this kit and that checker
 # measure on two different ones and quoted the same pairing at two numbers for
-# a release (#4423). The checker measures on the `paper` token `#FFFCF5`; the
+# a release (#4423). The checker measures on the `paper` token `#FBFAF6`; the
 # kit renders on the pure white below, which every generated asset already
 # sits on. Gold is 1.61:1 on `paper` and 1.65:1 on white.
 BRAND_ON_LIGHT = BRAND
 # Small brand *text* on light surfaces is not gold at all — rule 6 forbids it,
 # and at 1.65:1 on this kit's white the measurement agrees. Brand text on paper
 # is `ink`.
-BRAND_DEEP = "#141413"  # ink
-INK = "#0A0A0C"  # bg — the canvas
-PAPER = "#F4F1EA"  # text — primary text on dark
-# Pure white, and not the `paper` token `#FFFCF5`: an asset is
+BRAND_DEEP = "#10100F"  # ink
+INK = "#10100F"  # bg — the canvas
+PAPER = "#F2EEE5"  # text — primary text on dark
+# Pure white, and not the `paper` token `#FBFAF6`: an asset is
 # composited onto whatever page carries it, and white is the ground that makes
 # no assumption about which. It is the one value here that is not a token.
 PAPER_BG = "#FFFFFF"
-MUTED_ON_DARK = "#7C7C87"  # muted
+MUTED_ON_DARK = "#8C877C"  # muted
 # `dim` rather than `muted` on light. Both are tokens; this one is the pairing
 # that measures — 6.30:1 on the white above against muted's 4.13:1, which is
 # under AA. The checker reads `dim` on the `paper` token as 6.15:1 and licenses
 # no light pairing for `muted` at all, which is the same verdict arrived at
 # from the other side.
-MUTED_ON_LIGHT = "#5F5F6A"  # dim
+MUTED_ON_LIGHT = "#6E6A62"  # dim
 
 # JetBrains Mono advances 0.6em per glyph, which is what lets every string's
 # width be known before it is drawn.
