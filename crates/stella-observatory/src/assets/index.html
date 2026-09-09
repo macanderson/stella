@@ -35,7 +35,7 @@
    cyan case from the gold one and never could.
 
    The metric that does is OKLCH hue distance, and `--warn` is derived on it
-   rather than picked — 39.1° off the identity under the current palette (see
+   rather than picked — 31.8° off the identity under the current palette (see
    the palette block), where the amber it replaced was 10.7°. So the
    carve-out stands on both its own reasoning AND a measured separation:
    three jobs, three channels, no overlap. `--identity` says whose instrument
@@ -116,13 +116,16 @@
      metric: WCAG contrast is a LUMINANCE ratio and cannot answer "can a
      reader tell these apart" at all — every chromatic pair of similar
      lightness scores near 1:1 no matter how different they look. OKLCH hue
-     distance can. --bad sits at 12.8° and the identity at 90.8°, and 51.8°
+     distance can. --bad sits at 11.2° and the identity at 74.8°, and 43.0°
      is the point that maximises the SMALLER of the two gaps; the shipped
-     value lands 39.1° from the identity and 38.9° from --bad, and clears AA
-     on all three dark grounds (7.85 / 7.60 / 7.10 on ground / surface /
-     raised). --ok and --bad come straight from the palette (9.90:1 and
-     6.06:1 on ground, 63.1° and 78.0° from the identity), both pulled cool
-     so they sit inside the scheme rather than fighting it. */
+     value lands 31.8° from the identity and 31.8° from --bad, and clears AA
+     on all three dark grounds (7.51 / 7.06 / 6.50 on ground / surface /
+     raised). The house gold sits 16° nearer --bad than the gold before it,
+     so that arc is 63.7° wide and holds about two degrees of room for a
+     warning 30° from both ends. --ok and --bad come straight from the
+     palette: 9.52:1 and 5.84:1 on ground, 79.0° and 63.7° from the identity.
+     Both are pulled cool so they sit inside the scheme rather than fighting
+     it. */
   --ok:#74C991; --warn:#EB8960; --bad:#E0687D;
   /* Categorical data marks — a value ramp, not a hue wheel. Series are
      separated by lightness alone, which is the one channel that survives
@@ -571,8 +574,8 @@ tr:hover td.go{text-decoration:underline}
 .badge{display:inline-flex;align-items:center;gap:5px;padding:1px 8px;border-radius:var(--radius-sm);
        font:var(--fs-micro)/1.6 var(--mono);border:1px solid;white-space:nowrap}
 .badge.ok{color:var(--ok);border-color:rgba(116,201,145,.42)}
-.badge.bad{color:var(--bad);border-color:rgba(224,104,122,.42)}
-.badge.warn{color:var(--warn);border-color:rgba(231,141,84,.42)}
+.badge.bad{color:var(--bad);border-color:rgba(224,104,125,.42)}
+.badge.warn{color:var(--warn);border-color:rgba(235,137,96,.42)}
 .badge.dim{color:var(--text-3);border-color:var(--hairline-strong)}
 .badge.accent{color:var(--mark);border-color:var(--accent-edge)}
 /* self-driving: the run list is a control, so it says so on hover and keeps a
@@ -816,7 +819,7 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
 .dx-line .tx{padding-right:var(--sp2)}
 .dx-line.add{background:rgba(116,201,145,.10);color:var(--text)}
 .dx-line.add .sg{color:var(--ok)}
-.dx-line.rem{background:rgba(224,104,122,.10);color:var(--text)}
+.dx-line.rem{background:rgba(224,104,125,.10);color:var(--text)}
 .dx-line.rem .sg{color:var(--bad)}
 /* The elision. A row, not a footnote: it sits between the hunks it replaces,
    so its job is to be unmistakably NOT a line of the file — hence the raised

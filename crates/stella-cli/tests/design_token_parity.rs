@@ -1337,13 +1337,13 @@ fn every_stated_hue_angle_in_the_observatory_matches_the_computation() {
     };
 
     for (phrase, computed) in [
-        ("--bad sits at 12.8°", hue(&bad)),
-        ("the identity at 90.8°", hue(&identity)),
-        ("39.1° off the identity", hue_gap(&warn, &identity)),
-        ("lands 39.1° from the identity", hue_gap(&warn, &identity)),
-        ("and 38.9° from --bad", hue_gap(&warn, &bad)),
-        ("63.1° and", hue_gap(&ok, &identity)),
-        ("78.0° from the identity", hue_gap(&bad, &identity)),
+        ("--bad sits at 11.2°", hue(&bad)),
+        ("the identity at 74.8°", hue(&identity)),
+        ("31.8° off the identity", hue_gap(&warn, &identity)),
+        ("lands 31.8° from the identity", hue_gap(&warn, &identity)),
+        ("and 31.8° from --bad", hue_gap(&warn, &bad)),
+        ("79.0° and", hue_gap(&ok, &identity)),
+        ("63.7° from the identity", hue_gap(&bad, &identity)),
     ] {
         let stated = format!("{computed:.1}");
         assert!(
