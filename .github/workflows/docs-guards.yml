@@ -60,13 +60,19 @@ name: docs-guards
 #     diff ci.yml's Rust job is skipped for, which is why the filter above
 #     widened from `website/content/docs/**` to `website/**`.
 #
-#  9. the brand art's sources (docs/brand/social/build_social.py --check): the
-#     banner's install line against README.md, and its tagline against the kit
-#     page (#3631). Both are cross-file string claims that a render bakes into a
-#     PNG a platform then caches, so drift is unfixable after the fact. The
-#     script had never run in automation -- only a human following
-#     docs/brand/README.md ever invoked it. `--check` returns before it reaches
-#     rsvg-convert, so it needs no renderer and no desktop font.
+#  9. the brand assets against the house kit (scripts/sync-brand-assets.mjs
+#     --check). It replaces the social-art check that used to sit here, which
+#     held a banner's install line to README.md and its tagline to the kit page
+#     -- claims a render baked into a PNG a platform then cached, so drift was
+#     unfixable after the fact. The banners are no longer composed in this repo;
+#     they are the house kit's, vendored. So the claim to check moved with them:
+#     that every vendored file still matches what the kit emits.
+#
+#     The kit is a separate repository and this job checks out one, so --check
+#     says so and exits 0 when it is absent. It says it in a line naming what
+#     was not verified, and website/src/lib/brand-parity.test.ts still holds the
+#     site to docs/brand/ offline on every run -- which is the check that has
+#     actually caught this repo shipping a stale brand.
 #
 # 10. the five colour rulers (scripts/check-tokens.py with gen-tokens.py
 #     --check, check-hue-separation.py, check-contrast.py, check-css-vars.py,
@@ -302,17 +308,11 @@ jobs:
 
       # The brand kit's two cross-file strings: the install line against
       # README.md, and now the tagline against the kit (#3631). `--check`
-      # renders nothing and needs neither rsvg-convert nor a desktop font --
-      # it returns before either is reached -- so it costs a second here.
-      #
-      # It had never run in automation at all. `check_install_line` has guarded
-      # the banner's install command since the script was written, and the only
-      # thing invoking it was a human following docs/brand/README.md. A guard
-      # nobody runs is the same as no guard, which is the gap #4089 found for
-      # five others.
-      - name: the brand art's install line and tagline match their sources
+      # copies nothing and needs no renderer -- it compares bytes -- so it costs
+      # a second here.
+      - name: the vendored brand assets still match the house kit
         if: ${{ !cancelled() }}
-        run: python3 docs/brand/social/build_social.py --check
+        run: node scripts/sync-brand-assets.mjs --check
 
       # The `.mdx` half. ci.yml runs this guard for the tree's own reference,
       # which is generated and cannot drift; the website's curated table is

@@ -391,7 +391,8 @@ test("no retired brand value survives anywhere in the site", () => {
     // into a lemon that Oxagen never carried, so the two brands sat on two
     // metals. The anchors and both derived stops are listed because a
     // half-applied recolour is what this whole block exists to catch, and
-    // #3968 is the precedent — the site sat a whole version behind the kit.
+    // The precedent is this site having once sat a whole version behind the
+    // kit while every surface around it had already moved.
     "#efc53f",
     "#f7d96b",
     "#725a00",
