@@ -92,9 +92,11 @@ pub fn ansi16(color: Color) -> Color {
         // collapse together and `paper_border` takes the one gray that is
         // left. `ink` is a dark ground like `bg`, degrades the same way, and
         // now literally is that value — see the first arm.
-        token::PAPER | token::PAPER_GROUND | token::PAPER_RAISED | token::PAPER_PANEL => {
-            Color::White
-        }
+        // `PAPER_GROUND` is absent for the reason `INK` is: it IS `TEXT` under
+        // the house system, one off-white serving as the light page and the ink
+        // on the dark canvas, so the arm above already matches it. Both land on
+        // white, which is what SPEC 3.5 says for each of them.
+        token::PAPER | token::PAPER_RAISED | token::PAPER_PANEL => Color::White,
         token::PAPER_ROW | token::PAPER_BORDER | token::PAPER_SEAM => Color::Gray,
         // Text on that white, and it goes where `INK` goes.
         token::INK_MUTED => Color::Black,
