@@ -199,6 +199,44 @@ case "$out" in
   *) fail=$((fail + 1)); echo "FAIL an unknown exited 0 without saying so:"; echo "$out" ;;
 esac
 
+# ── E: an empty run list is a blind read ─────────────────────────────────────
+#
+# `gh run list` returns `[]` with exit 0 for a transient fault as readily as
+# for an empty history, and the verdict loop defaults every commit to
+# `missing`. On 2026-09-09 that turned one bad read into ten findings and a
+# filed issue claiming nothing had verified a tree whose `ci` run had gone
+# green seventeen seconds earlier. An auth failure exits non-zero and was
+# already an unknown; this shape was not.
+empty_list_commits="$(commit $A 'a merge the API could not answer for')
+$(commit $B 'the merge before it')"
+
+want "an empty run list is an unknown, not a finding" expect-pass \
+  "$empty_list_commits" "" \
+  "UNKNOWN"
+
+want "...and says the list is what came back empty" expect-pass \
+  "$empty_list_commits" "" \
+  "came back empty"
+
+# It also files no issue, which is the half of a misreport somebody has to
+# undo by hand.
+out="$("$SCRIPT" --fixture-commits "$empty_list_commits" --fixture-runs "" \
+  --announce --dry-run 2>&1)"
+case "$out" in
+  *"issue create"*)
+    fail=$((fail + 1)); echo "FAIL an empty run list filed an issue:"; echo "$out" ;;
+  *) pass=$((pass + 1)); echo "ok   ...and files no issue over a read it could not make" ;;
+esac
+
+# The coverage this must not buy its safety with. A populated list that simply
+# has no run for the commit is the real gap (f1f36660's shape above), and it
+# stays a failure — the guard turns on the list being empty, never on a commit
+# being absent from it.
+want "a commit missing from a POPULATED list is still reported" expect-fail \
+  "$(commit $A 'a merge nothing ran for')" \
+  "$B completed success $(now_iso)" \
+  "missing"
+
 # ── N: several commits, one bad ──────────────────────────────────────────────
 # The reported window is a run of merges, not one; a guard that stopped at the
 # first verified commit would have missed three of the four that day.

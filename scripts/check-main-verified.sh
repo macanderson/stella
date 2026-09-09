@@ -61,10 +61,11 @@
 #
 # ── It fails OPEN, at every unknown ──────────────────────────────────────────
 #
-# No `gh`, an unreachable API, an unparseable answer: report and exit 0. This
-# is a monitor, and a monitor that can itself block a merge is worse than the
-# gap it watches — the same argument `main-red-claim.sh`'s header makes about
-# a claim check. Every unknown is loud, never silent.
+# No `gh`, an unreachable API, an unparseable answer, a run list that came back
+# empty so no commit could be matched: report and exit 0. This is a monitor,
+# and a monitor that can itself block a merge is worse than the gap it watches
+# — the same argument `main-red-claim.sh`'s header makes about a claim check.
+# Every unknown is loud, never silent.
 #
 # ── `--announce` reaches a person, on codeql-canary.sh's shape ───────────────
 #
@@ -231,6 +232,25 @@ elif ! runs="$(gh run list --workflow ci.yml --branch main --limit 60 \
   --json headSha,status,conclusion,createdAt \
   --jq '.[] | "\(.headSha) \(.status) \(.conclusion // "none") \(.createdAt)"' 2>/dev/null)"; then
   unknown "could not reach the Actions API"
+fi
+
+# An empty list is a blind read, not a finding about every commit at once.
+#
+# `gh` answers a transient API fault with `[]` and exit 0 as readily as it
+# answers a genuinely empty history, and the loop below defaults each commit
+# to `missing`. So on 2026-09-09 one bad read reported all ten commits as
+# unverified and filed an issue saying nothing had checked a tree whose `ci`
+# run on cd7d53c had already concluded success. An auth or permission failure
+# exits non-zero and is already caught above; this is the shape that does not.
+#
+# The two cases are separable because the read asks for the last 60 `ci` runs
+# on `main` whatever their age. An outage creates no runs, and destroys none,
+# so it cannot empty that list — older runs stay in it, and a commit absent
+# from a populated list is still reported, which is the gap this script
+# watches. Empty means this run could not see the history at all, and that is
+# an unknown.
+if [ -z "$runs" ]; then
+  unknown "the ci run list came back empty, so no commit could be matched"
 fi
 
 now_epoch="$(date -u +%s 2>/dev/null || echo 0)"
