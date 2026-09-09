@@ -26,22 +26,21 @@ use ratatui::style::Color;
 
 /// The green ratio a gold must clear, as a percentage of red.
 ///
-/// The green ratio is the hue clause: below it the hue is orange, and orange
-/// on a near-black ground reads brown on cheap panels. It moved from 78 to
-/// 70 with the house gold, and the honest account of that is that 78 was
-/// never measured -- it was the ratio v5.0's own gold happened to sit at,
-/// written down as a law. #D6962C is at 0.701 and is unmistakably gold, so
-/// 78 was excluding golds, not oranges.
+/// The green ratio is the hue clause: below it the hue is orange, and orange on
+/// a near-black ground reads brown on cheap panels. It moved from 78 to 70 with
+/// the house gold, and the account of that is plain: 78 was never measured. It
+/// was the ratio v5.0's own gold happened to sit at, written down as a law.
+/// #D6962C is at 0.701 and is unmistakably gold, so 78 excluded golds rather
+/// than oranges.
 ///
-/// 70 is a floor with an argument behind it: sRGB hue 30 deg is the orange
-/// the clause exists to exclude, and a colour at r > g > b with g = 0.70 r
-/// sits at or above sRGB hue 36 deg, six degrees clear of it. Anything below
-/// 0.70 crosses into that band.
+/// 70 is a floor with an argument behind it: sRGB hue 30 deg is the orange the
+/// clause exists to exclude, and a colour at r > g > b with g = 0.70 r sits at
+/// or above sRGB hue 36 deg, six degrees clear of it. Anything below 0.70
+/// crosses into that band.
 ///
-/// The ratio is also no longer carrying two roles. It used to be the only
-/// thing holding `gold-ink` -- a dark SHADE of the gold, which a hue ratio
-/// polices badly because darkening a colour moves its channel ratios. The
-/// shade is anchored now; see `gold-shade`.
+/// The ratio carries one role. `gold-ink` is a dark SHADE of the gold, which a
+/// hue ratio polices badly because darkening moves a colour's channel ratios;
+/// the shade is anchored instead. See `gold-shade`.
 pub const GOLD_GREEN_PCT: u32 = 70;
 
 /// The blue ceiling a resting gold must stay under, as a percentage of red.
@@ -53,7 +52,7 @@ pub const GOLD_BLUE_PCT: u32 = 35;
 /// How far a lift's hue may sit from the gold it lifts, in degrees.
 ///
 /// A lift is anchored to the gold it lifts, never held to a second blue
-/// ceiling. An earlier revision carried `lifted-gold` with blue_pct 44 -- a
+/// ceiling. A revision of this file carried `lifted-gold` with blue_pct 44 -- a
 /// bound reverse-engineered from the one token it had to admit, which can say
 /// no to nothing in principle. It was answering the wrong question: in a
 /// gold, lightness is (r + b) / 510, so the resting ceiling 100*b <= 35*r
@@ -91,20 +90,17 @@ pub const GOLD_LIFT_ANCHOR: &str = "gold";
 
 /// How far a shade's hue may sit from the gold it darkens, in degrees.
 ///
-/// The mirror of `gold-lift`, and new in v6.0. `gold-ink` is the gold as it
-/// appears where the metal itself is illegible -- as text or a hairline on
-/// paper, where #D6962C is 2.2:1. It is the same hue, darkened.
+/// The mirror of `gold-lift`. `gold-ink` is the gold where the metal itself is
+/// illegible: as text or a hairline on paper, where #D6962C is 2.2:1. Same hue,
+/// darkened.
 ///
-/// It used to be held by the resting-gold ratio, which is the wrong
-/// instrument: darkening a colour compresses its channels unevenly, so a
-/// shade's g/r ratio drifts away from its parent's for reasons that have
-/// nothing to do with hue. Holding a shade to a ratio therefore forces the
-/// ratio down until it admits the shade -- and a ratio loosened to fit one
-/// dark token has stopped policing the hue of the bright one.
+/// A ratio is the wrong tool for it. Darkening squeezes a colour's channels
+/// unevenly, so a shade's g/r drifts from its parent's for reasons that are not
+/// about hue. Hold a shade to a ratio and the ratio has to drop until it lets
+/// the shade in. A ratio that wide stops holding the hue of the bright one.
 ///
-/// An anchor asks the question that actually matters: is this the SAME gold,
-/// darker? Recolour `gold` and `gold-ink` fails by name, which the ratio
-/// could never do.
+/// An anchor asks the question that counts: is this the SAME gold, darker?
+/// Recolour `gold` and `gold-ink` fails by name. A ratio cannot do that.
 pub const GOLD_SHADE_HUE_TOLERANCE_DEG: f64 = 4.0;
 
 /// The name, in [`ALL`], of the token a shade is anchored to.
@@ -112,25 +108,24 @@ pub const GOLD_SHADE_ANCHOR: &str = "gold";
 
 /// The green floor every neutral must clear, as a percentage of red.
 ///
-/// One neutral clamp for the whole system, replacing v5.0's `neutral-gray`,
-/// `cool-silver` and `warm-paper`. Those were three clamps because v5.0 had
-/// three neutral families: a blue-tipped dark ramp, two silvers that sat off
-/// neutral in the same direction, and a warm paper ramp. The house system has
-/// ONE: every neutral, from #0A0A09 to #FBFAF6, is warm or exactly neutral,
-/// never blue. Three predicates over one family is three places for it to
-/// drift.
+/// One neutral clamp for the whole system, in place of v5.0's `neutral-gray`,
+/// `cool-silver` and `warm-paper`. Three clamps answered to three neutral
+/// families: a blue-tipped dark ramp, two silvers sitting off neutral in the
+/// same direction, and a warm paper ramp. The house system has ONE -- every
+/// neutral, from #0A0A09 to #FBFAF6, is warm or exactly neutral, never blue --
+/// and three predicates over one family is three places for it to drift.
 ///
-/// `r >= g >= b` is the direction: warm or neutral, never cool. The floors
-/// keep it from becoming tan or sepia, which is the failure mode a
-/// black-and-gold scheme actually has -- the greys creeping warm one
-/// reasonable step at a time until the gold stops reading as a separate
-/// colour. 94 and 82 are the tightest integer floors the house ramp clears,
-/// measured against its two extremes: the hairline on ink (#292722, g/r
-/// 0.951) and the hairline on paper (#D8CDBD, b/r 0.875).
+/// `r >= g >= b` is the direction: warm or neutral, never cool. The floors stop
+/// it turning tan or sepia. That is the way a black-and-gold scheme fails:
+/// the greys creep warm one reasonable step at a time
+/// until the gold stops reading as a separate colour. 94 and 82 are the tightest
+/// integer floors the house ramp clears, measured against its two extremes: the
+/// hairline on ink (#292722, g/r 0.951) and the hairline on paper (#D8CDBD, b/r
+/// 0.875).
 ///
-/// Equality is admitted on both sides because the darkest stops are neutral
-/// to the byte -- #10100F is r == g -- and rounding at that lightness has
-/// nowhere else to land.
+/// Equality is admitted on both sides because the darkest stops are neutral to
+/// the byte -- #10100F is r == g -- and rounding at that lightness has nowhere
+/// else to land.
 pub const NEUTRAL_GREEN_PCT: u32 = 94;
 
 /// The blue floor every neutral must clear, as a percentage of red.
@@ -217,8 +212,8 @@ pub enum Clamp {
     GoldLift,
     /// Anchored to the resting gold: the same hue within
     /// [`GOLD_SHADE_HUE_TOLERANCE_DEG`], strictly darker. The mirror of
-    /// [`Clamp::GoldLift`], and the reason the green ratio no longer has to
-    /// police a value that darkening moved off it.
+    /// [`Clamp::GoldLift`], and what frees the green ratio from policing
+    /// a value that darkening moves off it.
     GoldShade,
     /// `r >= g >= b`, `100 g >= NEUTRAL_GREEN_PCT r`,
     /// `100 b >= NEUTRAL_BLUE_PCT r` -- every neutral in the system, ink to

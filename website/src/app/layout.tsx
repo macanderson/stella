@@ -17,13 +17,13 @@ import { SITE_NAME, SITE_URL } from "@/lib/site";
  * sentence in two unrelated designs. 700 display, 600 headings, 500 UI,
  * 400 body.
  *
- * JETBRAINS MONO stays, for code and terminal transcripts only. The house rule
- * is "Space Grotesk is not a code face", and this site is largely a picture of
- * a terminal — column alignment in a transcript is load-bearing, not
- * decorative. What changed is its scope: it used to be BOTH faces, on the
- * argument that a product living in a terminal should speak in monospace end
- * to end. The house system settles that the other way, and the two families
- * now split exactly where the kit puts the line.
+ * JETBRAINS MONO covers code and terminal transcripts only. The house rule is
+ * "Space Grotesk is not a code face", and this site is largely a picture of a
+ * terminal, where a transcript needs its columns to line up. Its scope narrowed
+ * with the house system: one family covered the whole site on the argument that
+ * a product living in a terminal should speak in monospace end to end, and the
+ * house system settles that the other way. The two families split where the kit
+ * puts the line.
  */
 const sans = localFont({
   src: [

@@ -72,11 +72,10 @@ pub fn detect_truecolor() -> bool {
 #[must_use]
 pub fn ansi16(color: Color) -> Color {
     match color {
-        // `INK` is deliberately absent from this list and from an arm of its
-        // own. Under the house system it IS `BG` — the dark canvas and the ink
-        // on paper are one colour — so it is matched by this arm's first
-        // pattern, and naming it again anywhere is a pattern the compiler can
-        // prove no value reaches. It still degrades to black, which is what
+        // `INK` has no arm of its own. Under the house system it IS `BG`: the
+        // dark canvas and the ink on paper are one colour. So the first pattern
+        // here already matches it, and a second arm would be one the compiler
+        // proves no value reaches. It still falls to black, which is what
         // `every_token_has_a_fallback` checks.
         token::BG | token::PANEL | token::DIFF_ADD_BG | token::DIFF_DEL_BG => Color::Black,
         token::HL | token::BORDER | token::RULE => Color::DarkGray,

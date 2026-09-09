@@ -14,9 +14,9 @@ import {
  *
  * The identity is `stella*` on Ink — the WORDMARK alone, which under the house
  * system is the whole lockup: the asterisk is already the mark and it lives
- * inside the word, so nothing is set to its left. The retired comet used to fly
- * in from there, and the wordmark dropped its sparkle to avoid two marks on one
- * line; both of those went with the comet.
+ * inside the word, so nothing is set to its left. That space belonged to the
+ * retired comet, which flew in from it, and the wordmark dropped its sparkle to
+ * avoid two marks on one line; both went with the comet.
  *
  * Around it is the composition the kit's own banners carry in
  * docs/brand/social/: the Homebrew line in a terminal, the repo named, and the

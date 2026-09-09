@@ -37,10 +37,10 @@ fn gold_is_gold_and_not_orange() {
 
 /// Every neutral in the system, ink to paper, under one predicate.
 ///
-/// This test used to be three — a blue-tipped dark ramp, two cool silvers, and
-/// a warm paper ramp — because v5.0 had three neutral families. The house
-/// system has one, so the three collapse here. The direction reversed with it:
-/// v5.0's neutrals were neutral-or-cool, and these are neutral-or-warm.
+/// One test for the whole neutral ramp. The house system has one family:
+/// every neutral from `VOID` to `PAPER` is warm, or exactly neutral. A cool
+/// ground beside a warm paper needs three predicates, and three places to
+/// drift.
 #[test]
 fn every_neutral_token_is_warm_or_neutral() {
     let mut seen = 0;
@@ -112,23 +112,23 @@ fn the_clamp_rejects_what_it_was_written_against() {
 /// `gold_ink` is not a second authored gold either — it is [`token::GOLD`],
 /// darker, and the mirror of the lift below.
 ///
-/// It used to be held by the green ratio alone, which is the wrong instrument:
-/// darkening compresses the channels unevenly, so a shade's `g/r` drifts from
-/// its parent's for reasons that have nothing to do with hue. That is what
-/// dragged the ratio down to fit the darkest token in the palette. Anchored, it
-/// answers the question that matters — is this the same gold, darker?
+/// A green ratio is the wrong tool for it. Darkening squeezes the channels
+/// unevenly, so a shade's `g/r` drifts from its parent's for reasons that are
+/// not about hue. A ratio wide enough to let the darkest token in is too wide
+/// to hold the brightest. The anchor asks the question that counts: is this
+/// the same gold, darker?
 #[test]
 fn gold_ink_is_a_shade_of_gold() {
     let gold = rgb("gold", token::GOLD);
     // A literal rather than `token::GOLD_INK`, which does not exist: `gold-ink`
-    // is one of the stops the TUI does not paint yet, so it carries no `rust`
+    // is one of the stops interactive mode does not paint yet, so it carries no `rust`
     // name and never enters `ALL`. The value is the JSON's, and the Python
     // guard walks the real token — this exercises the predicate the Rust side
     // will hold it to the day it does reach a cell.
     let shade = (0x8B, 0x5E, 0x1A);
     assert!(
         clamp::is_shade_of(shade, gold),
-        "gold-ink #{:02X}{:02X}{:02X} is no longer a shade of gold \
+        "gold-ink #{:02X}{:02X}{:02X} is not a shade of gold \
          #{:02X}{:02X}{:02X}: needs the same hue within {}° and lower \
          lightness",
         shade.0,
@@ -180,12 +180,10 @@ fn gold_bright_is_a_lift_of_gold() {
     );
     // The anchor is the constraint, so it has to be tight enough to reject a
     // near neighbour. The example here changed with the house gold, and the
-    // reason is worth stating so nobody restores the old one: this used to
-    // name the v1 gold #FFB81A, 4.3° from the gold of the day. It sits 3.99°
-    // from the house gold — INSIDE the 4° the repository itself calls
-    // indistinguishable — so asserting a reader can tell them apart would be
-    // asserting something untrue. The examples below sit 8.8° and 6.6° away
-    // and are outside the bound on their own merits.
+    // Why these two, and not the v1 gold #FFB81A: it sits 3.99° from the house
+    // gold. That is INSIDE the 4° this repository calls indistinguishable. To
+    // assert a reader can tell them apart is to assert something untrue. The
+    // two below sit 8.8° and 6.6° away, outside the bound on their own.
     // A brighter yellow 8.8° off the gold's hue — the distance the superseded
     // gold sits at, which is on the ban list and cannot be written here.
     assert!(
@@ -256,11 +254,10 @@ fn the_resting_blue_ceiling_is_unsatisfiable_above_this_lightness() {
 
     // The geometry above is a property of the ceiling and holds whatever gold
     // ships. What it USED to prove — that the lift role is unavoidable because
-    // the ceiling is unsatisfiable at gold_bright's lightness — no longer
-    // applies: the house lift sits at 0.6686, just under the line, where the
-    // ceiling is satisfiable in principle. The lift role survives on the
-    // simpler fact below, so this is asserted directly rather than inferred
-    // from a lightness that has stopped implying it.
+    // the ceiling cannot be met at gold_bright's lightness — does not cover
+    // the house lift. That sits at 0.6686, just under the line, where the
+    // ceiling can be met. So the lift role rests on the plainer fact below,
+    // asserted rather than read off a lightness that does not imply it.
     let (r, g, b) = rgb("gold_bright", token::GOLD_BRIGHT);
     assert!(
         !clamp::is_resting_gold(r, g, b),

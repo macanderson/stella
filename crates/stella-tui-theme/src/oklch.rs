@@ -24,18 +24,13 @@
 //! own values: the accent and the success green are 79.0° apart in OKLCH but
 //! 103.1° in sRGB, while the accent and the danger rose are 63.7° in OKLCH but
 //! 47.9° in sRGB — sRGB stretches yellow→green and compresses yellow→red by
-//! roughly 20° each. The consequence is not academic. It makes the 47.9° sRGB
-//! arc between the accent and danger too narrow to hold a warning at 30° from
-//! both, so the metric would have rejected the one hue that is *actually* 31.8°
-//! from each — an unbuildable law, not a strict one.
+//! roughly 20° each. The consequence is not academic. The 47.9° sRGB arc
+//! between the accent and danger cannot hold a warning 30° from both, so that
+//! metric rejects the one hue which is *actually* 31.8° from each. It is an
+//! unbuildable law, not a strict one — and the house gold narrows the arc, so
+//! the metric decides whether this palette can be built at all.
 //!
-//! The house gold narrowed that arc rather than widening it, which is what
-//! makes the choice of metric load-bearing now instead of merely correct: the
-//! sRGB reading leaves 47.9° for a warning that needs 60°, so under that ruler
-//! this palette has no legal warning at all.
-//!
-//! Do not re-derive the metric a third time without stating why, here, in this
-//! chain.
+//! Do not re-derive the metric a third time without stating why, here.
 //!
 //! ## Not [`crate::clamp::srgb_hue_degrees`]
 //!
@@ -53,11 +48,11 @@
 /// (#4071). Every shipped pair clears 30° on both web schemes; the tightest is
 /// `--identity` to `--warn` at 31.8° dark and 31.4° light.
 ///
-/// That pair is tight on purpose and not by luck. The house gold sits 16°
-/// closer to the warning than the gold it replaced, so the warning was re-cut
-/// to the hue that maximises its smallest gap — to the identity on one side and
-/// the danger rose on the other. There is roughly two degrees of room in the
-/// whole arc; a warning placed anywhere else in it fails this floor.
+/// That pair is tight by design. The house gold sits 16° nearer the warning
+/// than the gold before it. So the warning was re-cut to the hue with the
+/// widest smallest gap: to the identity on one side, the danger rose on the
+/// other. The whole arc holds about two degrees of room. A warning anywhere
+/// else in it fails this floor.
 pub const SEPARATION_FLOOR_DEG: f64 = 30.0;
 
 /// OKLCH hue in degrees `[0, 360)` for an 8-bit sRGB triple.

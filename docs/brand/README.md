@@ -1,3 +1,9 @@
+---
+id: brand
+title: "the house brand kit, mirrored"
+status: living
+---
+
 # docs/brand — the house kit, mirrored
 
 **This directory is a copy. The source is
@@ -20,10 +26,10 @@ version behind in the first place.
 
 ## What changed
 
-Stella used to have its own kit here, with its own generator: `build_marks.py`
-drew a four-point comet through `cometkit.py`, `sync_site.py` copied the
-results into the website, and `social/build_social.py` composed the banners.
-All of that is retired.
+Stella's own kit stood here until the house system, with its own generator:
+`build_marks.py` drew a four-point comet through `cometkit.py`, `sync_site.py`
+copied the results into the website, and `social/build_social.py` composed the
+banners. All of it is retired.
 
 **The comet is gone.** Stella's mark is the **asterisk**, and it already lives
 inside the word: `stella*`, set in Space Grotesk at the kit's logo weight with
@@ -36,9 +42,10 @@ reader crossing between the two sites does not watch the brand change hue. The
 normative copy for this repo is `design/tokens/stella-tokens.json`; `css/tokens.css`
 is generated from it and `css/house-tokens.css` is the kit's own file, verbatim.
 
-**The face is Space Grotesk**, which is what both wordmarks are cut from. JetBrains
-Mono stays for code and terminal transcripts only — the house rule is that Space
-Grotesk is not a code face, and a transcript's column alignment is load-bearing.
+**The face is Space Grotesk**, which is what both wordmarks are cut from.
+JetBrains Mono covers code and terminal transcripts only — the house rule is
+that Space Grotesk is not a code face, and a transcript needs its columns to
+line up.
 
 ## What is here
 

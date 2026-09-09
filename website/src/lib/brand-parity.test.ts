@@ -15,7 +15,7 @@ import { inflateSync } from "node:zlib";
  *
  * `src/app/tokens.css` carried the sentence "every value below is copied from
  * it verbatim — do not tune a hex here, change the kit and mirror it" while
- * sitting a whole brand version behind: the kit moved to Bronze Gold #C58A32
+ * sitting a whole brand version behind: the kit moved to Bronze Gold #D6962C
  * on Ink #10100F in the 2026-08-11 rebrand and this site stayed on v1.0's
  * Phosphor Gold #FFB000 on Ink #0B0B0C. All thirteen SVGs under
  * `public/brand/` were stale with it, as were seven of the eight PWA icons,
@@ -81,6 +81,23 @@ const SITE = join(HERE, "..");
 
 function read(path: string): string {
   return readFileSync(path, "utf8");
+}
+
+/**
+ * The retired hexes the palette itself declares, lowercased.
+ *
+ * `design/tokens/stella-tokens.json` already has to name every superseded
+ * anchor, with a sentence saying which kit it came from — `check-tokens.py`
+ * reads the same list. Taking them from there rather than restating them keeps
+ * one list where a supersession has to be recorded instead of two, and the
+ * second one silently going stale is exactly the failure this file was written
+ * against.
+ */
+function bannedValues(): string[] {
+  const palette: { banned: { values: { hex: string }[] } } = JSON.parse(
+    read(join(REPO, "design", "tokens", "stella-tokens.json")),
+  );
+  return palette.banned.values.map((v) => v.hex.toLowerCase());
 }
 
 /** The `i`th embedded image of an ICO, as its raw bytes. */
@@ -365,10 +382,9 @@ test("no retired brand value survives anywhere in the site", () => {
     "#6f675b",
     "#ded5c6",
     // v3.0 — the ion ramp, all eleven stops, retired by v4.0's return to gold.
-    // Listed in full rather than by the brand core alone, because the drift
-    // this catches is a half-applied recolour: #3968 left the site on ion
-    // while the kit and the product surfaces had already moved, and a partial
-    // list is how the next one gets through.
+    // Listed in full, not by the brand core alone. The drift this catches is a
+    // half-applied recolour: the site sat on ion while the kit and the product
+    // surfaces had moved. A partial list is how the next one gets through.
     "#eafaff",
     "#c7f2ff",
     "#9de9ff",
@@ -384,25 +400,23 @@ test("no retired brand value survives anywhere in the site", () => {
     "0,209,249",
     "0, 209, 249",
     "--stella-gold",
-    // v5.0 — "black and gold", superseded by the Oxagen house system at v6.0.
+    // v5.0 — "black and gold", superseded by the house system — is NOT written
+    // out here. Its values come from the palette's own ban list below, which is
+    // where every superseded anchor already had to be declared.
     //
-    // Its gold was the second in a row to be rejected for the same reason the
-    // house gold answers: v4.0's bronze read brown, and v5.0 over-corrected
-    // into a lemon that Oxagen never carried, so the two brands sat on two
-    // metals. The anchors and both derived stops are listed because a
-    // half-applied recolour is what this whole block exists to catch, and
-    // The precedent is this site having once sat a whole version behind the
-    // kit while every surface around it had already moved.
-    "#efc53f",
-    "#f7d96b",
-    "#725a00",
-    "#0a0a0c",
-    // The channel triples, both spellings. The OG card's washes are written
-    // out by hand for Satori, which has no cascade, so a hex sweep cannot see
-    // them — the lesson the v1.0 entry above records, applied ahead of time.
-    "239 197 63",
-    "239,197,63",
-    "239, 197, 63",
+    // Restating them would be the duplication this file exists to prevent,
+    // one level up: two hand-maintained lists of the same retired values, and
+    // the next supersession updating one of them. The list above is the older
+    // half, kept as-is because it predates the ban list carrying a reason for
+    // each entry.
+    ...bannedValues(),
+    // The channel triples, both spellings. The OG card's washes are written out
+    // by hand for Satori, which has no cascade, so a hex sweep cannot see them
+    // — the lesson the v1.0 entry above records, applied ahead of time.
+    ...bannedValues().flatMap((hex) => {
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+      return [`${r} ${g} ${b}`, `${r},${g},${b}`, `${r}, ${g}, ${b}`];
+    }),
   ];
 
   const offenders: string[] = [];
@@ -547,11 +561,10 @@ test("favicon.ico carries the kit's art in an RGBA encoding", () => {
   //     Processing image failed
   //     Caused by: Format error decoding Ico: The PNG is not in RGBA format!
   //
-  // So this one file is NOT a byte-copy of the kit's: it is the
-  // kit's pixels re-encoded with an opaque alpha channel. That is why it is
-  // absent from the PWA-icon byte-identity test above, and why the exception
-  // is asserted here rather than left as a silent difference someone would
-  // later "fix" by re-copying — which is exactly how the build broke.
+  // So this one file is NOT a byte-copy of the kit's. It is the kit's pixels,
+  // re-encoded with an opaque alpha channel. That keeps it out of the PWA-icon
+  // byte-identity test above. The exception is asserted here rather than left
+  // silent: a silent one gets "fixed" by re-copying, and that broke the build.
   //
   // Checking only the encoding is what let this file rot. It sat on v2.0's
   // bronze-on-warm-ink art (ground #10100F) through the whole v3.0 ion

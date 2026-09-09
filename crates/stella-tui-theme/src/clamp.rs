@@ -227,14 +227,12 @@ pub fn is_lift_of(lift: (u8, u8, u8), base: (u8, u8, u8)) -> bool {
 /// the gold as it appears where the metal itself cannot clear AA — as text or
 /// a hairline on paper. It is the same hue, darkened.
 ///
-/// It used to be held by [`is_gold_role`]'s green ratio alone, which is the
-/// wrong instrument: darkening compresses the channels unevenly, so a shade's
-/// `g/r` drifts away from its parent's for reasons that have nothing to do
-/// with hue. Holding a shade to a ratio therefore drags the ratio down until it
-/// admits the shade — and a ratio loosened to fit one dark token has stopped
-/// policing the hue of the bright one. So the shade is not held to the ratio;
-/// it is held to the gold, and only its *shape* (`r > g > b`) is asserted
-/// directly.
+/// A green ratio is the wrong instrument for it: darkening compresses the
+/// channels unevenly, so a shade's `g/r` sits away from its parent's for
+/// reasons that have nothing to do with hue. Holding a shade to a ratio drags
+/// the ratio down until it admits the shade, and a ratio loosened to fit one
+/// dark token stops policing the hue of the bright one. So the shade is held to
+/// the gold, and only its *shape* (`r > g > b`) is asserted directly.
 #[must_use]
 pub fn is_shade_of(shade: (u8, u8, u8), base: (u8, u8, u8)) -> bool {
     let (sr, sg, sb) = shade;

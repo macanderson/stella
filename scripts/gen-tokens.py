@@ -299,7 +299,7 @@ def validate(doc: dict) -> list[str]:
                     + (
                         f", and shares_value_with names {declared!r} instead"
                         if declared
-                        else "; declare `shares_value_with` if the repeat is deliberate"
+                        else "; declare `shares_value_with` if the repeat is intended"
                     )
                 )
         elif tok.get("shares_value_with"):
@@ -458,8 +458,8 @@ def render_rust(doc: dict) -> str:
         "    GoldLift,",
         "    /// Anchored to the resting gold: the same hue within",
         "    /// [`GOLD_SHADE_HUE_TOLERANCE_DEG`], strictly darker. The mirror of",
-        "    /// [`Clamp::GoldLift`], and the reason the green ratio no longer has to",
-        "    /// police a value that darkening moved off it.",
+        "    /// [`Clamp::GoldLift`], and what frees the green ratio from policing",
+        "    /// a value that darkening moves off it.",
         "    GoldShade,",
         "    /// `r >= g >= b`, `100 g >= NEUTRAL_GREEN_PCT r`,",
         "    /// `100 b >= NEUTRAL_BLUE_PCT r` -- every neutral in the system, ink to",
