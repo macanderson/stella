@@ -518,7 +518,7 @@ fn render_dashboard(
      The palette used to be interpolated from `stella_tui::theme`, which was
      right when the export's only sibling was the terminal. It is wrong now:
      the TUI palette is accent-chromed by design (ACCENT == BRAND == the
-     gold #EFC53F, and that hue marks a Running state), while a web
+     gold #D6962C, and that hue marks a Running state), while a web
      instrument's
      chrome must not carry a hue at all. Generating from the terminal guaranteed the
      export matched the one surface it should no longer match. The parity
@@ -556,19 +556,19 @@ fn render_dashboard(
      verdicts; the old block painted cost in --warn, which told every reader
      that spending money was a fault condition. */
   :root {{
-    --void: #050507; --ground: #0A0A0C; --surface: #0F0F12; --raised: #17171B;
-    --hairline: #26262C; --hairline-strong: #35353D;
-    --identity: #EFC53F; --identity-ink: #0A0A0C;
-    --text: #E8E8EC; --text-2: #A9AAB5; --text-3: #7C7C87;
-    --ok: #74C991; --warn: #E78D54; --bad: #E0687A;
-    --c1: #E8E8EC; --c2: #A9AAB5; --c3: #7C7C87; --c4: #5F5F6A;
-    --neutral-mark: #5F5F6A;
-    --ink: #0A0A0C;
-    --accent: #E8E8EC;
-    --accent-wash: rgba(232,232,236,.08);
-    --accent-edge: rgba(232,232,236,.38);
-    --sunken: #0A0A0C;
-    --control-edge: #7C7C87;
+    --void: #0A0A09; --ground: #10100F; --surface: #181715; --raised: #201F1C;
+    --hairline: #292722; --hairline-strong: #35353D;
+    --identity: #D6962C; --identity-ink: #10100F;
+    --text: #F2EEE5; --text-2: #9B958A; --text-3: #8C877C;
+    --ok: #74C991; --warn: #EB8960; --bad: #E0687D;
+    --c1: #F2EEE5; --c2: #9B958A; --c3: #8C877C; --c4: #6E6A62;
+    --neutral-mark: #6E6A62;
+    --ink: #10100F;
+    --accent: #F2EEE5;
+    --accent-wash: rgba(242,238,229,.08);
+    --accent-edge: rgba(242,238,229,.38);
+    --sunken: #10100F;
+    --control-edge: #8C877C;
 
     /* One face. The product lives in a terminal, so the brand speaks in
        monospace — and this artifact is a measurement, where a proportional
@@ -613,7 +613,7 @@ fn render_dashboard(
        --text 18.97:1  --text-2 7.49:1  --text-3 3.10:1
        --ok 5.91:1     --warn 5.99:1    --bad 6.74:1    --identity 8.33:1
 
-     and dark against --raised (#17171B):
+     and dark against --raised (#201F1C):
 
        --text 16.13:1  --text-2 7.31:1  --text-3 3.70:1
        --ok 8.52:1     --warn 7.81:1    --bad 6.17:1    --identity 6.34:1
@@ -631,40 +631,40 @@ fn render_dashboard(
      `each_surface_declares_one_scheme_per_gate` is what makes that true. It
      was a sentence here and nothing else until #4942, and the Observatory is
      what a sentence buys: its two gates drifted seventeen roles apart, and an
-     OS-light reader read #BFC1CC on paper at 1.68:1 (#4296). */
+     OS-light reader read #DDD8CD on paper at 1.68:1 (#4296). */
   @media (prefers-color-scheme: light) {{
     :root:not([data-theme="dark"]) {{
       color-scheme: light;
-      --void: #E8E8EC; --ground: #FFFFFF; --surface: #F7F7FA; --raised: #FFFFFF;
+      --void: #F2EEE5; --ground: #FFFFFF; --surface: #F7F7FA; --raised: #FFFFFF;
       --hairline: #E9E9EE; --hairline-strong: #D0D0D8;
-      --identity: #725a00; --identity-ink: #FFFFFF;
-      --text: #0A0A0C; --text-2: #5F5F6A; --text-3: #7C7C87;
-      --ok: #006933; --warn: #8a3f00; --bad: #96213C;
-      --c1: #0A0A0C; --c2: #5F5F6A; --c3: #7C7C87; --c4: #A9AAB5;
-      --neutral-mark: #A9AAB5;
+      --identity: #8b5e1a; --identity-ink: #FFFFFF;
+      --text: #10100F; --text-2: #6E6A62; --text-3: #8C877C;
+      --ok: #006933; --warn: #8d3b19; --bad: #952141;
+      --c1: #10100F; --c2: #6E6A62; --c3: #8C877C; --c4: #9B958A;
+      --neutral-mark: #9B958A;
       --ink: #FFFFFF;
-      --accent: #0A0A0C;
-      --accent-wash: rgba(10,10,12,.06);
-      --accent-edge: rgba(10,10,12,.28);
+      --accent: #10100F;
+      --accent-wash: rgba(16,16,15,.06);
+      --accent-edge: rgba(16,16,15,.28);
       --sunken: #F7F7FA;
-      --control-edge: #7C7C87;
+      --control-edge: #8C877C;
     }}
   }}
   :root[data-theme="light"] {{
     color-scheme: light;
-    --void: #E8E8EC; --ground: #FFFFFF; --surface: #F7F7FA; --raised: #FFFFFF;
+    --void: #F2EEE5; --ground: #FFFFFF; --surface: #F7F7FA; --raised: #FFFFFF;
     --hairline: #E9E9EE; --hairline-strong: #D0D0D8;
-    --identity: #725a00; --identity-ink: #FFFFFF;
-    --text: #0A0A0C; --text-2: #5F5F6A; --text-3: #7C7C87;
-    --ok: #006933; --warn: #8a3f00; --bad: #96213C;
-    --c1: #0A0A0C; --c2: #5F5F6A; --c3: #7C7C87; --c4: #A9AAB5;
-    --neutral-mark: #A9AAB5;
+    --identity: #8b5e1a; --identity-ink: #FFFFFF;
+    --text: #10100F; --text-2: #6E6A62; --text-3: #8C877C;
+    --ok: #006933; --warn: #8d3b19; --bad: #952141;
+    --c1: #10100F; --c2: #6E6A62; --c3: #8C877C; --c4: #9B958A;
+    --neutral-mark: #9B958A;
     --ink: #FFFFFF;
-    --accent: #0A0A0C;
-    --accent-wash: rgba(10,10,12,.06);
-    --accent-edge: rgba(10,10,12,.28);
+    --accent: #10100F;
+    --accent-wash: rgba(16,16,15,.06);
+    --accent-edge: rgba(16,16,15,.28);
     --sunken: #F7F7FA;
-    --control-edge: #7C7C87;
+    --control-edge: #8C877C;
   }}
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
   html {{ color-scheme: dark; }}
@@ -684,7 +684,7 @@ fn render_dashboard(
      here that it means something.
 
      So the asterisk carries the identity and the word does not. It inverts
-     with the theme for free: --text is #E8E8EC on the dark ground and #0A0A0C
+     with the theme for free: --text is #F2EEE5 on the dark ground and #10100F
      on the light one, which is the "white text, or black on a light
      background" the brand asks for, without this rule naming either. */
   h1 {{ font-size: var(--fs-xl); font-weight: 600; letter-spacing: -.02em; margin-bottom: 4px; color: var(--text); }}
@@ -777,8 +777,8 @@ fn render_dashboard(
     :root {{
       --ground: #FFFFFF; --surface: #FFFFFF; --raised: #FFFFFF; --sunken: #FFFFFF;
       --hairline: #D0D0D8; --hairline-strong: #777782;
-      --text: #0A0A0C; --text-2: #333333; --text-3: #555555;
-      --accent: #0A0A0C; --ink: #FFFFFF; --identity: #725a00;
+      --text: #10100F; --text-2: #333333; --text-3: #555555;
+      --accent: #10100F; --ink: #FFFFFF; --identity: #8b5e1a;
       --accent-wash: transparent;
     }}
     body {{ padding: 0; }}

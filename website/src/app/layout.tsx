@@ -8,18 +8,39 @@ import { SpeedInsights } from "@vercel/speed-insights/next";
 import { SITE_NAME, SITE_URL } from "@/lib/site";
 
 /**
- * One face: JetBrains Mono, self-hosted from the brand kit's own woff2 files
- * (docs/brand/fonts — mirrored into src/fonts with its OFL licence). The
- * product lives in a terminal, so the brand speaks in monospace; 800 carries
- * display, 700 headings, 500 UI, 400 body and code. There is no
- * second family — a sans here would be a font the brand never speaks in.
+ * Two faces, each doing the job it exists for.
+ *
+ * SPACE GROTESK is the brand face — the Oxagen house typeface, vendored from
+ * the kit by `scripts/sync-brand-assets.mjs`. It is not a preference: the
+ * `stella*` wordmark is this font's own outlines at weight 600, so setting the
+ * site in anything else would put the name in the nav and the name in a
+ * sentence in two unrelated designs. 700 display, 600 headings, 500 UI,
+ * 400 body.
+ *
+ * JETBRAINS MONO covers code and terminal transcripts only. The house rule is
+ * "Space Grotesk is not a code face", and this site is largely a picture of a
+ * terminal, where a transcript needs its columns to line up. Its scope narrowed
+ * with the house system: one family covered the whole site on the argument that
+ * a product living in a terminal should speak in monospace end to end, and the
+ * house system settles that the other way. The two families split where the kit
+ * puts the line.
  */
+const sans = localFont({
+  src: [
+    { path: "../fonts/space-grotesk-latin-400.woff2", weight: "400", style: "normal" },
+    { path: "../fonts/space-grotesk-latin-500.woff2", weight: "500", style: "normal" },
+    { path: "../fonts/space-grotesk-latin-600.woff2", weight: "600", style: "normal" },
+    { path: "../fonts/space-grotesk-latin-700.woff2", weight: "700", style: "normal" },
+  ],
+  variable: "--font-stella-sans",
+  display: "swap",
+});
+
 const mono = localFont({
   src: [
     { path: "../fonts/jetbrains-mono-latin-400-normal.woff2", weight: "400", style: "normal" },
     { path: "../fonts/jetbrains-mono-latin-500-normal.woff2", weight: "500", style: "normal" },
     { path: "../fonts/jetbrains-mono-latin-700-normal.woff2", weight: "700", style: "normal" },
-    { path: "../fonts/jetbrains-mono-latin-800-normal.woff2", weight: "800", style: "normal" },
   ],
   variable: "--font-stella-mono",
   display: "swap",
@@ -63,14 +84,14 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#0a0a0c" }, // --stella-canvas
-    { media: "(prefers-color-scheme: light)", color: "#f7f4ed" }, // --stella-paper-2
+    { media: "(prefers-color-scheme: dark)", color: "#10100f" }, // --st-bg
+    { media: "(prefers-color-scheme: light)", color: "#f2eee5" }, // --st-paper-ground
   ],
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning className={mono.variable}>
+    <html lang="en" suppressHydrationWarning className={`${sans.variable} ${mono.variable}`}>
       <body className="flex min-h-screen flex-col">
         {/* First focusable node in the document, ahead of the Fumadocs header
          * and (on /docs) a ~90-link sidebar. Both route groups expose a

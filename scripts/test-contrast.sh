@@ -152,30 +152,35 @@ entry_is "U3 the refused --update wrote no entry" "$r" silver bg absent
 
 # The other half: a pairing that IS baselined and got darker still. Seeded
 # rather than copied from the real ratchet, which now holds nothing.
+#
+# The repaint values in this section and the next are WARM greys. They were
+# cool ones, cut against a ground that was cool too; the house system is warm on
+# one axis end to end, so a cool grey here would be a fixture the palette it
+# tests could not contain. Same lightnesses, same cases, re-measured.
 r="$(seeded_root darkened "muted bg 4.47")"
-repaint "$r" muted "#6E6E79"
+repaint "$r" muted "#767268"
 want "U4 a baselined pairing that got darker is flagged with both numbers" \
   expect-fail "$r" "darker than the 4.47:1 the ratchet holds it to"
 want "U5 --update refuses to lower a floor" \
-  expect-fail "$r" "darkened: muted on bg: 4.47:1 -> 3.93:1" "--update"
+  expect-fail "$r" "darkened: muted on bg: 4.47:1 -> 3.97:1" "--update"
 entry_is "U6 the refused --update left the floor where it was" "$r" muted bg 4.47
 
 # ── D: a pairing that got better ─────────────────────────────────────────────
 # Lighter but still under its 3.0 floor, so it stays on the ledger at a higher
 # number rather than dropping off it.
 #
-# `dim` rather than `comment`, which carried this case until #4946 retired that
-# token — it was a colour with no paint site on any surface, so its ratchet row
-# guarded nothing. `dim` is the other pairing held to the 3.0 decorative floor.
-# It appears in a second pairing (`dim on paper`, at 4.5), and #5A5A66 leaves
-# that one at 6.63:1 — well clear, so this case moves the pairing it is about
-# and nothing else. Seeded with the one entry the case needs, since the real
-# ratchet has since retightened past it.
+# `dim` rather than `comment`, which carried this case until that token was
+# retired — it was a colour with no paint site on any surface, so its ratchet
+# row guarded nothing. `dim` is the other pairing held to the 3.0 decorative
+# floor. It appears in a second pairing (`dim on paper`, at 4.5), and #605D55
+# leaves that one at 5.68:1 — well clear, so this case moves the pairing it is
+# about and nothing else. Seeded with the one entry the case needs, since the
+# real ratchet has since retightened past it.
 r="$(seeded_root lightened "dim bg 2.30")"
-repaint "$r" dim "#5A5A66"
+repaint "$r" dim "#605D55"
 want "D1 a pairing that improved but still fails passes the check" expect-pass "$r" "held by the ratchet"
 want "D2 --update raises its floor" expect-pass "$r" "retightened to 1 pairing(s)" "--update"
-entry_is "D3 the floor is what was really measured" "$r" dim bg 2.91
+entry_is "D3 the floor is what was really measured" "$r" dim bg 2.90
 
 # Over the threshold: the entry must go, and the check must say so rather than
 # pass — a baselined pairing nobody needs is a standing permission slip.
@@ -185,8 +190,8 @@ entry_is "D3 the floor is what was really measured" "$r" dim bg 2.91
 # two leaves `dim`'s row behind — proof the file emptied for the right
 # reason, not by accident.
 r="$(seeded_root cleared "muted bg 4.47" "muted panel 4.32" "dim bg 2.30")"
-repaint "$r" muted "#7A7A85"
-repaint "$r" dim "#5A5A65"
+repaint "$r" muted "#868177"
+repaint "$r" dim "#5E5B53"
 want "D4 a pairing that cleared its threshold is reported, not passed" \
   expect-fail "$r" "clears its threshold now"
 want "D5 --update drops it" expect-pass "$r" "retightened to 1 pairing(s)" "--update"

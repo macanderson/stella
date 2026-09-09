@@ -103,6 +103,14 @@ def check_clamp(
     `check-tokens.py`, not by a promise -- see this file's header.
     """
     r, g, b = channels(hexv)
+    if clamp == "gold-shade" and not (r > g > b):
+        # A shade still has to BE a gold in shape. Its hue is then held by the
+        # anchor rather than by a ratio, because darkening compresses channels
+        # unevenly and a ratio measures that instead of the hue.
+        return (
+            f"{name} {hexv} fails gold-shade: needs r > g > b; "
+            f"got r={r} g={g} b={b}"
+        )
     if clamp in ("resting-gold", "gold-lift"):
         green = spec["green_pct"]
         # The hue clause, carried by every gold at every lightness. It is what
@@ -126,10 +134,12 @@ def check_clamp(
                 f"100*b <= {blue}*r; got 100*b={100 * b}, {blue}*r={blue * r}"
             )
         return None
-    if clamp == "gold-lift":
-        # A lift is anchored to the gold it lifts, never to a second ceiling.
-        # An anchor admits only the authored gold, brighter; a ceiling admits
-        # everything beneath it and keeps passing after that gold is gone.
+    if clamp in ("gold-lift", "gold-shade"):
+        # A lift and a shade are both anchored to the gold they are cut from,
+        # never to a second ceiling or a ratio. An anchor admits only the
+        # authored gold, brighter or darker; a ratio admits every colour that
+        # happens to share it and keeps passing after that gold is gone.
+        lighter = clamp == "gold-lift"
         anchor_name = spec["anchor"]
         anchor_hex = anchors.get(anchor_name)
         if anchor_hex is None:
@@ -145,39 +155,33 @@ def check_clamp(
                 f"{name} {hexv} is not a lift of {anchor_name} {anchor_hex}: "
                 f"hue {hue:.2f} deg is {distance:.2f} deg away, tolerance {tolerance}"
             )
-        if lightness(r, g, b) <= lightness(ar, ag, ab):
+        mine, theirs = lightness(r, g, b), lightness(ar, ag, ab)
+        if (mine <= theirs) if lighter else (mine >= theirs):
+            direction = "above" if lighter else "below"
+            word = "lift" if lighter else "shade"
+            adj = "brighter" if lighter else "darker"
             return (
-                f"{name} {hexv} is not a lift of {anchor_name} {anchor_hex}: "
-                f"lightness {lightness(r, g, b):.4f} is not above "
-                f"{lightness(ar, ag, ab):.4f}. A lift is brighter, or it is a "
-                f"second gold -- and this palette authors one."
+                f"{name} {hexv} is not a {word} of {anchor_name} {anchor_hex}: "
+                f"lightness {mine:.4f} is not {direction} {theirs:.4f}. "
+                f"A {word} is {adj}, or it is a second gold -- and this palette "
+                f"authors one."
             )
         return None
-    if clamp == "cool-silver":
-        if not (b > r and g >= r):
-            return (
-                f"{name} {hexv} fails cool-silver: needs b > r and g >= r; "
-                f"got r={r} g={g} b={b}"
-            )
-        return None
-    if clamp == "neutral-gray":
-        if not (r == g and b >= g):
-            return (
-                f"{name} {hexv} fails neutral-gray: needs r == g and b >= g; "
-                f"got r={r} g={g} b={b}"
-            )
-        return None
-    if clamp == "warm-paper":
+    if clamp == "warm-neutral":
+        # One clamp for every neutral in the system. v5.0 needed three because
+        # it had three neutral families (a blue-tipped dark ramp, two silvers,
+        # a warm paper ramp); the house system has one, warm end to end.
         if not (r >= g >= b):
             return (
-                f"{name} {hexv} fails warm-paper: needs r >= g >= b; "
-                f"got r={r} g={g} b={b}"
+                f"{name} {hexv} fails warm-neutral: needs r >= g >= b -- warm "
+                f"or neutral, never cool; got r={r} g={g} b={b}"
             )
         if g * 100 < r * spec["green_pct"] or b * 100 < r * spec["blue_pct"]:
             return (
-                f"{name} {hexv} fails warm-paper floors: needs "
+                f"{name} {hexv} fails warm-neutral floors: needs "
                 f"100*g >= {spec['green_pct']}*r and 100*b >= {spec['blue_pct']}*r; "
-                f"got r={r} g={g} b={b}"
+                f"got r={r} g={g} b={b}. Below the floors a grey reads as sepia "
+                f"and the gold stops reading as a separate colour."
             )
         return None
     if clamp in ("verdict", "surface"):
@@ -188,20 +192,18 @@ def check_clamp(
 def rust_tokens(doc: dict) -> list[dict]:
     """The tokens that reach the terminal, in declaration order.
 
-    A token declares a `rust` name when the TUI renders it. Eleven of the
-    JSON's stops still do not: `void`, `gold-ink`, the light page ramp
-    (`paper-text`, `paper-ground`, `paper-raised`, `paper-row`, `paper-seam`,
-    `ink-muted`), and the three status inks (`green-ink`, `amber-ink`,
-    `red-ink`). Every one of them sits on the decision
-    `crates/stella-tui/src/palette.rs`'s own module doc names: the deck's
-    paper theme is still a set of independently-derived hexes, not yet
-    reconciled against this ramp. Giving one a `rust` name before that lands
-    would force the generated `ALL`/`ansi16` tables to carry a value the
-    terminal does not actually paint yet, which is exactly the assertion
-    about nothing this rule exists to forbid. `amber` left this list once its
-    `verdict` clamp -- already shared with `red`/`green` -- got a `WARNING`
-    binding: it is the dark-ground stop, so it carries no part of the
-    undecided paper question the other eleven are waiting on.
+    A token declares a `rust` name when interactive mode renders it. The light
+    page ramp joined them with the house system: `paper-ground`,
+    `paper-raised`, `paper-row`, `paper-seam` and `ink-muted` are what
+    `crates/stella-tui/src/palette.rs` paints its paper theme from, so they
+    carry names now. Before that the paper theme was a set of hexes derived on
+    its own, holding no relation to this ramp, and a `rust` name would have
+    forced the generated `ALL`/`ansi16` tables to carry a value the terminal
+    did not paint -- the assertion about nothing this rule forbids.
+
+    Five stops still have no name: `void`, `gold-ink` and the three status inks
+    (`green-ink`, `amber-ink`, `red-ink`). Each is a value some surface off the
+    terminal paints; giving one a name would make the same empty claim.
 
     The alternative was to leave those values out of the system entirely, which
     is what `main` does -- and it means the only file that knows the site's
@@ -277,11 +279,33 @@ def validate(doc: dict) -> list[str]:
         err = check_paint(tok["name"], tok.get("paint"))
         if err:
             errors.append(err)
-        # A hex used twice under two names is how a role quietly loses meaning.
+        # A hex used twice under two names is how a role quietly loses meaning
+        # -- one of the two names is usually dead and nobody notices. So a
+        # repeat must be DECLARED: `shares_value_with` names the token it
+        # doubles, which turns an accident into a statement a reader can
+        # disagree with. The house system has two such pairs on purpose: the
+        # dark canvas is also the ink on paper, and the paper page is also the
+        # text on ink. Both roles are live on disjoint surfaces, and collapsing
+        # either pair into one name would leave the surviving name lying about
+        # where it is painted.
         prior = seen.get(tok["hex"].upper())
         if prior:
-            errors.append(f"{tok['name']}: hex {tok['hex']} already used by {prior}")
-        seen[tok["hex"].upper()] = tok["name"]
+            declared = tok.get("shares_value_with")
+            if declared != prior:
+                errors.append(
+                    f"{tok['name']}: hex {tok['hex']} already used by {prior}"
+                    + (
+                        f", and shares_value_with names {declared!r} instead"
+                        if declared
+                        else "; declare `shares_value_with` if the repeat is intended"
+                    )
+                )
+        elif tok.get("shares_value_with"):
+            errors.append(
+                f"{tok['name']}: shares_value_with names "
+                f"{tok['shares_value_with']!r}, but this hex is not a repeat"
+            )
+        seen.setdefault(tok["hex"].upper(), tok["name"])
     # The banned list must not name a live token: that would make the guard
     # unsatisfiable, and an unsatisfiable guard gets deleted rather than fixed.
     live = {t["hex"].upper() for t in doc["tokens"]}
@@ -304,8 +328,8 @@ def render_css(doc: dict) -> str:
         " *",
         f" * System: {doc['name']} v{doc['version']}.",
         f" * Supersedes {doc['supersedes']['kit']} ({doc['supersedes']['brand_hex']} on",
-        f" * {doc['supersedes']['ground_hex']}) -- see the JSON's `supersedes` block for why",
-        " * both of that kit's anchor values sit outside this system's hue clamp.",
+        f" * {doc['supersedes']['ground_hex']}) -- see the JSON's `supersedes` block for what",
+        " * changed and why it is a supersession rather than a tune.",
         " */",
         "",
         ":root {",
@@ -321,7 +345,8 @@ def render_rust(doc: dict) -> str:
     clamps = doc["clamps"]
     resting = clamps["resting-gold"]
     lift = clamps["gold-lift"]
-    paper = clamps["warm-paper"]
+    shade = clamps["gold-shade"]
+    neutral = clamps["warm-neutral"]
 
     def doc_block(text, indent: str = "//! ") -> list[str]:
         if isinstance(text, str):
@@ -383,15 +408,25 @@ def render_rust(doc: dict) -> str:
         "/// mismatch.",
         f'pub const GOLD_LIFT_ANCHOR: &str = "{lift["anchor"]}";',
         "",
-        "/// The green floor warm paper must clear, as a percentage of red.",
+        "/// How far a shade's hue may sit from the gold it darkens, in degrees.",
         "///",
     ]
-    out += doc_block(paper["why"], "/// ")
+    out += doc_block(shade["why"], "/// ")
     out += [
-        f"pub const PAPER_GREEN_PCT: u32 = {paper['green_pct']};",
+        f"pub const GOLD_SHADE_HUE_TOLERANCE_DEG: f64 = {shade['hue_tolerance_deg']}.0;",
         "",
-        "/// The blue floor warm paper must clear, as a percentage of red.",
-        f"pub const PAPER_BLUE_PCT: u32 = {paper['blue_pct']};",
+        "/// The name, in [`ALL`], of the token a shade is anchored to.",
+        f'pub const GOLD_SHADE_ANCHOR: &str = "{shade["anchor"]}";',
+        "",
+        "/// The green floor every neutral must clear, as a percentage of red.",
+        "///",
+    ]
+    out += doc_block(neutral["why"], "/// ")
+    out += [
+        f"pub const NEUTRAL_GREEN_PCT: u32 = {neutral['green_pct']};",
+        "",
+        "/// The blue floor every neutral must clear, as a percentage of red.",
+        f"pub const NEUTRAL_BLUE_PCT: u32 = {neutral['blue_pct']};",
         "",
         "// ── Tokens ─────────────────────────────────────────────────────────",
         "",
@@ -419,13 +454,15 @@ def render_rust(doc: dict) -> str:
         "    /// [`GOLD_LIFT_HUE_TOLERANCE_DEG`], strictly lighter. Never a second blue",
         "    /// ceiling -- `crate::clamp` carries the argument.",
         "    GoldLift,",
-        "    /// `b > r` and `g >= r` -- the second metal, never warm.",
-        "    CoolSilver,",
-        "    /// `r == g` and `b >= g` -- neutral, or tipped toward blue, never toward red.",
-        "    NeutralGray,",
-        "    /// `r >= g >= b`, `100 g >= PAPER_GREEN_PCT r`, `100 b >= PAPER_BLUE_PCT r`",
-        "    /// -- the light ground, warm or neutral, never blue.",
-        "    WarmPaper,",
+        "    /// Anchored to the resting gold: the same hue within",
+        "    /// [`GOLD_SHADE_HUE_TOLERANCE_DEG`], strictly darker. The mirror of",
+        "    /// [`Clamp::GoldLift`], and what frees the green ratio from policing",
+        "    /// a value that darkening moves off it.",
+        "    GoldShade,",
+        "    /// `r >= g >= b`, `100 g >= NEUTRAL_GREEN_PCT r`,",
+        "    /// `100 b >= NEUTRAL_BLUE_PCT r` -- every neutral in the system, ink to",
+        "    /// paper. Warm or exactly neutral, never cool.",
+        "    WarmNeutral,",
         "    /// Pass and fail. Neither metal nor gray; no channel predicate.",
         "    Verdict,",
         "    /// A tint carrying a sign column, not a hue in a role; no channel predicate.",
@@ -438,9 +475,8 @@ def render_rust(doc: dict) -> str:
     variant = {
         "resting-gold": "Clamp::RestingGold",
         "gold-lift": "Clamp::GoldLift",
-        "cool-silver": "Clamp::CoolSilver",
-        "neutral-gray": "Clamp::NeutralGray",
-        "warm-paper": "Clamp::WarmPaper",
+        "gold-shade": "Clamp::GoldShade",
+        "warm-neutral": "Clamp::WarmNeutral",
         "verdict": "Clamp::Verdict",
         "surface": "Clamp::Surface",
     }
@@ -459,6 +495,15 @@ def render_rust(doc: dict) -> str:
         "pub fn lift_anchor() -> Option<Color> {",
         "    ALL.iter()",
         "        .find(|(name, _, _)| *name == GOLD_LIFT_ANCHOR)",
+        "        .map(|(_, color, _)| *color)",
+        "}",
+        "",
+        "/// The colour [`GOLD_SHADE_ANCHOR`] names, or `None` if [`ALL`] has no",
+        "/// such entry.",
+        "#[must_use]",
+        "pub fn shade_anchor() -> Option<Color> {",
+        "    ALL.iter()",
+        "        .find(|(name, _, _)| *name == GOLD_SHADE_ANCHOR)",
         "        .map(|(_, color, _)| *color)",
         "}",
         "",

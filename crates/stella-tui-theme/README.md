@@ -41,7 +41,7 @@ implementation departs from SPEC 3.2's literal wording — and it does so to mak
 the spec's own argument satisfiable.
 
 SPEC 3.2 states one rule over "every color in the gold role", including
-`b <= 0.35 r`. SPEC 3.1's own `gold_bright` `#F7D96B` measures `0.433`. That is
+`b <= 0.35 r`. SPEC 3.1's own `gold_bright` `#F1C364` measures `0.433`. That is
 not a bad colour; it is a geometry problem, and the test
 `the_resting_blue_ceiling_is_unsatisfiable_above_this_lightness` pins it: in a
 gold, lightness is `(r + b) / 510`, so `b <= 0.35 r` caps lightness at

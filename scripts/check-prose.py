@@ -239,7 +239,10 @@ PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
         # what the sentence means. The sentence must say it instead. Tracking
         # markers (TODO and friends) keep their numbers: a gate requires them
         # there, and they are bookkeeping, not explanation.
-        re.compile(r"^(?!.*(?:TODO|FIXME|XXX|HACK|Closes #|Refs #)).*?(#\d{2,})"),
+        # A CSS hex is not one: `#10100F` read as issue 10100. A colour here is
+        # always six hex digits, so that form and `#RRGGBBAA` are exempt.
+        re.compile(r"^(?!.*(?:TODO|FIXME|XXX|HACK|Closes #|Refs #)).*?"
+                   r"(#(?![\da-fA-F]{6}\b)(?![\da-fA-F]{8}\b)\d{2,})"),
         "say the fact; drop the issue number from the prose",
     ),
     (

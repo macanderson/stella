@@ -521,26 +521,26 @@ fn every_stated_hue_angle_matches_the_computation() {
     let hue = hue_deg;
 
     for (phrase, computed) in [
-        ("OKLCH hue 90.8", hue(BRAND)),
-        ("3.5 deg from [`BRAND`] in hue", sep(BRAND_LIVE, BRAND)),
-        ("(0.1 deg from [`BRAND`])", sep(BRAND_INK, BRAND)),
+        ("OKLCH hue 74.8", hue(BRAND)),
+        ("8.8 deg from [`BRAND`] in hue", sep(BRAND_LIVE, BRAND)),
+        ("(2.3 deg from [`BRAND`])", sep(BRAND_INK, BRAND)),
         ("OKLCH hue 153.9", hue(SUCCESS)),
-        ("(63.1 deg from", sep(SUCCESS, BRAND)),
-        ("OKLCH hue 51.7", hue(WARNING)),
-        ("lands 39.1 deg from gold", sep(WARNING, BRAND)),
-        ("and 38.9 deg from danger", sep(WARNING, DANGER)),
-        ("OKLCH hue 12.8", hue(DANGER)),
-        ("(78.0 deg from", sep(DANGER, BRAND)),
+        ("(79.0 deg from", sep(SUCCESS, BRAND)),
+        ("OKLCH hue 43.0", hue(WARNING)),
+        ("lands 31.8 deg from gold", sep(WARNING, BRAND)),
+        ("and 31.8 deg from danger", sep(WARNING, DANGER)),
+        ("OKLCH hue 11.2", hue(DANGER)),
+        ("(63.7 deg from", sep(DANGER, BRAND)),
         ("OKLCH hue 292.6", hue(DATA_1)),
-        ("(158.2 deg from gold)", sep(DATA_1, BRAND)),
+        ("(142.3 deg from gold)", sep(DATA_1, BRAND)),
         ("hue 355.6", hue(DATA_2)),
-        ("(95.2 deg from gold)", sep(DATA_2, BRAND)),
+        ("(79.3 deg from gold)", sep(DATA_2, BRAND)),
         ("hue 186.6", hue(DATA_3)),
-        ("(95.9 deg from gold)", sep(DATA_3, BRAND)),
+        ("(111.8 deg from gold)", sep(DATA_3, BRAND)),
         ("hue 126.2", hue(DATA_4)),
-        ("(35.4 deg from gold", sep(DATA_4, BRAND)),
+        ("(51.3 deg from gold", sep(DATA_4, BRAND)),
         ("hue 324.4", hue(DATA_5)),
-        ("126.3 deg from", sep(DATA_5, BRAND)),
+        ("110.4 deg from", sep(DATA_5, BRAND)),
         ("31.8 deg from the violet", sep(DATA_5, DATA_1)),
         ("31.1 deg from the rose", sep(DATA_5, DATA_2)),
     ] {
@@ -593,7 +593,7 @@ fn every_stated_hue_angle_matches_the_computation() {
 /// longer required for telling a warning from the mark.
 ///
 /// What must hold now:
-///   1. The accent is `#EFC53F`, exactly; the canvas is `#0A0A0C`, exactly.
+///   1. The accent is `#D6962C`, exactly; the canvas is `#10100F`, exactly.
 ///      Brand and gold are one family (the collapse IS the identity).
 ///   2. Every retired hue is gone — the electric-blue family, every gold
 ///      this palette replaced, and the whole warm neutral ramp with them.
@@ -663,17 +663,6 @@ fn palette_law_gold_is_the_brand() {
     /// two grays, the warm ink grounds, and the warm papers of the light
     /// theme. Listed in full rather than by the ground alone, because the
     /// drift this catches is a half-applied recolour — one token pasted back
-    /// from the old ramp is exactly what nobody notices.
-    const RETIRED_WARM_INK: Color = Color::Rgb(0x0B, 0x0B, 0x0C);
-    const RETIRED_WARM_VOID: Color = Color::Rgb(0x05, 0x05, 0x06);
-    const RETIRED_WARM_SURFACE: Color = Color::Rgb(0x13, 0x13, 0x15);
-    const RETIRED_WARM_RAISED: Color = Color::Rgb(0x1B, 0x1B, 0x1E);
-    const RETIRED_WARM_HAIRLINE: Color = Color::Rgb(0x23, 0x23, 0x27);
-    const RETIRED_WARM_TEXT: Color = Color::Rgb(0xF4, 0xF1, 0xEA);
-    const RETIRED_WARM_TEXT_2: Color = Color::Rgb(0x9B, 0x98, 0x90);
-    const RETIRED_WARM_TEXT_3: Color = Color::Rgb(0x8D, 0x8A, 0x82);
-    const RETIRED_WARM_PAPER: Color = Color::Rgb(0xF6, 0xF2, 0xE9);
-    const RETIRED_WARM_SNOW: Color = Color::Rgb(0xFC, 0xFA, 0xF4);
     /// The previous status trio, all three of which sat outside this
     /// palette's cool register.
     const RETIRED_HOT_SUCCESS: Color = Color::Rgb(0x4A, 0xDE, 0x80);
@@ -682,16 +671,16 @@ fn palette_law_gold_is_the_brand() {
 
     // 1. The accent is the gold and the ground is the canvas — pinned by
     //    hex so the identity cannot silently drift. This is the one clause
-    //    that names numbers: `#EFC53F` on `#0A0A0C`.
+    //    that names numbers: `#D6962C` on `#10100F`.
     assert_eq!(
         ACCENT,
-        Color::Rgb(0xEF, 0xC5, 0x3F),
-        "the accent must be gold #EFC53F, exactly"
+        Color::Rgb(0xD6, 0x96, 0x2C),
+        "the accent must be gold #D6962C, exactly"
     );
     assert_eq!(
         GROUND,
-        Color::Rgb(0x0A, 0x0A, 0x0C),
-        "the ground must be the canvas #0A0A0C, exactly"
+        Color::Rgb(0x10, 0x10, 0x0F),
+        "the ground must be the canvas #10100F, exactly"
     );
     assert_eq!(ACCENT, palette::BRAND, "the accent comes from the palette");
     assert_eq!(GOLD, ACCENT, "brand and gold are one value");
@@ -763,16 +752,11 @@ fn palette_law_gold_is_the_brand() {
             (RETIRED_PHOSPHOR_GOLD_DEEP, "deep phosphor gold"),
             (RETIRED_PHOSPHOR_GOLD_TRAIL, "the phosphor gold trail stop"),
             (RETIRED_AMBER_MARK, "the amber data mark"),
-            (RETIRED_WARM_INK, "the warm ink ground"),
-            (RETIRED_WARM_VOID, "the warm void"),
-            (RETIRED_WARM_SURFACE, "the warm surface"),
-            (RETIRED_WARM_RAISED, "the warm raised ground"),
-            (RETIRED_WARM_HAIRLINE, "the warm hairline"),
-            (RETIRED_WARM_TEXT, "the warm primary text"),
-            (RETIRED_WARM_TEXT_2, "the warm secondary text"),
-            (RETIRED_WARM_TEXT_3, "the warm tertiary text"),
-            (RETIRED_WARM_PAPER, "the warm paper ground"),
-            (RETIRED_WARM_SNOW, "the warm snow surface"),
+            // The v2.0 WARM ramp is absent from this list. Its ground, void,
+            // surface, raised, hairline, three text tiers, paper and snow all
+            // came back with the house system, which is warm on one axis end
+            // to end. A value leaves this list when a later kit makes it live
+            // again; ten did at once.
             (RETIRED_HOT_SUCCESS, "the uncooled success green"),
             (RETIRED_HOT_WARNING, "the uncooled warning amber"),
             (RETIRED_HOT_DANGER, "the uncooled danger red"),
@@ -781,17 +765,34 @@ fn palette_law_gold_is_the_brand() {
         }
     }
 
-    // 3. Every neutral — ground ramp and text ramp alike — is cool: blue at
-    //    or above red, never below it, and never by enough to read as a
-    //    blue *cast*. This is the inverse of the clause it replaces, and it
-    //    is the whole reason these values are specified rather than derived:
-    //    the accent is a yellow, so a warm neutral would sit in the accent's
-    //    own family and the screen would read muddy on a cheap panel. Never
-    //    true black either — pure black makes an accent scream.
+    // The widest channel span each ramp's neutrals may spend.
+    //
+    // Absolute, and one number per ramp, because the question is whether a
+    // cast is VISIBLE — and a cast of eight levels looks the same wherever it
+    // sits. The numbers rose with the warm ramp for a reason that is
+    // arithmetic rather than taste: warmth lives in the blue channel, so a warm
+    // neutral spends more of its span than a cool one at the same lightness.
+    // The widest in each is TEXT_SECONDARY at 17 and the paper seam at 27.
+    const DARK_TEXT_SPAN: u8 = 17;
+    const PAPER_SPAN: u8 = 27;
+
+    // 3. Every neutral — ground ramp and text ramp alike — is WARM: red at
+    //    or above blue, never below it, and never by enough to read as a
+    //    sepia *cast*. Never true black either — pure black makes an accent
+    //    scream.
+    //
+    //    This clause has now been stated in both directions, and the reason it
+    //    flipped is worth having in one place. It read "cool" while the accent
+    //    was a lemon yellow: a warm neutral beside that accent sits in its own
+    //    family, and the screen reads muddy on a cheap panel. The house gold is
+    //    a deeper metal, and the kit answers the same question the other way —
+    //    one warm axis end to end, which is what lets a single gold read as
+    //    metal against both the ink and the paper. Half a palette on each
+    //    answer is the one outcome neither argument permits.
     //
     //    The grounds are held to a tighter band (≤ 8) than the text tiers
-    //    (≤ 14) because a ground is a large field where any cast is visible,
-    //    while a text tier is a few thousand lit pixels.
+    //    ([`NEUTRAL_SPAN`]) because a ground is a large field where any cast
+    //    is visible, while a text tier is a few thousand lit pixels.
     for (ground, name) in [
         (VOID, "VOID"),
         (GROUND, "GROUND"),
@@ -804,14 +805,14 @@ fn palette_law_gold_is_the_brand() {
             panic!("{name} must be a truecolor token");
         };
         assert!(
-            b >= r,
-            "{name} ({ground:?}) must not be warm — blue sits above red on \
+            r >= b,
+            "{name} ({ground:?}) must not be cool — red sits above blue on \
              every ground in this palette"
         );
         let (max, min) = (r.max(g).max(b), r.min(g).min(b));
         assert!(
             max - min <= 8,
-            "{name} ({ground:?}) must be a near-neutral, not a blue cast"
+            "{name} ({ground:?}) must be a near-neutral, not a sepia cast"
         );
         assert_ne!(ground, Color::Rgb(0, 0, 0), "{name} must not be true black");
     }
@@ -826,17 +827,17 @@ fn palette_law_gold_is_the_brand() {
             panic!("{name} must be a truecolor token");
         };
         assert!(
-            b >= r && b >= g,
-            "{name} ({text:?}) must be a cool neutral (b ≥ r, b ≥ g) — warm \
+            r >= g && g >= b,
+            "{name} ({text:?}) must be a warm neutral (r ≥ g ≥ b) — cool \
              grays are banned on the dark side"
         );
         let (max, min) = (r.max(g).max(b), r.min(g).min(b));
         assert!(
-            max - min <= 14,
-            "{name} ({text:?}) must be a near-neutral, not a blue cast"
+            max - min <= DARK_TEXT_SPAN,
+            "{name} ({text:?}) must be a near-neutral, not a sepia cast"
         );
     }
-    // The paper ramp is cooled to match, so a theme switch changes the
+    // The paper ramp is warmed to match, so a theme switch changes the
     // lightness and not the temperature.
     for (paper, name) in [
         (palette::PAPER, "PAPER"),
@@ -851,7 +852,15 @@ fn palette_law_gold_is_the_brand() {
         let Color::Rgb(r, _, b) = paper else {
             panic!("{name} must be a truecolor token");
         };
-        assert!(b >= r, "{name} ({paper:?}) must not be warm");
+        assert!(r >= b, "{name} ({paper:?}) must not be cool");
+        let Color::Rgb(r, g, b) = paper else {
+            unreachable!()
+        };
+        let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+        assert!(
+            max - min <= PAPER_SPAN,
+            "{name} ({paper:?}) must be a near-neutral, not a sepia cast"
+        );
     }
 
     // 4. Warning ramps warm (r > g > b — amber, no longer the orange that
@@ -935,10 +944,16 @@ fn palette_law_gold_is_the_brand() {
             continue;
         }
         let Color::Rgb(r, g, b) = value else { continue };
-        // Neutrals have no meaningful hue to separate; skip anything whose
-        // channels are within the ramp's own spread.
-        let (max, min) = (r.max(g).max(b), r.min(g).min(b));
-        if max - min <= 14 {
+        // Neutrals have no meaningful hue to separate. The question is whether
+        // a value HAS a hue, which is chroma — and a channel span cannot
+        // answer it, because levels mean different things at different
+        // lightnesses. The hairline on ink spends 7 of 41 and the seam on paper
+        // spends 27 of 216, and both are the same grey; a span that admits one
+        // reads the other as a colour.
+        //
+        // The gap is wide enough not to be a judgement call: every neutral here
+        // sits at or under 0.026 and every chromatic one at or above 0.090.
+        if oklch::chroma(r, g, b) <= 0.04 {
             continue;
         }
         let sep = hue_separation(value, ACCENT);

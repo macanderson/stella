@@ -21,22 +21,22 @@
 //!
 //! sRGB hue in turn breaks against a *yellow* brand, because sRGB's hue circle
 //! is badly non-uniform through the warm quadrant. Measured on this palette's
-//! own values: the accent and the success green are 63.1° apart in OKLCH but
-//! 94.8° in sRGB, while the accent and the danger rose are 78.0° in OKLCH but
-//! 54.7° in sRGB — sRGB stretches yellow→green and compresses yellow→red by
-//! roughly 30° each. The consequence is not academic. It makes the 54.7° sRGB
-//! arc between the accent and danger too narrow to hold a warning at 30° from
-//! both, so the metric would have rejected the one hue that is *actually* 39.1°
-//! from each — an unbuildable law, not a strict one.
+//! own values: the accent and the success green are 79.0° apart in OKLCH but
+//! 103.1° in sRGB, while the accent and the danger rose are 63.7° in OKLCH but
+//! 47.9° in sRGB — sRGB stretches yellow→green and compresses yellow→red by
+//! roughly 20° each. The consequence is not academic. The 47.9° sRGB arc
+//! between the accent and danger cannot hold a warning 30° from both, so that
+//! metric rejects the one hue which is *actually* 31.8° from each. It is an
+//! unbuildable law, not a strict one — and the house gold narrows the arc, so
+//! the metric decides whether this palette can be built at all.
 //!
-//! Do not re-derive the metric a third time without stating why, here, in this
-//! chain.
+//! Do not re-derive the metric a third time without stating why, here.
 //!
 //! ## Not [`crate::clamp::srgb_hue_degrees`]
 //!
 //! That function is sRGB hue and stays sRGB hue: it serves the gold-lift
-//! anchor, whose 3° tolerance was cut in that space against the gold this
-//! palette actually ships. Two hue functions in one crate is a hazard only
+//! anchor and the shade anchor beside it, whose 4° tolerance was cut in that
+//! space against the gold this palette actually ships. Two hue functions in one crate is a hazard only
 //! while either one is named for the job instead of the space, which is how
 //! this module and that one are named.
 
@@ -46,7 +46,13 @@
 /// the instrument-surface parity test — one law with two numbers, which means
 /// the stricter one was never the law and the looser one was never enforced
 /// (#4071). Every shipped pair clears 30° on both web schemes; the tightest is
-/// `--warn` to `--bad` at 38.9° dark and 37.6° light.
+/// `--identity` to `--warn` at 31.8° dark and 31.4° light.
+///
+/// That pair is tight by design. The house gold sits 16° nearer the warning
+/// than the gold before it. So the warning was re-cut to the hue with the
+/// widest smallest gap: to the identity on one side, the danger rose on the
+/// other. The whole arc holds about two degrees of room. A warning anywhere
+/// else in it fails this floor.
 pub const SEPARATION_FLOOR_DEG: f64 = 30.0;
 
 /// OKLCH hue in degrees `[0, 360)` for an 8-bit sRGB triple.
@@ -79,6 +85,36 @@ pub fn hue_deg(r: u8, g: u8, b: u8) -> f64 {
         return 0.0;
     }
     b_axis.atan2(a_axis).to_degrees().rem_euclid(360.0)
+}
+
+/// Oklab chroma — the distance from the neutral axis, in the same space.
+///
+/// The answer to "does this colour have a hue at all", which a channel span
+/// cannot give. A span is measured in levels, and levels mean different things
+/// at different lightnesses: the hairline on ink spends 7 of 41 and the seam on
+/// paper spends 27 of 216, and both are the same grey. Chroma is independent of
+/// lightness, so one threshold covers a ramp running from near-black to
+/// near-white.
+///
+/// Every neutral in this palette sits at or under 0.026 and every chromatic one
+/// at or above 0.090, so a caller's cut-off has a wide gap to sit in.
+#[must_use]
+pub fn chroma(r: u8, g: u8, b: u8) -> f64 {
+    let lin = |c: u8| {
+        let c = f64::from(c) / 255.0;
+        if c <= 0.040_45 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let (r, g, b) = (lin(r), lin(g), lin(b));
+    let l = (0.412_221_470_8 * r + 0.536_332_536_3 * g + 0.051_445_992_9 * b).cbrt();
+    let m = (0.211_903_498_2 * r + 0.680_699_545_1 * g + 0.107_396_956_6 * b).cbrt();
+    let s = (0.088_302_461_9 * r + 0.281_718_837_6 * g + 0.629_978_700_5 * b).cbrt();
+    let a_axis = 1.977_998_495_1 * l - 2.428_592_205_0 * m + 0.450_593_709_9 * s;
+    let b_axis = 0.025_904_037_1 * l + 0.782_771_766_2 * m - 0.808_675_766_0 * s;
+    a_axis.hypot(b_axis)
 }
 
 /// The shortest angular distance between two hues, in degrees.

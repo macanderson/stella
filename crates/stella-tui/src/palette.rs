@@ -34,7 +34,7 @@
 //!   `BRAND_INK_DEEP`, `GOLD_INK`), and the three status inks (`SUCCESS_INK`,
 //!   `WARNING_INK`, `DANGER_INK`). The JSON's `web-light` stops disagree with
 //!   these: its `paper` is pure white where the deck paints `#F4F4F6`, and
-//!   its `ink` is `#141413` where this file means the dark ground.
+//!   its `ink` is `#10100F` where this file means the dark ground.
 //!   Reconciling them is a design call about what the paper theme *is*, not
 //!   a remap. The three status inks wait on that same call.
 //! - **`VOID` and `HAIRLINE_STRONG`,** derived steps either side of the
@@ -50,18 +50,17 @@
 //! finishing it.
 //!
 //! The identity is **Gold on a cool near-black**: one colour, owned. Gold
-//! `#EFC53F` is the signal -- the mark, the prompt, active/selected, focus --
+//! `#D6962C` is the signal -- the mark, the prompt, active/selected, focus --
 //! and never the surface; the ground is a four-step neutral ramp from
-//! `#0A0A0C`, and text is a cool neutral ramp above it.
+//! `#10100F`, and text is a cool neutral ramp above it.
 //!
 //! **Every ground is neutral with blue one or two points above red.** That is
-//! the whole reason the ramp is specified by hex rather than derived: a
-//! neutral that leans even slightly warm reads as *muddy brown* on a cheap
-//! panel, and the accent is a yellow, so a warm ground puts the one owned
-//! colour and the surface it sits on in the same family. Measured, the ramp
-//! holds OKLCH hue 285.6-285.9 deg at chroma 0.004-0.011 -- a cast small
-//! enough to read as neutral and consistent enough that the four steps look
-//! like one material. Nothing on the dark side may be warm-dominant.
+//! the whole reason the ramp is specified rather than derived: the house
+//! system is warm on one axis end to end, which is what lets a single gold
+//! read as metal against both the ink and the paper. Measured, the ramp holds
+//! OKLCH hue 84.6-106.7 deg at chroma 0.002-0.009 -- a cast small enough to
+//! read as neutral and consistent enough that the four steps look like one
+//! material. Nothing on the dark side may be cool-dominant.
 //!
 //! The gold is deliberately **two values and no more**: [`GOLD`] for every
 //! resting mark, and [`GOLD_LIVE`] for the small things that are *moving
@@ -112,13 +111,13 @@ use stella_tui_theme::token;
 // a near-black lets it speak.
 
 /// Deepest ground -- full-bleed backdrops, the splash, OG art. One step below
-/// the canvas on the same ramp (OKLCH hue 285.4, blue two points above red).
+/// the canvas on the same ramp (OKLCH hue 106.7, red one point above blue).
 /// The four specified blacks start at [`GROUND`]; this is the derived fifth,
 /// and exists because a full-bleed backdrop behind a canvas needs somewhere
 /// to be.
-pub const VOID: Color = Color::Rgb(0x05, 0x05, 0x07);
+pub const VOID: Color = Color::Rgb(0x0A, 0x0A, 0x09);
 
-/// App background -- the canvas `#0A0A0C`, painted as a real frame fill by
+/// App background -- the canvas `#10100F`, painted as a real frame fill by
 /// the deck, so every contrast figure below is measured against it.
 pub const GROUND: Color = token::BG;
 
@@ -138,7 +137,7 @@ pub const HAIRLINE: Color = token::BORDER;
 /// The derived fifth step of the ground ramp (1.63:1 on ground), still below
 /// the 3:1 graphical floor, so it is a *stronger* decoration, not a
 /// substitute for a glyph or a gap.
-pub const HAIRLINE_STRONG: Color = Color::Rgb(0x35, 0x35, 0x3D);
+pub const HAIRLINE_STRONG: Color = token::RULE;
 
 // -- Brand (dark: gold) ------------------------------------------
 //
@@ -147,14 +146,14 @@ pub const HAIRLINE_STRONG: Color = Color::Rgb(0x35, 0x35, 0x3D);
 // is the signal, never the surface. A gold fill always carries GROUND-dark
 // text; white on this gold is 1.35:1 and illegible.
 
-/// Gold `#EFC53F` -- the mark. 11.99:1 on ground, 11.60:1 on surface,
-/// 10.83:1 on raised, so the same value is safe on a glyph, a one-cell rule
-/// and a fill on every dark ground. OKLCH hue 90.8.
+/// Gold `#D6962C` -- the mark. 7.49:1 on ground, 7.04:1 on surface, 6.49:1 on
+/// raised, so the same value is safe on a glyph, a one-cell rule and a fill on
+/// every dark ground. OKLCH hue 74.8.
 pub const BRAND: Color = token::GOLD;
 
-/// The live stop `#F7D96B` -- **reserved for small things that are moving**:
+/// The live stop `#F1C364` -- **reserved for small things that are moving**:
 /// the running spinner, the progress fill's leading edge. 14.22:1 on ground,
-/// 3.5 deg from [`BRAND`] in hue, so it reads as the same gold lit up rather
+/// 8.8 deg from [`BRAND`] in hue, so it reads as the same gold lit up rather
 /// than as a second colour. Never a resting mark: chrome that is not moving
 /// takes [`BRAND`].
 pub const BRAND_LIVE: Color = token::GOLD_BRIGHT;
@@ -162,13 +161,13 @@ pub const BRAND_LIVE: Color = token::GOLD_BRIGHT;
 // -- Brand (light: gold on paper) --------------------------------
 //
 // The `stella-light` primary. Gold cannot hold a text edge on paper at full
-// strength -- `#EFC53F` measures 1.32:1 on [`PAPER`] -- so the light accent
+// strength -- `#D6962C` measures 1.32:1 on [`PAPER`] -- so the light accent
 // walks the same hue down until it clears AA. Applied by the per-frame theme
 // remap in [`crate::theme`], truecolor only.
 
-/// The light-theme brand hue -- OKLCH hue 90.6 (0.1 deg from [`BRAND`]),
-/// 6.02:1 on [`PAPER`], 5.31:1 on [`PAPER_RAISED`]. Gold *text* on paper.
-pub const BRAND_INK: Color = Color::Rgb(0x72, 0x5A, 0x00);
+/// The light-theme brand hue -- OKLCH hue 72.5 (2.3 deg from [`BRAND`]),
+/// 4.88:1 on [`PAPER`], 4.62:1 on [`PAPER_RAISED`]. Gold *text* on paper.
+pub const BRAND_INK: Color = Color::Rgb(0x8B, 0x5E, 0x1A);
 
 /// Pressed stop / trailing progress stop on paper -- 9.60:1 on [`PAPER`],
 /// so even the fill's tail clears AA.
@@ -238,22 +237,24 @@ pub const TEXT_DIM: Color = token::DIM;
 // at chroma 0.116 and danger at 0.150, against the 0.152 of the gold, so no
 // status ever out-saturates the one owned colour.
 
-/// Success / done / added. 9.90:1 on ground, OKLCH hue 153.9 (63.1 deg from
+/// Success / done / added. 9.52:1 on ground, OKLCH hue 153.9 (79.0 deg from
 /// the gold accent). Also the settled cost of a finished turn -- money spent
 /// is a fact, and a fact reads green.
 pub const SUCCESS: Color = token::GREEN;
 
-/// Warning / needs-input. 7.85:1 on ground, OKLCH hue 51.7.
+/// Warning / needs-input. 7.51:1 on ground, OKLCH hue 43.0.
 ///
 /// The one status the palette did not name, and it is derived rather than
-/// picked: [`GOLD`] sits at hue 90.8 and [`DANGER`] at 12.8, and 51.8 is the
+/// picked: [`GOLD`] sits at hue 74.8 and [`DANGER`] at 11.2, and 43.0 is the
 /// point that **maximises the smaller of the two gaps**. The shipped value
-/// lands 39.1 deg from gold and 38.9 deg from danger -- so a reader can tell
+/// lands 31.8 deg from gold and 31.8 deg from danger -- so a reader can tell
 /// a warning from the mark *and* from a failure by hue, not just by glyph.
+/// The house gold sits 16 deg nearer danger than the gold before it, so that
+/// arc holds about two degrees of room for a warning 30 deg from both ends.
 /// It carries the same cool pull as its two neighbours (chroma 0.131).
 pub const WARNING: Color = token::WARNING;
 
-/// Error / failed / removed. 6.06:1 on ground, OKLCH hue 12.8 (78.0 deg from
+/// Error / failed / removed. 5.84:1 on ground, OKLCH hue 11.2 (63.7 deg from
 /// the gold accent).
 pub const DANGER: Color = token::RED;
 
@@ -269,10 +270,10 @@ pub const DANGER: Color = token::RED;
 pub const SUCCESS_INK: Color = Color::Rgb(0x00, 0x69, 0x33);
 
 /// Warning on a light ground -- 6.85:1 on [`PAPER`].
-pub const WARNING_INK: Color = Color::Rgb(0x8A, 0x3F, 0x00);
+pub const WARNING_INK: Color = Color::Rgb(0x8D, 0x3B, 0x19);
 
 /// Error on a light ground -- 7.41:1 on [`PAPER`].
-pub const DANGER_INK: Color = Color::Rgb(0x96, 0x21, 0x3C);
+pub const DANGER_INK: Color = Color::Rgb(0x95, 0x21, 0x41);
 
 // -- Ground (light) ----------------------------------------------
 //
@@ -281,18 +282,18 @@ pub const DANGER_INK: Color = Color::Rgb(0x96, 0x21, 0x3C);
 // lightness and not the temperature. Accent here is [`BRAND_INK`], text is
 // [`INK`].
 
-/// Light background -- a cool off-white, not pure white.
-pub const PAPER: Color = Color::Rgb(0xF4, 0xF4, 0xF6);
+/// Light background -- a warm off-white, not pure white.
+pub const PAPER: Color = token::PAPER_GROUND;
 
 /// Light surface. Lifts *lighter* than paper, as the dark surface lifts
 /// lighter than the canvas.
-pub const SNOW: Color = Color::Rgb(0xFA, 0xFA, 0xFC);
+pub const SNOW: Color = token::PAPER;
 
 /// Light raised surface -- popovers, selected rows on paper.
-pub const PAPER_RAISED: Color = Color::Rgb(0xE6, 0xE6, 0xEA);
+pub const PAPER_RAISED: Color = token::PAPER_ROW;
 
 /// Light seam / rule -- the paper counterpart of [`HAIRLINE`].
-pub const PAPER_HAIRLINE: Color = Color::Rgb(0xDD, 0xDD, 0xE3);
+pub const PAPER_HAIRLINE: Color = token::PAPER_SEAM;
 
 /// Primary text on paper -- 18.01:1. The same value as [`GROUND`]: the
 /// canvas black serves as both the dark ground and the light text, which is
@@ -308,16 +309,19 @@ pub const INK: Color = token::BG;
 /// different colour on a different ground, with nothing at a call site to say
 /// which one a line had reached. #4966 removed the third constant of that
 /// name; this is the last of them.
-pub const INK_MUTED: Color = Color::Rgb(0x5E, 0x5E, 0x69);
+pub const INK_MUTED: Color = token::INK_MUTED;
 
-/// Tertiary text on paper -- 4.72:1 on [`PAPER`], the counterpart of
-/// [`TEXT_TERTIARY`]. On [`PAPER_RAISED`] it drops to 4.16:1 and is a
-/// large-text / UI tone there, exactly as its dark twin is on [`RAISED`].
-pub const INK_DIM: Color = Color::Rgb(0x6C, 0x6C, 0x78);
+/// Tertiary text on paper -- 3.09:1 on [`PAPER`], the counterpart of
+/// [`TEXT_TERTIARY`] and a large-text / UI tone, exactly as its dark twin is
+/// on [`RAISED`]. The house kit's quietest ink on paper, written out because
+/// this ramp's name for the tier and the dark ramp's name for that value are
+/// different words.
+pub const INK_DIM: Color = Color::Rgb(0x8C, 0x87, 0x7C);
 
-/// The bright-neutral tier on paper -- 9.92:1, the counterpart of
-/// [`TEXT_EMPHASIS`], and like it a cool neutral (OKLCH hue 285.5).
-pub const INK_EMPHASIS: Color = Color::Rgb(0x3C, 0x3C, 0x46);
+/// The bright-neutral tier on paper -- 12.72:1, the counterpart of
+/// [`TEXT_EMPHASIS`], and like it a warm neutral (OKLCH hue 88.8). The house
+/// kit's body ink on paper, one tier under [`INK`].
+pub const INK_EMPHASIS: Color = Color::Rgb(0x2A, 0x28, 0x23);
 
 // -- Data marks --------------------------------------------------
 //
@@ -329,27 +333,27 @@ pub const INK_EMPHASIS: Color = Color::Rgb(0x3C, 0x3C, 0x46);
 // Every one clears **30 deg of OKLCH hue from [`GOLD`]** (the floor for two
 // hues to be told apart in a single terminal cell) and AA body on
 // [`GROUND`]. The amber mark that used to open this series was retired with
-// the recolour: at OKLCH hue 85.2 it sat **5.5 deg** from this gold -- the
+// the recolour: at OKLCH hue 85.2 it sat **10.4 deg** from this gold -- the
 // same colour at a glance -- and a categorical mark that can be mistaken for
 // "running" is worse than one fewer category. Its one surviving job, the
 // syntax-keyword tone inside code bodies, went to [`TEXT_EMPHASIS`], which
 // is where the palette puts code tokens anyway.
 
-/// Categorical 1 -- muted violet, OKLCH hue 292.6 (158.2 deg from gold).
+/// Categorical 1 -- muted violet, OKLCH hue 292.6 (142.3 deg from gold).
 /// 5.32:1 on ground.
 pub const DATA_1: Color = Color::Rgb(0x8F, 0x70, 0xE8);
-/// Categorical 2 -- warm rose, hue 355.6 (95.2 deg from gold). 5.11:1 on
+/// Categorical 2 -- warm rose, hue 355.6 (79.3 deg from gold). 5.11:1 on
 /// ground; 1.14:1 against [`DANGER`], so it never carries an error meaning
 /// and never appears without a label or glyph.
 pub const DATA_2: Color = Color::Rgb(0xE4, 0x40, 0x8F);
-/// Categorical 3 -- deep teal, hue 186.6 (95.9 deg from gold). 10.60:1 on
+/// Categorical 3 -- deep teal, hue 186.6 (111.8 deg from gold). 10.60:1 on
 /// ground.
 pub const DATA_3: Color = Color::Rgb(0x2F, 0xD3, 0xC6);
-/// Categorical 4 -- citron, hue 126.2 (35.4 deg from gold -- the tightest
+/// Categorical 4 -- citron, hue 126.2 (51.3 deg from gold -- the tightest
 /// clearance in the set, and it clears). 11.10:1 on ground. The transcript's
 /// repository/VCS class.
 pub const DATA_4: Color = Color::Rgb(0xA3, 0xD1, 0x4B);
-/// Categorical 5 -- orchid, hue 324.4. 6.74:1 on ground, 126.3 deg from
+/// Categorical 5 -- orchid, hue 324.4. 6.74:1 on ground, 110.4 deg from
 /// gold, and the tightest pair in the whole set: 31.8 deg from the violet
 /// and 31.1 deg from the rose. It sits at the point that maximises the
 /// smaller of those two gaps, because it has to -- at its previous value it

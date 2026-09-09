@@ -726,19 +726,19 @@ fn the_dashboard_palette_is_generated_from_the_live_theme() {
     // Dark: the instrument ramp, achromatic chrome, the brand hue only as
     // identity.
     for declaration in [
-        "--ground: #0A0A0C;",
-        "--surface: #0F0F12;",
-        "--raised: #17171B;",
-        "--hairline: #26262C;",
-        "--text: #E8E8EC;",
-        "--text-2: #A9AAB5;",
-        "--text-3: #7C7C87;",
-        "--accent: #E8E8EC;",
-        "--identity: #EFC53F;",
+        "--ground: #10100F;",
+        "--surface: #181715;",
+        "--raised: #201F1C;",
+        "--hairline: #292722;",
+        "--text: #F2EEE5;",
+        "--text-2: #9B958A;",
+        "--text-3: #8C877C;",
+        "--accent: #F2EEE5;",
+        "--identity: #D6962C;",
         "--ok: #74C991;",
-        "--warn: #E78D54;",
-        "--bad: #E0687A;",
-        "--c1: #E8E8EC;",
+        "--warn: #EB8960;",
+        "--bad: #E0687D;",
+        "--c1: #F2EEE5;",
     ] {
         assert!(
             html.contains(declaration),

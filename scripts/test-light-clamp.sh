@@ -145,10 +145,10 @@ entry_is "C4 the refused --update wrote no entry" "$r" "$BENCH" --panel absent
 # `--rule` is #E9E9EE and baselined; the kit's own `paper-seam` is warm and
 # passes, so the entry must LEAVE the ratchet rather than stay as a licence.
 r="$(new_root warm_neutral)"
-repaint "$r" "$BENCH" "#E9E9EE" "#E0DDD7"
+repaint "$r" "$BENCH" "#E9E9EE" "#D8CDBD"
 want "W1 a warm replacement is reported as clearing, not passed silently" \
   expect-fail "$r" "satisfies its clamp now"
-want "W2 --update drops the cleared entry" expect-pass "$r" "retightened to 33" "--update"
+want "W2 --update drops the cleared entry" expect-pass "$r" "retightened to 26" "--update"
 entry_is "W3 the cleared entry is gone" "$r" "$BENCH" --rule absent
 
 # ── U: a role that names no family at all ────────────────────────────────────

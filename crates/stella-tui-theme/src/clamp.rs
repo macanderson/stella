@@ -6,12 +6,12 @@
 //! SPEC 3.2 originally asked for one rule over "every color in the gold role":
 //! `r > g > b`, `g >= 0.78 r`, `b <= 0.35 r`. That rule is not satisfiable by a
 //! palette that also wants a *lift* — a brighter stop of the same gold for
-//! single-cell live indicators — and the spec's own `gold_bright` `#F7D96B`
+//! single-cell live indicators — and the spec's own `gold_bright` `#F1C364`
 //! was the proof, measuring `b/r = 0.433`.
 //!
 //! It is not a bad colour. It is a geometry problem. Lightening a hue moves
 //! every channel toward white, and the channel furthest from it — blue, in a
-//! gold — moves proportionally the most. Take `GOLD` `#EFC53F` and lift it to
+//! gold — moves proportionally the most. Take `GOLD` `#D6962C` and lift it to
 //! `gold_bright`'s lightness holding hue and saturation exactly: you land on
 //! `#F3D36F`, `b/r = 0.46`. **No** hue-preserving lift to that lightness
 //! satisfies a `0.35` blue ceiling. A single blue bound over both a resting
@@ -79,11 +79,17 @@ pub const GOLD_BLUE_PCT: u32 = token::GOLD_BLUE_PCT;
 /// `#EF8A1F` sits 14.8° away and fails.
 pub const LIFT_HUE_TOLERANCE_DEG: f64 = token::GOLD_LIFT_HUE_TOLERANCE_DEG;
 
-/// The green floor warm paper must clear, as a percentage of red.
-pub const PAPER_GREEN_PCT: u32 = token::PAPER_GREEN_PCT;
+/// How far a shade's hue may sit from the gold it darkens, in degrees.
+///
+/// The mirror of [`LIFT_HUE_TOLERANCE_DEG`], and the same number: a shade must
+/// be the *same* gold, and "same" does not change direction with lightness.
+pub const SHADE_HUE_TOLERANCE_DEG: f64 = token::GOLD_SHADE_HUE_TOLERANCE_DEG;
 
-/// The blue floor warm paper must clear, as a percentage of red.
-pub const PAPER_BLUE_PCT: u32 = token::PAPER_BLUE_PCT;
+/// The green floor every neutral must clear, as a percentage of red.
+pub const NEUTRAL_GREEN_PCT: u32 = token::NEUTRAL_GREEN_PCT;
+
+/// The blue floor every neutral must clear, as a percentage of red.
+pub const NEUTRAL_BLUE_PCT: u32 = token::NEUTRAL_BLUE_PCT;
 
 /// Does `color` satisfy the clamp its row in [`token::ALL`] declares?
 ///
@@ -107,9 +113,11 @@ pub fn satisfies(color: Color, clamp: token::Clamp) -> bool {
             Some(anchor) => is_lift_of((r, g, b), anchor),
             None => false,
         },
-        token::Clamp::CoolSilver => is_cool_silver(r, g, b),
-        token::Clamp::NeutralGray => is_neutral_gray(r, g, b),
-        token::Clamp::WarmPaper => is_warm_paper(r, g, b),
+        token::Clamp::GoldShade => match token::shade_anchor().and_then(channels) {
+            Some(anchor) => is_shade_of((r, g, b), anchor),
+            None => false,
+        },
+        token::Clamp::WarmNeutral => is_warm_neutral(r, g, b),
         token::Clamp::Verdict | token::Clamp::Surface => true,
     }
 }
@@ -129,7 +137,7 @@ pub const fn channels(color: Color) -> Option<(u8, u8, u8)> {
 
 /// Does this colour belong to the gold role at all — gold rather than orange?
 ///
-/// `r > g > b` and `g >= 0.78 r`. The universal half of SPEC 3.2, true of a
+/// `r > g > b` and `g >= 0.70 r`. The universal half of SPEC 3.2, true of a
 /// resting gold and of every lift of one, because it is a statement about hue
 /// and lifting does not change hue.
 #[must_use]
@@ -213,40 +221,57 @@ pub fn is_lift_of(lift: (u8, u8, u8), base: (u8, u8, u8)) -> bool {
     hue_distance(lh, bh) <= LIFT_HUE_TOLERANCE_DEG && lightness(lr, lg, lb) > lightness(br, bg, bb)
 }
 
-/// Is this colour a neutral or blue-tipped gray (SPEC 3.2)?
+/// Is `shade` the same gold as `base`, darker?
 ///
-/// `r == g` and `b >= g`. A gray with `r > g` is warm and is what turns a
-/// black-and-gold scheme sepia; a gray with `g > r` is green-tipped and is not
-/// what the spec asks for either.
+/// The mirror of [`is_lift_of`], and new with the house system. `gold-ink` is
+/// the gold as it appears where the metal itself cannot clear AA — as text or
+/// a hairline on paper. It is the same hue, darkened.
+///
+/// A green ratio is the wrong instrument for it: darkening compresses the
+/// channels unevenly, so a shade's `g/r` sits away from its parent's for
+/// reasons that have nothing to do with hue. Holding a shade to a ratio drags
+/// the ratio down until it admits the shade, and a ratio loosened to fit one
+/// dark token stops policing the hue of the bright one. So the shade is held to
+/// the gold, and only its *shape* (`r > g > b`) is asserted directly.
 #[must_use]
-pub const fn is_neutral_gray(r: u8, g: u8, b: u8) -> bool {
-    r == g && b >= g
+pub fn is_shade_of(shade: (u8, u8, u8), base: (u8, u8, u8)) -> bool {
+    let (sr, sg, sb) = shade;
+    let (br, bg, bb) = base;
+    if !(sr > sg && sg > sb) || !is_gold_role(br, bg, bb) {
+        return false;
+    }
+    let (Some(sh), Some(bh)) = (srgb_hue_degrees(sr, sg, sb), srgb_hue_degrees(br, bg, bb)) else {
+        return false;
+    };
+    hue_distance(sh, bh) <= SHADE_HUE_TOLERANCE_DEG && lightness(sr, sg, sb) < lightness(br, bg, bb)
 }
 
-/// Is this colour a cool silver — the second metal, never warm?
+/// Is this colour a house neutral — warm or exactly neutral, never cool?
 ///
-/// `b > r` and `g >= r`. SPEC 3.2's gray clamp is stated for the neutral ramp
-/// and the two silvers do not satisfy its `r == g` half by design (they sit
-/// one to two points off neutral, which is the tilt SPEC 3.1's opening
-/// sentence describes). Left unclamped they would be the palette's one
-/// unguarded warm-drift surface — the metal that appears on every read, skill
-/// and memory row — so they carry the weaker predicate that still forbids the
-/// failure mode: blue strictly above red, green never below it.
-#[must_use]
-pub const fn is_cool_silver(r: u8, g: u8, b: u8) -> bool {
-    b > r && g >= r
-}
-
-/// Is this colour warm paper — the light ground's clamp, off the deck?
+/// `r >= g >= b`, with `g >= 0.94 r` and `b >= 0.82 r`. One predicate for every
+/// neutral in the system, ink to paper.
 ///
-/// `r >= g >= b`, with `g >= 0.97 r` and `b >= 0.93 r`. The mirror of
-/// [`is_neutral_gray`]: warm or neutral, never blue. The two floors keep paper
-/// from becoming tan, and are taken from brand v1.0's light neutrals, which sit
-/// at `g = 0.988 r` and `b = 0.960 r`.
+/// It replaces three. v5.0 had a blue-tipped dark ramp (`r == g`, `b >= g`),
+/// two silvers that sat off neutral in the same direction, and a warm paper
+/// ramp — three neutral families, so three clamps. The house system has one:
+/// every neutral from `VOID` to `PAPER` is warm or exactly neutral. Three
+/// predicates over one family is three places for it to drift, and the two
+/// dark ones now disagree with the palette they were written for.
+///
+/// The floors are what keeps a warm ramp from becoming sepia, which is the
+/// failure mode a black-and-gold scheme actually has — the greys creeping warm
+/// one reasonable step at a time until the gold stops reading as a separate
+/// colour. They are the tightest integer floors the house ramp clears, measured
+/// against its two extremes: the hairline on ink (`#292722`, `g/r` 0.951) and
+/// the hairline on paper (`#D8CDBD`, `b/r` 0.875).
+///
+/// Equality is admitted on both sides because the darkest stops are neutral to
+/// the byte — `#10100F` is `r == g` — and rounding at that lightness has
+/// nowhere else to land.
 #[must_use]
-pub const fn is_warm_paper(r: u8, g: u8, b: u8) -> bool {
+pub const fn is_warm_neutral(r: u8, g: u8, b: u8) -> bool {
     r >= g
         && g >= b
-        && (g as u32) * 100 >= (r as u32) * PAPER_GREEN_PCT
-        && (b as u32) * 100 >= (r as u32) * PAPER_BLUE_PCT
+        && (g as u32) * 100 >= (r as u32) * NEUTRAL_GREEN_PCT
+        && (b as u32) * 100 >= (r as u32) * NEUTRAL_BLUE_PCT
 }

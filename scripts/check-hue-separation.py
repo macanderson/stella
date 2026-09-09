@@ -169,8 +169,8 @@ SCHEMES = {
 # `crates/stella-tui/src/theme/tests.rs`. Three tables, one shape, each beside
 # the surface it reads.
 CLAIMS = (
-    ("web-dark", "identity", "ok", "63.1°", OKLCH_SOURCE),
-    ("web-dark", "identity", "bad", "78.0°", OKLCH_SOURCE),
+    ("web-dark", "identity", "ok", "79.0°", OKLCH_SOURCE),
+    ("web-dark", "identity", "bad", "63.7°", OKLCH_SOURCE),
 )
 
 

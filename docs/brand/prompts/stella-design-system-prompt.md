@@ -9,7 +9,7 @@ stella is Latin for star. The logomark is a comet — a four-point star with thr
 ## logomark — use this exact svg, never redraw it
 
 ```svg
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" fill="none"><line x1="10" y1="48" x2="30" y2="48" stroke="#EFC53F" stroke-width="7" stroke-linecap="round"/><line x1="18" y1="34" x2="30" y2="34" stroke="#EFC53F" stroke-width="7" stroke-linecap="round"/><line x1="18" y1="62" x2="30" y2="62" stroke="#EFC53F" stroke-width="7" stroke-linecap="round"/><path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="#EFC53F"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" fill="none"><line x1="10" y1="48" x2="30" y2="48" stroke="#D6962C" stroke-width="7" stroke-linecap="round"/><line x1="18" y1="34" x2="30" y2="34" stroke="#D6962C" stroke-width="7" stroke-linecap="round"/><line x1="18" y1="62" x2="30" y2="62" stroke="#D6962C" stroke-width="7" stroke-linecap="round"/><path d="M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z" fill="#D6962C"/></svg>
 ```
 
 Lockup = this mark + "stella" in JetBrains Mono ExtraBold, lowercase, tracking −2%, text optically centered on the star. Clearspace = half a star-height on all sides. Minimum sizes: 16px favicon, 24px UI. Below 16px use the star alone.
@@ -26,43 +26,43 @@ The system is **flat**. There are no 50→950 ramps: v5.0 deletes both the brand
 
 | token | hex | role |
 |---|---|---|
-| `--st-bg` | `#0A0A0C` | canvas — the near-black ground |
-| `--st-panel` | `#0F0F12` | panels, cards, code blocks |
-| `--st-hl` | `#17171B` | selected and hover rows |
-| `--st-border` | `#26262C` | hairlines, dividers, unfilled meter track |
-| `--st-rule` | `#2C2C33` | section rules, boundaries |
-| `--st-gold` | `#EFC53F` | THE brand metal: actions, active states, money, the mark |
-| `--st-gold-bright` | `#F7D96B` | tiny live indicators only — spinner, hot marker |
-| `--st-silver` | `#A9AAB5` | secondary emphasis, syntax strings |
-| `--st-silver-type` | `#BFC1CC` | syntax types, tertiary labels |
-| `--st-text` | `#E8E8EC` | primary text on dark, in the deck |
-| `--st-paper-text` | `#F4F1EA` | primary text on dark, off the deck — the web surfaces and the cut assets, so this is the one you want for a page |
-| `--st-muted` | `#7C7C87` | secondary text |
-| `--st-dim` | `#5F5F6A` | hints, captions, line numbers |
+| `--st-bg` | `#10100F` | canvas — the near-black ground |
+| `--st-panel` | `#181715` | panels, cards, code blocks |
+| `--st-hl` | `#201F1C` | selected and hover rows |
+| `--st-border` | `#292722` | hairlines, dividers, unfilled meter track |
+| `--st-rule` | `#34322D` | section rules, boundaries |
+| `--st-gold` | `#D6962C` | THE brand metal: actions, active states, money, the mark |
+| `--st-gold-bright` | `#F1C364` | tiny live indicators only — spinner, hot marker |
+| `--st-silver` | `#9B958A` | secondary emphasis, syntax strings |
+| `--st-silver-type` | `#DDD8CD` | syntax types, tertiary labels |
+| `--st-text` | `#F2EEE5` | primary text on dark, in the deck |
+| `--st-text` | `#F2EEE5` | primary text on dark, off the deck — the web surfaces and the cut assets, so this is the one you want for a page |
+| `--st-muted` | `#8C877C` | secondary text |
+| `--st-dim` | `#6E6A62` | hints, captions, line numbers |
 | `--st-green` | `#74C991` | pass, additive diff sign |
-| `--st-red` | `#E0687A` | fail, destructive, removal diff sign |
-| `--st-amber` | `#E78D54` | warning — the one status the core palette does not otherwise name |
+| `--st-red` | `#E0687D` | fail, destructive, removal diff sign |
+| `--st-amber` | `#EB8960` | warning — the one status the core palette does not otherwise name |
 | `--st-diff-add` | `#10201A` | added diff row background |
 | `--st-diff-del` | `#241019` | removed diff row background |
-| `--st-void` | `#050507` | below the canvas: full-bleed backdrops |
+| `--st-void` | `#0A0A09` | below the canvas: full-bleed backdrops |
 
 **Light.** Not a recolour of the dark set — its own stops, and the only theme where `ink` and the paper tints appear.
 
 | token | hex | role |
 |---|---|---|
-| `--st-paper` | `#FFFCF5` | light canvas |
-| `--st-paper-ground` | `#F7F4ED` | the warm paper page ground, one step under the panel |
-| `--st-paper-panel` | `#F9F6EF` | light panel |
-| `--st-paper-raised` | `#FDFAF3` | surface raised above the page ground |
-| `--st-paper-row` | `#E9E6E0` | light hover and selected rows |
-| `--st-paper-border` | `#E6E3DD` | light border |
-| `--st-paper-seam` | `#E0DDD7` | the hairline under a border |
-| `--st-ink` | `#141413` | primary text on light |
-| `--st-ink-muted` | `#605F5C` | secondary text on light |
-| `--st-gold-ink` | `#725A00` | gold as *text* on the light ground, where the metal cannot clear AA |
+| `--st-paper` | `#FBFAF6` | light canvas |
+| `--st-paper-ground` | `#F2EEE5` | the warm paper page ground, one step under the panel |
+| `--st-paper-panel` | `#F5F2EA` | light panel |
+| `--st-paper-raised` | `#F8F5EE` | surface raised above the page ground |
+| `--st-paper-row` | `#E5DED1` | light hover and selected rows |
+| `--st-paper-border` | `#DED5C7` | light border |
+| `--st-paper-seam` | `#D8CDBD` | the hairline under a border |
+| `--st-ink` | `#10100F` | primary text on light |
+| `--st-ink-muted` | `#6B665C` | secondary text on light |
+| `--st-gold-ink` | `#8B5E1A` | gold as *text* on the light ground, where the metal cannot clear AA |
 | `--st-green-ink` | `#006933` | pass, as text on light |
-| `--st-amber-ink` | `#8A3F00` | warning, as text on light |
-| `--st-red-ink` | `#96213C` | fail, as text on light |
+| `--st-amber-ink` | `#8D3B19` | warning, as text on light |
+| `--st-red-ink` | `#952141` | fail, as text on light |
 
 <!-- END palette -->
 
@@ -107,4 +107,4 @@ Short, declarative, lowercase. Numbers do the talking. Hero pattern: "the fastes
 
 ## never
 
-Rotate or flip the comet, or fly it right→left. Gradients, outlines, or shadows on the mark. Gold body text on light surfaces — that is `gold-ink`, or `ink`. A darker gold cut for the mark on paper; the mark is the same metal on both grounds. Any stop not on the two token tables above — no ramp steps, no hand-mixed tints. A capital S in stella. Any typeface other than JetBrains Mono. Texture behind body text. Pure black backgrounds — the canvas is `#0A0A0C`, not `#000000`. More than one gold accent competing in a view. Spinners that spin.
+Rotate or flip the comet, or fly it right→left. Gradients, outlines, or shadows on the mark. Gold body text on light surfaces — that is `gold-ink`, or `ink`. A darker gold cut for the mark on paper; the mark is the same metal on both grounds. Any stop not on the two token tables above — no ramp steps, no hand-mixed tints. A capital S in stella. Any typeface other than JetBrains Mono. Texture behind body text. Pure black backgrounds — the canvas is `#10100F`, not `#000000`. More than one gold accent competing in a view. Spinners that spin.

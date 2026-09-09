@@ -72,6 +72,11 @@ pub fn detect_truecolor() -> bool {
 #[must_use]
 pub fn ansi16(color: Color) -> Color {
     match color {
+        // `INK` has no arm of its own. Under the house system it IS `BG`: the
+        // dark canvas and the ink on paper are one colour. So the first pattern
+        // here already matches it, and a second arm would be one the compiler
+        // proves no value reaches. It still falls to black, which is what
+        // `every_token_has_a_fallback` checks.
         token::BG | token::PANEL | token::DIFF_ADD_BG | token::DIFF_DEL_BG => Color::Black,
         token::HL | token::BORDER | token::RULE => Color::DarkGray,
         token::GOLD | token::GOLD_BRIGHT => Color::LightYellow,
@@ -85,10 +90,16 @@ pub fn ansi16(color: Color) -> Color {
         // theme is active, and at sixteen colours a paper ground *is* white —
         // there is no lighter tier to distinguish panel from canvas, so they
         // collapse together and `paper_border` takes the one gray that is
-        // left. `ink` is a dark ground like `bg` and degrades the same way.
-        token::INK => Color::Black,
-        token::PAPER | token::PAPER_PANEL => Color::White,
-        token::PAPER_BORDER => Color::Gray,
+        // left. `ink` is a dark ground like `bg`, degrades the same way, and
+        // now literally is that value — see the first arm.
+        // `PAPER_GROUND` is absent for the reason `INK` is: it IS `TEXT` under
+        // the house system, one off-white serving as the light page and the ink
+        // on the dark canvas, so the arm above already matches it. Both land on
+        // white, which is what SPEC 3.5 says for each of them.
+        token::PAPER | token::PAPER_RAISED | token::PAPER_PANEL => Color::White,
+        token::PAPER_ROW | token::PAPER_BORDER | token::PAPER_SEAM => Color::Gray,
+        // Text on that white, and it goes where `INK` goes.
+        token::INK_MUTED => Color::Black,
         // Not a palette token — a caller's own colour, or one this crate does
         // not own. Passing it through is the answer: this function
         // narrows the palette, it does not police what else reaches a cell.

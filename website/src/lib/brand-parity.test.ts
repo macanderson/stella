@@ -15,7 +15,7 @@ import { inflateSync } from "node:zlib";
  *
  * `src/app/tokens.css` carried the sentence "every value below is copied from
  * it verbatim — do not tune a hex here, change the kit and mirror it" while
- * sitting a whole brand version behind: the kit moved to Bronze Gold #C58A32
+ * sitting a whole brand version behind: the kit moved to Bronze Gold #D6962C
  * on Ink #10100F in the 2026-08-11 rebrand and this site stayed on v1.0's
  * Phosphor Gold #FFB000 on Ink #0B0B0C. All thirteen SVGs under
  * `public/brand/` were stale with it, as were seven of the eight PWA icons,
@@ -69,7 +69,7 @@ import { inflateSync } from "node:zlib";
  * about a copy rather than about a design.
  *
  * The comparison is textual and case-insensitive because the kit writes
- * `#EFC53F` and CSS convention here writes `#efc53f`. That is the one
+ * `#D6962C` and CSS convention here writes `#d6962c`. That is the one
  * difference allowed between the two files.
  */
 
@@ -81,6 +81,23 @@ const SITE = join(HERE, "..");
 
 function read(path: string): string {
   return readFileSync(path, "utf8");
+}
+
+/**
+ * The retired hexes the palette itself declares, lowercased.
+ *
+ * `design/tokens/stella-tokens.json` already has to name every superseded
+ * anchor, with a sentence saying which kit it came from — `check-tokens.py`
+ * reads the same list. Taking them from there rather than restating them keeps
+ * one list where a supersession has to be recorded instead of two, and the
+ * second one silently going stale is exactly the failure this file was written
+ * against.
+ */
+function bannedValues(): string[] {
+  const palette: { banned: { values: { hex: string }[] } } = JSON.parse(
+    read(join(REPO, "design", "tokens", "stella-tokens.json")),
+  );
+  return palette.banned.values.map((v) => v.hex.toLowerCase());
 }
 
 /** The `i`th embedded image of an ICO, as its raw bytes. */
@@ -96,9 +113,8 @@ function icoImage(ico: Buffer, i: number): Buffer {
  * equal.
  *
  * Minimal — 8-bit, non-interlaced, colour type 2 or 6, which is
- * every PNG `docs/brand/` produces (see cometkit.py: "PNG needs only zlib and
- * four chunk headers, no imaging library"). Anything else throws rather than
- * being silently accepted, because a guard that quietly skips is the failure
+ * every PNG the house kit and this repo's rasteriser produce. Anything else
+ * throws rather than being silently accepted, because a guard that quietly skips is the failure
  * this whole file exists to prevent. No dependency: `node:zlib` is built in,
  * and adding an image library to run one assertion is not worth it.
  */
@@ -233,7 +249,7 @@ const MIRRORED_CORE = [
  * One level of `var(--x)` indirection, resolved against the file's own map.
  *
  * The site writes `--stella-brand: var(--st-gold)` where the kit writes
- * `#EFC53F`, and that difference is not drift — it is the site declining to
+ * `#D6962C`, and that difference is not drift — it is the site declining to
  * repeat a value the generated ramp above it already carries. Comparing the
  * raw declarations would fail on it, and "fixing" that by pasting the hex back
  * into the site is precisely the duplication `design/tokens/` exists to end.
@@ -321,7 +337,7 @@ test("no retired brand value survives anywhere in the site", () => {
   //
   // A value leaves this list only when a later version makes it **live
   // again**, which is not hypothetical: v4.0 took the brand hue back to v2.0's
-  // the gold ramp value-for-value, so #efc53f and its stops moved from this
+  // the gold ramp value-for-value, so #d6962c and its stops moved from this
   // list into `tokens.css`. What v4.0 did *not* take back is the warm neutral
   // page those stops used to sit on — v3.0's cool graphite ramp and Obsidian
   // ground are kept — so the warm values stay retired and are what this block
@@ -330,14 +346,14 @@ test("no retired brand value survives anywhere in the site", () => {
   const RETIRED = [
     // v1.0 — phosphor gold on ink
     //
-    // These two were swept into `#efc53f`/`#0a0a0c` — the *live* v5.0 gold and
+    // These two were swept into `#d6962c`/`#10100f` — the *live* v5.0 gold and
     // canvas — by the v5.0 hex migration (#4066), which turned this block into
     // a ban on the current brand and made every correct surface an offender.
     // `scripts/check-tokens.py` now lists this file as a ban site so a sweep
     // skips it; the values below are the v1.0 ones they were before.
     "#ffb000",
     "#0b0b0c",
-    // #f4f1ea — v1.0's warm Paper — is **live again** as v5.1's `paper-text`,
+    // #f2eee5 — v1.0's warm Paper — is **live again** as v5.1's `text`,
     // the white every surface off the deck draws on dark. It leaves this list
     // on the rule stated above. The gold and the ground beside it do not: v1.0's
     // phosphor gold fails the resting-gold clamp and its ink is superseded, so
@@ -348,27 +364,27 @@ test("no retired brand value survives anywhere in the site", () => {
     // modern CSS `rgb(r g b / a)`; the comma form is what an `rgba()` literal
     // and Satori (which has no cascade, so the OG card writes its washes out
     // by hand) actually use. Only the first was listed, and the OG card's CTA
-    // shipped an `rgba(239,197,63,0.12)` wash straight through the v3.0
+    // shipped an `rgba(214,150,44,0.12)` wash straight through the v3.0
     // recolour because a hex sweep cannot see a channel triple and this guard
     // was not looking for one.
     "255 176 0",
     "255,176,0",
     "255, 176, 0",
-    // v2.0 — the WARM page the bronze gold used to sit on. The gold itself is
-    // live again under v4.0 and is absent from this block; what
-    // v3.0 actually retired, and v4.0 did not restore, was the warm ink, the
-    // warm papers and the warm neutral ramp.
-    "#10100f",
-    "#f2eee5",
+    // v2.0 — the WARM page the bronze gold used to sit on.
+    //
+    // Two of its values LEFT this list at v6.0, on the rule stated at the top:
+    // #10100f and #f2eee5 are the house system's ink and its off-white, so
+    // they are live again on every surface. That is the second time this has
+    // happened to them and it is the same mechanism both times — a warm kit
+    // returning — which is why the rule is a rule rather than a one-off.
     "#f5f0e6",
     "#a19a8e",
     "#6f675b",
     "#ded5c6",
     // v3.0 — the ion ramp, all eleven stops, retired by v4.0's return to gold.
-    // Listed in full rather than by the brand core alone, because the drift
-    // this catches is a half-applied recolour: #3968 left the site on ion
-    // while the kit and the product surfaces had already moved, and a partial
-    // list is how the next one gets through.
+    // Listed in full, not by the brand core alone. The drift this catches is a
+    // half-applied recolour: the site sat on ion while the kit and the product
+    // surfaces had moved. A partial list is how the next one gets through.
     "#eafaff",
     "#c7f2ff",
     "#9de9ff",
@@ -384,6 +400,23 @@ test("no retired brand value survives anywhere in the site", () => {
     "0,209,249",
     "0, 209, 249",
     "--stella-gold",
+    // v5.0 — "black and gold", superseded by the house system — is NOT written
+    // out here. Its values come from the palette's own ban list below, which is
+    // where every superseded anchor already had to be declared.
+    //
+    // Restating them would be the duplication this file exists to prevent,
+    // one level up: two hand-maintained lists of the same retired values, and
+    // the next supersession updating one of them. The list above is the older
+    // half, kept as-is because it predates the ban list carrying a reason for
+    // each entry.
+    ...bannedValues(),
+    // The channel triples, both spellings. The OG card's washes are written out
+    // by hand for Satori, which has no cascade, so a hex sweep cannot see them
+    // — the lesson the v1.0 entry above records, applied ahead of time.
+    ...bannedValues().flatMap((hex) => {
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+      return [`${r} ${g} ${b}`, `${r},${g},${b}`, `${r}, ${g}, ${b}`];
+    }),
   ];
 
   const offenders: string[] = [];
@@ -404,7 +437,7 @@ test("no retired brand value survives anywhere in the site", () => {
       // inline favicons. Normalising rather than listing every encoded twin
       // keeps one entry per retired value: `vision.html` sat on v1.0's
       // `%23FFB000` on `%230B0B0C` through three rebrands because a sweep for
-      // `#efc53f` cannot see it, the same blind spot the channel-triple
+      // `#d6962c` cannot see it, the same blind spot the channel-triple
       // entries above exist for.
       const text = read(path).toLowerCase().replaceAll("%23", "#");
       for (const value of RETIRED) {
@@ -420,12 +453,24 @@ test("no retired brand value survives anywhere in the site", () => {
   assert.deepEqual(offenders, [], offenders.join("\n"));
 });
 
+/**
+ * `stella-favicon.svg` is the one mark that does not land in `public/brand/`:
+ * Next takes the tab icon from `src/app/icon.svg` by file convention, so it is
+ * asserted on its own below. The spinner is not a logo and lives beside them
+ * rather than in `logo/svg/`. Everything else is a straight copy.
+ */
+const FAVICON_SVG = "stella-favicon.svg";
+
 test("the site's logo SVGs are byte-identical to the kit's", () => {
   const kitDir = join(KIT, "logo", "svg");
   const siteDir = join(SITE, "..", "public", "brand");
 
-  const expected = readdirSync(kitDir).filter((f) => f.endsWith(".svg")).sort();
-  const actual = readdirSync(siteDir).filter((f) => f.endsWith(".svg")).sort();
+  const expected = readdirSync(kitDir)
+    .filter((f) => f.endsWith(".svg") && f !== FAVICON_SVG)
+    .sort();
+  const actual = readdirSync(siteDir)
+    .filter((f) => f.endsWith(".svg") && !f.includes("spinner"))
+    .sort();
   assert.deepEqual(
     actual,
     expected,
@@ -442,18 +487,45 @@ test("the site's logo SVGs are byte-identical to the kit's", () => {
   }
 });
 
-test("the app icon is the kit's logomark", () => {
+test("the app icon is the kit's favicon mark", () => {
   assert.equal(
     read(join(SITE, "app", "icon.svg")),
-    read(join(KIT, "logo", "svg", "logomark-color.svg")),
-    "src/app/icon.svg must be docs/brand/logo/svg/logomark-color.svg",
+    read(join(KIT, "logo", "svg", FAVICON_SVG)),
+    `src/app/icon.svg must be docs/brand/logo/svg/${FAVICON_SVG}`,
   );
+});
+
+test("the animated lockup's motion is the kit's spinner", () => {
+  // The shimmer on the landing page and the shimmer in the kit's own spinner
+  // are one animation, which is only true while the numbers come from the
+  // file. `SWEEP` is generated from it; this is the assertion that the file
+  // the generator read is the one the site ships.
+  const spinner = read(join(KIT, "spinners", "stella-spinner-wordmark.svg"));
+  const generated = read(join(SITE, "components", "brand-marks.generated.ts"));
+  for (const [label, key, pattern] of [
+    ["duration", "durationSec", /animation:sweep-[^ ]+ ([\d.]+)s/],
+    ["travel", "travelPx", /translateX\(([\d.]+)px\)/],
+  ] as const) {
+    const stated = spinner.match(pattern)?.[1];
+    assert.ok(stated, `the kit's spinner states its ${label}`);
+    const mirrored = generated.match(new RegExp(`${key}: ([\\d.]+)`))?.[1];
+    assert.ok(mirrored, `SWEEP declares ${key}`);
+    // Numeric, not textual: the generator writes these through `Number`, so
+    // the kit's "137.90" is mirrored as `137.9`. Same value, and comparing the
+    // spellings would fail on a trailing zero.
+    assert.equal(
+      Number(mirrored),
+      Number(stated),
+      `SWEEP has drifted from the kit's ${label} (${stated}) — run ` +
+        `\`node scripts/sync-brand-assets.mjs\``,
+    );
+  }
 });
 
 test("the PWA icons are byte-identical to the kit's", () => {
   // The site renames the kit's two maskables; every other file keeps its name.
-  // `docs/brand/sync_site.py` performs this exact mapping; this table is the
-  // check on its work.
+  // `scripts/sync-brand-assets.mjs` performs this exact mapping; this table is
+  // the check on its work.
   const PAIRS: Array<[site: string, kit: string]> = [
     ["favicon-16.png", "favicon-16.png"],
     ["favicon-32.png", "favicon-32.png"],
@@ -471,7 +543,7 @@ test("the PWA icons are byte-identical to the kit's", () => {
     assert.ok(
       mine.equals(theirs),
       `public/icons/${siteName} has drifted from docs/brand/pwa/${kitName} — ` +
-        `run \`make brand-sync\` when the kit regenerates`,
+        `run \`node scripts/sync-brand-assets.mjs\` when the kit regenerates`,
     );
   }
 });
@@ -489,11 +561,10 @@ test("favicon.ico carries the kit's art in an RGBA encoding", () => {
   //     Processing image failed
   //     Caused by: Format error decoding Ico: The PNG is not in RGBA format!
   //
-  // So this one file is NOT a byte-copy of the kit's: it is the
-  // kit's pixels re-encoded with an opaque alpha channel. That is why it is
-  // absent from the PWA-icon byte-identity test above, and why the exception
-  // is asserted here rather than left as a silent difference someone would
-  // later "fix" by re-copying — which is exactly how the build broke.
+  // So this one file is NOT a byte-copy of the kit's. It is the kit's pixels,
+  // re-encoded with an opaque alpha channel. That keeps it out of the PWA-icon
+  // byte-identity test above. The exception is asserted here rather than left
+  // silent: a silent one gets "fixed" by re-copying, and that broke the build.
   //
   // Checking only the encoding is what let this file rot. It sat on v2.0's
   // bronze-on-warm-ink art (ground #10100F) through the whole v3.0 ion
@@ -536,7 +607,7 @@ test("favicon.ico carries the kit's art in an RGBA encoding", () => {
     assert.ok(
       mine.pixels.equals(theirs.pixels),
       `favicon.ico entry ${i} (${mine.width}×${mine.height}) does not carry ` +
-        `the kit's art — re-run docs/brand/build_marks.py, then ` +
+        `the kit's art — re-run \`node scripts/sync-brand-assets.mjs\`, ` +
         `\`make brand-sync\` (the RGBA re-encode lives in the sync)`,
     );
   }

@@ -3,7 +3,7 @@
 
 `design/tokens/stella-tokens.json` states the light ground's law:
 
-    "warm-paper": {
+    "warm-neutral": {
       "predicate": "r >= g >= b AND 100*g >= 97*r AND 100*b >= 93*r",
       "why": "The light ground's clamp: warm or neutral, never blue."
     }
@@ -19,7 +19,7 @@ So this guard reads **surfaces**. Every light-scheme declaration on the five
 web surfaces and the command deck's paper ramp is classified and judged:
 
   1. A value that IS a kit token is held to **that token's own declared
-     clamp**. `--text: #0A0A0C` on a light page is the dark canvas token being
+     clamp**. `--text: #10100F` on a light page is the dark canvas token being
      reused; whether that is the right value is #4072's question, and it is
      not this guard's. Whether it satisfies the clamp it declares is.
   2. A value that is NOT a token is held to the clamp of the **family its
@@ -32,7 +32,7 @@ web surfaces and the command deck's paper ramp is classified and judged:
 
 The predicates themselves are **not written here**. `gen-tokens.py`'s
 `check_clamp` is imported and called, so there is one Python implementation of
-`warm-paper` in the repository rather than two. A predicate written twice is
+`warm-neutral` in the repository rather than two. A predicate written twice is
 the drift this repository keeps paying for -- `clamp.rs` is the second
 implementation and `check-tokens.py` is what holds it to the first.
 
@@ -136,17 +136,17 @@ SURFACES = (
         "notation": CSS,
         "gate": (':root[data-theme="light"]{', "\n}"),
         "families": {
-            "--ground": "warm-paper",
-            "--surface": "warm-paper",
-            "--raised": "warm-paper",
-            "--hairline": "warm-paper",
-            "--hairline-strong": "warm-paper",
-            "--sunken": "warm-paper",
-            "--text-emph": "warm-paper",
-            "--ink": "warm-paper",
-            "--identity-ink": "warm-paper",
+            "--ground": "warm-neutral",
+            "--surface": "warm-neutral",
+            "--raised": "warm-neutral",
+            "--hairline": "warm-neutral",
+            "--hairline-strong": "warm-neutral",
+            "--sunken": "warm-neutral",
+            "--text-emph": "warm-neutral",
+            "--ink": "warm-neutral",
+            "--identity-ink": "warm-neutral",
             # The wordmark's darkest stop on paper. An ink like any other.
-            "--mark-bright": "warm-paper",
+            "--mark-bright": "warm-neutral",
         },
     },
     {
@@ -154,14 +154,14 @@ SURFACES = (
         "notation": CSS,
         "gate": (':root[data-theme="light"] {{', "\n  }}"),
         "families": {
-            "--ground": "warm-paper",
-            "--surface": "warm-paper",
-            "--raised": "warm-paper",
-            "--hairline": "warm-paper",
-            "--hairline-strong": "warm-paper",
-            "--sunken": "warm-paper",
-            "--ink": "warm-paper",
-            "--identity-ink": "warm-paper",
+            "--ground": "warm-neutral",
+            "--surface": "warm-neutral",
+            "--raised": "warm-neutral",
+            "--hairline": "warm-neutral",
+            "--hairline-strong": "warm-neutral",
+            "--sunken": "warm-neutral",
+            "--ink": "warm-neutral",
+            "--identity-ink": "warm-neutral",
         },
     },
     {
@@ -169,19 +169,19 @@ SURFACES = (
         "notation": CSS,
         "gate": ("@media (prefers-color-scheme: light) {", "\n  }"),
         "families": {
-            "--bg": "warm-paper",
-            "--panel": "warm-paper",
-            "--raised": "warm-paper",
-            "--line": "warm-paper",
-            "--line2": "warm-paper",
-            "--sunken": "warm-paper",
-            "--sunken-2": "warm-paper",
-            "--hover": "warm-paper",
-            "--hover-raised": "warm-paper",
-            "--selected": "warm-paper",
-            "--hairline-soft": "warm-paper",
-            "--code": "warm-paper",
-            "--hunk-bg": "warm-paper",
+            "--bg": "warm-neutral",
+            "--panel": "warm-neutral",
+            "--raised": "warm-neutral",
+            "--line": "warm-neutral",
+            "--line2": "warm-neutral",
+            "--sunken": "warm-neutral",
+            "--sunken-2": "warm-neutral",
+            "--hover": "warm-neutral",
+            "--hover-raised": "warm-neutral",
+            "--selected": "warm-neutral",
+            "--hairline-soft": "warm-neutral",
+            "--code": "warm-neutral",
+            "--hunk-bg": "warm-neutral",
             # The three categorical inks. A category that changed colour with
             # the ambient theme would stop being one, which the file's own
             # header says; they identify a diff hunk, a prompt-quote and the
@@ -196,11 +196,11 @@ SURFACES = (
         "notation": CSS,
         "gate": (':root[data-theme="light"]{', "}"),
         "families": {
-            "--bg": "warm-paper",
-            "--sub": "warm-paper",
-            "--panel": "warm-paper",
-            "--rule": "warm-paper",
-            "--rule-2": "warm-paper",
+            "--bg": "warm-neutral",
+            "--sub": "warm-neutral",
+            "--panel": "warm-neutral",
+            "--rule": "warm-neutral",
+            "--rule-2": "warm-neutral",
         },
     },
     {
@@ -208,12 +208,12 @@ SURFACES = (
         "notation": CSS,
         "gate": (':root[data-theme="light"]{', "}"),
         "families": {
-            "--bg": "warm-paper",
-            "--sub": "warm-paper",
-            "--panel": "warm-paper",
-            "--rule": "warm-paper",
-            "--rule-2": "warm-paper",
-            "--code": "warm-paper",
+            "--bg": "warm-neutral",
+            "--sub": "warm-neutral",
+            "--panel": "warm-neutral",
+            "--rule": "warm-neutral",
+            "--rule-2": "warm-neutral",
+            "--code": "warm-neutral",
             # The verdict washes: a green and a red at paper lightness. They
             # are a verdict's ground, not the page's, and the kit's `verdict`
             # clamp is what governs a verdict's hue.
@@ -228,13 +228,13 @@ SURFACES = (
         "notation": RUST,
         "gate": ("/// Light background", "// -- Data marks"),
         "families": {
-            "PAPER": "warm-paper",
-            "SNOW": "warm-paper",
-            "PAPER_RAISED": "warm-paper",
-            "PAPER_HAIRLINE": "warm-paper",
-            "INK_MUTED": "warm-paper",
-            "INK_DIM": "warm-paper",
-            "INK_EMPHASIS": "warm-paper",
+            "PAPER": "warm-neutral",
+            "SNOW": "warm-neutral",
+            "PAPER_RAISED": "warm-neutral",
+            "PAPER_HAIRLINE": "warm-neutral",
+            "INK_MUTED": "warm-neutral",
+            "INK_DIM": "warm-neutral",
+            "INK_EMPHASIS": "warm-neutral",
         },
     },
 )

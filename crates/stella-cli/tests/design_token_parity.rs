@@ -180,7 +180,7 @@ fn strip_comments(css: &str) -> String {
 /// [`declarations`] keeps only `#rrggbb`, because the parity matrix compares
 /// colours across three vocabularies. Two gates of *one* surface are the same
 /// author writing the same block twice, so everything they say is comparable —
-/// `rgba(10,10,12,.06)` and `color-scheme` included, and those are precisely
+/// `rgba(16,16,15,.06)` and `color-scheme` included, and those are precisely
 /// the declarations a copy-paste edit forgets.
 fn gate_declarations(block: &str) -> BTreeMap<String, String> {
     let mut found = BTreeMap::new();
@@ -386,7 +386,7 @@ fn scheme_blocks(file: &str, css: &str, scheme: &str) -> Vec<(String, BTreeMap<S
 /// The Observatory had drifted exactly that way: its media query kept the
 /// pre-v5.0 cool-graphite neutrals while its attribute gate moved to the
 /// product ramp, seventeen roles apart, and the worst was an absence — nothing
-/// re-pointed `--text-emph`, so an OS-light reader got `#BFC1CC` on paper at
+/// re-pointed `--text-emph`, so an OS-light reader got `#DDD8CD` on paper at
 /// 1.68:1. #4296 fixed that surface and
 /// `crates/stella-observatory/tests/light_mode.rs` holds it there.
 ///
@@ -597,7 +597,7 @@ fn surfaces() -> Vec<Surface> {
         //
         // It was outside this matrix until #3630, and had drifted exactly the
         // way an unchecked surface does: ground `#0a0a0a` against the
-        // instrument's `#0A0A0C`, and a different green, red and amber, so
+        // instrument's `#10100F`, and a different green, red and amber, so
         // "passed" was one colour in the dashboard and another in the
         // transcript of the same run. The file's own header comment claimed
         // the values WERE the instrument palette the whole time — which is the
@@ -1337,13 +1337,13 @@ fn every_stated_hue_angle_in_the_observatory_matches_the_computation() {
     };
 
     for (phrase, computed) in [
-        ("--bad sits at 12.8°", hue(&bad)),
-        ("the identity at 90.8°", hue(&identity)),
-        ("39.1° off the identity", hue_gap(&warn, &identity)),
-        ("lands 39.1° from the identity", hue_gap(&warn, &identity)),
-        ("and 38.9° from --bad", hue_gap(&warn, &bad)),
-        ("63.1° and", hue_gap(&ok, &identity)),
-        ("78.0° from the identity", hue_gap(&bad, &identity)),
+        ("--bad sits at 11.2°", hue(&bad)),
+        ("the identity at 74.8°", hue(&identity)),
+        ("31.8° off the identity", hue_gap(&warn, &identity)),
+        ("lands 31.8° from the identity", hue_gap(&warn, &identity)),
+        ("and 31.8° from --bad", hue_gap(&warn, &bad)),
+        ("79.0° and", hue_gap(&ok, &identity)),
+        ("63.7° from the identity", hue_gap(&bad, &identity)),
     ] {
         let stated = format!("{computed:.1}");
         assert!(

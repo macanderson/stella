@@ -111,7 +111,7 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
 // only — `/color` exists so several terminal windows running stella can be told
 // apart at a glance, which needs hues that are *distinct* rather than on-brand.
 // `colored`'s named ANSI colors are the portable stand-ins, and the nearest one
-// to the brand's gold (`theme::ACCENT`, `#EFC53F`) is bright-yellow.
+// to the brand's gold (`theme::ACCENT`, `#D6962C`) is bright-yellow.
 //
 // The default used to be bright-blue (and bright-cyan before that): the
 // accent trailed the identity through recolour after recolour because
@@ -1003,7 +1003,7 @@ mod tests {
         // default trailed the identity through recolour after recolour
         // because nothing asserted which colour the default slug actually
         // resolves to. Bright-yellow is the nearest named ANSI stand-in for
-        // `theme::ACCENT` (gold `#EFC53F`).
+        // `theme::ACCENT` (gold `#D6962C`).
         assert_eq!(PALETTE[0].1, Color::BrightYellow);
         assert_eq!(accent(), Color::BrightYellow);
         // The old brand slug survives as personalisation, then the process

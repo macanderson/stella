@@ -28,45 +28,45 @@
 
 :root {
   /* ---- brand core ------------------------------------------------------ */
-  --stella-brand: #EFC53F;       /* gold — the brand metal */
-  --stella-brand-deep: #141413;  /* ink — brand *text* on light is never gold */
-  --stella-ink: #0A0A0C;         /* bg — the canvas */
-  --stella-paper: #F4F1EA;       /* text — primary text on dark */
-  --stella-paper-bg: #FFFCF5;    /* paper — light-mode surface */
+  --stella-brand: #D6962C;       /* gold — the brand metal */
+  --stella-brand-deep: #10100F;  /* ink — brand *text* on light is never gold */
+  --stella-ink: #10100F;         /* bg — the canvas */
+  --stella-paper: #F2EEE5;       /* text — primary text on dark */
+  --stella-paper-bg: #FBFAF6;    /* paper — light-mode surface */
 
   /* ---- brand ramp ------------------------------------------------------ */
-  --st-bg: #0A0A0C;
-  --st-panel: #0F0F12;
-  --st-hl: #17171B;
-  --st-border: #26262C;
-  --st-rule: #2C2C33;
-  --st-gold: #EFC53F;
-  --st-gold-bright: #F7D96B;
-  --st-silver: #A9AAB5;
-  --st-silver-type: #BFC1CC;
-  --st-text: #E8E8EC;
-  --st-muted: #7C7C87;
-  --st-dim: #5F5F6A;
+  --st-bg: #10100F;
+  --st-panel: #181715;
+  --st-hl: #201F1C;
+  --st-border: #292722;
+  --st-rule: #34322D;
+  --st-gold: #D6962C;
+  --st-gold-bright: #F1C364;
+  --st-silver: #9B958A;
+  --st-silver-type: #DDD8CD;
+  --st-text: #F2EEE5;
+  --st-muted: #8C877C;
+  --st-dim: #6E6A62;
   --st-green: #74C991;
-  --st-red: #E0687A;
+  --st-red: #E0687D;
   --st-diff-add: #10201A;
   --st-diff-del: #241019;
-  --st-ink: #141413;
-  --st-paper: #FFFCF5;
-  --st-paper-text: #F4F1EA;
-  --st-paper-panel: #F9F6EF;
-  --st-paper-border: #E6E3DD;
-  --st-void: #050507;
-  --st-gold-ink: #725A00;
-  --st-paper-ground: #F7F4ED;
-  --st-paper-raised: #FDFAF3;
-  --st-paper-row: #E9E6E0;
-  --st-paper-seam: #E0DDD7;
-  --st-ink-muted: #605F5C;
+  --st-ink: #10100F;
+  --st-paper: #FBFAF6;
+  --st-text: #F2EEE5;
+  --st-paper-panel: #F5F2EA;
+  --st-paper-border: #DED5C7;
+  --st-void: #0A0A09;
+  --st-gold-ink: #8B5E1A;
+  --st-paper-ground: #F2EEE5;
+  --st-paper-raised: #F8F5EE;
+  --st-paper-row: #E5DED1;
+  --st-paper-seam: #D8CDBD;
+  --st-ink-muted: #6B665C;
   --st-green-ink: #006933;
-  --st-amber: #E78D54;
-  --st-amber-ink: #8A3F00;
-  --st-red-ink: #96213C;
+  --st-amber: #EB8960;
+  --st-amber-ink: #8D3B19;
+  --st-red-ink: #952141;
 
   /* ---- typography ------------------------------------------------------ */
   /* JetBrains Mono is the brand voice — the product lives in a terminal,
@@ -117,8 +117,8 @@
   --stella-grain-opacity: 0.045;     /* film grain overlay */
 
   /* ---- elevation / glow ------------------------------------------------ */
-  --stella-glow-brand: 0 0 24px rgb(239 197 63 / 0.28),
-      0 0 96px rgb(239 197 63 / 0.12);
+  --stella-glow-brand: 0 0 24px rgb(214 150 44 / 0.28),
+      0 0 96px rgb(214 150 44 / 0.12);
   --stella-shadow-card: 0 1px 2px rgb(0 0 0 / 0.25),
       0 8px 28px rgb(0 0 0 / 0.35);
 }
@@ -127,9 +127,9 @@
 :root {
   --stella-bg: var(--stella-paper-bg);
   --stella-fg: var(--stella-ink);
-  --stella-surface: #F9F6EF;
-  --stella-border: #E6E3DD;
-  --stella-muted-fg: #5F5F6A;
+  --stella-surface: #F5F2EA;
+  --stella-border: #DED5C7;
+  --stella-muted-fg: #6E6A62;
   --stella-accent: var(--stella-brand);
   --stella-accent-text: var(--stella-brand-deep); /* gold that passes on light */
   /* The mark itself — shapes, not text. v5.0 retires the darker light cut:
@@ -150,9 +150,9 @@
 .dark, [data-theme="dark"] {
   --stella-bg: var(--stella-ink);
   --stella-fg: var(--stella-paper);
-  --stella-surface: #0F0F12;
-  --stella-border: #26262C;
-  --stella-muted-fg: #7C7C87;
+  --stella-surface: #181715;
+  --stella-border: #292722;
+  --stella-muted-fg: #8C877C;
   --stella-accent: var(--stella-brand);
   --stella-accent-text: var(--stella-brand);
   --stella-mark-shape: var(--stella-brand);
@@ -161,9 +161,9 @@
   :root:not([data-theme="light"]) {
     --stella-bg: var(--stella-ink);
     --stella-fg: var(--stella-paper);
-    --stella-surface: #0F0F12;
-    --stella-border: #26262C;
-    --stella-muted-fg: #7C7C87;
+    --stella-surface: #181715;
+    --stella-border: #292722;
+    --stella-muted-fg: #8C877C;
     --stella-accent: var(--stella-brand);
     --stella-accent-text: var(--stella-brand);
     --stella-mark-shape: var(--stella-brand);

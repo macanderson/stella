@@ -193,7 +193,7 @@ RGB_FUNC = re.compile(
     r"rgba?\(\s*(\d{1,3})\s*[, ]\s*(\d{1,3})\s*[, ]\s*(\d{1,3})", re.IGNORECASE
 )
 # The same colours again, in the notation Rust writes them: ratatui spells a
-# colour `Color::Rgb(0x0A, 0x0A, 0x0C)`, and the hex-literal channels are what
+# colour `Color::Rgb(0x10, 0x10, 0x0F)`, and the hex-literal channels are what
 # no matcher here could see. #4910 reports this as Rust being invisible
 # outright; it is one notation narrower than that, and the suite is what caught
 # the difference. RGB_FUNC is IGNORECASE, so `Rgb(11, 11, 12)` already matched
@@ -220,8 +220,8 @@ def channel(text: str) -> int:
     return int(text, 16) if text[:2].lower() == "0x" else int(text)
 
 
-# A token's CSS name with a hex beside it: `--st-bg: #0A0A0C`, `<td>--st-bg</td>
-# <td>#0A0A0C</td>`, `` `--st-bg` | `#0A0A0C` ``. One line, because every one of
+# A token's CSS name with a hex beside it: `--st-bg: #10100F`, `<td>--st-bg</td>
+# <td>#10100F</td>`, `` `--st-bg` | `#10100F` ``. One line, because every one of
 # the citations in the tree writes the name and the value together and the widest
 # gap between them is twelve characters -- so the window below is four times what
 # any real citation needs and still cannot reach across a table row.
@@ -287,7 +287,7 @@ PAINT_BLIND = (
 )
 
 # A token being *used*, in the two notations this tree writes. A declaration --
-# `--st-bg: #0A0A0C` in a mirrored stylesheet -- is not one of them:
+# `--st-bg: #10100F` in a mirrored stylesheet -- is not one of them:
 # `comment` had four of those and no reader ever saw the colour.
 VAR_USE = re.compile(r"var\(\s*(--st-[a-z0-9-]+)")
 RUST_USE = re.compile(r"\btoken::([A-Z][A-Z0-9_]*)\b")
