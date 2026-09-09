@@ -108,13 +108,18 @@ The stand-in for every token, by the ANSI name rather than by ratatui's spelling
 | `diff_del_bg` | black |
 | `ink` | black |
 | `paper` | bright white |
+| `paper_ground` | bright white |
+| `paper_raised` | bright white |
 | `paper_panel` | bright white |
+| `paper_row` | white |
 | `paper_border` | white |
+| `paper_seam` | white |
+| `ink_muted` | black |
 | `amber` | yellow |
 
 <!-- END degradation -->
 
-The two golds collapse to one yellow and the two silvers to one white: at sixteen colors there is no second stop to lift to. The status colors take the bright half, like every other chromatic stop here. Both are pale on a dark ground. The v1 deck's own 16-color table has always shipped bright green and bright red, and the two surfaces must not disagree about a status color. The diff tints go to black rather than to a green and a red ground — at sixteen colors a tint is not available, only a wash, and a wash on every changed row would spend the palette's whole red budget on a healthy diff. The mandatory sign column (§6.4) is what carries the diff here, which is the case the sign column exists for.
+The paper ramp collapses hardest of all: at sixteen colors a paper ground *is* white, and there is no lighter tier to tell a canvas from a panel, so the four light surfaces go to bright white together and the two seams take the one gray that is left. `ink_muted` is text on that white and goes to black with `ink`. The two golds collapse to one yellow and the two silvers to one white: at sixteen colors there is no second stop to lift to. The status colors take the bright half, like every other chromatic stop here. Both are pale on a dark ground. The v1 deck's own 16-color table has always shipped bright green and bright red, and the two surfaces must not disagree about a status color. The diff tints go to black rather than to a green and a red ground — at sixteen colors a tint is not available, only a wash, and a wash on every changed row would spend the palette's whole red budget on a healthy diff. The mandatory sign column (§6.4) is what carries the diff here, which is the case the sign column exists for.
 
 ## 4. Glyph language
 

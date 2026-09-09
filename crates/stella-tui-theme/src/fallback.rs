@@ -92,8 +92,12 @@ pub fn ansi16(color: Color) -> Color {
         // collapse together and `paper_border` takes the one gray that is
         // left. `ink` is a dark ground like `bg`, degrades the same way, and
         // now literally is that value — see the first arm.
-        token::PAPER | token::PAPER_PANEL => Color::White,
-        token::PAPER_BORDER => Color::Gray,
+        token::PAPER | token::PAPER_GROUND | token::PAPER_RAISED | token::PAPER_PANEL => {
+            Color::White
+        }
+        token::PAPER_ROW | token::PAPER_BORDER | token::PAPER_SEAM => Color::Gray,
+        // Text on that white, and it goes where `INK` goes.
+        token::INK_MUTED => Color::Black,
         // Not a palette token — a caller's own colour, or one this crate does
         // not own. Passing it through is the answer: this function
         // narrows the palette, it does not police what else reaches a cell.
