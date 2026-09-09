@@ -355,6 +355,10 @@ brand-case: ## Assert docs prose spells the wordmark lowercase (#1500)
 brand-sync: ## Pull the Oxagen house brand kit into docs/brand/ and website/
 	@node scripts/sync-brand-assets.mjs
 
+.PHONY: brand-check
+brand-check: ## Fail if a vendored brand asset has drifted from the kit
+	@node scripts/sync-brand-assets.mjs --check
+
 # The generated per-tool reference. Deliberately NOT scoped by CARGO_SCOPE:
 # the artifact is derived from stella-tools' catalog and stella-cli's session
 # layers at once, so a push narrowed to either crate must still re-derive the
