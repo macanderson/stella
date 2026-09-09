@@ -524,7 +524,8 @@
         "web-light"
       ],
       "paint": "painted",
-      "shares_value_with": "text"
+      "shares_value_with": "text",
+      "rust": "PAPER_GROUND"
     },
     {
       "name": "paper-raised",
@@ -535,7 +536,8 @@
       "surfaces": [
         "web-light"
       ],
-      "paint": "painted"
+      "paint": "painted",
+      "rust": "PAPER_RAISED"
     },
     {
       "name": "paper-row",
@@ -546,7 +548,8 @@
       "surfaces": [
         "web-light"
       ],
-      "paint": "painted"
+      "paint": "painted",
+      "rust": "PAPER_ROW"
     },
     {
       "name": "paper-seam",
@@ -557,7 +560,8 @@
       "surfaces": [
         "web-light"
       ],
-      "paint": "painted"
+      "paint": "painted",
+      "rust": "PAPER_SEAM"
     },
     {
       "name": "ink-muted",
@@ -568,7 +572,8 @@
       "surfaces": [
         "web-light"
       ],
-      "paint": "painted"
+      "paint": "painted",
+      "rust": "INK_MUTED"
     },
     {
       "name": "green-ink",

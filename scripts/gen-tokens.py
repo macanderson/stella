@@ -192,20 +192,18 @@ def check_clamp(
 def rust_tokens(doc: dict) -> list[dict]:
     """The tokens that reach the terminal, in declaration order.
 
-    A token declares a `rust` name when the TUI renders it. Eleven of the
-    JSON's stops still do not: `void`, `gold-ink`, the light page ramp
-    (`paper-text`, `paper-ground`, `paper-raised`, `paper-row`, `paper-seam`,
-    `ink-muted`), and the three status inks (`green-ink`, `amber-ink`,
-    `red-ink`). Every one of them sits on the decision
-    `crates/stella-tui/src/palette.rs`'s own module doc names: the deck's
-    paper theme is still a set of independently-derived hexes, not yet
-    reconciled against this ramp. Giving one a `rust` name before that lands
-    would force the generated `ALL`/`ansi16` tables to carry a value the
-    terminal does not actually paint yet, which is exactly the assertion
-    about nothing this rule exists to forbid. `amber` left this list once its
-    `verdict` clamp -- already shared with `red`/`green` -- got a `WARNING`
-    binding: it is the dark-ground stop, so it carries no part of the
-    undecided paper question the other eleven are waiting on.
+    A token declares a `rust` name when interactive mode renders it. The light
+    page ramp joined them with the house system: `paper-ground`,
+    `paper-raised`, `paper-row`, `paper-seam` and `ink-muted` are what
+    `crates/stella-tui/src/palette.rs` paints its paper theme from, so they
+    carry names now. Before that the paper theme was a set of hexes derived on
+    its own, holding no relation to this ramp, and a `rust` name would have
+    forced the generated `ALL`/`ansi16` tables to carry a value the terminal
+    did not paint -- the assertion about nothing this rule forbids.
+
+    Five stops still have no name: `void`, `gold-ink` and the three status inks
+    (`green-ink`, `amber-ink`, `red-ink`). Each is a value some surface off the
+    terminal paints; giving one a name would make the same empty claim.
 
     The alternative was to leave those values out of the system entirely, which
     is what `main` does -- and it means the only file that knows the site's

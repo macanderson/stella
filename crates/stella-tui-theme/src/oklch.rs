@@ -87,6 +87,36 @@ pub fn hue_deg(r: u8, g: u8, b: u8) -> f64 {
     b_axis.atan2(a_axis).to_degrees().rem_euclid(360.0)
 }
 
+/// Oklab chroma — the distance from the neutral axis, in the same space.
+///
+/// The answer to "does this colour have a hue at all", which a channel span
+/// cannot give. A span is measured in levels, and levels mean different things
+/// at different lightnesses: the hairline on ink spends 7 of 41 and the seam on
+/// paper spends 27 of 216, and both are the same grey. Chroma is independent of
+/// lightness, so one threshold covers a ramp running from near-black to
+/// near-white.
+///
+/// Every neutral in this palette sits at or under 0.026 and every chromatic one
+/// at or above 0.090, so a caller's cut-off has a wide gap to sit in.
+#[must_use]
+pub fn chroma(r: u8, g: u8, b: u8) -> f64 {
+    let lin = |c: u8| {
+        let c = f64::from(c) / 255.0;
+        if c <= 0.040_45 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let (r, g, b) = (lin(r), lin(g), lin(b));
+    let l = (0.412_221_470_8 * r + 0.536_332_536_3 * g + 0.051_445_992_9 * b).cbrt();
+    let m = (0.211_903_498_2 * r + 0.680_699_545_1 * g + 0.107_396_956_6 * b).cbrt();
+    let s = (0.088_302_461_9 * r + 0.281_718_837_6 * g + 0.629_978_700_5 * b).cbrt();
+    let a_axis = 1.977_998_495_1 * l - 2.428_592_205_0 * m + 0.450_593_709_9 * s;
+    let b_axis = 0.025_904_037_1 * l + 0.782_771_766_2 * m - 0.808_675_766_0 * s;
+    a_axis.hypot(b_axis)
+}
+
 /// The shortest angular distance between two hues, in degrees.
 ///
 /// The shorter way round the wheel: 350° and 10° are 20° apart, not 340°.

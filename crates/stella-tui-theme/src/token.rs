@@ -193,6 +193,21 @@ pub const PAPER_PANEL: Color = Color::Rgb(0xF5, 0xF2, 0xEA);
 /// Light border. `#DED5C7`
 pub const PAPER_BORDER: Color = Color::Rgb(0xDE, 0xD5, 0xC7);
 
+/// The warm paper page ground, one step under the panel. `#F2EEE5`
+pub const PAPER_GROUND: Color = Color::Rgb(0xF2, 0xEE, 0xE5);
+
+/// Light surface raised above the page ground. `#F8F5EE`
+pub const PAPER_RAISED: Color = Color::Rgb(0xF8, 0xF5, 0xEE);
+
+/// Light hover and selected rows. `#E5DED1`
+pub const PAPER_ROW: Color = Color::Rgb(0xE5, 0xDE, 0xD1);
+
+/// Light seam: the hairline under a border. `#D8CDBD`
+pub const PAPER_SEAM: Color = Color::Rgb(0xD8, 0xCD, 0xBD);
+
+/// Secondary text on light surfaces. `#6B665C`
+pub const INK_MUTED: Color = Color::Rgb(0x6B, 0x66, 0x5C);
+
 /// Warning: the one status the core palette does not name. `#EB8960`
 pub const WARNING: Color = Color::Rgb(0xEB, 0x89, 0x60);
 
@@ -247,6 +262,11 @@ pub const ALL: &[(&str, Color, Clamp)] = &[
     ("paper", PAPER, Clamp::WarmNeutral),
     ("paper-panel", PAPER_PANEL, Clamp::WarmNeutral),
     ("paper-border", PAPER_BORDER, Clamp::WarmNeutral),
+    ("paper-ground", PAPER_GROUND, Clamp::WarmNeutral),
+    ("paper-raised", PAPER_RAISED, Clamp::WarmNeutral),
+    ("paper-row", PAPER_ROW, Clamp::WarmNeutral),
+    ("paper-seam", PAPER_SEAM, Clamp::WarmNeutral),
+    ("ink-muted", INK_MUTED, Clamp::WarmNeutral),
     ("amber", WARNING, Clamp::Verdict),
 ];
 
