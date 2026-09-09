@@ -239,24 +239,10 @@ PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
         # what the sentence means. The sentence must say it instead. Tracking
         # markers (TODO and friends) keep their numbers: a gate requires them
         # there, and they are bookkeeping, not explanation.
-        #
-        # A CSS hex is not an issue number, and `#10100F` opens with five
-        # digits. The palette before it hid that. Its ground broke after one
-        # digit and never reached the two this asks for, so the rule read as
-        # exact while resting on how one colour was spelled. The house ramp
-        # spells six of its stops digit-first, and the rule began to report
-        # the canvas as a ticket.
-        #
-        # Length separates them. Every colour in this repository is a six-digit
-        # hex (the token schema admits no other form), and an issue number is
-        # two to five digits followed by something that is not a hex digit. So
-        # the two exclusions are exact rather than heuristic: `#RRGGBB` and its
-        # `#RRGGBBAA` form. `#629` is still a hit, which is right -- three-digit
-        # CSS shorthand is not a form this tree uses.
-        re.compile(
-            r"^(?!.*(?:TODO|FIXME|XXX|HACK|Closes #|Refs #))"
-            r".*?(#(?![0-9a-fA-F]{6}\b)(?![0-9a-fA-F]{8}\b)\d{2,})"
-        ),
+        # A CSS hex is not one: `#10100F` read as issue 10100. A colour here is
+        # always six hex digits, so that form and `#RRGGBBAA` are exempt.
+        re.compile(r"^(?!.*(?:TODO|FIXME|XXX|HACK|Closes #|Refs #)).*?"
+                   r"(#(?![\da-fA-F]{6}\b)(?![\da-fA-F]{8}\b)\d{2,})"),
         "say the fact; drop the issue number from the prose",
     ),
     (
