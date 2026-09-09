@@ -124,31 +124,56 @@ pub const SEMANTIC_DESCRIPTION: &str = "Find code. This is the ONLY search you n
 /// - **"A miss … is NOT evidence that the behaviour is absent"** is the whole
 ///   point of #3139: it is the inference a model draws from a term-matcher's
 ///   silence when it was told the tool understood it.
-/// - **"It is still the call to make first"** guards the opposite failure. A
+/// - **"It is still the call to make first"** guarded the opposite failure. A
 ///   description that only disclaims teaches the model to reach for raw
 ///   `grep`, which loses the symbols, callers, imports and source this tool
-///   attaches to every hit — a worse outcome than the overclaim.
-pub const LEXICAL_DESCRIPTION: &str = "Find code. This is the ONLY search you need: describe what \
-                                       you are looking for, in whatever form you have it, and get \
-                                       back the files that answer it with their symbols, callers, \
-                                       imports and source already attached — so one call usually \
-                                       replaces a run of grep/glob/read_file round trips. In this \
-                                       session it matches the WORDS of your query literally — \
-                                       against file paths, symbol names, and file text — and not \
-                                       by meaning, so give it terms the code itself would use: \
+///   attaches to every hit — judged, at the time, a worse outcome than the
+///   overclaim.
+///
+/// # What the measurement said about that judgement (2026-09-07)
+///
+/// It was wrong, and in the direction the balance was struck to avoid. Over a
+/// full 89-task Terminal-Bench 2.1 run on this ladder's lexical rung — no
+/// embedder, so [`LEXICAL_DESCRIPTION`] is what the model read — `search` was
+/// called **2 times against 1,949 `bash` calls**, 0.09% of 2,174 tool calls.
+/// The model was not choosing `grep` over a tool it misjudged. It was reading
+/// a description that promised "the ONLY search you need" and "one call
+/// usually replaces a run of grep/glob/read_file round trips", meeting a rung
+/// that returns at most ten *files* with no line numbers off the head of each
+/// file, and correctly concluding the promise did not hold for what it needed.
+///
+/// So the overclaim did not buy the usage it was there to protect; it spent
+/// the tool's credibility on the first call and the model routed around it for
+/// the rest of the run. What replaces it is narrower and true: this rung finds
+/// *where* something lives with its neighborhood attached, and says plainly
+/// that exhaustive or line-exact questions belong to `rg`. A tool that names
+/// its own edges gets reached for at the edges it is good at.
+///
+/// The capability gap underneath — no line numbers, ~10 hits, head-of-file
+/// only — is not fixed here and is the thing that would actually earn the
+/// calls back.
+pub const LEXICAL_DESCRIPTION: &str = "Find WHERE code lives. Returns a short ranked list of FILES \
+                                       — not lines — each with its symbols, callers, imports and \
+                                       source attached, which is what makes it worth calling when \
+                                       you do not yet know your way around. In this session it \
+                                       matches the WORDS of your query literally — against file \
+                                       paths, symbol names, and file text — and not by meaning: \
+                                       give it terms the code itself would use, like \
                                        search(\"resolve_provider\"), search(\"CredentialStore\"), \
-                                       search(\"retry backoff\"), search(\"sanitize header log\"). A \
-                                       miss means those words were not found; it is NOT evidence \
-                                       that the behaviour is absent, so try the other names it \
-                                       might go by before concluding it does not exist. It is \
-                                       still the call to make first: it resolves exact symbols, \
-                                       ranks names across the code graph, and scans the tree where \
-                                       there is no index, and every hit arrives with its \
-                                       neighborhood attached. Use read_file when you already know \
-                                       the exact path and want the whole file, and `bash` with \
-                                       `grep -n` when you need every occurrence of one exact \
-                                       literal string. The answer always states which strategies \
-                                       ran and whether it was truncated.";
+                                       search(\"retry backoff\"). Reach for it to orient — \"which \
+                                       files implement this concept\", \"where is this symbol \
+                                       defined, and what calls it\". Its limits are real and you \
+                                       should route around them: it returns at most ~10 files with \
+                                       no line numbers, reads only the head of each file, and \
+                                       splits your query into whole words, so a regex, a path \
+                                       glob, a short literal, or any question needing EVERY \
+                                       occurrence is a job for `bash` with `rg -n`/`grep -n` \
+                                       instead — use that, not this, when you need exhaustive or \
+                                       line-exact answers. A miss means those words were not \
+                                       found; it is NOT evidence that the behaviour is absent, so \
+                                       try the other names it might go by. Use read_file when you \
+                                       already know the exact path. The answer always states which \
+                                       strategies ran and whether it was truncated.";
 
 /// Whether this process can run the ladder's **semantic** rung — the one fact
 /// the advertised description varies on (#3139).
