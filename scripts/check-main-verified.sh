@@ -61,10 +61,10 @@
 #
 # ── It fails OPEN, at every unknown ──────────────────────────────────────────
 #
-# No `gh`, an unreachable API, an unparseable answer: report and exit 0. This
-# is a monitor, and a monitor that can itself block a merge is worse than the
-# gap it watches — the same argument `main-red-claim.sh`'s header makes about
-# a claim check. Every unknown is loud, never silent.
+# No `gh`, an unreachable API, an empty run list, an unparseable answer: report
+# and exit 0. This is a monitor, and a monitor that can itself block a merge is
+# worse than the gap it watches — the same argument `main-red-claim.sh`'s
+# header makes about a claim check. Every unknown is loud, never silent.
 #
 # ── `--announce` reaches a person, on codeql-canary.sh's shape ───────────────
 #
@@ -231,6 +231,26 @@ elif ! runs="$(gh run list --workflow ci.yml --branch main --limit 60 \
   --json headSha,status,conclusion,createdAt \
   --jq '.[] | "\(.headSha) \(.status) \(.conclusion // "none") \(.createdAt)"' 2>/dev/null)"; then
   unknown "could not reach the Actions API"
+fi
+
+# Zero rows answers a different question than it looks like it answers. The
+# loop below opens every commit at `missing` and only a matching row moves it,
+# so an empty list does not report one absence — it reports the whole window as
+# absent, in one breath, with no row anywhere to contradict it. A read that
+# returned nothing cannot distinguish "no `ci` run exists for any of these
+# commits" from "the API declined to list them", and those are opposite states.
+#
+# `gh` exits 0 on an empty page, so the check above never sees it. On
+# 2026-09-09 one such page filed against the ten newest commits at once; each
+# of them had a completed, successful run, and the same query twenty minutes
+# later returned all sixty rows. The header's rule decides it: every unknown
+# exits 0 and says so, because a monitor that fabricates is one nobody reads
+# the second time.
+#
+# This is only the empty page. A list that carries rows but none for a given
+# commit is the outage this script was written to catch, and still reports.
+if [ -z "$runs" ]; then
+  unknown "the run list came back empty — this read listed no ci run at all for main, which cannot tell an outage from an unanswered query"
 fi
 
 now_epoch="$(date -u +%s 2>/dev/null || echo 0)"

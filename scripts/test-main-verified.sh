@@ -199,6 +199,35 @@ case "$out" in
   *) fail=$((fail + 1)); echo "FAIL an unknown exited 0 without saying so:"; echo "$out" ;;
 esac
 
+# Zero rows is the API declining to answer, not an answer that no `ci` run
+# exists for any of these commits. Read the second way, one empty page turns
+# every commit in the window into a finding at once: on 2026-09-09 that filed
+# against ten commits which each had a completed, successful run, and a monitor
+# that files falsely is one nobody reads twice.
+empty_runs_commits="$(commit $A 'a merge whose run the API did not list')
+$(commit $B 'and the merge before it')"
+if out="$("$SCRIPT" --fixture-commits "$empty_runs_commits" --fixture-runs "" 2>&1)" &&
+  [ -z "${out##*UNKNOWN*}" ]; then
+  pass=$((pass + 1)); echo "ok   an empty run list is UNKNOWN, not every commit missing"
+else
+  fail=$((fail + 1)); echo "FAIL an empty run list was read as a finding:"; echo "$out"
+fi
+
+# The report names the shape it could not read, so a reader of the log can
+# tell this apart from the outage the script exists to catch.
+case "$out" in
+  *"listed no ci run at all"*) pass=$((pass + 1)); echo "ok   ...and names an empty run list as the reason" ;;
+  *) fail=$((fail + 1)); echo "FAIL the unknown did not say the run list was empty:"; echo "$out" ;;
+esac
+
+# The other direction, so the guard above cannot be satisfied by refusing to
+# answer whenever a commit has no run: a NON-empty list that simply carries
+# nothing for this commit is still the outage this script was written for.
+want "a run list carrying nothing for the commit is still unverified" expect-fail \
+  "$(commit $B 'a merge with no run of its own')" \
+  "$A completed success $(now_iso)" \
+  "missing"
+
 # ── N: several commits, one bad ──────────────────────────────────────────────
 # The reported window is a run of merges, not one; a guard that stopped at the
 # first verified commit would have missed three of the four that day.
