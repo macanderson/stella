@@ -24,10 +24,9 @@
 //!   keep-alive, budget-derived allowance — and only an unaffordable wait
 //!   still fails fast. Which failures those are is decided at the adapter
 //!   and asked here through [`ProviderError::is_park_eligible`], never
-//!   re-derived (L-M7 again). Nothing here reads a budget; the supervisor
-//!   is a port, like [`Sleeper`]. The one clock read left is the monotonic
-//!   `Instant` that times each attempt for the failure observer, and
-//!   `make core-no-io` counts it.
+//!   re-derived (L-M7 again). Nothing here reads a budget or a clock; the
+//!   supervisor is a port, like [`Sleeper`], and the attempt timing the
+//!   failure observer receives is two readings of [`Sleeper::now`].
 //!
 //! Per-call timeouts (L-E4) are a caller concern layered on top of
 //! `attempt_fn`; this module owns "should we try again, and if so after how
@@ -59,8 +58,9 @@ use stella_protocol::ProviderError;
 ///
 /// The three live on one port because a double cannot answer them apart: a
 /// sleeper that suspends virtually has moved its own `now`, and a timeout
-/// is a sleep racing a call ([`bounded`]). tokio's paused runtime is the
-/// same shape — one virtual clock behind both `sleep` and `Instant::now`.
+/// is a sleep racing a call (`bounded`, one function down). tokio's paused
+/// runtime is the same shape — one virtual clock behind both `sleep` and
+/// `Instant::now`.
 ///
 /// Every method is required, with no default. A default `jitter` of zero
 /// would let a host forget the draw and ship a fleet whose workers all wake
