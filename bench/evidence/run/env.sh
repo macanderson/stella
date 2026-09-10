@@ -12,6 +12,26 @@ export VENV="$TB_REPO/bench/harbor_adapter/.venv"
 export PATH="$VENV/bin:$PATH"
 export PYTHONPATH="$TB_REPO/bench/harbor_adapter"
 
+# Which arm of a two-build experiment this shell is, or empty for a single-build
+# run. Only the binary may differ between two arms, so `TB_REPO` stays pointed at
+# one checkout and supplies the adapter, the venv and the run scripts to both.
+# The three lines above are why: `PYTHONPATH` follows `TB_REPO`, so an arm that
+# moved it to fetch an old binary would swap in that checkout's adapter as well,
+# and the arms would then differ by the measuring instrument too. Point
+# `TB_BUILD_REPO` at the old checkout instead — `build_sut.sh` reads it, and
+# nothing else does.
+#
+# Unset, every path below is what it was before arms existed, so a single-build
+# run reads and writes the same files it always did.
+export TB_ARM="${TB_ARM:-}"
+case "$TB_ARM" in
+  "") export TB_ARM_DIR="$TB_ROOT" ;;
+  *[!a-z0-9-]*)
+    echo "FATAL: TB_ARM must be lowercase letters, digits and hyphens; got '$TB_ARM'"
+    exit 1 ;;
+  *) export TB_ARM_DIR="$TB_ROOT/arms/$TB_ARM"; mkdir -p "$TB_ARM_DIR" ;;
+esac
+
 # The SUT is cross-compiled against an old glibc so it runs in every task image,
 # including the two on `debian:bullseye-slim` (glibc 2.31). Both halves of that
 # contract are pinned here — `build_sut.sh` builds to this floor and `preflight`
@@ -21,7 +41,21 @@ export PYTHONPATH="$TB_REPO/bench/harbor_adapter"
 # able to raise the floor to silence the error is the failure being prevented.
 export STELLA_TARGET_TRIPLE="x86_64-unknown-linux-gnu"
 export STELLA_GLIBC_FLOOR="2.17"
-export STELLA_BINARY="$TB_REPO/target/$STELLA_TARGET_TRIPLE/release/stella"
+# Where `cargo zigbuild` drops the artifact, in whichever checkout built it.
+#
+# `TB_` and not `STELLA_`: every script here sources this file before invoking
+# Harbor, so anything exported is ambient in the adapter's process, and the
+# adapter's ambient check refuses the run on any unregistered `STELLA_*` name.
+# A build path means nothing inside a task container and has no business in
+# that namespace.
+export TB_BUILD_OUTPUT="${TB_BUILD_REPO:-$TB_REPO}/target/$STELLA_TARGET_TRIPLE/release/stella"
+# Where the run reads it. An arm gets its own copy, so building the second arm
+# cannot overwrite the first and leave the report citing the survivor's hash.
+if [ -n "$TB_ARM" ]; then
+  export STELLA_BINARY="$TB_ARM_DIR/stella"
+else
+  export STELLA_BINARY="$TB_BUILD_OUTPUT"
+fi
 # `-` and not `:-`: unset still takes the development default, but an
 # explicitly empty value stays empty and means *no per-trial cap*, which a
 # head-to-head against a comparator with no spend ceiling has to be able to
@@ -57,7 +91,7 @@ export JOBS="$TB_ROOT/jobs"
 export DATASET_DIR="$TB_ROOT/dataset"
 mkdir -p "$JOBS"
 
-[ -f "$TB_ROOT/sut_commit.txt" ] && export STELLA_SOURCE_COMMIT="$(cat "$TB_ROOT/sut_commit.txt")"
+[ -f "$TB_ARM_DIR/sut_commit.txt" ] && export STELLA_SOURCE_COMMIT="$(cat "$TB_ARM_DIR/sut_commit.txt")"
 
 # Assert the SUT binary can actually execute inside a task container.
 #
@@ -114,12 +148,43 @@ assert_fresh_sut() {
   }
 }
 
+# Assert an arm's binary is the commit that arm was declared on.
+#
+# `assert_fresh_sut` with no reference asks "is this near origin/main", which is
+# the right question for a single-build run and the wrong one for an arm of a
+# two-build experiment. The control arm of the pipeline A/B is a thousand
+# commits behind main on purpose, so the default refuses it — and raising the
+# tolerance far enough to admit it would admit a stale binary on every other
+# run too.
+#
+# So an arm is held to equality with the commit `build_sut.sh` recorded for it
+# instead. That is stricter than the default, not looser: it fails on a binary
+# one commit off, which the default would wave through, and it is the property
+# the analysis checks anyway (`compare_arms.py --cross-sut` refuses an arm whose
+# trials report a commit other than the one declared for it).
+assert_arm_is_its_declared_commit() {
+  # `:-` and not a bare expansion: `set -u` turns an unset variable into a bash
+  # error that kills the shell before the message below can print, and an arm
+  # with no `sut_commit.txt` is exactly the case this is here to name.
+  local commit="${STELLA_SOURCE_COMMIT:-}"
+  test "${#commit}" = 40 || {
+    echo "FATAL: no recorded commit for arm '$TB_ARM' — run build_sut.sh for it first"
+    return 1
+  }
+  assert_fresh_sut "$STELLA_BINARY" --reference "$commit" --max-behind 0
+}
+
 preflight() {
   test -n "${OPENROUTER_API_KEY:-}" || { echo "FATAL: OPENROUTER_API_KEY unset"; return 1; }
   test -x "$STELLA_BINARY" || { echo "FATAL: no SUT binary at $STELLA_BINARY (run build_sut.sh)"; return 1; }
   assert_portable_binary || return 1
-  assert_fresh_sut || return 1
-  test "${#STELLA_SOURCE_COMMIT}" = 40 || { echo "FATAL: STELLA_SOURCE_COMMIT is not a full SHA"; return 1; }
+  if [ -n "$TB_ARM" ]; then
+    assert_arm_is_its_declared_commit || return 1
+  else
+    assert_fresh_sut || return 1
+  fi
+  local commit="${STELLA_SOURCE_COMMIT:-}"
+  test "${#commit}" = 40 || { echo "FATAL: STELLA_SOURCE_COMMIT is not a full SHA"; return 1; }
   test "$(command -v harbor)" = "$VENV/bin/harbor" || { echo "FATAL: wrong harbor on PATH"; return 1; }
   test "$(harbor --version)" = "0.6.1" || { echo "FATAL: harbor $(harbor --version) != 0.6.1 (audited constant)"; return 1; }
   docker info >/dev/null 2>&1 || { echo "FATAL: docker unreachable"; return 1; }
