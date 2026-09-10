@@ -302,6 +302,23 @@ pub enum TranscriptEntry {
         /// Which channel put it in the prompt — the head's `auto|/cmd`.
         trigger: stella_protocol::SkillTrigger,
     },
+    /// One steering candidate this turn's budget refused, and what widens
+    /// the budget that refused it (SPEC 6.3's `⚠ steering` note).
+    ///
+    /// The other complement of [`Self::Skill`]: that row says a skill fired,
+    /// and this one says a skill matched and could not be afforded. A reader
+    /// with only the first cannot tell the two apart, and the remedy each
+    /// line carries is the reason to keep it where it can be scrolled back
+    /// to rather than in a dialog that expires.
+    ///
+    /// Distinct from [`Self::SteeringWithheld`], which is one session-level
+    /// refusal by an authority. This is a per-turn budget cut, one row per
+    /// candidate.
+    SteeringDropped {
+        /// What was refused, and what widens the budget — a headline and a
+        /// remedy separated by an em dash.
+        advisory: String,
+    },
     /// Context recall completed; frames are cited by human label, never raw
     /// id (L-C4).
     ///

@@ -460,6 +460,30 @@ pub fn context_write(provider: &str, upserts: u32, superseded: u32) -> EventLine
     }
 }
 
+/// One candidate a turn's steering budget refused, for the surfaces that
+/// render a stream as text.
+///
+/// The remedy rides `detail` so a narrow terminal keeps what was refused and
+/// drops the advice, which is the same split [`skill_injected`] makes and the
+/// same one `stella_tui::notice` draws. The em dash is the emitter's
+/// (`stella-cli`'s `drop_message`), and the first one splits the line: every
+/// remedy clause is written after one, and a handle before it cannot contain
+/// one.
+#[must_use]
+pub fn steering_dropped(advisory: &str) -> EventLine {
+    let (body, detail) = match advisory.split_once(" — ") {
+        Some((head, remedy)) => (head.to_string(), Some(remedy.to_string())),
+        None => (advisory.to_string(), None),
+    };
+    EventLine {
+        glyph: "⚠",
+        tone: Tone::Warn,
+        strong: false,
+        body,
+        detail,
+    }
+}
+
 /// One injected skill, for the surfaces that render a stream as text.
 ///
 /// The summary rides `detail` rather than the body so a narrow terminal drops
@@ -802,6 +826,7 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
             tokens,
             trigger,
         } => Some(skill_injected(name, summary, *tokens, *trigger)),
+        AgentEvent::SteeringDropped { advisory } => Some(steering_dropped(advisory)),
         AgentEvent::MediaProgress {
             artifact_id,
             kind,

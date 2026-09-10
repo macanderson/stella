@@ -185,6 +185,10 @@ pub fn entry_fields(entry: &TranscriptEntry) -> Vec<&str> {
         E::Pr { url, .. } => vec![url],
         E::TaskUpdate { active, .. } => active.as_deref().into_iter().collect(),
         E::Error { message, .. } => vec![message],
+        // Free text a reader types into the find box — the handle that lost
+        // its seat is exactly what someone searches for after noticing a
+        // skill did not fire.
+        E::SteeringDropped { advisory } => vec![advisory],
         E::Complete { model, .. } => vec![model],
         // Counts and a closed authority — the row carries no free text a
         // reader could type into a find box, and deliberately no filename.

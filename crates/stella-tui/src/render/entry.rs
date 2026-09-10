@@ -20,7 +20,7 @@ use crate::model::{FileState, TranscriptEntry};
 use crate::render::row::*;
 use crate::textline::{
     budget_mode_label, ci_status_label, media_kind_label, media_state_label, pr_status_label,
-    stage_label, steering_withheld,
+    stage_label, steering_dropped, steering_withheld,
 };
 use crate::theme;
 
@@ -689,6 +689,21 @@ fn entry_body(
                 content.push(Span::styled(format!("  ·  {detail}"), quiet()));
             }
             push_note("⚠ steering", loud(theme::WARNING), content, width, out);
+        }
+        // Composed from `textline::steering_dropped` for the reason the arm
+        // above gives: one wording, so the deck and the plain door cannot
+        // drift on a sentence whose whole point is naming the right remedy.
+        //
+        // `strong` is false where the withheld row's is true: that row is a
+        // session refusing to be steered at all, and this one is one
+        // candidate priced out of a turn that is otherwise steered normally.
+        TranscriptEntry::SteeringDropped { advisory } => {
+            let line = steering_dropped(advisory);
+            let mut content = vec![Span::styled(line.body, value())];
+            if let Some(detail) = line.detail {
+                content.push(Span::styled(format!("  ·  {detail}"), quiet()));
+            }
+            push_note("⚠ steering", theme::WARNING.into(), content, width, out);
         }
         TranscriptEntry::ContextRecall {
             frames,

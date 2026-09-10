@@ -99,17 +99,12 @@ impl RecalledBlock {
                     trigger: stella_protocol::SkillTrigger::Auto,
                 }
             }))
-            .chain(self.dropped_event())
+            .chain(self.dropped.iter().map(|advisory| {
+                stella_protocol::AgentEvent::SteeringDropped {
+                    advisory: advisory.clone(),
+                }
+            }))
             .collect()
-    }
-
-    /// This block's refusals, ready to send. `None` when every candidate the
-    /// turn gathered fitted, which is the turn most sessions run.
-    #[must_use]
-    pub fn dropped_event(&self) -> Option<stella_protocol::AgentEvent> {
-        (!self.dropped.is_empty()).then(|| stella_protocol::AgentEvent::SteeringDropped {
-            advisories: self.dropped.clone(),
-        })
     }
 }
 

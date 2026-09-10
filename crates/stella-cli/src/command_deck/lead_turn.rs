@@ -144,7 +144,9 @@ pub(super) async fn run_lead_turn(
         // that is the drawn frame, and a line written into it scrolls the
         // screen out from under the renderer's diff.
         let advisories = |advisories: Vec<String>| {
-            let _ = tx.send(stella_protocol::AgentEvent::SteeringDropped { advisories });
+            for advisory in advisories {
+                let _ = tx.send(stella_protocol::AgentEvent::SteeringDropped { advisory });
+            }
         };
         let permitted = agent::tool_stack::session_stack(
             &claims,

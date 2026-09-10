@@ -1449,17 +1449,17 @@ absence of a sibling key."
     /// controlled. These candidates were loaded and read by this process, so
     /// naming the handle discloses nothing the session did not already hold.
     ///
-    /// One event per turn carrying every line, rather than one per candidate.
-    /// The memory arm arrives already summarized by count
-    /// (`report_steering_drops`), so a per-candidate event would have no
-    /// handle to put in it; and four budgets each refusing one candidate is
-    /// one thing a reader wants in one place.
+    /// One event per refusal, on [`Self::SkillInjected`]'s rule: each becomes
+    /// one transcript row, and a list would make the renderer split what the
+    /// emitter had already separated. The memory arm arrives from
+    /// `report_steering_drops` already summarized by count, so it is one
+    /// refusal here like any other.
     ///
-    /// Each line is a headline and a remedy separated by an em dash — the
+    /// The line is a headline and a remedy separated by an em dash — the
     /// shape `stella_tui::notice` splits into head and detail.
     SteeringDropped {
-        /// One line per refusal, in the order the steering plane made them.
-        advisories: Vec<String>,
+        /// What was refused, and what widens the budget that refused it.
+        advisory: String,
     },
     /// The workspace's own steering — memories, rules and published context
     /// records, skills, commands, agents — was on disk and was **not** loaded,
