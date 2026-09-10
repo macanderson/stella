@@ -24,32 +24,53 @@
 //!   keep-alive, budget-derived allowance — and only an unaffordable wait
 //!   still fails fast. Which failures those are is decided at the adapter
 //!   and asked here through [`ProviderError::is_park_eligible`], never
-//!   re-derived (L-M7 again). Nothing here reads a clock or a budget
-//!   directly; the supervisor is a port, like [`Sleeper`].
+//!   re-derived (L-M7 again). Nothing here reads a budget; the supervisor
+//!   is a port, like [`Sleeper`]. The one clock read left is the monotonic
+//!   `Instant` that times each attempt for the failure observer, and
+//!   `make core-no-io` counts it.
 //!
 //! Per-call timeouts (L-E4) are a caller concern layered on top of
 //! `attempt_fn`; this module owns "should we try again, and if so after how
 //! long" — and the jitter on that delay is part of the answer
 //! ([`compute_backoff_delay_ms`]'s equal jitter, `server_hint_delay_ms`'s
-//! additive nudge), not something a caller layers on.
+//! additive nudge), not something a caller layers on. The entropy behind
+//! that jitter is the one input this module cannot compute, so it comes
+//! through [`Sleeper::jitter`] rather than from an RNG this crate seeds
+//! itself: a retry ladder that rolled its own dice could not be replayed,
+//! and `stella-core` would link an entropy source for one draw.
 
 use std::future::Future;
 
 use async_trait::async_trait;
-use rand::{Rng, RngExt};
 use stella_protocol::ProviderError;
 
-/// The delay port `retry_with_backoff` sleeps through between attempts.
+/// The backoff port: how `retry_with_backoff` waits between attempts, and
+/// where the entropy that spreads those waits apart comes from.
+///
 /// Injectable so retry-loop tests run instantly and deterministically
 /// instead of paying real wall-clock delays — the same seam
 /// [`crate::ports::Clock`] provides for reading time, but for the one place
 /// this crate needs to actually suspend a task. Only the trait lives here —
 /// the production tokio-backed impl belongs to the binary that constructs
 /// the engine (the CLI's `runtime` module).
+///
+/// Both methods are required, with no default. A default `jitter` of zero
+/// would let a host forget the draw and ship a fleet whose workers all wake
+/// on the same millisecond after a shared 429, silently — the herd this
+/// jitter exists to break up. A host that wants no jitter writes that down.
 #[async_trait]
 pub trait Sleeper: Send + Sync {
     /// Suspend the current task for `duration_ms` milliseconds.
     async fn sleep(&self, duration_ms: u64);
+
+    /// A uniform draw from `0..=upper`, the spread between the backoff floor
+    /// and its cap that this attempt actually waits.
+    ///
+    /// Production draws from the OS entropy pool; a test double returns a
+    /// fixed value or a seeded sequence, which is what makes a retry ladder
+    /// assertable to the millisecond. A draw past `upper` is clamped by the
+    /// caller, so a careless impl widens nothing.
+    fn jitter(&self, upper: u64) -> u64;
 }
 
 /// Milliseconds per parked-wait chunk: a long rate-limit wait is slept in
@@ -324,9 +345,9 @@ pub struct RetryOutcome<T> {
 /// (thundering herd).
 ///
 /// Pure and synchronous by design — the only
-/// non-determinism is the injected `rng`, so bounds and shape are directly
-/// assertable without sleeping.
-pub fn compute_backoff_delay_ms(policy: &RetryPolicy, attempt: u32, rng: &mut impl Rng) -> u64 {
+/// non-determinism is the injected [`Sleeper::jitter`] draw, so bounds and
+/// shape are directly assertable without sleeping.
+pub fn compute_backoff_delay_ms(policy: &RetryPolicy, attempt: u32, sleeper: &dyn Sleeper) -> u64 {
     let base = policy.base_delay_ms;
     let cap = policy.max_delay_ms.max(base);
     let exponential = base.saturating_mul(2u64.saturating_pow(attempt));
@@ -335,10 +356,11 @@ pub fn compute_backoff_delay_ms(policy: &RetryPolicy, attempt: u32, rng: &mut im
     if high <= base {
         // Degenerate range (attempt 0, or a misconfigured policy where the
         // cap doesn't exceed the floor): nothing to jitter, return the
-        // floor rather than call `rng.random_range` on an empty range.
+        // floor rather than ask for a draw from an empty range.
         return base;
     }
-    rng.random_range(base..=high)
+    let span = high - base;
+    base + sleeper.jitter(span).min(span)
 }
 
 /// Turn a server `Retry-After` hint into the actual delay to sleep: raised to
@@ -352,14 +374,14 @@ pub fn compute_backoff_delay_ms(policy: &RetryPolicy, attempt: u32, rng: &mut im
 /// [`compute_backoff_delay_ms`], because the whole point of honoring a server
 /// hint is to retry *no earlier* than it asked. So the result is always at or
 /// above the floored hint. Pure and synchronous; the only non-determinism is
-/// the injected `rng`.
-fn server_hint_delay_ms(policy: &RetryPolicy, hint_ms: u64, rng: &mut impl Rng) -> u64 {
+/// the injected [`Sleeper::jitter`] draw.
+fn server_hint_delay_ms(policy: &RetryPolicy, hint_ms: u64, sleeper: &dyn Sleeper) -> u64 {
     let floored = hint_ms.max(policy.base_delay_ms);
     let jitter_span = floored / 8;
     if jitter_span == 0 {
         return floored;
     }
-    floored.saturating_add(rng.random_range(0..=jitter_span))
+    floored.saturating_add(sleeper.jitter(jitter_span).min(jitter_span))
 }
 
 /// Drive `attempt_fn` to completion, retrying retryable
@@ -466,16 +488,14 @@ where
                 // is for (#2677, #2742).
                 let ladder_open = attempt < policy.max_retries;
                 let inline_delay_ms = match park_hint {
-                    None if ladder_open => {
-                        Some(compute_backoff_delay_ms(policy, attempt, &mut rand::rng()))
-                    }
+                    None if ladder_open => Some(compute_backoff_delay_ms(policy, attempt, sleeper)),
                     None => return Err(error),
                     Some(hint)
                         if ladder_open && hint.is_none_or(|h| h <= policy.max_server_hint_ms) =>
                     {
                         Some(match hint {
-                            Some(h) => server_hint_delay_ms(policy, h, &mut rand::rng()),
-                            None => compute_backoff_delay_ms(policy, attempt, &mut rand::rng()),
+                            Some(h) => server_hint_delay_ms(policy, h, sleeper),
+                            None => compute_backoff_delay_ms(policy, attempt, sleeper),
                         })
                     }
                     Some(_) => None,
@@ -498,7 +518,7 @@ where
                         }
                         let hint_ms = park_hint.flatten();
                         let hint_delay_ms =
-                            hint_ms.map(|h| server_hint_delay_ms(policy, h, &mut rand::rng()));
+                            hint_ms.map(|h| server_hint_delay_ms(policy, h, sleeper));
                         let allowance_ms = park.wait_allowance_ms(parked_total_ms);
                         let total_ms = match plan_park(hint_delay_ms, park_streak, allowance_ms) {
                             ParkPlan::Wait { total_ms } => total_ms,
@@ -573,17 +593,34 @@ mod tests {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicU32, Ordering};
 
-    use rand::SeedableRng;
     use rand::rngs::StdRng;
+    use rand::{RngExt, SeedableRng};
 
     use super::*;
 
     /// A [`Sleeper`] that never actually waits — it just records every
     /// requested delay so async-loop tests can assert on retry timing
-    /// without paying real wall-clock cost or flaking under load.
-    #[derive(Default)]
+    /// without paying real wall-clock cost or flaking under load. Its
+    /// jitter is a seeded `StdRng`, so a test that wants the draw to vary
+    /// gets a real spread, and one that reruns gets the same spread.
     struct NoopSleeper {
         delays_ms: Mutex<Vec<u64>>,
+        rng: Mutex<StdRng>,
+    }
+
+    impl NoopSleeper {
+        fn seeded(seed: u64) -> Self {
+            Self {
+                delays_ms: Mutex::new(Vec::new()),
+                rng: Mutex::new(StdRng::seed_from_u64(seed)),
+            }
+        }
+    }
+
+    impl Default for NoopSleeper {
+        fn default() -> Self {
+            Self::seeded(0)
+        }
     }
 
     #[async_trait]
@@ -593,6 +630,13 @@ mod tests {
                 .lock()
                 .expect("mutex poisoned")
                 .push(duration_ms);
+        }
+
+        fn jitter(&self, upper: u64) -> u64 {
+            self.rng
+                .lock()
+                .expect("mutex poisoned")
+                .random_range(0..=upper)
         }
     }
 
@@ -636,16 +680,53 @@ mod tests {
         // attempt 0: base * 2^0 == base, so the jitter range is degenerate
         // and the result is deterministic.
         let policy = RetryPolicy::new(5, 250, 8_000);
-        let mut rng = StdRng::seed_from_u64(1);
-        assert_eq!(compute_backoff_delay_ms(&policy, 0, &mut rng), 250);
+        let sleeper = NoopSleeper::seeded(1);
+        assert_eq!(compute_backoff_delay_ms(&policy, 0, &sleeper), 250);
+    }
+
+    /// A [`Sleeper`] whose draw is always the same number.
+    struct FixedJitter(u64);
+
+    #[async_trait]
+    impl Sleeper for FixedJitter {
+        async fn sleep(&self, _duration_ms: u64) {}
+
+        fn jitter(&self, _upper: u64) -> u64 {
+            self.0
+        }
+    }
+
+    /// The draw comes from the port. A sleeper answering a fixed number
+    /// lands the delay at exactly the floor plus that number, which no RNG
+    /// this crate seeded itself could promise. A ladder drawing from
+    /// `rand::rng()` cannot pass this, and that is what it did before.
+    #[test]
+    fn the_jitter_is_the_ports_draw_and_a_wide_draw_is_clamped() {
+        let policy = RetryPolicy::new(5, 100, 8_000);
+        // Attempt 3: 100 * 2^3 = 800, so the span above the floor is 700.
+        assert_eq!(compute_backoff_delay_ms(&policy, 3, &FixedJitter(0)), 100);
+        assert_eq!(compute_backoff_delay_ms(&policy, 3, &FixedJitter(250)), 350);
+        assert_eq!(
+            compute_backoff_delay_ms(&policy, 3, &FixedJitter(u64::MAX)),
+            800
+        );
+        // A server hint of 8000ms: the nudge is at most an eighth of it.
+        assert_eq!(
+            server_hint_delay_ms(&policy, 8_000, &FixedJitter(40)),
+            8_040
+        );
+        assert_eq!(
+            server_hint_delay_ms(&policy, 8_000, &FixedJitter(5_000)),
+            9_000
+        );
     }
 
     #[test]
     fn delay_stays_within_base_and_cap_bounds_across_many_attempts() {
         let policy = RetryPolicy::new(10, 100, 5_000);
-        let mut rng = StdRng::seed_from_u64(7);
+        let sleeper = NoopSleeper::seeded(7);
         for attempt in 0..30 {
-            let delay = compute_backoff_delay_ms(&policy, attempt, &mut rng);
+            let delay = compute_backoff_delay_ms(&policy, attempt, &sleeper);
             assert!(
                 (policy.base_delay_ms..=policy.max_delay_ms).contains(&delay),
                 "attempt {attempt}: delay {delay} out of [{}, {}]",
@@ -658,7 +739,7 @@ mod tests {
     #[test]
     fn delay_grows_with_attempt_number_up_to_the_cap() {
         let policy = RetryPolicy::new(10, 50, 4_000);
-        let mut rng = StdRng::seed_from_u64(42);
+        let sleeper = NoopSleeper::seeded(42);
         // Use the upper bound of what's achievable at each attempt (the
         // exponential envelope) rather than one jittered sample, since a
         // single draw can dip low even as the ceiling climbs.
@@ -681,7 +762,7 @@ mod tests {
         assert_eq!(envelope(20), policy.max_delay_ms);
         // Sanity: real samples at a late attempt never exceed the cap.
         for _ in 0..20 {
-            assert!(compute_backoff_delay_ms(&policy, 20, &mut rng) <= policy.max_delay_ms);
+            assert!(compute_backoff_delay_ms(&policy, 20, &sleeper) <= policy.max_delay_ms);
         }
     }
 
@@ -691,9 +772,9 @@ mod tests {
         // wide [base, cap] range sampled many times at a fixed attempt
         // should not collapse to a single value.
         let policy = RetryPolicy::new(10, 100, 10_000);
-        let mut rng = StdRng::seed_from_u64(99);
+        let sleeper = NoopSleeper::seeded(99);
         let samples: Vec<u64> = (0..50)
-            .map(|_| compute_backoff_delay_ms(&policy, 5, &mut rng))
+            .map(|_| compute_backoff_delay_ms(&policy, 5, &sleeper))
             .collect();
         let first = samples[0];
         assert!(
@@ -705,9 +786,9 @@ mod tests {
     #[test]
     fn zero_policy_never_panics_and_returns_zero() {
         let policy = RetryPolicy::deterministic();
-        let mut rng = StdRng::seed_from_u64(3);
-        assert_eq!(compute_backoff_delay_ms(&policy, 0, &mut rng), 0);
-        assert_eq!(compute_backoff_delay_ms(&policy, 7, &mut rng), 0);
+        let sleeper = NoopSleeper::seeded(3);
+        assert_eq!(compute_backoff_delay_ms(&policy, 0, &sleeper), 0);
+        assert_eq!(compute_backoff_delay_ms(&policy, 7, &sleeper), 0);
     }
 
     #[test]
@@ -715,8 +796,8 @@ mod tests {
         // cap < base is a misconfiguration, but must degrade safely rather
         // than panic the sampler on an empty range.
         let policy = RetryPolicy::new(3, 5_000, 100);
-        let mut rng = StdRng::seed_from_u64(11);
-        let delay = compute_backoff_delay_ms(&policy, 4, &mut rng);
+        let sleeper = NoopSleeper::seeded(11);
+        let delay = compute_backoff_delay_ms(&policy, 4, &sleeper);
         assert_eq!(delay, policy.base_delay_ms);
     }
 
@@ -728,8 +809,8 @@ mod tests {
             attempt in 0u32..40,
         ) {
             let policy = RetryPolicy::new(10, base, base + extra);
-            let mut rng = StdRng::seed_from_u64(u64::from(attempt) ^ base ^ extra);
-            let delay = compute_backoff_delay_ms(&policy, attempt, &mut rng);
+            let sleeper = NoopSleeper::seeded(u64::from(attempt) ^ base ^ extra);
+            let delay = compute_backoff_delay_ms(&policy, attempt, &sleeper);
             proptest::prop_assert!(delay >= policy.base_delay_ms);
             proptest::prop_assert!(delay <= policy.max_delay_ms);
         }
@@ -1312,12 +1393,12 @@ mod tests {
         // [floored, floored + floored/8], and the draw actually varies so a
         // fleet decorrelates instead of waking in lockstep.
         let policy = RetryPolicy::new(3, 250, 8_000);
-        let mut rng = StdRng::seed_from_u64(2024);
+        let sleeper = NoopSleeper::seeded(2024);
         let hint = 30_000u64;
         let floor = hint; // hint already above base_delay_ms
         let ceil = floor + floor / 8;
         let samples: Vec<u64> = (0..64)
-            .map(|_| server_hint_delay_ms(&policy, hint, &mut rng))
+            .map(|_| server_hint_delay_ms(&policy, hint, &sleeper))
             .collect();
         for &d in &samples {
             assert!(

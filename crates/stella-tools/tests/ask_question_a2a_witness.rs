@@ -139,7 +139,7 @@ async fn a_child_behind_read_only_tools_can_see_and_call_ask_question() {
 #[tokio::test]
 async fn a_childs_question_is_attributed_to_the_child_not_the_turn() {
     let (registry, responder) = registry_with_driver();
-    let bus = HookBus::new("ses-a2a-witness");
+    let bus = HookBus::new("ses-a2a-witness", stella_core::ports::FixedClock(0));
     registry.attach_bus(bus.clone());
 
     // Top-level: no agent is entered, so the question is the driver's own.

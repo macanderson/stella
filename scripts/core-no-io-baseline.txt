@@ -1,0 +1,18 @@
+# `Instant::now()` reads in stella-core's shipping source, per file.
+#
+# A DOWN-ONLY ratchet. It records the clock reads that predate the guard. It
+# may never gain a file or a larger count, and `--update` refuses both. To
+# clear a red run, read the clock once at the edge and pass `now` in, or take
+# `ports::Clock`. Never record the read. The list is meant to reach empty.
+#
+# Regenerate after removing a read:  ./scripts/check-core-no-io.py --update
+2 crates/stella-core/src/accounted_call.rs
+1 crates/stella-core/src/bus.rs
+4 crates/stella-core/src/driver.rs
+1 crates/stella-core/src/driver/completion.rs
+2 crates/stella-core/src/driver/dispatch.rs
+2 crates/stella-core/src/driver/rate_limit.rs
+1 crates/stella-core/src/driver/settlement.rs
+1 crates/stella-core/src/retry.rs
+3 crates/stella-core/src/step.rs
+2 crates/stella-core/src/subagent.rs

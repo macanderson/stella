@@ -442,7 +442,7 @@ fn minting_is_a_function_of_call_order_alone() {
 async fn dispatching_a_child_emits_declared_progress_on_the_bus() {
     let (tool, _dispatcher) = tool_with(SubAgentOutcome::Completed(report("done", 0.0, false)));
 
-    let bus = stella_core::bus::HookBus::new("test-session");
+    let bus = stella_core::bus::HookBus::new("test-session", stella_core::ports::FixedClock(0));
     let seen: Arc<Mutex<Vec<serde_json::Value>>> = Arc::default();
     let sink = seen.clone();
     bus.on("tool.call.progress", move |event| {

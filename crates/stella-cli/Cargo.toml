@@ -91,6 +91,9 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 hmac.workspace = true
+# The entropy behind retry jitter. `stella-core` takes it through
+# `retry::Sleeper::jitter` and links no entropy source of its own.
+rand.workspace = true
 reqwest.workspace = true
 futures-util.workspace = true
 tokio = { workspace = true, features = ["sync", "signal", "net"] }

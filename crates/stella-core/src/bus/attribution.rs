@@ -132,7 +132,7 @@ mod tests {
     /// that had finished.
     #[test]
     fn overlapping_siblings_do_not_corrupt_the_ambient_agent() {
-        let bus = HookBus::new("session-1653");
+        let bus = HookBus::new("session-1653", crate::ports::FixedClock(0));
         assert_eq!(bus.current_agent(), None, "nothing entered yet");
 
         let a = bus.push_agent("a".to_string());
@@ -158,7 +158,7 @@ mod tests {
     /// Strict nesting — the only case the slot got right — still behaves.
     #[test]
     fn nested_scopes_restore_their_parent() {
-        let bus = HookBus::new("session-1653");
+        let bus = HookBus::new("session-1653", crate::ports::FixedClock(0));
         let parent = bus.push_agent("parent".to_string());
         let child = bus.push_agent("child".to_string());
         assert_eq!(bus.current_agent(), Some("child".to_string()));
@@ -180,7 +180,7 @@ mod tests {
     /// else's entry — which a pop-the-top implementation would do.
     #[test]
     fn dropping_a_scope_twice_does_not_disturb_a_live_sibling() {
-        let bus = HookBus::new("session-1653");
+        let bus = HookBus::new("session-1653", crate::ports::FixedClock(0));
         let a = bus.push_agent("a".to_string());
         let b = bus.push_agent("b".to_string());
 
@@ -199,7 +199,7 @@ mod tests {
     /// a slot, and the one a fan-out of siblings actually produces.
     #[test]
     fn entry_order_exits_leave_the_innermost_survivor_attributed() {
-        let bus = HookBus::new("session-1653");
+        let bus = HookBus::new("session-1653", crate::ports::FixedClock(0));
         let a = bus.push_agent("a".to_string());
         let b = bus.push_agent("b".to_string());
         let c = bus.push_agent("c".to_string());

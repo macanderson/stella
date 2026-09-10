@@ -57,21 +57,25 @@
 //! # No I/O in this module
 //!
 //! The bus is plain synchronous logic over owned data: registration lists,
-//! an atomic sequence counter, and inline dispatch. Timestamping reads the
-//! system clock (a pure computation over `SystemTime`), and observer dispatch
-//! reads a monotonic `Instant` to enforce the per-handler latency budget
-//! (#459) — both are clock reads, not I/O in the architectural sense (no
-//! filesystem, no network, no processes).
+//! an atomic sequence counter, and inline dispatch. The stamp on every
+//! event comes from the [`Clock`] the host hands [`HookBus::new`], never
+//! from `SystemTime` — a hook script reads that stamp on the far side of a
+//! process boundary, so the host's wall clock is the right one and the
+//! host owns it. Observer dispatch still reads a monotonic `Instant` to
+//! enforce the per-handler latency budget (#459); `make core-no-io` counts
+//! that read and lets it go no higher.
 
 use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stella_protocol::Denial;
+
+use crate::ports::Clock;
 
 // The event-name catalog, split to a sibling file (the `driver/settlement.rs`
 // pattern) so this file stays under its file-size ceiling (#1857).
@@ -312,6 +316,9 @@ struct BusInner {
     /// The per-observer-dispatch latency budget (#459). Immutable for the
     /// bus's lifetime; defaults to [`SLOW_OBSERVER_BUDGET`].
     slow_observer_budget: Duration,
+    /// Where every event's `timestamp` comes from. Unix-epoch milliseconds,
+    /// by the contract on [`HookBus::new`].
+    clock: Box<dyn Clock>,
 }
 
 /// The session-scoped hook bus. Cheap to clone (shared inner); every clone
@@ -322,8 +329,15 @@ pub struct HookBus {
 }
 
 impl HookBus {
-    pub fn new(session_id: impl Into<String>) -> Self {
-        Self::with_slow_observer_budget(session_id, SLOW_OBSERVER_BUDGET)
+    /// A bus for one session, stamping its events from `clock`.
+    ///
+    /// `clock` must count milliseconds from the Unix epoch. The stamp it
+    /// produces leaves the process — a hook script parses it, an
+    /// observatory orders by it — so a clock counting from process start
+    /// would write a number that means nothing to either reader. A test
+    /// passes [`crate::ports::FixedClock`] and asserts on the exact stamp.
+    pub fn new(session_id: impl Into<String>, clock: impl Clock + 'static) -> Self {
+        Self::with_slow_observer_budget(session_id, clock, SLOW_OBSERVER_BUDGET)
     }
 
     /// Like [`HookBus::new`] but with an explicit observer latency budget
@@ -331,6 +345,7 @@ impl HookBus {
     /// tiny budget to exercise quarantine without real-time sleeps.
     pub fn with_slow_observer_budget(
         session_id: impl Into<String>,
+        clock: impl Clock + 'static,
         slow_observer_budget: Duration,
     ) -> Self {
         Self {
@@ -343,8 +358,14 @@ impl HookBus {
                 context: Mutex::new(AmbientContext::default()),
                 recent_failures: Mutex::new(VecDeque::new()),
                 slow_observer_budget,
+                clock: Box::new(clock),
             }),
         }
+    }
+
+    /// The clock's reading now, as the ISO 8601 stamp events carry.
+    fn stamp(&self) -> String {
+        iso8601_utc_millis(i64::try_from(self.inner.clock.now_ms()).unwrap_or(i64::MAX))
     }
 
     pub fn session_id(&self) -> &str {
@@ -581,7 +602,7 @@ impl HookBus {
         HookEvent {
             id: format!("evt_{}_{sequence}", self.inner.session_id),
             name: draft.name,
-            timestamp: now_iso8601_utc(),
+            timestamp: self.stamp(),
             session_id: self.inner.session_id.clone(),
             turn_id: draft.turn_id.or(ambient_turn),
             agent_id: draft.agent_id.or(ambient_agent),
@@ -677,7 +698,7 @@ impl HookBus {
                 pattern: pattern.to_string(),
                 event_name: event.name.clone(),
                 message: message.clone(),
-                timestamp: now_iso8601_utc(),
+                timestamp: self.stamp(),
             });
         }
         self.emit(HookEventDraft {
@@ -711,7 +732,7 @@ impl HookBus {
                 pattern: pattern.to_string(),
                 event_name: event.name.clone(),
                 message: message.clone(),
-                timestamp: now_iso8601_utc(),
+                timestamp: self.stamp(),
             });
         }
         if event.name != names::EXTENSION_ERROR {
@@ -971,14 +992,6 @@ pub fn is_sensitive_path(path: &str) -> bool {
 
 // Timestamps — ISO 8601 UTC without a date-time dependency
 
-fn now_iso8601_utc() -> String {
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
-    iso8601_utc_millis(millis)
-}
-
 /// Format Unix milliseconds as `YYYY-MM-DDThh:mm:ss.mmmZ`. Fixed-width and
 /// zero-padded, so lexicographic order equals time order (same property as
 /// `stella-context`'s clock, extended to millisecond precision).
@@ -1020,7 +1033,7 @@ mod tests {
 
     /// Bus + a `Vec` capturing every event a `"*"` observer sees.
     fn observed_bus(session: &str) -> (HookBus, Arc<Mutex<Vec<HookEvent>>>) {
-        let bus = HookBus::new(session);
+        let bus = HookBus::new(session, crate::ports::FixedClock(0));
         let seen = Arc::new(Mutex::new(Vec::new()));
         let sink = seen.clone();
         bus.on("*", move |event| {
@@ -1044,7 +1057,7 @@ mod tests {
     #[test]
     fn bridge_maps_the_audit_plane_onto_policy_decision_events() {
         use stella_protocol::PolicyKind;
-        let bus = HookBus::new("bridge-test");
+        let bus = HookBus::new("bridge-test", crate::ports::FixedClock(0));
         bus.on_blocking(names::TOOL_CALL_REQUESTED, |_| {
             HookDecision::Deny("not on my watch".into())
         })
@@ -1107,7 +1120,7 @@ mod tests {
 
     #[test]
     fn dropping_the_bridge_subscription_stops_the_flow() {
-        let bus = HookBus::new("bridge-drop");
+        let bus = HookBus::new("bridge-drop", crate::ports::FixedClock(0));
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let bridge = bridge_policy_plane(&bus, crate::event_sender::EventSender::new(tx));
         drop(bridge); // un-detached subscription unsubscribes on drop
@@ -1181,7 +1194,7 @@ mod tests {
 
     #[test]
     fn exact_and_wildcard_subscriptions_each_receive_matching_events() {
-        let bus = HookBus::new("s");
+        let bus = HookBus::new("s", crate::ports::FixedClock(0));
         let exact = Arc::new(AtomicUsize::new(0));
         let ns = Arc::new(AtomicUsize::new(0));
         let all = Arc::new(AtomicUsize::new(0));
@@ -1212,7 +1225,7 @@ mod tests {
 
     #[test]
     fn envelope_serializes_to_the_documented_shape() {
-        let bus = HookBus::new("sess-1");
+        let bus = HookBus::new("sess-1", crate::ports::FixedClock(0));
         bus.set_turn(Some("turn-9".into()));
         let event = bus.emit(
             HookEventDraft::new(names::FILE_READ, serde_json::json!({"path": "src/a.rs"}))
@@ -1239,7 +1252,7 @@ mod tests {
 
     #[test]
     fn absent_turn_and_agent_ids_are_omitted_from_the_wire_shape() {
-        let bus = HookBus::new("s");
+        let bus = HookBus::new("s", crate::ports::FixedClock(0));
         let event = bus.emit_named(names::FILE_READ, Value::Null);
         let json = serde_json::to_string(&event).unwrap();
         assert!(!json.contains("turn_id"));
@@ -1301,8 +1314,8 @@ mod tests {
 
     #[test]
     fn sequences_are_per_session_not_global() {
-        let a = HookBus::new("a");
-        let b = HookBus::new("b");
+        let a = HookBus::new("a", crate::ports::FixedClock(0));
+        let b = HookBus::new("b", crate::ports::FixedClock(0));
         assert_eq!(a.emit_named(names::FILE_READ, Value::Null).sequence, 1);
         assert_eq!(a.emit_named(names::FILE_READ, Value::Null).sequence, 2);
         assert_eq!(b.emit_named(names::FILE_READ, Value::Null).sequence, 1);
@@ -1338,7 +1351,7 @@ mod tests {
 
     #[test]
     fn failing_observers_never_stop_delivery_and_surface_extension_error() {
-        let bus = HookBus::new("s");
+        let bus = HookBus::new("s", crate::ports::FixedClock(0));
         let delivered = Arc::new(AtomicUsize::new(0));
         let errors = Arc::new(Mutex::new(Vec::new()));
 
@@ -1378,7 +1391,7 @@ mod tests {
 
     #[test]
     fn a_broken_extension_error_handler_does_not_recurse() {
-        let bus = HookBus::new("s");
+        let bus = HookBus::new("s", crate::ports::FixedClock(0));
         // This handler fails on EVERY event — including extension.error.
         // Without the recursion guard this loops forever.
         bus.on("*", |_| Err("always broken".to_string())).detach();
@@ -1390,7 +1403,7 @@ mod tests {
 
     #[test]
     fn failure_log_is_bounded() {
-        let bus = HookBus::new("s");
+        let bus = HookBus::new("s", crate::ports::FixedClock(0));
         bus.on(names::FILE_READ, |_| Err("broken".to_string()))
             .detach();
         for _ in 0..(MAX_RECENT_FAILURES + 20) {
@@ -1486,7 +1499,7 @@ mod tests {
 
     #[test]
     fn blocking_modify_folds_payload_and_later_handlers_see_it() {
-        let bus = HookBus::new("s");
+        let bus = HookBus::new("s", crate::ports::FixedClock(0));
         let _a = bus.on_blocking(names::COMMAND_STARTED, |event| {
             let mut payload = event.payload.clone();
             payload["command"] = Value::String("ls -la".into());
@@ -1516,7 +1529,7 @@ mod tests {
 
     #[test]
     fn blocking_handlers_run_in_registration_order() {
-        let bus = HookBus::new("s");
+        let bus = HookBus::new("s", crate::ports::FixedClock(0));
         let order = Arc::new(Mutex::new(Vec::new()));
         for tag in ["first", "second", "third"] {
             let order = order.clone();
@@ -1532,7 +1545,7 @@ mod tests {
 
     #[test]
     fn a_panicking_policy_handler_fails_closed() {
-        let bus = HookBus::new("s");
+        let bus = HookBus::new("s", crate::ports::FixedClock(0));
         let _a = bus.on_blocking(names::FILE_DELETED, |_| panic!("broken extension"));
         let outcome = bus.emit_blocking(HookEventDraft::new(
             names::FILE_DELETED,
@@ -1549,7 +1562,7 @@ mod tests {
 
     #[test]
     fn blocking_events_consume_session_sequence_numbers_too() {
-        let bus = HookBus::new("s");
+        let bus = HookBus::new("s", crate::ports::FixedClock(0));
         let first = bus.emit_named(names::FILE_READ, Value::Null);
         let outcome = bus.emit_blocking(HookEventDraft::new(names::FILE_CREATED, Value::Null));
         let last = bus.emit_named(names::FILE_READ, Value::Null);
@@ -1563,7 +1576,7 @@ mod tests {
 
     #[test]
     fn unsubscribe_stops_delivery() {
-        let bus = HookBus::new("s");
+        let bus = HookBus::new("s", crate::ports::FixedClock(0));
         let count = Arc::new(AtomicUsize::new(0));
         let sink = count.clone();
         let sub = bus.on(names::FILE_READ, move |_| {
@@ -1578,7 +1591,7 @@ mod tests {
 
     #[test]
     fn dropping_the_subscription_unsubscribes() {
-        let bus = HookBus::new("s");
+        let bus = HookBus::new("s", crate::ports::FixedClock(0));
         let count = Arc::new(AtomicUsize::new(0));
         {
             let sink = count.clone();
@@ -1594,7 +1607,7 @@ mod tests {
 
     #[test]
     fn detach_keeps_the_handler_for_the_bus_lifetime() {
-        let bus = HookBus::new("s");
+        let bus = HookBus::new("s", crate::ports::FixedClock(0));
         let count = Arc::new(AtomicUsize::new(0));
         let sink = count.clone();
         bus.on("*", move |_| {
@@ -1609,7 +1622,7 @@ mod tests {
 
     #[test]
     fn off_removes_blocking_handlers_and_outlives_the_bus_safely() {
-        let bus = HookBus::new("s");
+        let bus = HookBus::new("s", crate::ports::FixedClock(0));
         let sub = bus.on_blocking(names::FILE_CREATED, |_| HookDecision::Deny("no".into()));
         assert!(
             !bus.emit_blocking(HookEventDraft::new(names::FILE_CREATED, Value::Null))
@@ -1623,7 +1636,7 @@ mod tests {
 
         // A subscription outliving its bus unsubscribes into nothing.
         let orphan = {
-            let short_lived = HookBus::new("gone");
+            let short_lived = HookBus::new("gone", crate::ports::FixedClock(0));
             short_lived.on("*", |_| Ok(()))
         };
         orphan.unsubscribe(); // must not panic
@@ -1652,7 +1665,7 @@ mod tests {
 
     #[tokio::test]
     async fn forward_to_bridges_events_into_a_bounded_channel() {
-        let bus = HookBus::new("s");
+        let bus = HookBus::new("s", crate::ports::FixedClock(0));
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
         let (fwd, dropped) = forward_to(tx);
         bus.on("file.*", fwd).detach();
@@ -1672,7 +1685,7 @@ mod tests {
     /// outcome, not a handler failure — so no `extension.error` storm.
     #[tokio::test]
     async fn forward_to_drops_newest_when_the_bounded_channel_is_full() {
-        let bus = HookBus::new("s");
+        let bus = HookBus::new("s", crate::ports::FixedClock(0));
         // `_rx` is never drained but stays alive, so the channel fills (Full),
         // it is not closed (which would be a real Err).
         let (tx, _rx) = tokio::sync::mpsc::channel(2);
@@ -1700,7 +1713,11 @@ mod tests {
     /// it), to stay non-flaky under CI load.
     #[test]
     fn a_persistently_slow_observer_is_quarantined_then_skipped() {
-        let bus = HookBus::with_slow_observer_budget("s", Duration::from_millis(10));
+        let bus = HookBus::with_slow_observer_budget(
+            "s",
+            crate::ports::FixedClock(0),
+            Duration::from_millis(10),
+        );
         let slow_calls = Arc::new(AtomicU32::new(0));
         let sc = slow_calls.clone();
         bus.on("file.created", move |_event| {

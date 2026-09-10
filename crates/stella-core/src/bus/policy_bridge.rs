@@ -125,7 +125,7 @@ mod tests {
     /// rows per ask, and a count of asks read double.
     #[test]
     fn one_ask_is_one_row_however_many_emissions_it_makes() {
-        let bus = HookBus::new("approval-pair");
+        let bus = HookBus::new("approval-pair", crate::ports::FixedClock(0));
         bus.on_blocking(names::TOOL_CALL_REQUESTED, |_| {
             HookDecision::RequireApproval {
                 reason: "destructive".into(),
@@ -161,7 +161,7 @@ mod tests {
     /// a new row, not the other half of the last one.
     #[test]
     fn a_resolved_ask_lets_the_next_one_through() {
-        let bus = HookBus::new("approval-reopen");
+        let bus = HookBus::new("approval-reopen", crate::ports::FixedClock(0));
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let _bridge = bridge_policy_plane(&bus, crate::event_sender::EventSender::new(tx));
 
@@ -189,7 +189,7 @@ mod tests {
     /// is what keeps them apart.
     #[test]
     fn two_gates_are_two_asks() {
-        let bus = HookBus::new("approval-two-gates");
+        let bus = HookBus::new("approval-two-gates", crate::ports::FixedClock(0));
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let _bridge = bridge_policy_plane(&bus, crate::event_sender::EventSender::new(tx));
 

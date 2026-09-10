@@ -171,7 +171,7 @@ mod tests {
     /// bit, and reason.
     #[tokio::test]
     async fn a_hook_approval_resolves_through_the_broker_with_the_audit_trail() {
-        let bus = HookBus::new("hook-bridge-test");
+        let bus = HookBus::new("hook-bridge-test", stella_core::ports::FixedClock(0));
         let events = collect_approval_events(&bus);
         let responder = Arc::new(Scripted {
             answer: ApprovalResponse::Approve,
@@ -219,7 +219,7 @@ mod tests {
     /// config.
     #[tokio::test]
     async fn a_renamed_route_stamps_its_producer_on_the_audit_trail() {
-        let bus = HookBus::new("hook-bridge-test");
+        let bus = HookBus::new("hook-bridge-test", stella_core::ports::FixedClock(0));
         let events = collect_approval_events(&bus);
         let route = BrokerApprovalRoute::new(
             ApprovalBroker::interactive(
@@ -249,7 +249,7 @@ mod tests {
     /// denial is audited.
     #[tokio::test]
     async fn a_denying_responder_reaches_the_bridge_with_its_reason() {
-        let bus = HookBus::new("hook-bridge-test");
+        let bus = HookBus::new("hook-bridge-test", stella_core::ports::FixedClock(0));
         let events = collect_approval_events(&bus);
         let route = BrokerApprovalRoute::new(
             ApprovalBroker::interactive(

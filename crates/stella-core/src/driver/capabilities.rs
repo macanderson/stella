@@ -447,7 +447,10 @@ mod tests {
     /// owned struct actually arrives.
     #[test]
     fn as_borrowed_carries_every_slot_it_was_given() {
-        let bus = Arc::new(crate::bus::HookBus::new("owned-caps-test"));
+        let bus = Arc::new(crate::bus::HookBus::new(
+            "owned-caps-test",
+            crate::ports::FixedClock(0),
+        ));
         let mut owned = OwnedTurnCapabilities::none();
         owned.bus = Some(Arc::clone(&bus));
 

@@ -37,6 +37,11 @@ struct NoopSleeper;
 #[async_trait]
 impl Sleeper for NoopSleeper {
     async fn sleep(&self, _duration_ms: u64) {}
+
+    // The floor: a test that asserts on retry timing wants no spread in it.
+    fn jitter(&self, _upper: u64) -> u64 {
+        0
+    }
 }
 
 /// First call: one step carrying two sibling `delegate` calls. Second call: done.

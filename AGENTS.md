@@ -129,6 +129,9 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + stat-portability + module-reachability
                          #   + core-reachability (a stella-core module is
                          #     reachable from the engine's step path; down-only)
+                         #   + core-no-io (no shipping stella-core source or
+                         #     dependency names an I/O surface; Instant::now()
+                         #     reads are a down-only count)
                          #   + typed-errors
                          #   + tool-error-class (#3167 unclassified-ToolOutput::error ratchet)
                          #   + dead-code-allows
@@ -938,6 +941,27 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
    property-testable. Anything that spawns processes, reads files, or hits the
    network belongs in `stella-tools`, `stella-model`, `stella-cli`, or
    `stella-store` — injected as a port/trait, not called directly.
+
+   Enforced by `scripts/check-core-no-io.py` (`make core-no-io`), which
+   reads the crate's shipping source — `#[cfg(test)]` bodies, `tests/`
+   directories and `tests.rs` files stripped — and its `[dependencies]`.
+   Three questions. A **floor**: no line names the filesystem, a process,
+   the network, the environment, a standard stream, the wall clock
+   (`SystemTime::now`), a sleep, an entropy source, or a print macro, and
+   no dependency is an I/O or entropy crate (`tokio` may take only
+   `sync`, `time`, `macros` and `rt`). There is no baseline for the floor:
+   the tree has none and gains none. A **ratchet**: `Instant::now()` reads
+   are counted per file in `scripts/core-no-io-baseline.txt`, down-only,
+   because the monotonic clock is ambient state a replay cannot reproduce
+   even though it is not I/O; `make core-no-io-update` refuses to add a
+   file or raise a count, so a red run is cleared by reading the clock once
+   at the edge and passing `now` in, or by taking `ports::Clock`. The
+   guard was written on 2026-09-09 over two breaches this rule had
+   carried unread: the retry ladder drew its jitter from `rand::rng()`, and
+   the hook bus stamped every event from `SystemTime::now()`, while each
+   file's header said the crate reads nothing directly. Both take a port
+   now — `retry::Sleeper::jitter` and the `Clock` handed to
+   `bus::HookBus::new`.
 3. **Zero telemetry egress by default.** Community/default Stella sends no
    telemetry anywhere; model-provider traffic remains the normal network
    exception selected by the user. The sole additional egress is an explicitly

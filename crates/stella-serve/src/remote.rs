@@ -16,10 +16,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use rand::RngExt;
 use serde_json::Value;
 use stella_core::bus::{self, HookBus, HookEventDraft, names as hook_names};
 use stella_core::hooks::decision::{GateVerdict, OperatorPosture, resolve_precedence};
-use stella_core::ports::{AuthzGate, DispatchAdmission, DispatchGate, Principal, ToolExecutor};
+use stella_core::ports::{
+    AuthzGate, Clock, DispatchAdmission, DispatchGate, Principal, ToolExecutor,
+};
 use stella_core::retry::Sleeper;
 use stella_protocol::{
     CompletionRequestRef, CompletionResult, Provider, ProviderError, ToolCallObserver, ToolOutput,
@@ -128,13 +131,38 @@ fn forward_delta(observer: Option<&dyn ToolCallObserver>, delta: &ProviderDelta)
 
 /// A Tokio-backed [`Sleeper`] for the session runtime's retry backoff. The
 /// session runtime is built with the time driver enabled, so `sleep` resolves
-/// there.
+/// there. The jitter draws from the OS entropy pool, which is the host's to
+/// hold: `stella-core` takes the draw through the port and links no entropy
+/// source of its own.
 pub(crate) struct TokioSleeper;
 
 #[async_trait]
 impl Sleeper for TokioSleeper {
     async fn sleep(&self, duration_ms: u64) {
         tokio::time::sleep(std::time::Duration::from_millis(duration_ms)).await;
+    }
+
+    fn jitter(&self, upper: u64) -> u64 {
+        rand::rng().random_range(0..=upper)
+    }
+}
+
+/// The host's own clock, counting from the Unix epoch, for the stamp on
+/// every hook event an installed extension sees. Those stamps are read on
+/// the other side of the wire and compared with the host's own, so they have
+/// to share the host's origin; `stella-cli`'s `WallClock` answers the same
+/// port the same way. A system clock set before the epoch reads as `0`
+/// rather than failing the turn.
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct WallClock;
+
+impl Clock for WallClock {
+    fn now_ms(&self) -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| {
+                u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+            })
     }
 }
 

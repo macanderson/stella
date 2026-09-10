@@ -5,6 +5,7 @@
 //! keeps `stella-core` free of production `tokio::time` calls.
 
 use async_trait::async_trait;
+use rand::RngExt;
 use stella_core::ports::Clock;
 use stella_core::retry::Sleeper;
 
@@ -55,7 +56,10 @@ impl Clock for WallClock {
     }
 }
 
-/// The production [`Sleeper`]: a thin wrapper over `tokio::time::sleep`.
+/// The production [`Sleeper`]: `tokio::time::sleep` for the wait, and the
+/// OS entropy pool for the jitter that spreads concurrent retriers across
+/// the backoff window. Both live here so `stella-core` links neither a
+/// timer nor an entropy source.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TokioSleeper;
 
@@ -63,6 +67,10 @@ pub struct TokioSleeper;
 impl Sleeper for TokioSleeper {
     async fn sleep(&self, duration_ms: u64) {
         tokio::time::sleep(std::time::Duration::from_millis(duration_ms)).await;
+    }
+
+    fn jitter(&self, upper: u64) -> u64 {
+        rand::rng().random_range(0..=upper)
     }
 }
 

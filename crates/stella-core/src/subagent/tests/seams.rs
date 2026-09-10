@@ -250,7 +250,7 @@ fn empty_turn_controls_leave_an_engine_exactly_as_it_was() {
 
 #[test]
 fn attribution_leaves_its_own_scope_including_on_an_unwind() {
-    let bus = HookBus::new("session-1");
+    let bus = HookBus::new("session-1", crate::ports::FixedClock(0));
     let parent = bus.push_agent("parent".into());
 
     {
@@ -451,7 +451,7 @@ async fn subagent_start_and_stop_hooks_fire_around_a_child_turn() {
 /// turn of its own.
 #[tokio::test]
 async fn a_forked_child_stamps_the_subagent_fork_lane() {
-    let bus = HookBus::new("fork-lane-test");
+    let bus = HookBus::new("fork-lane-test", crate::ports::FixedClock(0));
     let seen: std::sync::Arc<Mutex<Vec<serde_json::Value>>> =
         std::sync::Arc::new(Mutex::new(Vec::new()));
     let sink = std::sync::Arc::clone(&seen);

@@ -3214,6 +3214,7 @@ dependencies = [
  "hmac",
  "libc",
  "proptest",
+ "rand 0.10.2",
  "ratatui",
  "reqwest",
  "rpassword",
