@@ -23,29 +23,9 @@ use super::*;
 use crate::TurnCapabilities;
 use crate::budget::BudgetOutcome;
 use crate::ports::TurnGate;
-use crate::retry::Sleeper;
+pub(crate) use crate::tests::PausedSleeper;
 
 // ---- fakes -----------------------------------------------------------
-
-/// A `Sleeper` on tokio's clock, run paused by every test here: a sleep is
-/// free while the runtime is idle and still lets a pending child finish
-/// first, and `now` reads the same virtual timeline.
-pub(crate) struct TokioSleeper;
-#[async_trait]
-impl Sleeper for TokioSleeper {
-    async fn sleep(&self, duration_ms: u64) {
-        tokio::time::sleep(std::time::Duration::from_millis(duration_ms)).await;
-    }
-
-    fn now(&self) -> std::time::Instant {
-        tokio::time::Instant::now().into_std()
-    }
-
-    // The floor: a test that asserts on retry timing wants no spread in it.
-    fn jitter(&self, _upper: u64) -> u64 {
-        0
-    }
-}
 
 /// A provider that returns a fixed sequence of results, then errors.
 pub(crate) struct ScriptedProvider {

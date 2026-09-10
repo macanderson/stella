@@ -27,6 +27,9 @@ pub mod ports;
 pub mod receipts;
 pub mod restore;
 pub mod retry;
+
+// The two sleeper doubles the unit tests share. The module doc says why
+// this copy of `stella-time`'s exists.
 pub mod router;
 pub mod running_task;
 pub mod shell_text;
@@ -37,6 +40,8 @@ pub mod steering;
 pub mod step;
 pub mod subagent;
 mod summarize;
+#[cfg(test)]
+pub(crate) mod tests;
 pub mod waiting;
 
 pub use budget::{BudgetGuard, BudgetOutcome};

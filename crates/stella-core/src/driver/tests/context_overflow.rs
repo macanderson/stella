@@ -28,6 +28,7 @@ use stella_protocol::{CompletionResult, ToolSchema, UsageIncompleteReason};
 
 use super::super::*;
 use crate::TurnCapabilities;
+use crate::tests::NoopSleeper;
 
 /// Rejects the first `overflows` calls as context overflow, then completes.
 struct OverflowThenComplete {
@@ -101,22 +102,6 @@ impl ToolExecutor for NoTools {
     }
 }
 
-struct NoSleep;
-
-#[async_trait::async_trait]
-impl crate::retry::Sleeper for NoSleep {
-    async fn sleep(&self, _duration_ms: u64) {}
-
-    // The floor: a test that asserts on retry timing wants no spread in it.
-    fn now(&self) -> std::time::Instant {
-        std::time::Instant::now()
-    }
-
-    fn jitter(&self, _upper: u64) -> u64 {
-        0
-    }
-}
-
 /// Completes every call — the wider-window replacement the spent ladder
 /// hands the transcript to.
 struct HealthyFallback {
@@ -186,7 +171,7 @@ async fn run_turn_with_fallback(
     resolver: Option<&dyn crate::ports::FallbackResolver>,
 ) -> (TurnOutcome, Vec<AgentEvent>) {
     let tools = NoTools;
-    let sleeper = NoSleep;
+    let sleeper = NoopSleeper;
     let seams = TurnCapabilities {
         fallback: resolver,
         ..TurnCapabilities::none()
@@ -444,7 +429,7 @@ async fn a_summarizer_request_that_overflows_drops_its_head_and_still_folds_the_
     let tools = super::CountingTools {
         calls: std::sync::Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoSleep;
+    let sleeper = NoopSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, super::overflow_config(), &sleeper, seams);
     let mut messages = vec![
@@ -496,7 +481,7 @@ async fn head_dropping_is_bounded_when_no_span_size_is_accepted() {
     let tools = super::CountingTools {
         calls: std::sync::Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoSleep;
+    let sleeper = NoopSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, super::overflow_config(), &sleeper, seams);
     let mut messages = vec![

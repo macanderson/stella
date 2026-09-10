@@ -144,12 +144,12 @@ pub enum AccountedCallError {
 /// measured since the last streamed fragment, so it re-arms every time the
 /// dispatch is observed to still be producing — the same distinction
 /// `crate::step::bounded_generation` draws for the engine's own step loop.
-/// A flat wall-clock deadline here used to abandon a call the instant total
-/// elapsed time crossed the ceiling even while the provider was actively
-/// answering, which lost OpenRouter's trailing usage/cost frame (it arrives
-/// in a final SSE frame *after* the content, once the gateway has settled
-/// the routed call's price) to a ceiling sized to catch silence, not a
-/// slow-but-live generation (#1467).
+/// A flat wall-clock deadline here abandoned a call the instant total
+/// elapsed time crossed the ceiling, even while the provider was still
+/// answering. That lost OpenRouter's trailing usage/cost frame, which
+/// arrives in a final SSE frame *after* the content, once the gateway has
+/// settled the routed call's price. The ceiling was sized to catch silence,
+/// not a slow-but-live generation (#1467).
 pub async fn run_accounted_call(
     call: AccountedCall<'_>,
     budget: &mut BudgetGuard,
@@ -460,23 +460,8 @@ mod tests {
     use stella_protocol::{BudgetMode, CompletionMessage, CompletionRequestRef, CompletionUsage};
 
     use super::*;
+    use crate::tests::{NoopSleeper, PausedSleeper};
     use std::time::Instant;
-
-    struct NoopSleeper;
-
-    #[async_trait]
-    impl Sleeper for NoopSleeper {
-        async fn sleep(&self, _duration_ms: u64) {}
-
-        // The floor: a test that asserts on retry timing wants no spread in it.
-        fn now(&self) -> std::time::Instant {
-            std::time::Instant::now()
-        }
-
-        fn jitter(&self, _upper: u64) -> u64 {
-            0
-        }
-    }
 
     struct RetryThenSuccess {
         attempts: Mutex<u32>,
@@ -982,27 +967,6 @@ mod tests {
         );
     }
 
-    /// A [`Sleeper`] backed by real (here, paused-virtual) tokio time so a
-    /// caller-supplied per-call timeout can expire *during* a backoff sleep.
-    struct TokioSleeper;
-
-    #[async_trait]
-    impl Sleeper for TokioSleeper {
-        async fn sleep(&self, duration_ms: u64) {
-            tokio::time::sleep(Duration::from_millis(duration_ms)).await;
-        }
-
-        // The floor: the timeout under test is placed against the exact
-        // backoff, so the draw must not move it.
-        fn now(&self) -> std::time::Instant {
-            std::time::Instant::now()
-        }
-
-        fn jitter(&self, _upper: u64) -> u64 {
-            0
-        }
-    }
-
     struct AlwaysRetryable;
 
     #[async_trait]
@@ -1048,7 +1012,7 @@ mod tests {
             },
             &mut budget,
             &EventSender::new(tx),
-            &TokioSleeper,
+            &PausedSleeper,
         )
         .await;
 
@@ -1170,7 +1134,7 @@ mod tests {
             },
             &mut budget,
             &EventSender::new(tx),
-            &TokioSleeper,
+            &PausedSleeper,
         )
         .await
         .expect("the trailing gap must not abandon a call that was actively answering");

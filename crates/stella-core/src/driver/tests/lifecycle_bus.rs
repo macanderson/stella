@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex};
 use super::super::*;
 use crate::TurnCapabilities;
 use crate::bus::{HookBus, HookEvent, names};
+use crate::tests::NoopSleeper;
 use serde_json::Value;
 use stella_protocol::{CompletionResult, ToolSchema};
 
@@ -129,25 +130,9 @@ impl ToolExecutor for NoTools {
     }
 }
 
-struct NoSleep;
-
-#[async_trait::async_trait]
-impl crate::retry::Sleeper for NoSleep {
-    async fn sleep(&self, _duration_ms: u64) {}
-
-    // The floor: a test that asserts on retry timing wants no spread in it.
-    fn now(&self) -> std::time::Instant {
-        std::time::Instant::now()
-    }
-
-    fn jitter(&self, _upper: u64) -> u64 {
-        0
-    }
-}
-
 async fn run_one_turn(provider: &dyn Provider, bus: &HookBus) -> TurnOutcome {
     let tools = NoTools;
-    let sleeper = NoSleep;
+    let sleeper = NoopSleeper;
     let seams = TurnCapabilities {
         bus: Some(bus),
         ..TurnCapabilities::none()
@@ -166,7 +151,7 @@ async fn run_one_turn_in_lane(
     lane: stella_protocol::TurnLane,
 ) -> TurnOutcome {
     let tools = NoTools;
-    let sleeper = NoSleep;
+    let sleeper = NoopSleeper;
     let seams = crate::driver::capabilities::TurnCapabilities {
         bus: Some(bus),
         lane: Some(lane),
@@ -337,7 +322,7 @@ async fn a_step_reports_how_it_ended() {
 #[tokio::test]
 async fn an_engine_without_a_bus_runs_identically() {
     let tools = NoTools;
-    let sleeper = NoSleep;
+    let sleeper = NoopSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(
         &OneShotProvider,

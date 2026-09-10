@@ -575,24 +575,9 @@ mod tests {
     use crate::driver::{Engine, EngineConfig};
     use crate::event_sender::EventSender;
     use crate::ports::ToolExecutor;
-    use crate::retry::Sleeper;
     use crate::step::SummarizerHealth;
+    use crate::tests::NoopSleeper;
     use stella_protocol::BudgetMode;
-
-    struct NoSleep;
-    #[async_trait]
-    impl Sleeper for NoSleep {
-        async fn sleep(&self, _duration_ms: u64) {}
-
-        // The floor: a test that asserts on retry timing wants no spread in it.
-        fn now(&self) -> std::time::Instant {
-            std::time::Instant::now()
-        }
-
-        fn jitter(&self, _upper: u64) -> u64 {
-            0
-        }
-    }
 
     /// Always answers "SUMMARY" — the summarizer path under test is the
     /// restoration that follows the splice, not the summary itself.
@@ -752,7 +737,7 @@ mod tests {
             active: vec![],
         };
         let seams = TurnCapabilities::none();
-        let engine = Engine::assemble(&provider, &tools, config(), &NoSleep, seams);
+        let engine = Engine::assemble(&provider, &tools, config(), &NoopSleeper, seams);
         let mut messages = vec![
             CompletionMessage::system("sys"),
             CompletionMessage::user("the task"),
@@ -793,7 +778,7 @@ mod tests {
             active: vec![],
         };
         let seams = TurnCapabilities::none();
-        let engine = Engine::assemble(&provider, &tools, config(), &NoSleep, seams);
+        let engine = Engine::assemble(&provider, &tools, config(), &NoopSleeper, seams);
         let mut messages = vec![
             CompletionMessage::system("sys"),
             CompletionMessage::user("the task"),
@@ -837,7 +822,7 @@ mod tests {
             active: vec![],
         };
         let seams = TurnCapabilities::none();
-        let engine = Engine::assemble(&provider, &tools, config(), &NoSleep, seams);
+        let engine = Engine::assemble(&provider, &tools, config(), &NoopSleeper, seams);
         let mut messages = vec![
             CompletionMessage::system("sys"),
             CompletionMessage::user("the task"),
@@ -883,7 +868,7 @@ mod tests {
             active: vec!["deploy".into()],
         };
         let seams = TurnCapabilities::none();
-        let engine = Engine::assemble(&provider, &tools, config(), &NoSleep, seams);
+        let engine = Engine::assemble(&provider, &tools, config(), &NoopSleeper, seams);
         let mut messages = vec![
             CompletionMessage::system("sys"),
             CompletionMessage::user("the task"),
@@ -924,7 +909,7 @@ mod tests {
             active: vec![],
         };
         let seams = TurnCapabilities::none();
-        let engine = Engine::assemble(&provider, &tools, config(), &NoSleep, seams);
+        let engine = Engine::assemble(&provider, &tools, config(), &NoopSleeper, seams);
         let mut messages = vec![
             CompletionMessage::system("sys"),
             CompletionMessage::user("the task"),
@@ -957,7 +942,7 @@ mod tests {
             active: vec![],
         };
         let seams = TurnCapabilities::none();
-        let engine = Engine::assemble(&provider, &tools, config(), &NoSleep, seams);
+        let engine = Engine::assemble(&provider, &tools, config(), &NoopSleeper, seams);
         let mut messages = vec![
             CompletionMessage::system("sys"),
             CompletionMessage::user("the task"),
@@ -1083,7 +1068,7 @@ mod tests {
             active: vec![],
         };
         let seams = TurnCapabilities::none();
-        let engine = Engine::assemble(&provider, &tools, config(), &NoSleep, seams);
+        let engine = Engine::assemble(&provider, &tools, config(), &NoopSleeper, seams);
         let mut messages = vec![
             CompletionMessage::system("sys"),
             CompletionMessage::user("the task"),
@@ -1138,7 +1123,7 @@ mod tests {
             active: vec![],
         };
         let seams = TurnCapabilities::none();
-        let engine = Engine::assemble(&provider, &tools, config(), &NoSleep, seams);
+        let engine = Engine::assemble(&provider, &tools, config(), &NoopSleeper, seams);
         let mut messages = vec![
             CompletionMessage::system("sys"),
             CompletionMessage::user("the task"),

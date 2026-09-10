@@ -54,7 +54,7 @@ async fn pre_tool_use_hook_nonzero_exit_blocks_the_tool_and_model_sees_it() {
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let payloads = Arc::new(TokioMutex::new(Vec::new()));
     let runner = RecordingHookRunner {
         exit_code: 1,
@@ -128,7 +128,7 @@ async fn post_tool_use_hook_runs_after_the_tool_and_never_blocks() {
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let payloads = Arc::new(TokioMutex::new(Vec::new()));
     // Exit 3 (non-zero) proves a *failing* PostToolUse hook is still a
     // pure observation — it can neither block nor abort the turn.
@@ -196,7 +196,7 @@ async fn non_blocking_hook_failure_surfaces_as_one_retryable_error_event() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let payloads = Arc::new(TokioMutex::new(Vec::new()));
     let runner = RecordingHookRunner {
         exit_code: 3,
@@ -270,7 +270,7 @@ async fn no_hooks_configured_leaves_the_turn_path_unchanged() {
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     // Built WITHOUT `with_hooks` — `hooks` stays `None`.
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
@@ -319,7 +319,7 @@ async fn run_turn_never_fires_session_start_hooks() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let payloads = Arc::new(TokioMutex::new(Vec::new()));
     let runner = RecordingHookRunner {
         exit_code: 0,
@@ -383,7 +383,7 @@ async fn a_hooked_read_fires_its_hook_once_never_for_a_dropped_speculative_attem
         calls: calls.clone(),
         executed,
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let payloads = Arc::new(TokioMutex::new(Vec::new()));
     // exit 0: non-blocking, so the tool runs and the hook is a pure
     // observation — what matters is how many times it is invoked.
@@ -493,7 +493,7 @@ async fn pre_tool_use_modify_decision_rewrites_the_input_the_tool_receives() {
         schemas: vec![bash_schema(false)],
         inputs: inputs.clone(),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let payloads = Arc::new(TokioMutex::new(Vec::new()));
     let runner = RecordingHookRunner {
         exit_code: 0,
@@ -624,7 +624,7 @@ async fn a_hook_require_approval_parks_on_the_route_and_the_answer_decides() {
         runner,
         hooks,
     } = require_approval_fixture(ask);
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let route = ScriptedRoute {
         resolution: crate::hooks::decision::ApprovalRouteResolution::Approved,
         calls: Arc::new(AtomicU32::new(0)),
@@ -722,7 +722,7 @@ async fn require_approval_without_a_route_refuses_with_the_grant_path() {
         runner,
         hooks,
     } = require_approval_fixture(ask);
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities {
         hooks: Some((&hooks, &runner)),
         ..TurnCapabilities::none()
@@ -773,7 +773,7 @@ async fn pre_tool_use_payload_carries_the_schemas_read_only_bit() {
         schemas: vec![bash_schema(true)],
         inputs: Arc::new(TokioMutex::new(Vec::new())),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let payloads = Arc::new(TokioMutex::new(Vec::new()));
     let runner = RecordingHookRunner {
         exit_code: 0,
@@ -869,7 +869,7 @@ async fn an_always_denying_stop_hook_is_consulted_to_the_bound_then_the_turn_sta
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let payloads = Arc::new(TokioMutex::new(Vec::new()));
     let runner = RecordingHookRunner {
         exit_code: 0,
@@ -977,7 +977,7 @@ async fn a_deny_then_allow_is_reconsulted_and_the_allowed_completion_stands() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let payloads = Arc::new(TokioMutex::new(Vec::new()));
     let runner = ScriptedHookRunner {
         stdouts: TokioMutex::new(vec![
@@ -1051,7 +1051,7 @@ async fn a_failing_stop_hook_never_holds_the_turn_open() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let runner = RecordingHookRunner {
         exit_code: 3,
         stdout: String::new(),
@@ -1125,7 +1125,7 @@ async fn a_stop_hooks_require_approval_resolves_both_ways() {
         let tools = CountingTools {
             calls: Arc::new(AtomicU32::new(0)),
         };
-        let sleeper = TokioSleeper;
+        let sleeper = PausedSleeper;
         let runner = RecordingHookRunner {
             exit_code: 0,
             stdout: r#"{"action":"require_approval","reason":"verification budget exhausted, continue?"}"#
@@ -1220,7 +1220,7 @@ async fn a_stop_hooks_require_approval_with_no_route_lets_the_turn_complete() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let runner = RecordingHookRunner {
         exit_code: 0,
         stdout: r#"{"action":"require_approval","reason":"ask a human"}"#.into(),
@@ -1275,7 +1275,7 @@ async fn pre_compact_hook_veto_skips_the_summarization_round() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let hook_payloads = Arc::new(TokioMutex::new(Vec::new()));
     let runner = RecordingHookRunner {
         exit_code: 0,
@@ -1346,7 +1346,7 @@ async fn pre_compact_modify_instructions_reach_the_summarizer_request() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let runner = RecordingHookRunner {
         exit_code: 0,
         stdout: r#"{"action":"modify","payload":{"instructions":"keep every file path verbatim"}}"#

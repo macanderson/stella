@@ -39,7 +39,7 @@ async fn a_step_walks_the_transcript_to_estimate_it_at_most_twice() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -94,7 +94,7 @@ async fn the_receipt_and_the_usage_record_report_one_estimate_per_step() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -197,7 +197,7 @@ async fn per_step_hashing_grows_with_the_turn_not_with_its_square() {
             }
         }
         let tools = EchoingTools;
-        let sleeper = TokioSleeper;
+        let sleeper = PausedSleeper;
         let seams = TurnCapabilities::none();
         let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
         let mut messages = vec![
@@ -384,7 +384,7 @@ async fn compaction_mid_turn_invalidates_the_receipt_ledgers_digest_memo() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let tools = BigOutputTools { filler: 4_000 };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let config = EngineConfig {
         // Small enough that a couple of 4 KB results blow it, and no summarizer so
         // the rewrite comes purely from eviction/aging.
@@ -481,7 +481,7 @@ async fn a_compaction_pass_journals_the_replacement_bytes_it_wrote() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let tools = BigOutputTools { filler: 4_000 };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let config = EngineConfig {
         compaction_budget_tokens: 800,
         summarize_overflow: false,

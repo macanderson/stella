@@ -29,7 +29,7 @@ async fn a_structured_stop_denial_reaches_the_model_and_the_journal_intact() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let runner = ScriptedHookRunner {
         stdouts: TokioMutex::new(vec![
             r#"{"action":"deny","reason":"the witness is still red",
@@ -123,7 +123,7 @@ async fn a_prose_only_stop_denial_grows_no_evidence_section() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let runner = ScriptedHookRunner {
         stdouts: TokioMutex::new(vec![
             r#"{"action":"deny","reason":"the checklist is not done"}"#.into(),
@@ -209,7 +209,7 @@ async fn run_always_denying_stop_gate(allowance: Option<u32>, answers: usize) ->
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let runner = RecordingHookRunner {
         exit_code: 0,
         stdout: r#"{"action":"deny","reason":"not yet"}"#.into(),
