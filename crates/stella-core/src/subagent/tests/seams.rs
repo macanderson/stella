@@ -36,7 +36,7 @@ async fn a_child_honors_the_soft_stop_but_never_eats_the_parents_steering() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &TokioSleeper,
+        &PausedSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
@@ -111,7 +111,7 @@ async fn a_child_polls_the_parents_pause_gate() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &TokioSleeper,
+        &PausedSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
@@ -161,7 +161,7 @@ async fn owned_turn_controls_stop_a_child_without_clobbering_an_attached_gate() 
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &TokioSleeper,
+        &PausedSleeper,
         seams,
     )
     .with_turn_controls(&controls);
@@ -220,7 +220,7 @@ fn turn_controls_carrying_both_seams_give_a_child_both() {
         &provider,
         &tools,
         EngineConfig::default(),
-        &TokioSleeper,
+        &PausedSleeper,
         seams,
     )
     .with_turn_controls(&both);
@@ -247,7 +247,7 @@ fn empty_turn_controls_leave_an_engine_exactly_as_it_was() {
         &provider,
         &tools,
         EngineConfig::default(),
-        &TokioSleeper,
+        &PausedSleeper,
         seams,
     )
     .with_turn_controls(&nothing);
@@ -313,7 +313,7 @@ async fn the_child_claims_its_own_receipt_turn_slot() {
         ..EngineConfig::default()
     };
     let seams = TurnCapabilities::none();
-    let parent = Engine::assemble(&parent_provider, &tools, config, &TokioSleeper, seams);
+    let parent = Engine::assemble(&parent_provider, &tools, config, &PausedSleeper, seams);
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, mut rx) = mpsc::unbounded_channel();
 
@@ -398,7 +398,7 @@ async fn subagent_start_and_stop_hooks_fire_around_a_child_turn() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &TokioSleeper,
+        &PausedSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
@@ -484,7 +484,7 @@ async fn a_forked_child_stamps_the_subagent_fork_lane() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &TokioSleeper,
+        &PausedSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);

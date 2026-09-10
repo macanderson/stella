@@ -82,9 +82,9 @@ test that arms none. They live beside the real sources and not in
 `stella-core` may not link. `stella-core`'s integration tests and every
 other crate take it as a dev-dependency, which cargo allows in a cycle.
 That is the tokio / tokio-test shape. `stella-core`'s own unit tests keep
-one copy in `src/tests.rs`, because a lib's unit tests are a second build
-of the lib and a dev-dependency that links the lib implements the trait
-for the first. The compiler forces that copy, and the witness names it.
+one copy, `tests`, because a lib's unit tests are a second build of
+the lib and a dev-dependency that links the lib implements the trait for
+the first. The compiler forces that copy, and the witness names it.
 
 ## Consequences
 

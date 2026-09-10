@@ -24,6 +24,7 @@ use super::super::*;
 use crate::TurnCapabilities;
 use crate::ports::{FallbackResolver, ResolvedFallback};
 use crate::retry::RetryPolicy;
+use crate::tests::NoopSleeper;
 
 /// Fails every call with the error `build` produces, counting the calls.
 struct AlwaysFailing {
@@ -165,22 +166,6 @@ impl ToolExecutor for NoTools {
     }
 }
 
-struct NoSleep;
-
-#[async_trait::async_trait]
-impl crate::retry::Sleeper for NoSleep {
-    async fn sleep(&self, _duration_ms: u64) {}
-
-    // The floor: a test that asserts on retry timing wants no spread in it.
-    fn now(&self) -> std::time::Instant {
-        std::time::Instant::now()
-    }
-
-    fn jitter(&self, _upper: u64) -> u64 {
-        0
-    }
-}
-
 /// One real turn against `provider` with `resolver` attached (when given),
 /// returning the outcome and every event.
 async fn run_turn_collecting(
@@ -190,7 +175,7 @@ async fn run_turn_collecting(
     config: EngineConfig,
 ) -> (TurnOutcome, Vec<AgentEvent>) {
     let tools = NoTools;
-    let sleeper = NoSleep;
+    let sleeper = NoopSleeper;
     let seams = TurnCapabilities {
         fallback: resolver,
         ..TurnCapabilities::none()

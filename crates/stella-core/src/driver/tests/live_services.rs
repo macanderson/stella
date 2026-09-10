@@ -98,7 +98,7 @@ async fn run(
         script: TokioMutex::new(script.into_iter().map(Ok).collect()),
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![

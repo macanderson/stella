@@ -71,7 +71,7 @@ async fn an_over_cap_budget_abort_hands_back_a_well_paired_transcript() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = transcript_with_an_unanswered_tool_call();
@@ -107,7 +107,7 @@ async fn a_past_deadline_abort_hands_back_a_well_paired_transcript() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = transcript_with_an_unanswered_tool_call();
@@ -211,7 +211,7 @@ async fn summary_induced_budget_breach_aborts_with_cost_before_next_provider_cal
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     let mut messages = vec![
@@ -263,7 +263,7 @@ async fn an_existing_budget_breach_stops_before_paid_compaction() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     let mut messages = vec![
@@ -310,7 +310,7 @@ async fn a_past_task_deadline_stops_the_turn_before_the_next_call_with_partial_w
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -363,7 +363,7 @@ async fn cancellation_after_billed_completion_before_speculation_finishes_keeps_
         provider_completed: provider_completed.clone(),
     };
     let tools = ForeverRead;
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![CompletionMessage::user("read")];
@@ -406,7 +406,7 @@ async fn a_normal_completion_charges_the_budget_exactly_once() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![CompletionMessage::user("answer")];
@@ -479,7 +479,7 @@ async fn a_slow_tool_stops_the_turn_before_the_deadline() {
     };
     let provider_calls = provider.calls.clone();
     let tools = SlowTool { took: tool_time };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![

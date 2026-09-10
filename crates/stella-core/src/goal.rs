@@ -554,23 +554,7 @@ mod tests {
     use crate::TurnCapabilities;
     use crate::driver::EngineConfig;
     use crate::ports::ToolExecutor;
-    use crate::retry::Sleeper;
-
-    /// Sleeper that never really sleeps — goal tests run instantly.
-    struct NoSleep;
-    #[async_trait]
-    impl Sleeper for NoSleep {
-        async fn sleep(&self, _duration_ms: u64) {}
-
-        // The floor: a test that asserts on retry timing wants no spread in it.
-        fn now(&self) -> std::time::Instant {
-            std::time::Instant::now()
-        }
-
-        fn jitter(&self, _upper: u64) -> u64 {
-            0
-        }
-    }
+    use crate::tests::NoopSleeper;
 
     /// A provider that returns a fixed sequence of results, then errors.
     struct ScriptedProvider {
@@ -670,7 +654,13 @@ mod tests {
         ]);
         let tools = NoTools;
         let seams = TurnCapabilities::none();
-        let engine = Engine::assemble(&worker, &tools, EngineConfig::default(), &NoSleep, seams);
+        let engine = Engine::assemble(
+            &worker,
+            &tools,
+            EngineConfig::default(),
+            &NoopSleeper,
+            seams,
+        );
         let mut messages = vec![CompletionMessage::system("sys")];
         let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
         let (tx, rx) = mpsc::unbounded_channel();
@@ -736,7 +726,13 @@ mod tests {
         ]);
         let tools = NoTools;
         let seams = TurnCapabilities::none();
-        let engine = Engine::assemble(&worker, &tools, EngineConfig::default(), &NoSleep, seams);
+        let engine = Engine::assemble(
+            &worker,
+            &tools,
+            EngineConfig::default(),
+            &NoopSleeper,
+            seams,
+        );
         let mut messages = vec![CompletionMessage::system("sys")];
         let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
         let (tx, rx) = mpsc::unbounded_channel();
@@ -823,7 +819,13 @@ mod tests {
         ]);
         let tools = NoTools;
         let seams = TurnCapabilities::none();
-        let engine = Engine::assemble(&worker, &tools, EngineConfig::default(), &NoSleep, seams);
+        let engine = Engine::assemble(
+            &worker,
+            &tools,
+            EngineConfig::default(),
+            &NoopSleeper,
+            seams,
+        );
         let mut messages = vec![CompletionMessage::system("sys")];
         let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -883,7 +885,13 @@ mod tests {
         ]);
         let tools = NoTools;
         let seams = TurnCapabilities::none();
-        let engine = Engine::assemble(&worker, &tools, EngineConfig::default(), &NoSleep, seams);
+        let engine = Engine::assemble(
+            &worker,
+            &tools,
+            EngineConfig::default(),
+            &NoopSleeper,
+            seams,
+        );
         let mut messages = vec![CompletionMessage::system("sys")];
         // Mirrors `build_budget_guard(Some(0.05))`: the cap is on the session
         // axis. (A per-turn axis here would reset each round and let the loop
@@ -963,7 +971,13 @@ mod tests {
         ]);
         let tools = NoTools;
         let seams = TurnCapabilities::none();
-        let engine = Engine::assemble(&worker, &tools, EngineConfig::default(), &NoSleep, seams);
+        let engine = Engine::assemble(
+            &worker,
+            &tools,
+            EngineConfig::default(),
+            &NoopSleeper,
+            seams,
+        );
         let mut messages = vec![CompletionMessage::system("sys")];
         let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -1014,7 +1028,13 @@ mod tests {
             gate: Some(&gate),
             ..TurnCapabilities::none()
         };
-        let engine = Engine::assemble(&worker, &tools, EngineConfig::default(), &NoSleep, seams);
+        let engine = Engine::assemble(
+            &worker,
+            &tools,
+            EngineConfig::default(),
+            &NoopSleeper,
+            seams,
+        );
         let mut messages = vec![CompletionMessage::system("sys")];
         let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -1065,7 +1085,13 @@ mod tests {
         ]);
         let tools = NoTools;
         let seams = TurnCapabilities::none();
-        let engine = Engine::assemble(&worker, &tools, EngineConfig::default(), &NoSleep, seams);
+        let engine = Engine::assemble(
+            &worker,
+            &tools,
+            EngineConfig::default(),
+            &NoopSleeper,
+            seams,
+        );
         let mut messages = vec![CompletionMessage::system("sys")];
         let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -1105,7 +1131,13 @@ mod tests {
         let verifier = ScriptedProvider::new(vec![Err(ProviderError::Auth("bad key".into()))]);
         let tools = NoTools;
         let seams = TurnCapabilities::none();
-        let engine = Engine::assemble(&worker, &tools, EngineConfig::default(), &NoSleep, seams);
+        let engine = Engine::assemble(
+            &worker,
+            &tools,
+            EngineConfig::default(),
+            &NoopSleeper,
+            seams,
+        );
         let mut messages = vec![CompletionMessage::system("sys")];
         let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -1137,7 +1169,13 @@ mod tests {
         let verifier = ScriptedProvider::new(vec![]);
         let tools = NoTools;
         let seams = TurnCapabilities::none();
-        let engine = Engine::assemble(&worker, &tools, EngineConfig::default(), &NoSleep, seams);
+        let engine = Engine::assemble(
+            &worker,
+            &tools,
+            EngineConfig::default(),
+            &NoopSleeper,
+            seams,
+        );
         let mut messages = vec![CompletionMessage::system("sys")];
         let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -1195,7 +1233,13 @@ mod tests {
         let verifier = ScriptedProvider::new(vec![]);
         let tools = NoTools;
         let seams = TurnCapabilities::none();
-        let engine = Engine::assemble(&worker, &tools, EngineConfig::default(), &NoSleep, seams);
+        let engine = Engine::assemble(
+            &worker,
+            &tools,
+            EngineConfig::default(),
+            &NoopSleeper,
+            seams,
+        );
         let mut messages = vec![CompletionMessage::system("sys")];
         let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -1230,7 +1274,13 @@ mod tests {
         ))]);
         let tools = NoTools;
         let seams = TurnCapabilities::none();
-        let engine = Engine::assemble(&worker, &tools, EngineConfig::default(), &NoSleep, seams);
+        let engine = Engine::assemble(
+            &worker,
+            &tools,
+            EngineConfig::default(),
+            &NoopSleeper,
+            seams,
+        );
         let mut messages = vec![CompletionMessage::system("sys")];
         let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
         budget.reseed_session_spend(0.75);

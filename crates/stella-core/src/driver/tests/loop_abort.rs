@@ -124,7 +124,7 @@ async fn a_loop_that_resumes_after_a_successful_course_correction_still_aborts()
     let tools = ConstantTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     // A low cap, so a broken ladder shows up as "ground to the cap" in a
     // second.
     let config = EngineConfig {
@@ -231,7 +231,7 @@ async fn a_second_distinct_loop_earns_its_own_steer_before_the_turn_dies() {
     let tools = ConstantTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, exact_repeat_only(30), &sleeper, seams);
     let mut messages = vec![
@@ -341,7 +341,7 @@ async fn a_third_loop_is_not_steered_and_is_not_blamed_on_the_warned_one() {
     let tools = ConstantTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, exact_repeat_only(30), &sleeper, seams);
     let mut messages = vec![
@@ -442,7 +442,7 @@ async fn a_tool_answering_identically_to_every_new_argument_is_steered_then_kill
     let tools = ConstantTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let config = EngineConfig {
         max_steps: Some(60),
         ..EngineConfig::default()
@@ -512,7 +512,7 @@ async fn a_confident_zero_never_reports_as_completed() {
     let tools = ConstantTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -565,7 +565,7 @@ async fn a_direct_zero_tool_answer_still_completes() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -602,7 +602,7 @@ async fn a_turn_that_did_mutating_work_still_completes_despite_a_bare_closing_li
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -641,7 +641,7 @@ async fn a_terminated_short_answer_after_investigation_still_completes() {
     let tools = ConstantTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -692,7 +692,7 @@ async fn a_stuck_loop_steer_names_the_loop_rung_as_its_cause() {
     let tools = ConstantTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, exact_repeat_only(30), &sleeper, seams);
     let mut messages = vec![
