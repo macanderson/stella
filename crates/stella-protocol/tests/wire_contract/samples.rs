@@ -509,6 +509,10 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             tokens: 1200,
             trigger: SkillTrigger::Auto,
         },
+        AgentEvent::SteeringDropped {
+            advisory: "a skill matching this turn did not fit the skill budget: backlog-triage — raise `skills.max_skills`"
+                .into(),
+        },
         AgentEvent::StepManifest {
             turn_instance: 1,
             step: 0,

@@ -211,6 +211,58 @@ mod tests {
         set.schemas().iter().map(schema_tokens).sum()
     }
 
+    /// A cut tool is named to the caller, and to nobody else.
+    ///
+    /// The return type is the fix for #643's failure mode reappearing here:
+    /// this layer is composed inside a turn, and under the deck that turn's
+    /// stderr is the drawn `ratatui` frame. A reporter that printed would put
+    /// these lines inside the frame and scroll it out from under the
+    /// renderer's diff — the mangled status bar this test exists to keep
+    /// fixed. Handing them back leaves the choice of channel to the door that
+    /// owns one.
+    #[test]
+    fn a_cut_tool_is_handed_back_rather_than_printed() {
+        let leaf = Leaf::new(40);
+        let full: u64 = leaf.schemas().iter().map(schema_tokens).sum();
+        let set = LeanToolSet::new(
+            Box::new(leaf),
+            ToolBudget {
+                max_tokens: full / 4,
+                mcp_max_tokens: full,
+            },
+        );
+
+        let advisories = set.drop_advisories();
+
+        assert!(
+            !advisories.is_empty(),
+            "a budget holding a quarter of forty tools cut something"
+        );
+        assert!(
+            advisories.iter().all(|line| line.contains(" — ")),
+            "every line names a remedy after an em dash: {advisories:?}"
+        );
+    }
+
+    /// A budget that affords every tool says nothing at all.
+    ///
+    /// The silent turn is the common one, and a door that emitted an empty
+    /// advisory every turn would put a blank row on every transcript.
+    #[test]
+    fn an_allowance_that_affords_everything_says_nothing() {
+        let leaf = Leaf::new(4);
+        let full: u64 = leaf.schemas().iter().map(schema_tokens).sum();
+        let set = LeanToolSet::new(
+            Box::new(leaf),
+            ToolBudget {
+                max_tokens: full * 2,
+                mcp_max_tokens: full * 2,
+            },
+        );
+
+        assert!(set.drop_advisories().is_empty());
+    }
+
     /// **The witness.** Forty tools, and a budget that holds a quarter of
     /// them. The schemas sent fit the cap. The rest are left out. The layer
     /// below still has all forty.

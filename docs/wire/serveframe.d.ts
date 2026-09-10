@@ -860,6 +860,12 @@ export type AgentEvent = {
   model: string;
   type: "run_complete";
 } | {
+  /**
+   * What was refused, and what widens the budget that refused it.
+   */
+  advisory: string;
+  type: "steering_dropped";
+} | {
   agents: number;
   commands: number;
   memories: number;
