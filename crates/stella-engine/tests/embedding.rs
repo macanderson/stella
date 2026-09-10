@@ -311,6 +311,10 @@ impl Sleeper for NoopSleeper {
     async fn sleep(&self, _duration_ms: u64) {}
 
     // The floor: a test that asserts on retry timing wants no spread in it.
+    fn now(&self) -> std::time::Instant {
+        std::time::Instant::now()
+    }
+
     fn jitter(&self, _upper: u64) -> u64 {
         0
     }

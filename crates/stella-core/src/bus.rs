@@ -61,15 +61,16 @@
 //! event comes from the [`Clock`] the host hands [`HookBus::new`], never
 //! from `SystemTime` — a hook script reads that stamp on the far side of a
 //! process boundary, so the host's wall clock is the right one and the
-//! host owns it. Observer dispatch still reads a monotonic `Instant` to
-//! enforce the per-handler latency budget (#459); `make core-no-io` counts
-//! that read and lets it go no higher.
+//! host owns it. Observer dispatch times each handler off that same clock
+//! to enforce the per-handler latency budget (#459), so a wall-clock step
+//! can misjudge one dispatch; quarantine needs three in a row, which one
+//! step cannot supply.
 
 use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -645,9 +646,9 @@ impl HookBus {
             if quarantined.load(Ordering::Relaxed) {
                 continue;
             }
-            let started = Instant::now();
+            let started = self.inner.clock.now_ms();
             let outcome = catch_unwind(AssertUnwindSafe(|| handler(event)));
-            let elapsed = started.elapsed();
+            let elapsed = Duration::from_millis(self.inner.clock.now_ms().saturating_sub(started));
             match outcome {
                 Ok(Ok(())) => {}
                 Ok(Err(message)) => self.report_failure(&pattern, event, message),
@@ -1711,18 +1712,31 @@ mod tests {
     /// every later event, so it can't keep stalling the emitting (tool) thread.
     /// Positive direction only (a tiny budget + a handler that sleeps ~10x past
     /// it), to stay non-flaky under CI load.
+    /// A [`Clock`] the test advances by hand.
+    struct SteppingClock(Arc<AtomicU64>);
+
+    impl Clock for SteppingClock {
+        fn now_ms(&self) -> u64 {
+            self.0.load(Ordering::Relaxed)
+        }
+    }
+
     #[test]
     fn a_persistently_slow_observer_is_quarantined_then_skipped() {
+        // The bus reads its clock before and after each dispatch, so a
+        // handler that moves the clock is a slow handler — with no real
+        // sleep to flake under CI load.
+        let clock = Arc::new(AtomicU64::new(0));
         let bus = HookBus::with_slow_observer_budget(
             "s",
-            crate::ports::FixedClock(0),
+            SteppingClock(clock.clone()),
             Duration::from_millis(10),
         );
         let slow_calls = Arc::new(AtomicU32::new(0));
         let sc = slow_calls.clone();
         bus.on("file.created", move |_event| {
             sc.fetch_add(1, Ordering::Relaxed);
-            std::thread::sleep(Duration::from_millis(100));
+            clock.fetch_add(100, Ordering::Relaxed);
             Ok(())
         })
         .detach();

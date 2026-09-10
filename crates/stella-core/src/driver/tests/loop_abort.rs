@@ -101,7 +101,7 @@ fn grep_call() -> CompletionResultAlias {
 /// with one different call — and then falls straight into a second loop. The
 /// turn already spent its one warning, so the second loop's first detection
 /// must abort rather than grind to the step cap.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_loop_that_resumes_after_a_successful_course_correction_still_aborts() {
     // grep ×3 (detect + steer) → read_file (the course correction) → grep
     // forever (ScriptedProvider repeats its last entry).
@@ -124,7 +124,7 @@ async fn a_loop_that_resumes_after_a_successful_course_correction_still_aborts()
     let tools = ConstantTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     // A low cap, so a broken ladder shows up as "ground to the cap" in a
     // second.
     let config = EngineConfig {
@@ -204,7 +204,7 @@ fn exact_repeat_only(max_steps: usize) -> EngineConfig {
 /// Both loops are `grep`, which is the half that makes this a witness rather
 /// than a restatement of #1524: tool-name identity called them one loop, so
 /// nothing short of comparing arguments can tell "obeyed" from "ignored".
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_second_distinct_loop_earns_its_own_steer_before_the_turn_dies() {
     let grep_for = |call_id: &str, pattern: &str| {
         call_of(
@@ -231,7 +231,7 @@ async fn a_second_distinct_loop_earns_its_own_steer_before_the_turn_dies() {
     let tools = ConstantTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, exact_repeat_only(30), &sleeper, seams);
     let mut messages = vec![
@@ -318,7 +318,7 @@ async fn a_second_distinct_loop_earns_its_own_steer_before_the_turn_dies() {
 /// The abort's reason must still not claim the warned loop "persisted" — it
 /// did not, this is a different loop — and the whole abort must reach the bus
 /// as exactly one `Error` event.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_third_loop_is_not_steered_and_is_not_blamed_on_the_warned_one() {
     let read_of = |call_id: &str, path: &str| {
         call_of(call_id, "read_file", serde_json::json!({ "path": path }))
@@ -341,7 +341,7 @@ async fn a_third_loop_is_not_steered_and_is_not_blamed_on_the_warned_one() {
     let tools = ConstantTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, exact_repeat_only(30), &sleeper, seams);
     let mut messages = vec![
@@ -433,7 +433,7 @@ impl Provider for MutatingGrepProvider {
 /// returned the same bytes. On the live turn that produced this shape the
 /// tool ran 38 times before an accidental exact triple finally tripped the
 /// old detector.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_tool_answering_identically_to_every_new_argument_is_steered_then_killed() {
     let provider = MutatingGrepProvider {
         calls: Arc::new(AtomicU32::new(0)),
@@ -442,7 +442,7 @@ async fn a_tool_answering_identically_to_every_new_argument_is_steered_then_kill
     let tools = ConstantTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let config = EngineConfig {
         max_steps: Some(60),
         ..EngineConfig::default()
@@ -494,7 +494,7 @@ async fn a_tool_answering_identically_to_every_new_argument_is_steered_then_kill
 /// THE reported shape (issue #1477's ArenaBench trace): two read-only tool
 /// calls, then a short line with no terminal punctuation standing in for a
 /// result. This must never reach `Completed`.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_confident_zero_never_reports_as_completed() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -512,7 +512,7 @@ async fn a_confident_zero_never_reports_as_completed() {
     let tools = ConstantTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -555,7 +555,7 @@ async fn a_confident_zero_never_reports_as_completed() {
 /// Zero tool calls this turn must never trip the check, however short or
 /// unterminated the answer — a task answerable without investigation at all
 /// is an ordinary short completion, not an abstain.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_direct_zero_tool_answer_still_completes() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -565,7 +565,7 @@ async fn a_direct_zero_tool_answer_still_completes() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -589,7 +589,7 @@ async fn a_direct_zero_tool_answer_still_completes() {
 /// last line says. `CountingTools` (shared by other driver tests, declared
 /// in the parent `tests.rs`) declares its one tool, `bash`, as NOT
 /// read-only.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_turn_that_did_mutating_work_still_completes_despite_a_bare_closing_line() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -602,7 +602,7 @@ async fn a_turn_that_did_mutating_work_still_completes_despite_a_bare_closing_li
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -624,7 +624,7 @@ async fn a_turn_that_did_mutating_work_still_completes_despite_a_bare_closing_li
 /// A properly terminated short answer following read-only investigation is
 /// not a confident zero — only an UNTERMINATED, orientation-shaped line
 /// trips the check.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_terminated_short_answer_after_investigation_still_completes() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -641,7 +641,7 @@ async fn a_terminated_short_answer_after_investigation_still_completes() {
     let tools = ConstantTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -671,7 +671,7 @@ async fn a_terminated_short_answer_after_investigation_still_completes() {
 /// The paired `LoopDetected` is asserted alongside: it is what
 /// establishes that the steer under inspection really came from the loop rung,
 /// so the cause assertion is about the emitter and not about this test's setup.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_stuck_loop_steer_names_the_loop_rung_as_its_cause() {
     let grep_open = |call_id: &str| {
         call_of(
@@ -692,7 +692,7 @@ async fn a_stuck_loop_steer_names_the_loop_rung_as_its_cause() {
     let tools = ConstantTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, exact_repeat_only(30), &sleeper, seams);
     let mut messages = vec![

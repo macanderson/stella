@@ -38,7 +38,7 @@ fail=0
 new_core() { # <case>
   local dir="$TMP/$1/crates/stella-core"
   mkdir -p "$dir/src" "$TMP/$1/scripts"
-  printf '[package]\nname = "stella-core"\n\n[dependencies]\nserde = "1"\ntokio = { version = "1", features = ["sync", "time"] }\n\n[dev-dependencies]\nrand = "0.10"\n' >"$dir/Cargo.toml"
+  printf '[package]\nname = "stella-core"\n\n[dependencies]\nserde = "1"\ntokio = { version = "1", features = ["sync"] }\n\n[dev-dependencies]\nrand = "0.10"\n' >"$dir/Cargo.toml"
   printf 'pub mod driver;\n' >"$dir/src/lib.rs"
   printf 'pub fn drive() {}\n' >"$dir/src/driver.rs"
   : >"$TMP/$1/scripts/core-no-io-baseline.txt"
@@ -105,6 +105,14 @@ src="$(new_core spawn)"
 printf 'pub fn drive() { let _ = std::process::Command::new("sh"); }\n' >"$src/driver.rs"
 want "std::process is reported" expect-fail spawn "std::process"
 
+src="$(new_core elapsed)"
+printf 'pub fn drive(started: std::time::Instant) -> u128 { started.elapsed().as_millis() }\n' >"$src/driver.rs"
+want "Instant::elapsed is reported as the clock read it hides" expect-fail elapsed "Instant::elapsed"
+
+src="$(new_core timer)"
+printf 'pub async fn drive() { let _ = tokio::time::timeout(std::time::Duration::from_secs(1), async {}).await; }\n' >"$src/driver.rs"
+want "a tokio timer is reported" expect-fail timer "tokio's timer"
+
 # ── Fabrication: what is not shipping code ───────────────────────────────────
 src="$(new_core cfgtest)"
 cat >"$src/driver.rs" <<'RS'
@@ -145,6 +153,10 @@ want "the same crate in [dev-dependencies] is allowed" expect-pass devdep
 src="$(new_core tokiofs)"
 printf '[package]\nname = "stella-core"\n\n[dependencies]\ntokio = { version = "1", features = ["sync", "fs"] }\n' >"$TMP/tokiofs/crates/stella-core/Cargo.toml"
 want "a tokio I/O feature is reported" expect-fail tokiofs "tokio feature \`fs\`"
+
+src="$(new_core tokiotime)"
+printf '[package]\nname = "stella-core"\n\n[dependencies]\ntokio = { version = "1", features = ["sync", "time"] }\n' >"$TMP/tokiotime/crates/stella-core/Cargo.toml"
+want "tokio's time feature is reported" expect-fail tokiotime "tokio feature \`time\`"
 
 src="$(new_core tokiotable)"
 printf '[package]\nname = "stella-core"\n\n[dependencies.tokio]\nversion = "1"\nfeatures = ["process"]\n' >"$TMP/tokiotable/crates/stella-core/Cargo.toml"

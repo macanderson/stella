@@ -52,7 +52,7 @@ impl crate::ports::TurnSteering for StopNow {
 /// closed the pairing; the soft stop lands at the same boundary with the
 /// same keep-the-transcript contract, so it must repair the same shape or
 /// the kept history hard-fails the next provider call.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_soft_stop_closes_caller_supplied_open_tool_calls() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -62,7 +62,7 @@ async fn a_soft_stop_closes_caller_supplied_open_tool_calls() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let steering = StopNow;
     let seams = TurnCapabilities {
         steering: Some(&steering),
@@ -111,7 +111,7 @@ async fn a_soft_stop_closes_caller_supplied_open_tool_calls() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_steer_after_a_tool_round_keeps_every_call_paired_with_its_result() {
     // Step 0 calls a tool; step 1's boundary is where the steer lands, so the
     // transcript it appends to ends with the Tool message from step 0.
@@ -126,7 +126,7 @@ async fn a_steer_after_a_tool_round_keeps_every_call_paired_with_its_result() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let steering = SteerAtDrain {
         queue: std::sync::Mutex::new(vec!["also check the tests".into()]),
         fire_on_drain: 2,
@@ -186,7 +186,7 @@ async fn a_steer_after_a_tool_round_keeps_every_call_paired_with_its_result() {
 /// (consecutive same-role turns are combined), and this witness pins the
 /// transcript shape so a provider adapter that cannot tolerate it is caught
 /// here rather than at runtime.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_mid_tool_round_steer_leaves_a_tool_message_immediately_before_it() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -199,7 +199,7 @@ async fn a_mid_tool_round_steer_leaves_a_tool_message_immediately_before_it() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let steering = SteerAtDrain {
         queue: std::sync::Mutex::new(vec!["actually, stop after this".into()]),
         fire_on_drain: 2,

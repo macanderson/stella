@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use stella_protocol::{BudgetMode, CompletionRequestRef, CompletionResult, ProviderError};
 use tokio::sync::mpsc;
 
-use super::{MixedTools, NoSleep, ScriptedProvider, text_result, tool_call_result};
+use super::{MixedTools, ScriptedProvider, TokioSleeper, text_result, tool_call_result};
 use crate::subagent::*;
 
 // ---- forked-skill scoping: allowed_tools + effort (#2682) ---------------
@@ -65,7 +65,7 @@ impl Provider for RecordingProvider {
 /// #2682: a child scoped by `allowed_tools` sees only the granted schemas
 /// AND cannot execute outside them by guessing a name — the grant is
 /// structural (`GrantedTools`), not prompt-side.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_grant_scoped_child_cannot_see_or_call_outside_its_grant() {
     let parent_provider = ScriptedProvider::new(vec![]);
     // The child tries the un-granted read first, then the granted write,
@@ -81,7 +81,7 @@ async fn a_grant_scoped_child_cannot_see_or_call_outside_its_grant() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &NoSleep,
+        &TokioSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
@@ -123,7 +123,7 @@ async fn a_grant_scoped_child_cannot_see_or_call_outside_its_grant() {
 
 /// #2682: a spec-pinned effort reaches the child's requests; absent, the
 /// child inherits the parent's.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_forked_skills_effort_overrides_the_parents_and_absent_inherits() {
     use stella_protocol::ReasoningEffort;
 
@@ -134,7 +134,7 @@ async fn a_forked_skills_effort_overrides_the_parents_and_absent_inherits() {
         ..EngineConfig::default()
     };
     let seams = TurnCapabilities::none();
-    let parent = Engine::assemble(&parent_provider, &tools, config, &NoSleep, seams);
+    let parent = Engine::assemble(&parent_provider, &tools, config, &TokioSleeper, seams);
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, _rx) = mpsc::unbounded_channel();
 

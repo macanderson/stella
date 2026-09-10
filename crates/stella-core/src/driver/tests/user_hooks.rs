@@ -40,7 +40,7 @@ impl HookRunner for RecordingHookRunner {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn pre_tool_use_hook_nonzero_exit_blocks_the_tool_and_model_sees_it() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -54,7 +54,7 @@ async fn pre_tool_use_hook_nonzero_exit_blocks_the_tool_and_model_sees_it() {
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let payloads = Arc::new(TokioMutex::new(Vec::new()));
     let runner = RecordingHookRunner {
         exit_code: 1,
@@ -114,7 +114,7 @@ async fn pre_tool_use_hook_nonzero_exit_blocks_the_tool_and_model_sees_it() {
     assert!(payloads[0].contains("\"event\":\"PreToolUse\""));
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn post_tool_use_hook_runs_after_the_tool_and_never_blocks() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -128,7 +128,7 @@ async fn post_tool_use_hook_runs_after_the_tool_and_never_blocks() {
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let payloads = Arc::new(TokioMutex::new(Vec::new()));
     // Exit 3 (non-zero) proves a *failing* PostToolUse hook is still a
     // pure observation — it can neither block nor abort the turn.
@@ -179,7 +179,7 @@ async fn post_tool_use_hook_runs_after_the_tool_and_never_blocks() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn non_blocking_hook_failure_surfaces_as_one_retryable_error_event() {
     // A PostToolUse hook exiting non-zero stays non-blocking (pinned by the
     // test above) but must no longer vanish: the dispatch path forwards the
@@ -196,7 +196,7 @@ async fn non_blocking_hook_failure_surfaces_as_one_retryable_error_event() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let payloads = Arc::new(TokioMutex::new(Vec::new()));
     let runner = RecordingHookRunner {
         exit_code: 3,
@@ -253,7 +253,7 @@ async fn non_blocking_hook_failure_surfaces_as_one_retryable_error_event() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn no_hooks_configured_leaves_the_turn_path_unchanged() {
     // With no hooks attached the tool executes normally and the turn
     // completes exactly as it did before the hooks seam existed — the
@@ -270,7 +270,7 @@ async fn no_hooks_configured_leaves_the_turn_path_unchanged() {
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     // Built WITHOUT `with_hooks` — `hooks` stays `None`.
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
@@ -304,7 +304,7 @@ async fn no_hooks_configured_leaves_the_turn_path_unchanged() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn run_turn_never_fires_session_start_hooks() {
     // SessionStart is a session-level event and a host obligation (#2674):
     // the host fires it once, via `hooks::run_hooks`, while assembling the
@@ -319,7 +319,7 @@ async fn run_turn_never_fires_session_start_hooks() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let payloads = Arc::new(TokioMutex::new(Vec::new()));
     let runner = RecordingHookRunner {
         exit_code: 0,
@@ -358,7 +358,7 @@ async fn run_turn_never_fires_session_start_hooks() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_hooked_read_fires_its_hook_once_never_for_a_dropped_speculative_attempt() {
     // A read-only tool with a configured PreToolUse hook. The first stream
     // attempt announces it and then fails; the retry commits it. The hook
@@ -383,7 +383,7 @@ async fn a_hooked_read_fires_its_hook_once_never_for_a_dropped_speculative_attem
         calls: calls.clone(),
         executed,
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let payloads = Arc::new(TokioMutex::new(Vec::new()));
     // exit 0: non-blocking, so the tool runs and the hook is a pure
     // observation — what matters is how many times it is invoked.
@@ -478,7 +478,7 @@ fn bash_schema(read_only: bool) -> ToolSchema {
 /// `PostToolUse` payload reports the input the tool saw. On the base
 /// commit stdout JSON is ignored and the tool runs with the model's
 /// original input, so this fails there.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn pre_tool_use_modify_decision_rewrites_the_input_the_tool_receives() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -493,7 +493,7 @@ async fn pre_tool_use_modify_decision_rewrites_the_input_the_tool_receives() {
         schemas: vec![bash_schema(false)],
         inputs: inputs.clone(),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let payloads = Arc::new(TokioMutex::new(Vec::new()));
     let runner = RecordingHookRunner {
         exit_code: 0,
@@ -613,7 +613,7 @@ fn require_approval_fixture(stdout: &str) -> ApprovalFixture {
 /// parks the dispatch on the attached route: an approving route lets the
 /// tool run, a denying route blocks it with the human's reason, and the
 /// route sees the tool's name and `read_only` bit.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_hook_require_approval_parks_on_the_route_and_the_answer_decides() {
     let ask = r#"{"action":"require_approval","reason":"mutating call"}"#;
     // Approving route: the tool runs.
@@ -624,7 +624,7 @@ async fn a_hook_require_approval_parks_on_the_route_and_the_answer_decides() {
         runner,
         hooks,
     } = require_approval_fixture(ask);
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let route = ScriptedRoute {
         resolution: crate::hooks::decision::ApprovalRouteResolution::Approved,
         calls: Arc::new(AtomicU32::new(0)),
@@ -712,7 +712,7 @@ async fn a_hook_require_approval_parks_on_the_route_and_the_answer_decides() {
 /// With no route attached, a `require_approval` decision refuses the call
 /// and names the missing surface — the same headless posture as #2676's
 /// broker, never a silent allow or a hang.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn require_approval_without_a_route_refuses_with_the_grant_path() {
     let ask = r#"{"action":"require_approval","reason":"mutating call"}"#;
     let ApprovalFixture {
@@ -722,7 +722,7 @@ async fn require_approval_without_a_route_refuses_with_the_grant_path() {
         runner,
         hooks,
     } = require_approval_fixture(ask);
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities {
         hooks: Some((&hooks, &runner)),
         ..TurnCapabilities::none()
@@ -759,7 +759,7 @@ async fn require_approval_without_a_route_refuses_with_the_grant_path() {
 /// **Deliverable 4, #2684.** The `PreToolUse` payload spells the tool's
 /// advertised `read_only` bit from its schema, so a "deny anything
 /// non-read-only" hook needs no tool-name allowlist.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn pre_tool_use_payload_carries_the_schemas_read_only_bit() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -773,7 +773,7 @@ async fn pre_tool_use_payload_carries_the_schemas_read_only_bit() {
         schemas: vec![bash_schema(true)],
         inputs: Arc::new(TokioMutex::new(Vec::new())),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let payloads = Arc::new(TokioMutex::new(Vec::new()));
     let runner = RecordingHookRunner {
         exit_code: 0,
@@ -853,7 +853,7 @@ impl HookRunner for ScriptedHookRunner {
 /// itself as final — and then the next completion stands: the death-spiral
 /// guard, now a counter. On the once-per-turn boolean this fails: the turn
 /// completed on the second answer with a single Stop fire.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn an_always_denying_stop_hook_is_consulted_to_the_bound_then_the_turn_stands() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -869,7 +869,7 @@ async fn an_always_denying_stop_hook_is_consulted_to_the_bound_then_the_turn_sta
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let payloads = Arc::new(TokioMutex::new(Vec::new()));
     let runner = RecordingHookRunner {
         exit_code: 0,
@@ -963,7 +963,7 @@ async fn an_always_denying_stop_hook_is_consulted_to_the_bound_then_the_turn_sta
 /// consulted BOTH times — the fail→pass observation a verification hook
 /// exists to make. On the once-per-turn boolean this fails: the second
 /// completion was never offered to the hook (one Stop fire, not two).
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_deny_then_allow_is_reconsulted_and_the_allowed_completion_stands() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -977,7 +977,7 @@ async fn a_deny_then_allow_is_reconsulted_and_the_allowed_completion_stands() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let payloads = Arc::new(TokioMutex::new(Vec::new()));
     let runner = ScriptedHookRunner {
         stdouts: TokioMutex::new(vec![
@@ -1040,7 +1040,7 @@ async fn a_deny_then_allow_is_reconsulted_and_the_allowed_completion_stands() {
 /// A failing Stop hook (non-zero exit) never blocks completion — failing
 /// closed at a turn boundary IS the death spiral, so the failure surfaces
 /// as a diagnostic and the turn ends normally.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_failing_stop_hook_never_holds_the_turn_open() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -1051,7 +1051,7 @@ async fn a_failing_stop_hook_never_holds_the_turn_open() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let runner = RecordingHookRunner {
         exit_code: 3,
         stdout: String::new(),
@@ -1103,7 +1103,7 @@ async fn a_failing_stop_hook_never_holds_the_turn_open() {
 /// `ApprovalRouteRequest` was keyed on a tool name and there is no tool here.
 /// The route was never asked at all, so the approved half is anti-vacuity: the
 /// same hook, the same engine, and the answer is what changes the outcome.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_stop_hooks_require_approval_resolves_both_ways() {
     async fn run(
         resolution: crate::hooks::decision::ApprovalRouteResolution,
@@ -1125,7 +1125,7 @@ async fn a_stop_hooks_require_approval_resolves_both_ways() {
         let tools = CountingTools {
             calls: Arc::new(AtomicU32::new(0)),
         };
-        let sleeper = NoopSleeper;
+        let sleeper = TokioSleeper;
         let runner = RecordingHookRunner {
             exit_code: 0,
             stdout: r#"{"action":"require_approval","reason":"verification budget exhausted, continue?"}"#
@@ -1210,7 +1210,7 @@ async fn a_stop_hooks_require_approval_resolves_both_ways() {
 /// The opposite of `PreToolUse`'s posture and so — the module
 /// docs' § "The Stop gate" argues it: refusing to complete because nobody was
 /// there to answer is the compact→error→stop-hook→retry spiral, not safety.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_stop_hooks_require_approval_with_no_route_lets_the_turn_complete() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -1220,7 +1220,7 @@ async fn a_stop_hooks_require_approval_with_no_route_lets_the_turn_complete() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let runner = RecordingHookRunner {
         exit_code: 0,
         stdout: r#"{"action":"require_approval","reason":"ask a human"}"#.into(),
@@ -1264,7 +1264,7 @@ async fn a_stop_hooks_require_approval_with_no_route_lets_the_turn_complete() {
 /// (proven by the summarizer never running at all) and the transcript is
 /// left un-spliced. On the base commit the `PreCompact` key is unknown and
 /// the summarizer runs, so this fails there.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn pre_compact_hook_veto_skips_the_summarization_round() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -1275,7 +1275,7 @@ async fn pre_compact_hook_veto_skips_the_summarization_round() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let hook_payloads = Arc::new(TokioMutex::new(Vec::new()));
     let runner = RecordingHookRunner {
         exit_code: 0,
@@ -1337,7 +1337,7 @@ async fn pre_compact_hook_veto_skips_the_summarization_round() {
 
 /// A `PreCompact` `modify` decision's `instructions` reach the
 /// summarizer's request, visibly separated from the span content.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn pre_compact_modify_instructions_reach_the_summarizer_request() {
     let requests = Arc::new(TokioMutex::new(Vec::new()));
     let provider = RequestCapturingProvider {
@@ -1346,7 +1346,7 @@ async fn pre_compact_modify_instructions_reach_the_summarizer_request() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let runner = RecordingHookRunner {
         exit_code: 0,
         stdout: r#"{"action":"modify","payload":{"instructions":"keep every file path verbatim"}}"#

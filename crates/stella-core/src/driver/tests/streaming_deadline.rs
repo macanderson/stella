@@ -51,7 +51,7 @@ impl Provider for SlowStreamingProvider {
 /// The test shows the turn does not stop in a span many times the deadline.
 /// It is still going when the test times out, so the call is dropped in
 /// flight.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_streaming_generation_outlives_the_deadline_because_it_is_not_stalled() {
     let calls = Arc::new(AtomicU32::new(0));
     let provider = SlowStreamingProvider {
@@ -61,7 +61,7 @@ async fn a_streaming_generation_outlives_the_deadline_because_it_is_not_stalled(
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let config = EngineConfig {
         model_timeout: Some(Duration::from_millis(50)),
         ..EngineConfig::default()
@@ -143,7 +143,7 @@ impl Provider for CallOnlyStreamingProvider {
 /// Put the tick on the gate's event sender and only text goes through it. A
 /// call that writes one big file then looks silent. It dies at the deadline,
 /// and the whole call is paid for.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_call_only_stream_outlives_the_deadline_because_it_is_not_stalled() {
     let calls = Arc::new(AtomicU32::new(0));
     let provider = CallOnlyStreamingProvider {
@@ -153,7 +153,7 @@ async fn a_call_only_stream_outlives_the_deadline_because_it_is_not_stalled() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let config = EngineConfig {
         model_timeout: Some(Duration::from_millis(50)),
         ..EngineConfig::default()

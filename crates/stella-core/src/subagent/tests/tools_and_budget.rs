@@ -2,7 +2,7 @@ use super::*;
 
 // ---- read-only by default ---------------------------------------------
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_read_only_child_cannot_execute_a_mutating_tool_even_when_it_tries() {
     let parent_provider = ScriptedProvider::new(vec![]);
     let child_provider = ScriptedProvider::new(vec![
@@ -15,7 +15,7 @@ async fn a_read_only_child_cannot_execute_a_mutating_tool_even_when_it_tries() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &NoSleep,
+        &TokioSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
@@ -37,7 +37,7 @@ async fn a_read_only_child_cannot_execute_a_mutating_tool_even_when_it_tries() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn write_access_is_opt_in_per_spawn() {
     let parent_provider = ScriptedProvider::new(vec![]);
     let child_provider = ScriptedProvider::new(vec![
@@ -50,7 +50,7 @@ async fn write_access_is_opt_in_per_spawn() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &NoSleep,
+        &TokioSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
@@ -69,7 +69,7 @@ async fn write_access_is_opt_in_per_spawn() {
 
 // ---- budget: carved, settled, and never a hole in the accounting ------
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn child_spend_settles_into_the_parent_exactly_once() {
     let parent_provider = ScriptedProvider::new(vec![]);
     let child_provider = ScriptedProvider::new(vec![
@@ -82,7 +82,7 @@ async fn child_spend_settles_into_the_parent_exactly_once() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &NoSleep,
+        &TokioSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
@@ -109,7 +109,7 @@ async fn child_spend_settles_into_the_parent_exactly_once() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn an_enforced_carve_stops_the_child_without_touching_the_parents_turn() {
     let parent_provider = ScriptedProvider::new(vec![]);
     // Each call costs more than the whole carve, so the child trips at the
@@ -124,7 +124,7 @@ async fn an_enforced_carve_stops_the_child_without_touching_the_parents_turn() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &NoSleep,
+        &TokioSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Enforced, None, Some(100.0));
@@ -154,7 +154,7 @@ async fn an_enforced_carve_stops_the_child_without_touching_the_parents_turn() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_child_can_never_be_carved_past_the_parents_remaining_headroom() {
     // The hard-ceiling property at the spawn boundary: the caller asks for
     // ten dollars, the parent has four cents left, and the child is bounded
@@ -167,7 +167,7 @@ async fn a_child_can_never_be_carved_past_the_parents_remaining_headroom() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &NoSleep,
+        &TokioSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Enforced, None, Some(1.0));
@@ -203,7 +203,7 @@ async fn a_child_can_never_be_carved_past_the_parents_remaining_headroom() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn an_enforced_parent_with_no_headroom_refuses_before_spending_anything() {
     let parent_provider = ScriptedProvider::new(vec![]);
     // Would answer happily if it were ever asked. It must not be.
@@ -214,7 +214,7 @@ async fn an_enforced_parent_with_no_headroom_refuses_before_spending_anything() 
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &NoSleep,
+        &TokioSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Enforced, None, Some(1.0));

@@ -111,7 +111,7 @@ fn ci_wait_call() -> CompletionResultAlias {
 /// The witness: the watched state changes on the THIRD engine-side probe,
 /// and the model is re-invoked exactly once — not three times — with the
 /// wake delta on the transcript tail and zero poll debris anywhere in it.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_change_on_the_nth_probe_re_invokes_the_model_exactly_once() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -124,7 +124,7 @@ async fn a_change_on_the_nth_probe_re_invokes_the_model_exactly_once() {
     let tools = ParkingTools::depositing(ci_wait_request(600), 3);
     let probe_calls = tools.probe_calls.clone();
     let wake_calls = tools.wake_calls.clone();
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -225,7 +225,7 @@ async fn a_change_on_the_nth_probe_re_invokes_the_model_exactly_once() {
 
 /// A condition that never changes wakes the model once with the timeout
 /// marked — never N poll-steps, and never a silent hang past the deadline.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn an_unchanged_condition_wakes_once_at_the_deadline() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -239,7 +239,7 @@ async fn an_unchanged_condition_wakes_once_at_the_deadline() {
     let tools = ParkingTools::depositing(ci_wait_request(20), u32::MAX);
     let probe_calls = tools.probe_calls.clone();
     let wake_calls = tools.wake_calls.clone();
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -283,7 +283,7 @@ async fn an_unchanged_condition_wakes_once_at_the_deadline() {
 
 /// A request whose replayed calls are not read-only is refused outright —
 /// the engine must never mutate on a timer the model cannot see.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_non_read_only_probe_is_refused_not_replayed() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -297,7 +297,7 @@ async fn a_non_read_only_probe_is_refused_not_replayed() {
     request.probe.name = "bash".into(); // not in the read-only schema set
     let tools = ParkingTools::depositing(request, 1);
     let probe_calls = tools.probe_calls.clone();
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -346,7 +346,7 @@ fn overloaded() -> ProviderError {
 /// inline ladder now parks — bounded by wall clock, narrated on the stream —
 /// and the step completes once the provider recovers. On the pre-#2677
 /// ladder this run dies at the seventh attempt with `RetriesExhausted`.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn sustained_rate_limiting_parks_within_budget_and_recovers() {
     // Nine 429s: six absorbed by the inline ladder, three more that only a
     // park survives. The tenth call succeeds.
@@ -361,7 +361,7 @@ async fn sustained_rate_limiting_parks_within_budget_and_recovers() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -409,7 +409,7 @@ async fn sustained_rate_limiting_parks_within_budget_and_recovers() {
 /// The witness for #2677's headline defect: a `Retry-After` past the 120s
 /// inline ceiling used to fail the call fast as `Terminal` even with hours
 /// of wall clock left. With headroom it is now honored as a parked wait.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_long_retry_after_hint_is_honored_by_parking_when_budget_allows() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -425,7 +425,7 @@ async fn a_long_retry_after_hint_is_honored_by_parking_when_budget_allows() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -462,7 +462,7 @@ async fn a_long_retry_after_hint_is_honored_by_parking_when_budget_allows() {
 /// the task deadline's remaining headroom still fails fast — waiting less
 /// than the server asked guarantees a re-429, so the wait would spend the
 /// budget and buy nothing. The park machinery must not engage.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_hint_past_the_remaining_deadline_still_fails_fast_without_parking() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -475,7 +475,7 @@ async fn a_hint_past_the_remaining_deadline_still_fails_fast_without_parking() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -519,7 +519,7 @@ async fn a_hint_past_the_remaining_deadline_still_fails_fast_without_parking() {
 ///
 /// Fails before the change with `TurnOutcome::Aborted` and a
 /// `RetriesExhausted` on the stream.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_sustained_529_brownout_parks_within_budget_and_recovers() {
     // Nine 529s: six absorbed by the inline ladder, three more that only a
     // park survives. The tenth call succeeds.
@@ -534,7 +534,7 @@ async fn a_sustained_529_brownout_parks_within_budget_and_recovers() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -584,7 +584,7 @@ async fn a_sustained_529_brownout_parks_within_budget_and_recovers() {
 /// aborts. Without this, "529 recovers" and "every retryable failure now
 /// waits six hours" look identical from inside the diff — and the second is a
 /// far worse bug than the one #2742 fixes.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_sustained_transport_fault_still_exhausts_the_ladder_and_aborts() {
     let script: Vec<Result<CompletionResultAlias, ProviderError>> = (0..9)
         .map(|_| Err(ProviderError::transport("connection reset by peer")))
@@ -597,7 +597,7 @@ async fn a_sustained_transport_fault_still_exhausts_the_ladder_and_aborts() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -652,7 +652,7 @@ impl crate::ports::TurnSteering for StopOnAsk {
 /// `RetriesExhausted` + `Error` pair, recording a provider failure for what
 /// was a person's decision. The provider really was rate limiting; that is
 /// simply not why the turn ended.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_soft_stop_during_a_park_ends_the_turn_as_a_deliberate_stop() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -662,7 +662,7 @@ async fn a_soft_stop_during_a_park_ends_the_turn_as_a_deliberate_stop() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     // Ask 1 is the step boundary's, which must answer "no" or the turn ends
     // before a park exists; ask 2 is the park's first per-chunk tick.
     let steering = StopOnAsk {

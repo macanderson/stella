@@ -44,7 +44,7 @@ impl ToolExecutor for SpendingTools {
 /// that spend in at the next step boundary is what keeps `--spend-limit` a hard
 /// ceiling once turns nest; deferring to end-of-turn would let the parent and
 /// its children each run to the cap independently.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn tool_dispatched_child_spend_aborts_the_parent_at_the_next_step_boundary() {
     let provider = ScriptedProvider::new(vec![
         // The parent's own calls are free; every dollar here is the child's.
@@ -58,7 +58,13 @@ async fn tool_dispatched_child_spend_aborts_the_parent_at_the_next_step_boundary
         drains: AtomicUsize::new(0),
     };
     let seams = TurnCapabilities::none();
-    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &NoSleep, seams);
+    let engine = Engine::assemble(
+        &provider,
+        &tools,
+        EngineConfig::default(),
+        &TokioSleeper,
+        seams,
+    );
     let mut messages = vec![CompletionMessage::user("go")];
     let mut budget = BudgetGuard::new(BudgetMode::Enforced, None, Some(1.0));
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -113,7 +119,7 @@ async fn tool_dispatched_child_spend_aborts_the_parent_at_the_next_step_boundary
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn the_drain_is_destructive_so_child_spend_is_never_charged_twice() {
     let provider = ScriptedProvider::new(vec![
         Ok(tool_call_result("delegate", "c1", 0.0)),
@@ -125,7 +131,13 @@ async fn the_drain_is_destructive_so_child_spend_is_never_charged_twice() {
         drains: AtomicUsize::new(0),
     };
     let seams = TurnCapabilities::none();
-    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &NoSleep, seams);
+    let engine = Engine::assemble(
+        &provider,
+        &tools,
+        EngineConfig::default(),
+        &TokioSleeper,
+        seams,
+    );
     let mut messages = vec![CompletionMessage::user("go")];
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, _rx) = mpsc::unbounded_channel();
@@ -217,7 +229,7 @@ impl Provider for HangAfterScript {
 /// `CancelBracket`, the `Started` bracket stayed open forever and every
 /// ceiling-bearing caller had to forge a `Finished` it could only fill with
 /// `steps: 0`.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_cancelled_child_closes_its_bracket_with_committed_steps_and_cost() {
     let parent_provider = ScriptedProvider::new(vec![]);
     let hang_reached = std::sync::Arc::new(tokio::sync::Notify::new());
@@ -232,7 +244,7 @@ async fn a_cancelled_child_closes_its_bracket_with_committed_steps_and_cost() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &NoSleep,
+        &TokioSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
@@ -367,7 +379,7 @@ async fn a_child_is_bounded_by_the_ceiling_its_whole_run_sits_under() {
             model_timeout: None,
             ..EngineConfig::default()
         },
-        &NoSleep,
+        &TokioSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
@@ -463,7 +475,7 @@ fn a_ceiling_at_or_under_the_reserve_is_refused_not_floored() {
 /// **Loud refusal, half two.** The refusal is not just the seam function —
 /// it has to reach the parent as a [`SubAgentOutcome::Refused`] with zero
 /// model calls and zero cost, the same contract every other refusal keeps.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_ceiling_too_short_refuses_the_whole_spawn_loudly() {
     use std::time::Duration;
 
@@ -479,7 +491,7 @@ async fn a_ceiling_too_short_refuses_the_whole_spawn_loudly() {
             tool_timeout: Some(Duration::from_secs(30)),
             ..EngineConfig::default()
         },
-        &NoSleep,
+        &TokioSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);

@@ -433,6 +433,7 @@ impl TurnState {
         messages: Vec<CompletionMessage>,
         budget: BudgetGuard,
         config: &EngineConfig,
+        now: std::time::Instant,
     ) -> Self {
         age_session_output_ceilings(config);
         Self {
@@ -451,7 +452,7 @@ impl TurnState {
             memos: TurnMemos::new(config.turn_instance, config.lifecycle_enabled),
             length_continuations: 0,
             stop_hook_consults: 0,
-            started_at: std::time::Instant::now(),
+            started_at: now,
             pace: StepPace::default(),
             steps_since_requery: 0,
             cancel: CancelToken::new(),
@@ -462,7 +463,11 @@ impl TurnState {
     /// money, calibration model, loop-steer latch and step index — see the
     /// module docs for exactly what resuming costs.
     #[must_use]
-    pub fn from_checkpoint(checkpoint: Checkpoint, config: &EngineConfig) -> Self {
+    pub fn from_checkpoint(
+        checkpoint: Checkpoint,
+        config: &EngineConfig,
+        now: std::time::Instant,
+    ) -> Self {
         age_session_output_ceilings(config);
         Self {
             messages: checkpoint.messages,
@@ -498,7 +503,7 @@ impl TurnState {
             // latch re-arms, which only re-permits one more held-open round —
             // the same bounded-allowance reasoning as `length_continuations`.
             stop_hook_consults: 0,
-            started_at: std::time::Instant::now(),
+            started_at: now,
             pace: StepPace::default(),
             steps_since_requery: 0,
             cancel: CancelToken::new(),
@@ -1044,8 +1049,9 @@ impl<'a> BorrowedTurn<'a> {
         messages: &'a mut Vec<CompletionMessage>,
         budget: &'a mut BudgetGuard,
         config: &EngineConfig,
+        now: std::time::Instant,
     ) -> Self {
-        let state = TurnState::new(std::mem::take(messages), *budget, config);
+        let state = TurnState::new(std::mem::take(messages), *budget, config, now);
         Self {
             messages,
             budget,
@@ -1172,6 +1178,7 @@ impl StreamProgress {
 /// it, and a slow-but-progressing provider is never cut off by time another
 /// attempt already spent.
 pub(crate) async fn bounded_generation<F>(
+    sleeper: &dyn crate::retry::Sleeper,
     limit: Option<Duration>,
     progress: &StreamProgress,
     call: F,
@@ -1185,9 +1192,9 @@ where
     let mut call = std::pin::pin!(call);
     let mut seen = progress.count();
     loop {
-        match tokio::time::timeout(limit, &mut call).await {
-            Ok(result) => return result,
-            Err(_) => {
+        match crate::retry::bounded(sleeper, limit, &mut call).await {
+            Some(result) => return result,
+            None => {
                 // The window elapsed. Whether that is a fault depends on what
                 // arrived during it: any fragment at all means the provider is
                 // answering, so re-arm and keep waiting. Only a window that
@@ -1243,6 +1250,7 @@ where
 /// [`bounded_generation`]'s is: the task is out of time, so retrying only
 /// spends more of a deadline that has already run out.
 pub(crate) async fn deadline_bounded_generation<F>(
+    sleeper: &dyn crate::retry::Sleeper,
     idle_limit: Option<Duration>,
     task_deadline: Option<std::time::Instant>,
     progress: &StreamProgress,
@@ -1251,14 +1259,14 @@ pub(crate) async fn deadline_bounded_generation<F>(
 where
     F: Future<Output = Result<CompletionResult, ProviderError>>,
 {
-    let generation = bounded_generation(idle_limit, progress, call);
+    let generation = bounded_generation(sleeper, idle_limit, progress, call);
     let Some(deadline) = task_deadline else {
         return generation.await;
     };
-    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-    match tokio::time::timeout(remaining, generation).await {
-        Ok(result) => result,
-        Err(_) => Err(ProviderError::Terminal(format!(
+    let remaining = deadline.saturating_duration_since(sleeper.now());
+    match crate::retry::bounded(sleeper, remaining, generation).await {
+        Some(result) => result,
+        None => Err(ProviderError::Terminal(format!(
             "generation exceeded the task's remaining wall clock ({}ms): \
              the task deadline ran out mid-call",
             remaining.as_millis()
@@ -1283,7 +1291,7 @@ where
 ///
 /// Content-free by construction, same privacy rule as every other
 /// `UsageIncomplete` envelope: no request or response body is representable.
-pub(crate) struct CancelUsageGuard {
+pub(crate) struct CancelUsageGuard<'a> {
     pub(crate) events: EventSender,
     pub(crate) role: stella_protocol::ModelCallRole,
     pub(crate) provider: String,
@@ -1293,17 +1301,20 @@ pub(crate) struct CancelUsageGuard {
     /// [`stella_protocol::UNKNOWN_MODEL`] when the adapter names none.
     pub(crate) model: String,
     pub(crate) started: std::time::Instant,
+    /// The clock `started` was read from, asked again at the drop: a `Drop`
+    /// has no caller to hand it `now`.
+    pub(crate) sleeper: &'a dyn crate::retry::Sleeper,
     pub(crate) armed: bool,
     pub(crate) attempt_in_flight: Arc<AtomicBool>,
 }
 
-impl CancelUsageGuard {
+impl CancelUsageGuard<'_> {
     pub(crate) fn disarm(&mut self) {
         self.armed = false;
     }
 }
 
-impl Drop for CancelUsageGuard {
+impl Drop for CancelUsageGuard<'_> {
     fn drop(&mut self) {
         if !self.armed || !self.attempt_in_flight.load(Ordering::SeqCst) {
             return;
@@ -1313,7 +1324,7 @@ impl Drop for CancelUsageGuard {
             provider: self.provider.clone(),
             model: self.model.clone(),
             reason: stella_protocol::UsageIncompleteReason::Cancelled,
-            duration_ms: self.started.elapsed().as_millis() as u64,
+            duration_ms: self.sleeper.now().duration_since(self.started).as_millis() as u64,
             retries: None,
             // A hard cancel drops the call future mid-flight, so no adapter
             // ever returned an error to salvage from. The server-side cost of

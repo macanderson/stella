@@ -74,7 +74,7 @@ struct RateLimitPark<'e, 'a> {
 impl ParkSupervisor for RateLimitPark<'_, '_> {
     fn wait_allowance_ms(&mut self, waited_ms: u64) -> u64 {
         let cap = MAX_PARKED_WAIT_MS.saturating_sub(waited_ms);
-        match self.budget.deadline_remaining(std::time::Instant::now()) {
+        match self.budget.deadline_remaining(self.engine.sleeper.now()) {
             Some(remaining) => {
                 let remaining_ms = u64::try_from(remaining.as_millis()).unwrap_or(u64::MAX);
                 cap.min(remaining_ms.saturating_sub(PARK_DEADLINE_RESERVE_MS))
@@ -166,7 +166,7 @@ impl<'a> Engine<'a> {
         ),
         ModelCallFailure,
     > {
-        let call_started = std::time::Instant::now();
+        let call_started = self.sleeper.now();
         // Armed for exactly the interval where a paid attempt may be in
         // flight: a caller-side hard cancel that drops this future mid-await
         // still leaves one content-free `Cancelled` envelope behind.
@@ -186,6 +186,7 @@ impl<'a> Engine<'a> {
                 .unwrap_or(stella_protocol::UNKNOWN_MODEL)
                 .to_string(),
             started: call_started,
+            sleeper: self.sleeper,
             armed: true,
             attempt_in_flight,
         };

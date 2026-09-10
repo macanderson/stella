@@ -141,7 +141,7 @@ impl super::Engine<'_> {
         // the settlement tick below, so the boundary's two answers — what is
         // left on the clock, and whether that is already too little — cannot
         // disagree about when "now" was.
-        let now = std::time::Instant::now();
+        let now = self.sleeper.now();
         let child_spend = self.tools.drain_sub_agent_spend_usd();
         if child_spend > 0.0 {
             record_settled_cost(

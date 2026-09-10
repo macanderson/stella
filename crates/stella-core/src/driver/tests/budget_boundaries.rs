@@ -58,7 +58,7 @@ fn provider_that_must_not_be_called() -> ScriptedProvider {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn an_over_cap_budget_abort_hands_back_a_well_paired_transcript() {
     // The dollar arm of `settlement::check_budget` fires at
     // the top of the step, before any model call, on a transcript that is
@@ -71,7 +71,7 @@ async fn an_over_cap_budget_abort_hands_back_a_well_paired_transcript() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = transcript_with_an_unanswered_tool_call();
@@ -98,7 +98,7 @@ async fn an_over_cap_budget_abort_hands_back_a_well_paired_transcript() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_past_deadline_abort_hands_back_a_well_paired_transcript() {
     // The same witness for the deadline arm, which is checked first and has
     // its own reason string — and had the same missing repair.
@@ -107,7 +107,7 @@ async fn a_past_deadline_abort_hands_back_a_well_paired_transcript() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = transcript_with_an_unanswered_tool_call();
@@ -197,7 +197,7 @@ impl ToolExecutor for ForeverRead {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn summary_induced_budget_breach_aborts_with_cost_before_next_provider_call() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -211,7 +211,7 @@ async fn summary_induced_budget_breach_aborts_with_cost_before_next_provider_cal
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     let mut messages = vec![
@@ -252,7 +252,7 @@ async fn summary_induced_budget_breach_aborts_with_cost_before_next_provider_cal
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn an_existing_budget_breach_stops_before_paid_compaction() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -263,7 +263,7 @@ async fn an_existing_budget_breach_stops_before_paid_compaction() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     let mut messages = vec![
@@ -290,7 +290,7 @@ async fn an_existing_budget_breach_stops_before_paid_compaction() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_past_task_deadline_stops_the_turn_before_the_next_call_with_partial_work() {
     // The witness for #1481: the dollar budget is per turn/session, but a
     // benchmark's limit is per TASK — several turns that each honestly fit
@@ -310,7 +310,7 @@ async fn a_past_task_deadline_stops_the_turn_before_the_next_call_with_partial_w
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -356,14 +356,14 @@ async fn a_past_task_deadline_stops_the_turn_before_the_next_call_with_partial_w
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn cancellation_after_billed_completion_before_speculation_finishes_keeps_the_cost() {
     let provider_completed = Arc::new(tokio::sync::Notify::new());
     let provider = BilledResultWithBlockedSpeculation {
         provider_completed: provider_completed.clone(),
     };
     let tools = ForeverRead;
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![CompletionMessage::user("read")];
@@ -396,7 +396,7 @@ async fn cancellation_after_billed_completion_before_speculation_finishes_keeps_
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_normal_completion_charges_the_budget_exactly_once() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -406,7 +406,7 @@ async fn a_normal_completion_charges_the_budget_exactly_once() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![CompletionMessage::user("answer")];
@@ -461,7 +461,7 @@ impl ToolExecutor for SlowTool {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_slow_tool_stops_the_turn_before_the_deadline() {
     // The scripted model answers at once and its tool then runs for a
     // second, so the step costs a second and the call inside it costs
@@ -479,7 +479,7 @@ async fn a_slow_tool_stops_the_turn_before_the_deadline() {
     };
     let provider_calls = provider.calls.clone();
     let tools = SlowTool { took: tool_time };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![

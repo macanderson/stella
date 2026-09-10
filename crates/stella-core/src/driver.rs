@@ -535,7 +535,7 @@ impl<'a> Engine<'a> {
         // caller's borrows when it drops — including on the hard-cancel path,
         // where the future is dropped mid-step and there is no exit to copy
         // back from (see `BorrowedTurn`).
-        let mut turn = BorrowedTurn::adopt(messages, budget, &self.config);
+        let mut turn = BorrowedTurn::adopt(messages, budget, &self.config, self.sleeper.now());
         self.drive(&mut turn.state, events).await
     }
 
@@ -677,7 +677,7 @@ impl<'a> Engine<'a> {
         }
         // The boundary's host consults — steering drain, soft stop, and the
         // #3243 Phase 3 re-query — in the order `step_boundary` documents.
-        deadline_notice::push_if_due(state, std::time::Instant::now());
+        deadline_notice::push_if_due(state, self.sleeper.now());
         if let Some(outcome) =
             step_boundary::consult_hosts(self.steering, self.requery, state, events).await
         {
@@ -755,7 +755,7 @@ impl<'a> Engine<'a> {
         // Wall clock around the whole call including its retries, because that
         // is what a continuation would actually cost again — not the duration
         // of the one attempt that happened to succeed.
-        let step_started = std::time::Instant::now();
+        let step_started = self.sleeper.now();
         let committed = match self
             .run_model_call(
                 state.model_call_shape(self.configured_output_ceiling()),
@@ -781,7 +781,9 @@ impl<'a> Engine<'a> {
         self.emit_lifecycle(bus::names::MODEL_REQUEST_COMPLETED, || {
             lifecycle::model_request_completed_payload(state.step, &committed.result)
         });
-        state.pace.observe_model(step_started.elapsed());
+        state
+            .pace
+            .observe_model(self.sleeper.now().duration_since(step_started));
         state.calibration_model = Some(committed.result.model.clone());
         // Anchor the context measure to what the provider just attested for
         // this exact prefix — before dispatch appends the reply to it.
@@ -839,7 +841,9 @@ impl<'a> Engine<'a> {
         }
 
         // The whole step, tools and park included: the reserve (`step_pace`).
-        state.pace.observe_step(step_started.elapsed());
+        state
+            .pace
+            .observe_step(self.sleeper.now().duration_since(step_started));
 
         // Advanced only by a step that committed and continued, so the index
         // a checkpoint carries is always "the step that runs next".
@@ -852,7 +856,7 @@ impl<'a> Engine<'a> {
     /// and a meter.
     #[must_use]
     pub fn new_turn(&self, messages: Vec<CompletionMessage>, budget: BudgetGuard) -> TurnState {
-        TurnState::new(messages, budget, &self.config)
+        TurnState::new(messages, budget, &self.config, self.sleeper.now())
     }
 
     /// A [`TurnState`] resumed from a durable snapshot. See
@@ -876,7 +880,7 @@ impl<'a> Engine<'a> {
     /// `stella-engine`'s test suite.
     #[must_use]
     pub fn resume_turn(&self, checkpoint: crate::step::Checkpoint) -> TurnState {
-        TurnState::from_checkpoint(checkpoint, &self.config)
+        TurnState::from_checkpoint(checkpoint, &self.config, self.sleeper.now())
     }
 
     /// The calibrated compaction budget and the factor that produced it —
@@ -1177,7 +1181,7 @@ impl<'a> Engine<'a> {
                     // path, where AGENTS.md #5 (no panics on runtime data)
                     // outranks asserting a structural claim (#618 item 17).
                     biased;
-                    result = deadline_bounded_generation(self.config.model_timeout, task_deadline, &progress, &mut complete) => result,
+                    result = deadline_bounded_generation(self.sleeper, self.config.model_timeout, task_deadline, &progress, &mut complete) => result,
                     _ = &mut pump => Err(ProviderError::Terminal(
                         "speculation pump ended before the model call that feeds it; \
                          the speculation gate holds the channel open for the whole call, \
@@ -1204,7 +1208,7 @@ impl<'a> Engine<'a> {
             ..
         } = outcome;
         // One boundary read: the call's duration and the tick's clock axis.
-        let now = std::time::Instant::now();
+        let now = self.sleeper.now();
         let call_duration_ms = now.duration_since(call_started).as_millis() as u64;
         let budget_outcome = record_settled_cost(budget, result.cost_usd, warnings, events, now);
 
@@ -1281,16 +1285,21 @@ impl<'a> Engine<'a> {
         events: EventSender,
     ) -> SpeculationPool {
         let announced = futures_util::stream::poll_fn(move |cx| rx.poll_recv(cx));
+        let sleeper = self.sleeper;
         let mut in_flight = announced
             .map(|call| async move {
-                let started = std::time::Instant::now();
+                let started = sleeper.now();
                 // `read_only: true` is exact, not a guess: only tools whose
                 // schemas declare `read_only` (AND `speculation_safe`) are
                 // ever announced to this pool, and hooked tools are fenced
                 // out entirely (`tool_has_matching_hook`), so no hook reads
                 // this bit off a speculative dispatch anyway.
                 let output = self.execute_with_repair(&call, true, None).await;
-                (call, output, started.elapsed().as_millis() as u64)
+                (
+                    call,
+                    output,
+                    sleeper.now().duration_since(started).as_millis() as u64,
+                )
             })
             .buffer_unordered(MAX_CONCURRENT_TOOL_CALLS);
 
@@ -1498,9 +1507,15 @@ impl<'a> Engine<'a> {
         let Some(limit) = self.config.tool_timeout else {
             return self.dispatch_tool_call(call, read_only, events).await;
         };
-        match tokio::time::timeout(limit, self.dispatch_tool_call(call, read_only, events)).await {
-            Ok(output) => output,
-            Err(_) => ToolOutput::classified_error(
+        match crate::retry::bounded(
+            self.sleeper,
+            limit,
+            self.dispatch_tool_call(call, read_only, events),
+        )
+        .await
+        {
+            Some(output) => output,
+            None => ToolOutput::classified_error(
                 stella_protocol::ErrorClass::Timeout,
                 format!(
                     "tool `{}` exceeded the engine's {}s dispatch ceiling and was abandoned \

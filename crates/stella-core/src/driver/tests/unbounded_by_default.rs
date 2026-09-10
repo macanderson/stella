@@ -65,7 +65,7 @@ async fn run_productive_turn(steps: u32, config: EngineConfig) -> (TurnOutcome, 
         script: TokioMutex::new(productive_script(steps)),
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &DistinctTools, config, &sleeper, seams);
     let mut messages = vec![
@@ -80,7 +80,7 @@ async fn run_productive_turn(steps: u32, config: EngineConfig) -> (TurnOutcome, 
 
 /// The witness. A thousand steps is five times the old cap. A cap that came
 /// back at any round number under it would fail this.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_long_productive_turn_runs_to_completion_under_the_default_config() {
     const STEPS: u32 = 1_000;
     assert_eq!(
@@ -104,7 +104,7 @@ async fn a_long_productive_turn_runs_to_completion_under_the_default_config() {
 
 /// A host that sets a cap still gets it. The stop is a `DeliberateStop` and
 /// it names the number the host set.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_host_set_cap_still_ends_the_turn_where_it_says() {
     const CAP: usize = 25;
     let config = EngineConfig {

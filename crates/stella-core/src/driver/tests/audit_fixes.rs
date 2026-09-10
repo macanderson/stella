@@ -9,7 +9,7 @@ use super::*;
 /// F1: `summarize_keep_recent: 0` is a legal config — the tail walk must
 /// not index one past the end (this test panicked with "index out of
 /// bounds" before the guard).
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn summarize_keep_recent_zero_does_not_panic() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -19,7 +19,7 @@ async fn summarize_keep_recent_zero_does_not_panic() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let config = EngineConfig {
         summarize_keep_recent: 0,
         ..overflow_config()
@@ -51,7 +51,7 @@ async fn summarize_keep_recent_zero_does_not_panic() {
 /// F2: `BudgetOutcome::Warn`'s contract is that the driver surfaces it —
 /// an Observed-mode breach must emit a visible warning (exactly once per
 /// settled call, so the twice-per-step gate checks cannot spam it).
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn observed_budget_breach_emits_a_warning_event() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -61,7 +61,7 @@ async fn observed_budget_breach_emits_a_warning_event() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -105,7 +105,7 @@ async fn observed_budget_breach_emits_a_warning_event() {
 /// F5: the budget-abort path's synthetic tool results must reach the event
 /// stream, not just `messages` — StepUsage already announced the calls, so
 /// a transcript reconstructed from events must resolve them too.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn budget_abort_synthetic_results_are_visible_in_the_event_stream() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -116,7 +116,7 @@ async fn budget_abort_synthetic_results_are_visible_in_the_event_stream() {
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -150,7 +150,7 @@ async fn budget_abort_synthetic_results_are_visible_in_the_event_stream() {
 
 /// F6: a whitespace-only response is the empty-turn defect, not an answer —
 /// it must abort without first streaming a blank `Text` event.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn whitespace_only_completion_aborts_without_a_text_event() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -160,7 +160,7 @@ async fn whitespace_only_completion_aborts_without_a_text_event() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -326,7 +326,7 @@ impl Provider for HangingProvider {
 /// F9: a hard cancel that drops the turn while a paid attempt is mid-stream
 /// must leave exactly one content-free `Cancelled` usage envelope — the
 /// call may have real server-side cost and must not vanish from accounting.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn hard_cancel_mid_stream_emits_a_cancelled_usage_envelope() {
     let started = Arc::new(tokio::sync::Notify::new());
     let provider = HangingProvider {
@@ -335,7 +335,7 @@ async fn hard_cancel_mid_stream_emits_a_cancelled_usage_envelope() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![CompletionMessage::user("secret prompt text")];
@@ -396,6 +396,10 @@ impl crate::retry::Sleeper for HangingSleeper {
     }
 
     // The floor: this double never wakes, so the draw decides nothing.
+    fn now(&self) -> std::time::Instant {
+        std::time::Instant::now()
+    }
+
     fn jitter(&self, _upper: u64) -> u64 {
         0
     }
@@ -407,7 +411,7 @@ impl crate::retry::Sleeper for HangingSleeper {
 /// `ProviderError` envelope, and a second envelope for the same single
 /// dispatch double-reports it (the guard's armed window used to span the
 /// sleeps; `attempt_in_flight` is what narrowed it).
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn hard_cancel_during_a_backoff_sleep_emits_no_phantom_cancelled_envelope() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -479,7 +483,7 @@ fn summary_markers(messages: &[CompletionMessage]) -> usize {
 /// #368.2: the summarizer is the last line of defense before a terminal
 /// context overflow, so a transient blip must be retried (standard policy),
 /// not fast-failed (deterministic policy, which discarded the recovery).
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn overflow_summarizer_retries_a_transient_error() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -493,7 +497,7 @@ async fn overflow_summarizer_retries_a_transient_error() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     let mut messages = overflow_messages();
@@ -537,7 +541,7 @@ async fn overflow_summarizer_retries_a_transient_error() {
 /// #368.3: a summary generated and paid for right as the budget trips must
 /// still be spliced in — applying it only shrinks the context the resumed
 /// session reloads. Discarding it lost paid work for no benefit.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn budget_aborted_summary_is_applied_not_discarded() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -547,7 +551,7 @@ async fn budget_aborted_summary_is_applied_not_discarded() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     let mut messages = overflow_messages();
@@ -601,7 +605,7 @@ async fn budget_aborted_summary_is_applied_not_discarded() {
 /// `summarized_blocks` was hard-coded empty, so the one compaction path that
 /// most changes context reported no block identities. Witness: a tool-result
 /// block in the folded span leaves context and is named in the receipt.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn overflow_summary_names_the_folded_tool_result_blocks() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -611,7 +615,7 @@ async fn overflow_summary_names_the_folded_tool_result_blocks() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
 
@@ -701,7 +705,7 @@ async fn overflow_summary_names_the_folded_tool_result_blocks() {
 /// #368.4: a summarizer that keeps failing must surface each failure and,
 /// after enough consecutive misses, latch — a persistently-timing-out cheap
 /// summarizer can't be allowed to re-fire (and re-pay) every remaining step.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn repeated_summarizer_failures_emit_events_and_latch() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -712,7 +716,7 @@ async fn repeated_summarizer_failures_emit_events_and_latch() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
@@ -794,7 +798,7 @@ async fn repeated_summarizer_failures_emit_events_and_latch() {
 /// A single observed-mode breach persists across every remaining settled
 /// call of the turn, but it must warn once per axis, not once per call —
 /// otherwise a session-limit breach on a many-step turn floods the stream.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn observed_budget_breach_warns_once_per_axis_per_turn() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -810,7 +814,7 @@ async fn observed_budget_breach_warns_once_per_axis_per_turn() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -857,7 +861,7 @@ async fn observed_budget_breach_warns_once_per_axis_per_turn() {
 /// An enforced session breach that trips as the just-landed call settles
 /// aborts through `handle_committed_result` — its reason must name the
 /// session axis so the user knows which cap they hit.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn enforced_session_breach_abort_reason_names_the_axis() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -867,7 +871,7 @@ async fn enforced_session_breach_abort_reason_names_the_axis() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -891,7 +895,7 @@ async fn enforced_session_breach_abort_reason_names_the_axis() {
 /// A session already over budget at the turn's opening safe-boundary aborts
 /// through `check_budget` (before any call is dispatched) — that reason must
 /// name the session axis too.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn enforced_session_breach_at_step_boundary_names_the_axis() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -902,7 +906,7 @@ async fn enforced_session_breach_at_step_boundary_names_the_axis() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -1242,7 +1246,7 @@ impl ToolExecutor for CountingReadTools {
 /// them). A second announcement under the same id therefore EVICTS the first
 /// pool entry — whose tool had already run real I/O — and before the fix that
 /// eviction was silent: the execution happened and nothing on the wire said so.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_recycled_speculation_call_id_reports_the_execution_it_displaces() {
     let read = |path: &str| ToolCall {
         call_id: "call_0".into(),
@@ -1263,7 +1267,7 @@ async fn a_recycled_speculation_call_id_reports_the_execution_it_displaces() {
     let tools = CountingReadTools {
         executions: executions.clone(),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -1374,14 +1378,14 @@ impl ToolExecutor for BulkyTools {
 /// and the overflow summarizer's span opens *after* the first user message. This
 /// pins all three at the driver level: several steps of real compaction and a
 /// summarization pass, and the bytes at index 0 never change.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn the_system_prefix_stays_byte_stable_across_a_compacting_turn() {
     const SYSTEM: &str = "You are Stella. Follow the workspace rules. Prefer small diffs.";
     let provider = PrefixRecordingProvider {
         prefixes: std::sync::Mutex::new(Vec::new()),
         step: AtomicU32::new(0),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let config = EngineConfig {
         // Small enough that every step after the first compacts, and small
         // enough that the pure passes cannot get under it alone — so the

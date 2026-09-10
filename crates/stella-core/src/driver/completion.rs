@@ -92,7 +92,7 @@ impl<'a> Engine<'a> {
                     &result.text,
                     result.usage.output_tokens,
                     *length_continuations,
-                    clock.continuation_budget(std::time::Instant::now()),
+                    clock.continuation_budget(self.sleeper.now()),
                 ) {
                     ContinuationPlan::Continue(plan) => {
                         *length_continuations += 1;

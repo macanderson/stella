@@ -56,7 +56,7 @@ impl Provider for SliceAddressProvider {
 /// schema's full JSON parameter document. Two attempts meant two copies.
 ///
 /// Identical addresses across both attempts prove there are now zero.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_retried_attempt_re_sends_the_same_slices_it_did_the_first_time() {
     let provider = SliceAddressProvider {
         seen: std::sync::Mutex::new(Vec::new()),
@@ -65,7 +65,7 @@ async fn a_retried_attempt_re_sends_the_same_slices_it_did_the_first_time() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let (tx, _rx) = mpsc::unbounded_channel();
@@ -113,7 +113,7 @@ async fn a_retried_attempt_re_sends_the_same_slices_it_did_the_first_time() {
 /// `the_system_prefix_stays_byte_stable_across_a_compacting_turn`, which pins
 /// the *bytes*. There is no intermediate buffer in which the system prefix
 /// could drift, because there is no intermediate buffer.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn the_adapter_serializes_off_the_callers_own_transcript() {
     let provider = SliceAddressProvider {
         seen: std::sync::Mutex::new(Vec::new()),
@@ -122,7 +122,7 @@ async fn the_adapter_serializes_off_the_callers_own_transcript() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let (tx, _rx) = mpsc::unbounded_channel();

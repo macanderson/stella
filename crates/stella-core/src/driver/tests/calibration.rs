@@ -51,7 +51,7 @@ fn compactable_history() -> Vec<CompletionMessage> {
 /// the raw estimate runs low against this model's tokenizer — the
 /// compaction decision demonstrably consumes the calibrated estimate,
 /// not the raw one.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn calibrated_estimate_changes_the_compaction_decision() {
     let run = |calibrate: bool| async move {
         let provider = ScriptedProvider {
@@ -62,7 +62,7 @@ async fn calibrated_estimate_changes_the_compaction_decision() {
         let tools = CountingTools {
             calls: Arc::new(AtomicU32::new(0)),
         };
-        let sleeper = NoopSleeper;
+        let sleeper = TokioSleeper;
         let mut messages = compactable_history();
         // A budget the RAW estimate just fits under: uncalibrated, no
         // compaction can fire.
@@ -108,7 +108,7 @@ async fn calibrated_estimate_changes_the_compaction_decision() {
 /// records its (estimated, actual) pair into the attached calibration —
 /// keyed by the model that served it — and emits the raw estimate on
 /// `StepUsage` for persistence.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn each_committed_step_feeds_the_calibration_and_reports_its_estimate() {
     let with_real_usage = |result: CompletionResultAlias| {
         let mut result = result;
@@ -141,7 +141,7 @@ async fn each_committed_step_feeds_the_calibration_and_reports_its_estimate() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let calibration = CalibrationMap::new();
     let seams = TurnCapabilities {
         calibration: Some(&calibration),
@@ -196,7 +196,7 @@ async fn each_committed_step_feeds_the_calibration_and_reports_its_estimate() {
 /// session's first call — nearly its whole prompt a cache write — recorded
 /// a near-zero ratio that dragged the factor toward the floor and inflated
 /// the effective compaction budget past the provider's context window.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn cache_write_tokens_count_toward_the_calibration_actual() {
     let with_cache_write_usage = |result: CompletionResultAlias| {
         let mut result = result;
@@ -228,7 +228,7 @@ async fn cache_write_tokens_count_toward_the_calibration_actual() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let calibration = CalibrationMap::new();
     let seams = TurnCapabilities {
         calibration: Some(&calibration),
@@ -263,7 +263,7 @@ async fn cache_write_tokens_count_toward_the_calibration_actual() {
 /// pressure, poison for calibration, where one screenshot-bearing step
 /// clamped the ratio to the sample floor and doubled the effective
 /// compaction budget for the rest of the session.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn attachment_weight_is_excluded_from_the_drift_sample_estimate() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -273,7 +273,7 @@ async fn attachment_weight_is_excluded_from_the_drift_sample_estimate() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user_with_attachments(
@@ -325,7 +325,7 @@ async fn attachment_weight_is_excluded_from_the_drift_sample_estimate() {
 /// model-known read — one sample into a three-sample warm-up — and served it
 /// for the rest of the turn, so the 40+ samples the turn itself recorded were
 /// never read back into any decision.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_fresh_sessions_calibration_factor_leaves_identity_within_the_turn() {
     // Actuals that grow with the transcript, all far above the tiny history
     // estimates — the drift shape the bench trace measured.
@@ -359,7 +359,7 @@ async fn a_fresh_sessions_calibration_factor_leaves_identity_within_the_turn() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     // Unseeded, exactly like a bench container's first run: warm-up happens
     // (or fails to matter) entirely inside this one turn.
     let calibration = CalibrationMap::new();

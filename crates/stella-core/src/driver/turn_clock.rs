@@ -298,6 +298,7 @@ mod tests {
             Vec::new(),
             crate::budget::BudgetGuard::new(stella_protocol::BudgetMode::Off, None, None),
             &config,
+            std::time::Instant::now(),
         );
 
         let clock = TurnClock::read(&config, &state);

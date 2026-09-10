@@ -98,7 +98,7 @@ async fn run(
         script: TokioMutex::new(script.into_iter().map(Ok).collect()),
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -120,7 +120,7 @@ async fn run(
 /// done — and the engine sends it back once with the handle named. On `main`
 /// the executor is never asked and the turn completes on the first
 /// declaration, having said nothing about the process it left listening.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_turn_declaring_done_with_a_service_up_is_asked_about_it() {
     let tools = Serving::with(vec![service("proc-1", Some("docs"))]);
     let (outcome, messages, events) = run(
@@ -176,7 +176,7 @@ async fn a_turn_declaring_done_with_a_service_up_is_asked_about_it() {
 /// services, so nothing is appended and nothing is emitted. The executor is
 /// still asked — the engine cannot know the answer without asking — which is
 /// why the port must be a peek.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_turn_with_nothing_running_is_left_untouched() {
     let tools = Serving::with(Vec::new());
     let (outcome, messages, events) = run(
@@ -215,7 +215,7 @@ async fn a_turn_with_nothing_running_is_left_untouched() {
 /// everything history keeps of a truncated step), not the raw cut-off
 /// narration. Before the fix the raw partial rode into history verbatim,
 /// re-sent on every later step of the turn.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_truncated_declaration_reaches_history_elided_not_raw() {
     let tools = Serving::with(vec![service("proc-1", Some("docs"))]);
     let long_partial = "the fix is coming ".repeat(200); // > 2000 chars, elidable
@@ -259,7 +259,7 @@ async fn a_truncated_declaration_reaches_history_elided_not_raw() {
 /// `gate-ab` shape (#2663) the shared nudge window exists to prevent, on a
 /// gate whose condition, unlike the prove-it gate's, the model may
 /// legitimately choose not to clear.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_confirmed_service_never_re_arms_the_question() {
     let tools = Serving::with(vec![service("proc-1", None)]);
     let (outcome, messages, _) = run(

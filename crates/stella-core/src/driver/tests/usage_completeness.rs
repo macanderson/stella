@@ -2,7 +2,7 @@
 
 use super::*;
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn exhausted_worker_call_emits_one_content_free_incompleteness_event() {
     let provider = ScriptedProvider {
         id: "anthropic-fallback".into(),
@@ -14,7 +14,7 @@ async fn exhausted_worker_call_emits_one_content_free_incompleteness_event() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -84,7 +84,7 @@ impl Provider for ModelBoundProvider {
 /// this emit site — 435 such rows in one 16-trial panel. That is exactly the
 /// population mid-turn model fallback (#2769) re-resolves from, so the
 /// failures that trigger a swap were the ones unable to say what had failed.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_failed_call_names_the_model_that_made_it() {
     let provider = ModelBoundProvider {
         inner: ScriptedProvider {
@@ -97,7 +97,7 @@ async fn a_failed_call_names_the_model_that_made_it() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -141,7 +141,7 @@ async fn a_failed_call_names_the_model_that_made_it() {
 /// per-attempt observer is the sole path by which a doomed attempt's usage can
 /// ever be recorded. If it drops the partial, the fix stops at the adapter
 /// boundary and nothing downstream is any wiser.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_failed_attempts_recovered_usage_reaches_the_event_stream() {
     let recovered = stella_protocol::PartialUsage {
         usage: stella_protocol::CompletionUsage {
@@ -164,7 +164,7 @@ async fn a_failed_attempts_recovered_usage_reaches_the_event_stream() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -202,7 +202,7 @@ async fn a_failed_attempts_recovered_usage_reaches_the_event_stream() {
     assert!(wire.contains("14000"), "the numbers do cross: {wire}");
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn exhausted_retries_emit_typed_reasons_before_the_error() {
     // Receipts spec §6.3 (#364 gap 3): `Retry` events only flush for steps
     // that COMMIT, so a terminally-failed call's doomed attempts were
@@ -221,7 +221,7 @@ async fn exhausted_retries_emit_typed_reasons_before_the_error() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -265,7 +265,7 @@ async fn exhausted_retries_emit_typed_reasons_before_the_error() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn auth_failure_on_first_attempt_reports_not_retryable() {
     // #926: a terminal `ProviderError::Auth` on attempt 1 was previously
     // indistinguishable, at the typed level, from a genuine retry-budget
@@ -281,7 +281,7 @@ async fn auth_failure_on_first_attempt_reports_not_retryable() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -325,7 +325,7 @@ async fn auth_failure_on_first_attempt_reports_not_retryable() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn successful_retry_keeps_the_failed_attempt_usage_incomplete() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -338,7 +338,7 @@ async fn successful_retry_keeps_the_failed_attempt_usage_incomplete() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let config = EngineConfig {
         retry_policy: RetryPolicy::new(1, 0, 0),
         ..EngineConfig::default()
@@ -384,7 +384,7 @@ async fn successful_retry_keeps_the_failed_attempt_usage_incomplete() {
 /// asked for — the resolved effort and the effective output ceiling — not
 /// blanks the Observatory's profile card has to render as "not recorded for
 /// this run". Fails before #4565, when `StepUsage` had neither field.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn step_usage_carries_the_requests_effort_and_output_ceiling() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -394,7 +394,7 @@ async fn step_usage_carries_the_requests_effort_and_output_ceiling() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let config = EngineConfig {
         effort: Some(stella_protocol::completion::ReasoningEffort::High),
         max_output_tokens: Some(32_000),
@@ -440,7 +440,7 @@ async fn step_usage_carries_the_requests_effort_and_output_ceiling() {
 /// failing if the emitter re-derived the values from the engine config rather
 /// than reading the request it dispatched, which is what
 /// `settlement::RequestShape::of` exists to make impossible.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn step_usage_carries_the_requests_generation_params() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -450,7 +450,7 @@ async fn step_usage_carries_the_requests_generation_params() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let asked = stella_protocol::completion::GenerationParams {
         top_p: Some(0.9),
         seed: Some(4_621),
@@ -510,7 +510,7 @@ fn overflow_messages() -> Vec<CompletionMessage> {
     messages
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn overflow_summarizer_emits_its_own_usage_envelope() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -520,7 +520,7 @@ async fn overflow_summarizer_emits_its_own_usage_envelope() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     let mut messages = overflow_messages();
@@ -542,7 +542,7 @@ async fn overflow_summarizer_emits_its_own_usage_envelope() {
     )));
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn failed_overflow_summarizer_emits_content_free_incompleteness() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -555,7 +555,7 @@ async fn failed_overflow_summarizer_emits_content_free_incompleteness() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     let mut messages = overflow_messages();
@@ -601,7 +601,7 @@ async fn failed_overflow_summarizer_emits_content_free_incompleteness() {
 /// `run_accounted_call` — the path every management role takes. The two rows
 /// share a step and differ in `call_seq`, so the join the glossary describes
 /// is available on both sides.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn two_calls_at_one_step_are_separable_by_their_usage_rows() {
     const TURN: u32 = 4;
 
@@ -613,7 +613,7 @@ async fn two_calls_at_one_step_are_separable_by_their_usage_rows() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams)
         .with_turn_instance(TURN);
