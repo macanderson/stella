@@ -367,6 +367,18 @@ matters because this repo has **immutable releases** enabled — a published
 release's assets can't be added or changed afterward, so an incomplete release
 means cutting a new version.
 
+## The engine container
+
+Every release tag also publishes `packaging/docker/Dockerfile.serve` as
+`ghcr.io/macanderson/stella-serve:<version>` and `:latest`, for linux/amd64
+and linux/arm64 (`.github/workflows/docker-serve-publish.yml`). Each
+architecture is built on its own runner, smoked with
+`scripts/smoke-serve-image.sh` before its digest is pushed, and the two
+digests are tagged together at the end, so a tag never resolves on one
+architecture and not the other. A host that embeds the engine pins the
+version tag; `latest` is for a laptop. The image takes `STELLA_SERVE_TOKEN`
+or `STELLA_SERVE_TOKEN_FILE` at run time and nothing else.
+
 ## After the release — how users install
 
 Homebrew (prebuilt binary, no Rust toolchain):

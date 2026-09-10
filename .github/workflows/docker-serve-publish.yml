@@ -1,0 +1,179 @@
+name: docker-serve-publish
+
+# Publishes packaging/docker/Dockerfile.serve to the GitHub container registry
+# on every release tag, as `ghcr.io/macanderson/stella-serve:<version>` and
+# `:latest`, for linux/amd64 and linux/arm64.
+#
+# Until this workflow existed nothing published the image at all. docker-serve.yml
+# builds it and smokes the container on a pull request, then throws it away;
+# release.yml ships the `stella` CLI for four targets and never builds
+# `stella-serve`. So a host that wants to run the engine as a container — the
+# Oxagen node does, on arm64 — had to build the image itself from a checkout
+# of this repository, and would find out only at deploy time whether the tag
+# it built matched the wire its client was written against. An image published
+# under the release version is the pin such a host can name.
+#
+# Two native builds rather than one QEMU build: compiling the workspace under
+# emulation takes hours, and both runner architectures exist. Each build job
+# pushes its image by digest only, and the last job stitches the two digests
+# into one multi-architecture tag, which is the shape docker/build-push-action
+# documents for this.
+#
+# Each per-architecture image is smoked with the same script docker-serve.yml
+# uses before its digest is pushed, so a published image is one that served.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, without the leading v (defaults to the checked-out tag)"
+        required: false
+
+concurrency:
+  group: docker-serve-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/macanderson/stella-serve
+
+jobs:
+  build:
+    name: build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            os: ubuntu-latest
+            arch: amd64
+          - platform: linux/arm64
+            os: ubuntu-24.04-arm
+            arch: arm64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # The same assertion docker-serve.yml makes: the builder base and
+      # rust-toolchain.toml must name one compiler, or the image ships two
+      # compilers' worth of download in its critical path.
+      - name: builder base tracks rust-toolchain.toml
+        run: |
+          set -euo pipefail
+          dockerfile=packaging/docker/Dockerfile.serve
+          pinned="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' rust-toolchain.toml)"
+          base="$(sed -n 's/^FROM rust:\([^[:space:]]*\)-bookworm .*/\1/p' "$dockerfile")"
+          if [ -z "$pinned" ] || [ -z "$base" ] || [ "$pinned" != "$base" ]; then
+            echo "$dockerfile builds on rust:$base-bookworm but rust-toolchain.toml pins $pinned." >&2
+            exit 1
+          fi
+
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: build the image for this architecture
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: packaging/docker/Dockerfile.serve
+          platforms: ${{ matrix.platform }}
+          tags: stella-serve:smoke
+          load: true
+          provenance: false
+          cache-from: type=gha,scope=serve-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=serve-${{ matrix.arch }}
+
+      - name: smoke the container before publishing it
+        run: ./scripts/smoke-serve-image.sh stella-serve:smoke
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pushed by digest only. The tag is written once, below, over both
+      # digests, so a half-published release never carries a tag that
+      # resolves on one architecture and not the other.
+      - name: push the image by digest
+        id: push
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: packaging/docker/Dockerfile.serve
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          provenance: false
+          cache-from: type=gha,scope=serve-${{ matrix.arch }}
+
+      # An artifact rather than a job output: two matrix legs writing one
+      # job's outputs race, and the last leg to finish wins with an empty
+      # value for the key it did not set. A file per architecture cannot
+      # collide.
+      - name: record the digest
+        run: |
+          set -euo pipefail
+          mkdir -p digests
+          printf '%s' "${{ steps.push.outputs.digest }}" > "digests/${{ matrix.arch }}"
+          test -s "digests/${{ matrix.arch }}"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: serve-digest-${{ matrix.arch }}
+          path: digests/${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: tag the multi-architecture image
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: resolve the version
+        id: version
+        run: |
+          set -euo pipefail
+          version="${{ inputs.version }}"
+          if [ -z "$version" ]; then
+            ref="${GITHUB_REF_NAME}"
+            version="${ref#v}"
+          fi
+          case "$version" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "not a release version: '$version'" >&2; exit 1 ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: serve-digest-*
+          path: digests
+          merge-multiple: true
+
+      - name: write the version and latest tags over both digests
+        run: |
+          set -euo pipefail
+          amd64="$(cat digests/amd64)"
+          arm64="$(cat digests/arm64)"
+          if [ -z "$amd64" ] || [ -z "$arm64" ]; then
+            echo "a per-architecture digest is missing (amd64='$amd64', arm64='$arm64'); refusing to tag half a release" >&2
+            exit 1
+          fi
+          docker buildx imagetools create \
+            --tag "$IMAGE:${{ steps.version.outputs.version }}" \
+            --tag "$IMAGE:latest" \
+            "$IMAGE@$amd64" "$IMAGE@$arm64"
+          docker buildx imagetools inspect "$IMAGE:${{ steps.version.outputs.version }}"
