@@ -883,6 +883,62 @@ mod tests {
         .len()
     }
 
+    /// **The #643 witness, in the tool plane.** A composed stack says what it
+    /// cut to the sink the door named, and to nowhere else.
+    ///
+    /// The default matters as much as the routing. `budgeted` used to print
+    /// its refusals with `eprintln!`, which under the deck is the drawn
+    /// `ratatui` frame — the bytes land between rows and scroll the screen
+    /// out from under the renderer's diff, which is what left the status bar
+    /// drawn three times over itself after a prompt. An allowance built
+    /// without [`ToolAllowance::reporting`] now reaches no terminal at all,
+    /// so a future door that forgets to name a sink is silent rather than
+    /// destructive.
+    #[test]
+    fn a_composed_stack_reports_its_cuts_to_the_named_sink_alone() {
+        let leaf = WideLeaf { count: 40 };
+        let ledger = SteeringLedger::default();
+        let quarter = stella_core::steering::tools::ToolBudget {
+            max_tokens: full_cost(&leaf) / 4,
+            mcp_max_tokens: full_cost(&leaf),
+        };
+        let seen = std::cell::RefCell::new(Vec::new());
+        let sink = |advisories: Vec<String>| seen.borrow_mut().extend(advisories);
+
+        let stack = |allowance| {
+            session_stack_with_gate(
+                &leaf,
+                Vec::new(),
+                PathBuf::from("."),
+                ToolPolicy::allow_all(),
+                allowance,
+                Arc::new(NoAuthz),
+                Principal::User,
+            )
+            .schemas()
+            .len()
+        };
+
+        let unreported = ToolAllowance::new(ToolAdvertisement::Lean(quarter), &ledger);
+        let advertised = stack(unreported);
+        assert!(advertised < 40, "the ceiling bound: {advertised} advertised");
+        assert!(
+            seen.borrow().is_empty(),
+            "an allowance nobody asked to report says nothing: {:?}",
+            seen.borrow()
+        );
+
+        assert_eq!(
+            stack(unreported.reporting(&sink)),
+            advertised,
+            "naming a sink changes what is said, never what is advertised"
+        );
+        assert!(
+            !seen.borrow().is_empty(),
+            "and the same cut reaches the sink once one is named"
+        );
+    }
+
     /// A declared allowance wide enough to hold `leaf`'s whole surface.
     fn wide_enough(leaf: &WideLeaf) -> stella_core::steering::tools::ToolBudget {
         stella_core::steering::tools::ToolBudget {

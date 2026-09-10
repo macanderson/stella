@@ -868,3 +868,67 @@ fn the_merge_drop_report_is_one_summary_line_per_class() {
         );
     }
 }
+
+/// **The #643 witness, in the recall plane.** A refusal leaves the block as
+/// an event on the turn's stream, one row per candidate.
+///
+/// The channel is the whole point. These lines used to go straight to stderr
+/// from inside `recall_block_reported`, which under the deck is the drawn
+/// `ratatui` frame: the bytes landed between rendered rows and scrolled the
+/// screen out from under the renderer's diff, leaving the status bar drawn
+/// several times over itself after a prompt submission. `RecalledBlock` now
+/// carries them out to the caller, which owns a channel; this layer owns
+/// none.
+///
+/// One event per line rather than one carrying the list, on the rule
+/// `AgentEvent::SkillInjected` already states: each becomes one transcript
+/// row, and a list would make the renderer split what the emitter had
+/// already separated.
+#[test]
+fn a_refused_candidate_leaves_the_block_as_its_own_event() {
+    let block = crate::memory::recall::RecalledBlock {
+        dropped: vec![
+            "a skill matching this turn did not fit the skill budget: seat-loser — raise \
+             `skills.max_skills`"
+                .to_string(),
+            "2 memories did not fit this turn's 1200-token retrieval budget — raise \
+             context.retrieval.max_tokens in stella.toml to include them"
+                .to_string(),
+        ],
+        ..Default::default()
+    };
+
+    let advisories: Vec<String> = block
+        .telemetry_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            stella_protocol::AgentEvent::SteeringDropped { advisory } => Some(advisory),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        advisories, block.dropped,
+        "every refusal reaches the stream, in the order the plane made them"
+    );
+}
+
+/// A turn that refused nothing puts no row on the transcript.
+///
+/// The silent turn is the common one. An empty advisory emitted every turn
+/// would be a blank warning row under every prompt, which is how a signal
+/// stops being read.
+#[test]
+fn a_turn_that_refused_nothing_announces_nothing() {
+    let block = crate::memory::recall::RecalledBlock::default();
+    assert!(
+        !block
+            .telemetry_events()
+            .iter()
+            .any(|event| matches!(
+                event,
+                stella_protocol::AgentEvent::SteeringDropped { .. }
+            )),
+        "no refusal, no row"
+    );
+}
