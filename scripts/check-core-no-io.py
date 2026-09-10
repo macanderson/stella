@@ -20,18 +20,21 @@ none. `#[cfg(test)]` bodies, `tests/` directories, and `tests.rs` files are
 stripped first — a test may read a fixture; the engine may not.
 
 **The manifest.** `[dependencies]` may not name a crate whose purpose is I/O
-or entropy, and `tokio` may take only the features that schedule and time
-(`sync`, `time`, `macros`, `rt`). `[dev-dependencies]` is exempt for the
-same reason `#[cfg(test)]` is.
+or entropy, and `tokio` may take only the features that schedule (`sync`,
+`macros`, `rt`) — not `time`, because the engine waits through
+`retry::Sleeper` and never owns a timer. `[dev-dependencies]` is exempt for
+the same reason `#[cfg(test)]` is.
 
 **The ratchet.** Reads of the monotonic clock — `Instant::now()` — are not
-I/O, and the engine's deadline arithmetic is full of them. They are ambient
-state all the same: a turn that reads the clock itself cannot be replayed
-from its record, which is why `ports::Clock` exists. Each file's count is
-recorded in `scripts/core-no-io-baseline.txt` and may only go down.
+I/O. They are ambient state all the same: a turn that reads the clock itself
+cannot be replayed from its record, which is why `Sleeper::now` exists. Each
+file's count is recorded in `scripts/core-no-io-baseline.txt` and may only
+go down. The baseline reached empty on 2026-09-10, so every read now fails;
+the ratchet stays so a read that lands reports as the count it is.
 `--update` refuses to add a file or raise a count, so a red run is cleared
-by reading the clock once at the edge and passing `now` in, never by
-recording the read.
+by reading the clock once through the port and passing `now` in, never by
+recording the read. `.elapsed()` is the same read in disguise and sits on
+the floor.
 
 This is a fact about the repository rather than about a crate, so it is never
 scoped by CARGO_SCOPE (AGENTS.md § "The gate"), and a text-level walk keeps it
@@ -112,9 +115,14 @@ FLOOR: list[tuple[str, re.Pattern[str], str]] = [
         "the engine suspends through retry::Sleeper, never a thread",
     ),
     (
-        "tokio::time::sleep",
-        re.compile(r"\btokio\s*::\s*time\s*::\s*sleep\b"),
-        "the engine suspends through retry::Sleeper, never a timer of its own",
+        "tokio's timer",
+        re.compile(r"\btokio\s*::\s*time\b"),
+        "the engine waits through retry::Sleeper — retry::bounded is the timeout, sleep is the sleep",
+    ),
+    (
+        "Instant::elapsed",
+        re.compile(r"\.\s*elapsed\s*\(\s*\)"),
+        "a hidden Instant::now(): subtract two readings of Sleeper::now instead",
     ),
     (
         "an entropy source",
@@ -156,7 +164,7 @@ DENIED_DEPS = {
     "which",
     "git2",
 }
-TOKIO_FEATURES_ALLOWED = {"sync", "time", "macros", "rt"}
+TOKIO_FEATURES_ALLOWED = {"sync", "macros", "rt"}
 
 SECTION = re.compile(r"^\s*\[([^\]]+)\]\s*$")
 DEP_KEY = re.compile(r"^\s*([A-Za-z0-9_-]+)\s*(?:\.\s*workspace\s*)?=")
@@ -273,8 +281,8 @@ BASELINE_HEADER = """\
 #
 # A DOWN-ONLY ratchet. It records the clock reads that predate the guard. It
 # may never gain a file or a larger count, and `--update` refuses both. To
-# clear a red run, read the clock once at the edge and pass `now` in, or take
-# `ports::Clock`. Never record the read. The list is meant to reach empty.
+# clear a red run, read the clock through `Sleeper::now` and pass `now` in.
+# Never record the read. The list reached empty on 2026-09-10 and stays so.
 #
 # Regenerate after removing a read:  ./scripts/check-core-no-io.py --update
 """

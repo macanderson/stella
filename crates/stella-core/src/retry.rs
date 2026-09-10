@@ -40,21 +40,29 @@
 //! and `stella-core` would link an entropy source for one draw.
 
 use std::future::Future;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use futures_util::future::{Either, select};
 use stella_protocol::ProviderError;
 
-/// The backoff port: how `retry_with_backoff` waits between attempts, and
-/// where the entropy that spreads those waits apart comes from.
+/// The engine's time port: what time it is, how a wait is waited out, and
+/// where the entropy that spreads retries apart comes from.
 ///
 /// Injectable so retry-loop tests run instantly and deterministically
-/// instead of paying real wall-clock delays — the same seam
-/// [`crate::ports::Clock`] provides for reading time, but for the one place
-/// this crate needs to actually suspend a task. Only the trait lives here —
+/// instead of paying real wall-clock delays. Only the trait lives here —
 /// the production tokio-backed impl belongs to the binary that constructs
-/// the engine (the CLI's `runtime` module).
+/// the engine (the CLI's `runtime` module), so `stella-core` links neither
+/// a timer nor a clock nor an entropy source. [`crate::ports::Clock`] is
+/// the millisecond clock a host hands to things that stamp records; this
+/// one answers in [`Instant`], which is what a deadline is.
 ///
-/// Both methods are required, with no default. A default `jitter` of zero
+/// The three live on one port because a double cannot answer them apart: a
+/// sleeper that suspends virtually has moved its own `now`, and a timeout
+/// is a sleep racing a call ([`bounded`]). tokio's paused runtime is the
+/// same shape — one virtual clock behind both `sleep` and `Instant::now`.
+///
+/// Every method is required, with no default. A default `jitter` of zero
 /// would let a host forget the draw and ship a fleet whose workers all wake
 /// on the same millisecond after a shared 429, silently — the herd this
 /// jitter exists to break up. A host that wants no jitter writes that down.
@@ -62,6 +70,15 @@ use stella_protocol::ProviderError;
 pub trait Sleeper: Send + Sync {
     /// Suspend the current task for `duration_ms` milliseconds.
     async fn sleep(&self, duration_ms: u64);
+
+    /// The monotonic clock's reading now.
+    ///
+    /// Every deadline the engine holds is an `Instant` from this reading,
+    /// and every elapsed time is the difference of two of them. Nothing in
+    /// `stella-core` calls `Instant::now()` itself — `make core-no-io`
+    /// refuses it — so a host that answers from a virtual clock replays a
+    /// turn to the millisecond.
+    fn now(&self) -> Instant;
 
     /// A uniform draw from `0..=upper`, the spread between the backoff floor
     /// and its cap that this attempt actually waits.
@@ -71,6 +88,29 @@ pub trait Sleeper: Send + Sync {
     /// assertable to the millisecond. A draw past `upper` is clamped by the
     /// caller, so a careless impl widens nothing.
     fn jitter(&self, upper: u64) -> u64;
+}
+
+/// Run `call` for at most `limit`, through the port's own sleep.
+///
+/// `Some` is the call's answer; `None` means the limit passed first, with
+/// the call dropped where it stood. This is `tokio::time::timeout` written
+/// against the port: the call is polled first, so a call that is ready is
+/// never lost to a sleep that is also ready, and the sleep is the port's, so
+/// a paused or virtual host clock bounds the call the way it bounds a
+/// backoff. A `&mut` pinned future may be passed and re-armed after a
+/// `None`, which is how the idle bounds in [`crate::step`] keep waiting
+/// while fragments still arrive.
+pub(crate) async fn bounded<F: Future>(
+    sleeper: &dyn Sleeper,
+    limit: Duration,
+    call: F,
+) -> Option<F::Output> {
+    let call = std::pin::pin!(call);
+    let limit_ms = u64::try_from(limit.as_millis()).unwrap_or(u64::MAX);
+    match select(call, sleeper.sleep(limit_ms)).await {
+        Either::Left((output, _)) => Some(output),
+        Either::Right(((), _)) => None,
+    }
 }
 
 /// Milliseconds per parked-wait chunk: a long rate-limit wait is slept in
@@ -454,7 +494,7 @@ where
     let mut parked_total_ms: u64 = 0;
     let mut park_streak: u32 = 0;
     loop {
-        let attempt_started = std::time::Instant::now();
+        let attempt_started = sleeper.now();
         match attempt_fn().await {
             Ok(value) => {
                 return Ok(RetryOutcome {
@@ -464,7 +504,11 @@ where
                 });
             }
             Err(error) => {
-                observe_failure(attempt + 1, &error, attempt_started.elapsed());
+                observe_failure(
+                    attempt + 1,
+                    &error,
+                    sleeper.now().duration_since(attempt_started),
+                );
                 if !error.is_retryable() {
                     return Err(error);
                 }
@@ -632,6 +676,10 @@ mod tests {
                 .push(duration_ms);
         }
 
+        fn now(&self) -> Instant {
+            Instant::now()
+        }
+
         fn jitter(&self, upper: u64) -> u64 {
             self.rng
                 .lock()
@@ -691,9 +739,36 @@ mod tests {
     impl Sleeper for FixedJitter {
         async fn sleep(&self, _duration_ms: u64) {}
 
+        fn now(&self) -> Instant {
+            Instant::now()
+        }
+
         fn jitter(&self, _upper: u64) -> u64 {
             self.0
         }
+    }
+
+    /// The timeout is the port's sleep, not tokio's timer. A sleeper whose
+    /// sleep returns at once times out a pending call at once, with no
+    /// runtime clock consulted; a call that is already ready still wins.
+    /// A timeout built on `tokio::time::timeout` would wait the real hour.
+    #[tokio::test]
+    async fn bounded_races_the_ports_own_sleep() {
+        let sleeper = NoopSleeper::default();
+        let hour = std::time::Duration::from_secs(3_600);
+        assert_eq!(
+            bounded(&sleeper, hour, std::future::pending::<u8>()).await,
+            None
+        );
+        assert_eq!(
+            bounded(&sleeper, hour, std::future::ready(5u8)).await,
+            Some(5)
+        );
+        assert_eq!(
+            sleeper.delays_ms.lock().unwrap().as_slice(),
+            &[3_600_000],
+            "the pending call slept the whole limit through the port; the ready one slept nothing"
+        );
     }
 
     /// The draw comes from the port. A sleeper answering a fixed number

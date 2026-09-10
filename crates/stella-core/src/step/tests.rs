@@ -1,6 +1,26 @@
 use super::*;
 use stella_protocol::ToolCall;
 
+/// A [`crate::retry::Sleeper`] on real tokio time, for the bounds below: they
+/// race a trickling call against a sleep, and only a sleep that takes time
+/// can lose that race.
+struct RealTime;
+
+#[async_trait::async_trait]
+impl crate::retry::Sleeper for RealTime {
+    async fn sleep(&self, duration_ms: u64) {
+        tokio::time::sleep(Duration::from_millis(duration_ms)).await;
+    }
+
+    fn now(&self) -> std::time::Instant {
+        std::time::Instant::now()
+    }
+
+    fn jitter(&self, _upper: u64) -> u64 {
+        0
+    }
+}
+
 fn checkpoint_fixture() -> Checkpoint {
     let mut budget = BudgetGuard::new(BudgetMode::Enforced, Some(2.5), Some(10.0));
     let _ = budget.record_spend(0.375);
@@ -33,7 +53,12 @@ fn checkpoint_fixture() -> Checkpoint {
             attachments: Vec::new(),
         },
     ];
-    let state = TurnState::new(messages, budget, &EngineConfig::default());
+    let state = TurnState::new(
+        messages,
+        budget,
+        &EngineConfig::default(),
+        std::time::Instant::now(),
+    );
     let mut state = state;
     state.total_cost_usd = 0.375;
     state.calibration_model = Some("glm-5.2".into());
@@ -73,7 +98,11 @@ fn checkpoint_round_trips_byte_identically() {
 #[test]
 fn a_restored_turn_state_carries_the_whole_checkpoint() {
     let checkpoint = checkpoint_fixture();
-    let state = TurnState::from_checkpoint(checkpoint.clone(), &EngineConfig::default());
+    let state = TurnState::from_checkpoint(
+        checkpoint.clone(),
+        &EngineConfig::default(),
+        std::time::Instant::now(),
+    );
 
     assert_eq!(state.step(), checkpoint.step);
     assert_eq!(state.messages(), checkpoint.messages.as_slice());
@@ -111,7 +140,8 @@ fn a_resumed_turn_cannot_re_open_a_steer_the_checkpoint_says_it_spent() {
         "the count must survive the JSON, not just the struct"
     );
 
-    let state = TurnState::from_checkpoint(decoded, &EngineConfig::default());
+    let state =
+        TurnState::from_checkpoint(decoded, &EngineConfig::default(), std::time::Instant::now());
     assert_eq!(
         state.loop_steer.remaining(),
         0,
@@ -127,7 +157,8 @@ fn a_resumed_turn_cannot_re_open_a_steer_the_checkpoint_says_it_spent() {
         .remove("loop_steers_spent");
     let legacy = Checkpoint::from_json(&legacy.to_string()).expect("a v1 checkpoint still decodes");
     assert_eq!(legacy.loop_steers_spent, 0);
-    let restored = TurnState::from_checkpoint(legacy, &EngineConfig::default());
+    let restored =
+        TurnState::from_checkpoint(legacy, &EngineConfig::default(), std::time::Instant::now());
     assert_eq!(
         restored.loop_steer.spent(),
         1,
@@ -198,6 +229,7 @@ fn a_cancel_closes_every_open_tool_use_so_the_history_stays_reusable() {
         ],
         BudgetGuard::new(BudgetMode::Off, None, None),
         &EngineConfig::default(),
+        std::time::Instant::now(),
     );
     assert!(
         state.cancel_outcome(&events).is_none(),
@@ -239,7 +271,11 @@ fn closing_open_calls_is_a_no_op_on_a_well_paired_transcript() {
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let events = EventSender::new(tx);
     let checkpoint = checkpoint_fixture();
-    let mut state = TurnState::from_checkpoint(checkpoint, &EngineConfig::default());
+    let mut state = TurnState::from_checkpoint(
+        checkpoint,
+        &EngineConfig::default(),
+        std::time::Instant::now(),
+    );
     let before = state.messages().len();
     state.cancel_token().cancel();
     let _ = state.cancel_outcome(&events);
@@ -256,6 +292,7 @@ fn a_cloned_token_cancels_the_turn_it_came_from() {
         Vec::new(),
         BudgetGuard::new(BudgetMode::Off, None, None),
         &EngineConfig::default(),
+        std::time::Instant::now(),
     );
     let handed_off = state.cancel_token();
     assert!(!state.cancel.is_cancelled());
@@ -280,6 +317,7 @@ fn the_compaction_budget_is_latched_once_the_calibration_corrects() {
         Vec::new(),
         BudgetGuard::new(BudgetMode::Observed, None, None),
         &EngineConfig::default(),
+        std::time::Instant::now(),
     );
     state.calibration_model = Some("anthropic/claude-fable-5".to_string());
 
@@ -310,6 +348,7 @@ fn a_warming_calibrations_identity_is_served_live_never_captured() {
         Vec::new(),
         BudgetGuard::new(BudgetMode::Observed, None, None),
         &EngineConfig::default(),
+        std::time::Instant::now(),
     );
     state.calibration_model = Some("claude-fable-5".to_string());
 
@@ -346,6 +385,7 @@ fn nothing_is_latched_while_the_model_is_still_unknown() {
         Vec::new(),
         BudgetGuard::new(BudgetMode::Observed, None, None),
         &EngineConfig::default(),
+        std::time::Instant::now(),
     );
     assert!(state.calibration_model.is_none());
 
@@ -373,6 +413,7 @@ fn the_usage_anchor_survives_appends_and_dies_with_a_rewrite() {
         vec![CompletionMessage::system("sys")],
         BudgetGuard::new(BudgetMode::Observed, None, None),
         &EngineConfig::default(),
+        std::time::Instant::now(),
     );
     let latched = (150_000, 1.0);
     assert_eq!(
@@ -428,6 +469,7 @@ fn stub_completion_result() -> CompletionResult {
 async fn a_call_with_no_idle_bound_is_still_cut_by_the_task_deadline() {
     let progress = StreamProgress::default();
     let result = deadline_bounded_generation(
+        &RealTime,
         None,
         Some(std::time::Instant::now() + Duration::from_millis(30)),
         &progress,
@@ -463,6 +505,7 @@ async fn a_trickling_generation_under_a_generous_idle_bound_is_still_cut_by_the_
         Ok(stub_completion_result())
     };
     let result = deadline_bounded_generation(
+        &RealTime,
         Some(Duration::from_secs(10)),
         Some(std::time::Instant::now() + Duration::from_millis(30)),
         &progress,
@@ -489,6 +532,7 @@ async fn a_trickling_generation_under_a_generous_idle_bound_is_still_cut_by_the_
 async fn no_armed_deadline_leaves_the_idle_bound_as_the_only_cut() {
     let progress = StreamProgress::default();
     let result = deadline_bounded_generation(
+        &RealTime,
         Some(Duration::from_millis(20)),
         None,
         &progress,

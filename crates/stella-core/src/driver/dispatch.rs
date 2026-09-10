@@ -144,7 +144,7 @@ impl<'a> Engine<'a> {
             // than inside the futures below so a refusal lands before any
             // `ToolStart` fires, which is the shape `close_open_tool_calls`
             // established for a synthetic closure.
-            let now = std::time::Instant::now();
+            let now = self.sleeper.now();
             let mut admitted: Vec<(usize, &ToolCall)> = Vec::with_capacity(group_end - group_start);
             for (offset, call) in calls[group_start..group_end].iter().enumerate() {
                 let index = group_start + offset;
@@ -198,11 +198,12 @@ impl<'a> Engine<'a> {
                     match harvested {
                         Some(s) => (index, call, s.output, s.duration_ms, true),
                         None => {
-                            let started = std::time::Instant::now();
+                            let started = self.sleeper.now();
                             let output = self
                                 .execute_with_repair(call, read_only, Some(events))
                                 .await;
-                            let duration_ms = started.elapsed().as_millis() as u64;
+                            let duration_ms =
+                                self.sleeper.now().duration_since(started).as_millis() as u64;
                             (index, call, output, duration_ms, false)
                         }
                     }
@@ -455,6 +456,10 @@ mod tests {
         async fn sleep(&self, _duration_ms: u64) {}
 
         // The floor: a test that asserts on retry timing wants no spread in it.
+        fn now(&self) -> std::time::Instant {
+            std::time::Instant::now()
+        }
+
         fn jitter(&self, _upper: u64) -> u64 {
             0
         }
@@ -520,7 +525,7 @@ mod tests {
             turn_halt: Some(Arc::new(AfterFlag { flag })),
             ..EngineConfig::default()
         };
-        let mut state = TurnState::from_checkpoint(step_one(), &config);
+        let mut state = TurnState::from_checkpoint(step_one(), &config, std::time::Instant::now());
         let seams = TurnCapabilities::none();
         let engine = Engine::assemble(&provider, &tools, config, &NoopSleeper, seams);
         let (tx, mut rx) = mpsc::unbounded_channel();
@@ -575,7 +580,7 @@ mod tests {
         };
         let tools = FlagAndHang { flag, hang: false };
         let config = EngineConfig::default();
-        let mut state = TurnState::from_checkpoint(step_one(), &config);
+        let mut state = TurnState::from_checkpoint(step_one(), &config, std::time::Instant::now());
         let seams = TurnCapabilities::none();
         let engine = Engine::assemble(&provider, &tools, config, &NoopSleeper, seams);
         let (tx, mut rx) = mpsc::unbounded_channel();

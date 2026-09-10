@@ -13,7 +13,7 @@ use super::*;
 /// for the rest of the session. The report the parent *may* choose to append
 /// is bounded separately (see
 /// [`the_report_is_clamped_to_the_spec_cap_and_says_so`]).
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn the_parent_transcript_does_not_grow_by_the_childs_intermediate_work() {
     let parent_provider = ScriptedProvider::new(vec![]);
     // Four read steps, then an answer: 9 messages of child transcript.
@@ -30,7 +30,7 @@ async fn the_parent_transcript_does_not_grow_by_the_childs_intermediate_work() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &NoSleep,
+        &TokioSleeper,
         seams,
     );
 
@@ -122,7 +122,7 @@ impl crate::step::CheckpointSink for RecordingSink {
 /// reaching a terminal outcome retracts the parent's resume point outright — so
 /// a crash moments later would find either nothing to resume from, or a
 /// conversation belonging to a different agent.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_child_turn_never_writes_or_clears_the_parents_resume_point() {
     let parent_provider = ScriptedProvider::new(vec![]);
     // Two tool calls then an answer: the child crosses two step boundaries, so
@@ -139,7 +139,7 @@ async fn a_child_turn_never_writes_or_clears_the_parents_resume_point() {
         ..EngineConfig::default()
     };
     let seams = TurnCapabilities::none();
-    let parent = Engine::assemble(&parent_provider, &tools, config, &NoSleep, seams);
+    let parent = Engine::assemble(&parent_provider, &tools, config, &TokioSleeper, seams);
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, mut rx) = mpsc::unbounded_channel();
 
@@ -178,7 +178,7 @@ async fn a_child_turn_never_writes_or_clears_the_parents_resume_point() {
 
 // ---- context economy is a mechanism, not an intention -----------------
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn the_report_is_clamped_to_the_spec_cap_and_says_so() {
     let parent_provider = ScriptedProvider::new(vec![]);
     let child_provider = ScriptedProvider::new(vec![Ok(text_result(&"y".repeat(5_000), 0.001))]);
@@ -188,7 +188,7 @@ async fn the_report_is_clamped_to_the_spec_cap_and_says_so() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &NoSleep,
+        &TokioSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);

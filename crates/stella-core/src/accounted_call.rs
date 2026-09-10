@@ -1,13 +1,12 @@
 //! I/O-free one-shot provider accounting shared by non-engine callers.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use stella_protocol::{
     AgentEvent, CompletionRequest, CompletionResult, ModelCallRole, Provider, ProviderError,
     ToolCall, ToolCallObserver, UsageIncompleteReason,
 };
-use tokio::time::timeout;
 
 use crate::budget::{BudgetGuard, BudgetOutcome, DeadlineOutcome};
 use crate::event_sender::EventSender;
@@ -157,7 +156,7 @@ pub async fn run_accounted_call(
     events: &EventSender,
     sleeper: &dyn Sleeper,
 ) -> Result<CompletionResult, AccountedCallError> {
-    let started = Instant::now();
+    let started = sleeper.now();
     // The task's wall clock, checked BEFORE the dispatch (#2238). This seam is
     // between model calls by construction — an `AccountedCall` carries no
     // tools, so there is never anything in flight to interrupt — which makes
@@ -245,12 +244,12 @@ pub async fn run_accounted_call(
             let mut future = std::pin::pin!(future);
             let mut seen = progress.count();
             loop {
-                match timeout(limit, &mut future).await {
-                    Ok(Ok(outcome)) => break outcome,
-                    Ok(Err(error)) => {
+                match crate::retry::bounded(sleeper, limit, &mut future).await {
+                    Some(Ok(outcome)) => break outcome,
+                    Some(Err(error)) => {
                         return Err(AccountedCallError::Provider(error));
                     }
-                    Err(_) => {
+                    None => {
                         // The window elapsed with the call still unresolved.
                         // Whether that is the deadline this bound exists for
                         // depends on what arrived during it: any fragment at
@@ -271,7 +270,13 @@ pub async fn run_accounted_call(
                                 // so nothing was salvaged: the stream is
                                 // still open and its usage frame may yet
                                 // have been in flight.
-                                emit_incomplete(&call, events, started.elapsed(), None, None);
+                                emit_incomplete(
+                                    &call,
+                                    events,
+                                    sleeper.now().duration_since(started),
+                                    None,
+                                    None,
+                                );
                             }
                             return Err(AccountedCallError::Timeout);
                         }
@@ -353,7 +358,7 @@ pub async fn run_accounted_call(
         reasoning_tokens: result.usage.reasoning_tokens,
         estimated_input_tokens: call.estimated_input_tokens,
         cost_usd: result.cost_usd,
-        duration_ms: started.elapsed().as_millis() as u64,
+        duration_ms: sleeper.now().duration_since(started).as_millis() as u64,
         retries: outcome.retries.len() as u32,
         tool_calls: result.tool_calls.len(),
         complete: result.usage.is_complete(),
@@ -372,7 +377,7 @@ pub async fn run_accounted_call(
         task_id: None,
     });
     let budget_outcome = budget.record_spend(result.cost_usd);
-    let _ = events.send(budget.tick_event(Instant::now()));
+    let _ = events.send(budget.tick_event(sleeper.now()));
     if let BudgetOutcome::Warn {
         spent_usd,
         limit_usd,
@@ -455,6 +460,7 @@ mod tests {
     use stella_protocol::{BudgetMode, CompletionMessage, CompletionRequestRef, CompletionUsage};
 
     use super::*;
+    use std::time::Instant;
 
     struct NoopSleeper;
 
@@ -463,6 +469,10 @@ mod tests {
         async fn sleep(&self, _duration_ms: u64) {}
 
         // The floor: a test that asserts on retry timing wants no spread in it.
+        fn now(&self) -> std::time::Instant {
+            std::time::Instant::now()
+        }
+
         fn jitter(&self, _upper: u64) -> u64 {
             0
         }
@@ -984,6 +994,10 @@ mod tests {
 
         // The floor: the timeout under test is placed against the exact
         // backoff, so the draw must not move it.
+        fn now(&self) -> std::time::Instant {
+            std::time::Instant::now()
+        }
+
         fn jitter(&self, _upper: u64) -> u64 {
             0
         }
@@ -1156,7 +1170,7 @@ mod tests {
             },
             &mut budget,
             &EventSender::new(tx),
-            &NoopSleeper,
+            &TokioSleeper,
         )
         .await
         .expect("the trailing gap must not abandon a call that was actively answering");

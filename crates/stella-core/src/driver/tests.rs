@@ -13,12 +13,22 @@ use crate::TurnCapabilities;
 use crate::hooks::{HookAction, HookExecError, HookExecResult, HookMatcher};
 use crate::retry::Sleeper;
 
-/// A `Sleeper` that records but never actually waits.
+/// A `Sleeper` on tokio's clock, which every test here runs paused: a sleep
+/// costs nothing while the runtime is idle and still lets a pending call
+/// finish first, and `now` reads the same virtual timeline. A sleeper that
+/// returned at once would make every engine timeout fire the moment a
+/// provider future waited on another task, which is not what a timeout is.
 #[derive(Default)]
-struct NoopSleeper;
+struct TokioSleeper;
 #[async_trait]
-impl Sleeper for NoopSleeper {
-    async fn sleep(&self, _duration_ms: u64) {}
+impl Sleeper for TokioSleeper {
+    async fn sleep(&self, duration_ms: u64) {
+        tokio::time::sleep(std::time::Duration::from_millis(duration_ms)).await;
+    }
+
+    fn now(&self) -> std::time::Instant {
+        tokio::time::Instant::now().into_std()
+    }
 
     // The floor: a test that asserts on retry timing wants no spread in it.
     fn jitter(&self, _upper: u64) -> u64 {
@@ -242,7 +252,7 @@ async fn run_speculation_turn(
     provider: &SpeculatingProvider,
     tools: &dyn ToolExecutor,
 ) -> (TurnOutcome, Vec<AgentEvent>) {
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(provider, tools, EngineConfig::default(), &sleeper, seams);
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -257,7 +267,7 @@ async fn run_speculation_turn(
     (outcome, drain_events(&mut rx))
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn read_only_calls_execute_during_the_stream_and_are_harvested_not_rerun() {
     let executed = Arc::new(tokio::sync::Notify::new());
     let calls = Arc::new(AtomicU32::new(0));
@@ -299,7 +309,7 @@ async fn read_only_calls_execute_during_the_stream_and_are_harvested_not_rerun()
 /// out of speculation, with no hook attached. Its announced call must not
 /// run during the stream — it executes exactly once, at dispatch, so a
 /// retried attempt could never have billed it twice.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_read_only_but_speculation_unsafe_call_runs_once_at_dispatch() {
     let executed = Arc::new(tokio::sync::Notify::new());
     let calls = Arc::new(AtomicU32::new(0));
@@ -344,7 +354,7 @@ async fn a_read_only_but_speculation_unsafe_call_runs_once_at_dispatch() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_divergent_committed_call_is_re_executed_not_harvested() {
     let executed = Arc::new(tokio::sync::Notify::new());
     let calls = Arc::new(AtomicU32::new(0));
@@ -378,7 +388,7 @@ async fn a_divergent_committed_call_is_re_executed_not_harvested() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_divergent_committed_call_emits_a_harvest_mismatch_discard() {
     // The announced read (a.rs) is speculated and runs real I/O; the
     // committed call (b.rs) diverges, so the pooled result is rejected at
@@ -416,7 +426,7 @@ async fn a_divergent_committed_call_emits_a_harvest_mismatch_discard() {
 /// already executed would drop silently on the abort unwind; it must instead
 /// emit `SpeculationDiscarded(budget_abort)` so #370's accounting holds on the
 /// abort path too. Witness: this event is absent before the fix.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn budget_abort_after_speculation_discards_the_pool() {
     let executed = Arc::new(tokio::sync::Notify::new());
     let calls = Arc::new(AtomicU32::new(0));
@@ -434,7 +444,7 @@ async fn budget_abort_after_speculation_discards_the_pool() {
         executed,
     };
 
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -528,7 +538,7 @@ impl Provider for FlakySpeculatingProvider {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_failed_attempts_speculative_pool_emits_discarded_events() {
     // No hooks: the read IS speculated, so the failed first attempt runs it
     // for real (the wait returns the moment it does) and then drops the
@@ -547,7 +557,7 @@ async fn a_failed_attempts_speculative_pool_emits_discarded_events() {
         calls: calls.clone(),
         executed,
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![CompletionMessage::user("read a.rs")];
@@ -601,13 +611,13 @@ impl Provider for StreamingTextProvider {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn text_deltas_precede_the_authoritative_text_and_concatenate_to_it() {
     let provider = StreamingTextProvider;
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -648,7 +658,7 @@ async fn text_deltas_precede_the_authoritative_text_and_concatenate_to_it() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn mutating_calls_are_never_speculated() {
     let executed = Arc::new(tokio::sync::Notify::new());
     let calls = Arc::new(AtomicU32::new(0));
@@ -718,7 +728,7 @@ impl Provider for WedgedProvider {
 /// The call count is the required assertion. A deadline that tripped as
 /// `Transport` would be retried and this would read 4, multiplying the very
 /// window the deadline exists to close.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_wedged_generation_trips_the_deadline_once_instead_of_burning_the_retry_budget() {
     let calls = Arc::new(AtomicU32::new(0));
     let provider = WedgedProvider {
@@ -727,7 +737,7 @@ async fn a_wedged_generation_trips_the_deadline_once_instead_of_burning_the_retr
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let config = EngineConfig {
         model_timeout: Some(Duration::from_millis(50)),
         ..EngineConfig::default()
@@ -758,7 +768,7 @@ async fn a_wedged_generation_trips_the_deadline_once_instead_of_burning_the_retr
     drain_events(&mut rx);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn simple_turn_with_no_tool_calls_completes() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -768,7 +778,7 @@ async fn simple_turn_with_no_tool_calls_completes() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -822,7 +832,7 @@ impl crate::driver::TurnHalt for NeverHalt {
 /// `Aborted` is the arm that matters here. It reaches the CLI as a non-zero
 /// exit, which Harbor scores identically to the agent crashing — so a turn
 /// that stopped BECAUSE it succeeded must not take that exit.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_halt_ends_the_turn_at_the_next_step_boundary_as_completed() {
     // Three tool-calling steps queued. Without a halt this turn runs all
     // three; with one it must stop after the first.
@@ -838,7 +848,7 @@ async fn a_halt_ends_the_turn_at_the_next_step_boundary_as_completed() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let config = EngineConfig {
         turn_halt: Some(Arc::new(AlwaysHalt)),
         ..EngineConfig::default()
@@ -872,7 +882,7 @@ async fn a_halt_ends_the_turn_at_the_next_step_boundary_as_completed() {
 /// The control: the same script with a halt that never fires runs to its
 /// scripted end. Without this, the test above would also pass if the seam
 /// simply broke every turn after one step.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_halt_that_never_fires_leaves_the_turn_exactly_as_it_was() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -886,7 +896,7 @@ async fn a_halt_that_never_fires_leaves_the_turn_exactly_as_it_was() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let config = EngineConfig {
         turn_halt: Some(Arc::new(NeverHalt)),
         ..EngineConfig::default()
@@ -975,7 +985,7 @@ impl crate::ports::TurnSteering for TestSteering {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn steered_messages_inject_before_the_next_model_call() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -985,7 +995,7 @@ async fn steered_messages_inject_before_the_next_model_call() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let steering = TestSteering {
         queue: std::sync::Mutex::new(vec!["also check the tests".into()]),
         stop_after_drains: None,
@@ -1028,7 +1038,7 @@ async fn steered_messages_inject_before_the_next_model_call() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn soft_stop_ends_the_turn_keeping_completed_steps() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -1043,7 +1053,7 @@ async fn soft_stop_ends_the_turn_keeping_completed_steps() {
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     // Stop latches after the first boundary: step 0 runs fully (model
     // call + tool), step 1's boundary honors the stop.
     let steering = TestSteering {
@@ -1077,7 +1087,7 @@ async fn soft_stop_ends_the_turn_keeping_completed_steps() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn overflow_of_protected_content_is_summarized_and_metered() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -1090,7 +1100,7 @@ async fn overflow_of_protected_content_is_summarized_and_metered() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     let mut messages = vec![
@@ -1144,7 +1154,7 @@ async fn overflow_of_protected_content_is_summarized_and_metered() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn summarization_disabled_leaves_history_untouched() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -1155,7 +1165,7 @@ async fn summarization_disabled_leaves_history_untouched() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let config = EngineConfig {
         summarize_overflow: false,
         ..overflow_config()
@@ -1182,7 +1192,7 @@ async fn summarization_disabled_leaves_history_untouched() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn summarizer_failure_is_non_fatal_and_leaves_history() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -1195,7 +1205,7 @@ async fn summarizer_failure_is_non_fatal_and_leaves_history() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     let mut messages = vec![
@@ -1221,7 +1231,7 @@ async fn summarizer_failure_is_non_fatal_and_leaves_history() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn summarization_never_orphans_tool_results_at_the_span_edge() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -1234,7 +1244,7 @@ async fn summarization_never_orphans_tool_results_at_the_span_edge() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     // The naive span end (len - keep_recent) lands ON the tool-result
@@ -1305,7 +1315,7 @@ fn empty_result(finish_reason: Option<FinishReason>) -> CompletionResultAlias {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn empty_completion_aborts_with_a_visible_message_not_a_silent_success() {
     // A turn that yields no text AND no tool calls — e.g. the model spent
     // its whole output budget on reasoning and was cut off at
@@ -1320,7 +1330,7 @@ async fn empty_completion_aborts_with_a_visible_message_not_a_silent_success() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -1349,7 +1359,7 @@ async fn empty_completion_aborts_with_a_visible_message_not_a_silent_success() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_step_out_of_time_completes_with_a_truthful_partial_instead_of_aborting() {
     // The same empty length-truncated shape as the test above, and the opposite
     // ending, because the reason for stopping is opposite: above, the model
@@ -1371,7 +1381,7 @@ async fn a_step_out_of_time_completes_with_a_truthful_partial_instead_of_abortin
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(
         &provider,
@@ -1444,7 +1454,7 @@ fn length_text_result(text: &str) -> CompletionResultAlias {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_length_truncated_tool_less_step_continues_the_turn_instead_of_completing() {
     // Step 0 is cut off at the output limit mid-"reasoning" with no tool
     // call. That is not a finished turn: the engine must record the partial,
@@ -1465,7 +1475,7 @@ async fn a_length_truncated_tool_less_step_continues_the_turn_instead_of_complet
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -1509,7 +1519,7 @@ async fn a_length_truncated_tool_less_step_continues_the_turn_instead_of_complet
     assert_tool_pairing(&messages);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn length_continuations_are_bounded_per_turn() {
     // The model truncates tool-less on EVERY step (the scripted provider
     // loops its last entry). The engine spends its whole continuation
@@ -1525,7 +1535,7 @@ async fn length_continuations_are_bounded_per_turn() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -1568,7 +1578,7 @@ async fn length_continuations_are_bounded_per_turn() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn tool_calls_execute_and_feed_back_into_history() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -1582,7 +1592,7 @@ async fn tool_calls_execute_and_feed_back_into_history() {
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -1615,7 +1625,7 @@ async fn tool_calls_execute_and_feed_back_into_history() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn retry_never_re_executes_a_tool_call() {
     // Property: a step's tool call is executed exactly once, even when
     // the model call surrounding it needed retries elsewhere in the
@@ -1635,7 +1645,7 @@ async fn retry_never_re_executes_a_tool_call() {
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -1670,7 +1680,7 @@ async fn retry_never_re_executes_a_tool_call() {
     assert_eq!(retry_events, 2);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn malformed_tool_call_input_is_repaired_not_executed_blindly() {
     let mut malformed_call = tool_call_result("call_1", "bash");
     malformed_call.tool_calls[0].input = Value::Null;
@@ -1683,7 +1693,7 @@ async fn malformed_tool_call_input_is_repaired_not_executed_blindly() {
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -1711,7 +1721,7 @@ async fn malformed_tool_call_input_is_repaired_not_executed_blindly() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn stuck_loop_aborts_the_turn_cleanly_before_the_step_cap() {
     // Every call returns the identical tool call and the tool answers with
     // identical output — well past the default exact-repeat threshold (3)
@@ -1727,7 +1737,7 @@ async fn stuck_loop_aborts_the_turn_cleanly_before_the_step_cap() {
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -1749,7 +1759,7 @@ async fn stuck_loop_aborts_the_turn_cleanly_before_the_step_cap() {
     assert!(events.iter().any(|e| matches!(e, AgentEvent::Error { .. })));
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn stuck_loop_steers_once_then_aborts_on_re_detection() {
     // The exact steer-then-abort sequencing: three identical no-progress
     // calls earn a steering warning, the model ignores it with a fourth
@@ -1766,7 +1776,7 @@ async fn stuck_loop_steers_once_then_aborts_on_re_detection() {
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -1870,7 +1880,7 @@ impl ToolExecutor for PollingTools {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn identical_polls_with_changing_output_complete_without_abort() {
     // Six byte-identical calls (same name, same input, no cursor field) —
     // but every poll returns new output. That is visible progress, not a
@@ -1888,7 +1898,7 @@ async fn identical_polls_with_changing_output_complete_without_abort() {
     let tools = PollingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -1913,7 +1923,7 @@ async fn identical_polls_with_changing_output_complete_without_abort() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn period_three_cycle_with_no_progress_steers_then_aborts() {
     // The common real stuck signature: read → failing edit → failing test,
     // with byte-identical outputs every cycle — invisible to exact-repeat
@@ -1950,7 +1960,7 @@ async fn period_three_cycle_with_no_progress_steers_then_aborts() {
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let config = EngineConfig {
         loop_detection: LoopDetectionConfig {
             exact_repeat_threshold: 3,
@@ -1994,7 +2004,7 @@ async fn period_three_cycle_with_no_progress_steers_then_aborts() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn enforced_budget_aborts_the_turn_cleanly_between_steps() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -2004,7 +2014,7 @@ async fn enforced_budget_aborts_the_turn_cleanly_between_steps() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -2131,10 +2141,10 @@ async fn run_synthetic_survival_turn(dialect: &str, id_style: fn(u32) -> String)
         }
     }
     let tools = GrowingTools;
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let config = EngineConfig {
         // Keep the retry backoff floor at 0 so 200 steps with injected
-        // 429s/drops still runs near-instantly under NoopSleeper.
+        // 429s/drops still runs near-instantly under TokioSleeper.
         retry_policy: RetryPolicy::new(3, 0, 0),
         // A tight-ish compaction budget so the growing tool output
         // actually forces multiple compaction passes over 200 steps.
@@ -2153,7 +2163,7 @@ async fn run_synthetic_survival_turn(dialect: &str, id_style: fn(u32) -> String)
     engine.run_turn(&mut messages, &mut budget, &tx).await
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn synthetic_200_step_turn_survives_glm_shape() {
     let outcome = run_synthetic_survival_turn("glm", |i| format!("call_{i}")).await;
     assert!(
@@ -2162,7 +2172,7 @@ async fn synthetic_200_step_turn_survives_glm_shape() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn synthetic_200_step_turn_survives_anthropic_shape() {
     // Anthropic's tool_use ids are its own `toolu_...` convention —
     // varying the id shape alone is enough to prove the driver never
@@ -2174,7 +2184,7 @@ async fn synthetic_200_step_turn_survives_anthropic_shape() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn synthetic_200_step_turn_survives_openai_shape() {
     let outcome = run_synthetic_survival_turn("openai", |i| format!("call_{i:016x}")).await;
     assert!(
@@ -2237,7 +2247,7 @@ impl ToolExecutor for BarrierTools {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn read_only_calls_in_one_step_execute_concurrently() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -2253,7 +2263,7 @@ async fn read_only_calls_in_one_step_execute_concurrently() {
     let tools = BarrierTools {
         barrier: tokio::sync::Barrier::new(2),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -2330,7 +2340,7 @@ impl ToolExecutor for RecordingTools {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn mutating_calls_are_barriers_and_history_keeps_call_order() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -2351,7 +2361,7 @@ async fn mutating_calls_are_barriers_and_history_keeps_call_order() {
         read1_started: tokio::sync::Notify::new(),
         read2_done: tokio::sync::Notify::new(),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -2420,7 +2430,7 @@ async fn mutating_calls_are_barriers_and_history_keeps_call_order() {
 
 // ---- StepUsage telemetry ----------------------------------------------
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn every_committed_step_emits_exactly_one_step_usage_record() {
     let with_usage = |text: &str, calls: &[(&str, &str)]| {
         let mut result = if calls.is_empty() {
@@ -2454,7 +2464,7 @@ async fn every_committed_step_emits_exactly_one_step_usage_record() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -2545,7 +2555,7 @@ async fn a_wedged_tool_trips_the_dispatch_ceiling_instead_of_hanging() {
         ]),
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let config = EngineConfig {
         tool_timeout: Some(Duration::from_secs(900)),
         ..EngineConfig::default()
@@ -2601,7 +2611,7 @@ async fn a_none_ceiling_leaves_tool_dispatch_unbounded() {
         ]),
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let config = EngineConfig {
         tool_timeout: None,
         ..EngineConfig::default()
@@ -2669,7 +2679,7 @@ impl crate::step::CheckpointSink for RecordingSink {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_turn_checkpoints_at_every_step_boundary_and_clears_when_it_ends() {
     // The durability contract in one test. Script: a tool call (step 0
     // continues) then text (step 1 completes), so the turn crosses exactly
@@ -2694,7 +2704,7 @@ async fn a_turn_checkpoints_at_every_step_boundary_and_clears_when_it_ends() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let sink = Arc::new(RecordingSink::default());
     let config = EngineConfig {
         checkpoint_sink: Some(sink.clone() as Arc<dyn crate::step::CheckpointSink>),
@@ -2743,7 +2753,7 @@ async fn a_turn_checkpoints_at_every_step_boundary_and_clears_when_it_ends() {
     drain_events(&mut rx);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_turn_without_a_sink_is_unchanged() {
     // The default config attaches no sink, and that path must stay entirely
     // free of checkpoint work — this is what keeps durability opt-in for
@@ -2756,7 +2766,7 @@ async fn a_turn_without_a_sink_is_unchanged() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     assert!(
         EngineConfig::default().checkpoint_sink.is_none(),
         "durability is opt-in: a default engine writes no checkpoints"

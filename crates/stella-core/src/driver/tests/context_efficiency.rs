@@ -33,7 +33,7 @@ impl ToolExecutor for BigOutputTools {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_long_turn_ages_old_tool_results_far_below_the_compaction_budget() {
     // The #1285 step-loop witness. Thirteen tool-bearing steps at ~5 KB each
     // is ~16k estimated tokens, so before the retention pass the step loop
@@ -59,7 +59,7 @@ async fn a_long_turn_ages_old_tool_results_far_below_the_compaction_budget() {
     let tools = BigOutputTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let config = EngineConfig {
         compaction_budget_tokens: 20_000,
         ..EngineConfig::default()
@@ -129,7 +129,7 @@ fn huge_partial() -> String {
     )
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_spent_allowance_retains_an_elided_partial_not_the_scratchpad() {
     // Post-mortem §3.3 lever 2, the terminal half. The continuation path
     // already elides what it retains; the path that ENDS the turn after the
@@ -147,7 +147,7 @@ async fn a_spent_allowance_retains_an_elided_partial_not_the_scratchpad() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -186,7 +186,7 @@ async fn a_spent_allowance_retains_an_elided_partial_not_the_scratchpad() {
     drain_events(&mut rx);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_truncated_step_with_tool_calls_retains_elided_narration() {
     // The other residual hole: a step cut at the output limit that still
     // carried a tool call proceeds normally — and used to retain its whole
@@ -213,7 +213,7 @@ async fn a_truncated_step_with_tool_calls_retains_elided_narration() {
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![

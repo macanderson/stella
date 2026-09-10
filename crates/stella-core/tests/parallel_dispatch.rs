@@ -33,12 +33,22 @@ use stella_protocol::{
 };
 use tokio::sync::mpsc;
 
-struct NoopSleeper;
+/// A `Sleeper` on tokio's clock. The engine's tool timeout is this sleep racing
+/// the dispatch, and the barrier test below needs a parked tool to stay
+/// parked: a sleeper that returned at once would time it out on the first
+/// poll and hand the test a completion it must not see.
+struct TokioSleeper;
 #[async_trait]
-impl Sleeper for NoopSleeper {
-    async fn sleep(&self, _duration_ms: u64) {}
+impl Sleeper for TokioSleeper {
+    async fn sleep(&self, duration_ms: u64) {
+        tokio::time::sleep(std::time::Duration::from_millis(duration_ms)).await;
+    }
 
     // The floor: a test that asserts on retry timing wants no spread in it.
+    fn now(&self) -> std::time::Instant {
+        std::time::Instant::now()
+    }
+
     fn jitter(&self, _upper: u64) -> u64 {
         0
     }
@@ -130,7 +140,7 @@ async fn sibling_delegate_calls_in_one_step_execute_concurrently() {
     let tools = BarrierSpawns {
         barrier: tokio::sync::Barrier::new(2),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -241,7 +251,7 @@ async fn a_mutating_call_between_spawns_keeps_its_barrier() {
     let tools = BarrierSpawnsAndEdit {
         barrier: tokio::sync::Barrier::new(2),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![

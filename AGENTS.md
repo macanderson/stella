@@ -130,8 +130,8 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + core-reachability (a stella-core module is
                          #     reachable from the engine's step path; down-only)
                          #   + core-no-io (no shipping stella-core source or
-                         #     dependency names an I/O surface; Instant::now()
-                         #     reads are a down-only count)
+                         #     dependency names an I/O surface, a timer or a
+                         #     clock; Instant::now() is a down-only count, at 0)
                          #   + typed-errors
                          #   + tool-error-class (#3167 unclassified-ToolOutput::error ratchet)
                          #   + dead-code-allows
@@ -947,16 +947,19 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
    directories and `tests.rs` files stripped — and its `[dependencies]`.
    Three questions. A **floor**: no line names the filesystem, a process,
    the network, the environment, a standard stream, the wall clock
-   (`SystemTime::now`), a sleep, an entropy source, or a print macro, and
-   no dependency is an I/O or entropy crate (`tokio` may take only
-   `sync`, `time`, `macros` and `rt`). There is no baseline for the floor:
-   the tree has none and gains none. A **ratchet**: `Instant::now()` reads
-   are counted per file in `scripts/core-no-io-baseline.txt`, down-only,
-   because the monotonic clock is ambient state a replay cannot reproduce
-   even though it is not I/O; `make core-no-io-update` refuses to add a
-   file or raise a count, so a red run is cleared by reading the clock once
-   at the edge and passing `now` in, or by taking `ports::Clock`. The
-   guard was written on 2026-09-09 over two breaches this rule had
+   (`SystemTime::now`), a thread sleep, tokio's timer, a hidden clock read
+   (`.elapsed()`), an entropy source, or a print macro, and no dependency
+   is an I/O or entropy crate (`tokio` may take only `sync`, `macros` and
+   `rt` — not `time`). There is no baseline for the floor: the tree has
+   none and gains none. A **ratchet**: `Instant::now()` reads are counted
+   per file in `scripts/core-no-io-baseline.txt`, down-only, because the
+   monotonic clock is ambient state a replay cannot reproduce even though
+   it is not I/O. The count reached zero on 2026-09-10 and
+   `make core-no-io-update` refuses to add a file or raise it, so any read
+   fails. The engine's time comes through one port, `retry::Sleeper`: `now`
+   for every deadline and every elapsed time, `sleep` for every wait, and
+   `retry::bounded` — the port's sleep racing a call — for every timeout.
+   The guard was written on 2026-09-09 over two breaches this rule had
    carried unread: the retry ladder drew its jitter from `rand::rng()`, and
    the hook bus stamped every event from `SystemTime::now()`, while each
    file's header said the crate reads nothing directly. Both take a port

@@ -29,12 +29,23 @@ use stella_protocol::{
     MessageRole, Provider, ProviderError, ToolCall, ToolOutput, ToolSchema,
 };
 
-struct NoopSleeper;
+/// A `Sleeper` on tokio's clock. The tool below hangs for an hour, and the
+/// engine's tool timeout is that same clock racing it: a sleeper that
+/// returned at once would time the tool out on its first poll and the turn
+/// this test drops mid-tool would already be over.
+struct TokioSleeper;
 #[async_trait]
-impl Sleeper for NoopSleeper {
-    async fn sleep(&self, _duration_ms: u64) {}
+impl Sleeper for TokioSleeper {
+    async fn sleep(&self, duration_ms: u64) {
+        tokio::time::sleep(Duration::from_millis(duration_ms)).await;
+    }
+
+    fn now(&self) -> std::time::Instant {
+        std::time::Instant::now()
+    }
 
     // The floor: a test that asserts on retry timing wants no spread in it.
+
     fn jitter(&self, _upper: u64) -> u64 {
         0
     }
@@ -97,7 +108,7 @@ impl ToolExecutor for WedgedTool {
 async fn dropping_a_turn_mid_tool_still_leaves_the_partial_history_with_the_caller() {
     let provider = AlwaysCallsATool;
     let tools = WedgedTool;
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
 

@@ -16,7 +16,7 @@ use super::*;
 /// Fails before #3380: `HookDecision::Deny` carried only a `String`, so serde
 /// dropped the whole `evidence` object as an unknown key and neither consumer
 /// could have seen a witness, a command, a flip or a digest.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_structured_stop_denial_reaches_the_model_and_the_journal_intact() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -29,7 +29,7 @@ async fn a_structured_stop_denial_reaches_the_model_and_the_journal_intact() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let runner = ScriptedHookRunner {
         stdouts: TokioMutex::new(vec![
             r#"{"action":"deny","reason":"the witness is still red",
@@ -110,7 +110,7 @@ async fn a_structured_stop_denial_reaches_the_model_and_the_journal_intact() {
 /// A prose-only denial — every pre-#3380 hook — renders exactly as it always
 /// did, and its journal payload states that this hook does not verify rather
 /// than inventing an empty evidence object.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_prose_only_stop_denial_grows_no_evidence_section() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -123,7 +123,7 @@ async fn a_prose_only_stop_denial_grows_no_evidence_section() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let runner = ScriptedHookRunner {
         stdouts: TokioMutex::new(vec![
             r#"{"action":"deny","reason":"the checklist is not done"}"#.into(),
@@ -169,7 +169,7 @@ async fn a_prose_only_stop_denial_grows_no_evidence_section() {
 ///
 /// Fails before #3380: nothing read a bound, so the turn completed on the
 /// fourth answer whatever the host asked for.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_host_supplied_hold_allowance_buys_more_rounds_than_the_default() {
     let held = run_always_denying_stop_gate(Some(5), 6).await;
     assert_eq!(
@@ -183,7 +183,7 @@ async fn a_host_supplied_hold_allowance_buys_more_rounds_than_the_default() {
 /// [`STOP_HOLD_CEILING`](crate::driver::STOP_HOLD_CEILING) rather than
 /// honoured, so no manifest can buy an unbounded deny → revise → re-check
 /// loop.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_hold_allowance_above_the_ceiling_is_clamped_not_honoured() {
     let ceiling = crate::driver::STOP_HOLD_CEILING;
     let held = run_always_denying_stop_gate(Some(1_000), ceiling as usize + 1).await;
@@ -209,7 +209,7 @@ async fn run_always_denying_stop_gate(allowance: Option<u32>, answers: usize) ->
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let runner = RecordingHookRunner {
         exit_code: 0,
         stdout: r#"{"action":"deny","reason":"not yet"}"#.into(),

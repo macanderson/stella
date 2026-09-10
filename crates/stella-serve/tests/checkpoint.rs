@@ -299,6 +299,7 @@ async fn a_served_resume_point_reconstitutes_the_turn_it_came_from() {
     let resumed = stella_engine::TurnState::from_checkpoint(
         stella_engine::decode_checkpoint(&body).expect("the wire body decodes as a Checkpoint"),
         &stella_engine::EngineConfig::default(),
+        std::time::Instant::now(),
     );
 
     assert_eq!(

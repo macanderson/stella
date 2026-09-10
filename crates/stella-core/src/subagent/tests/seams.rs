@@ -19,7 +19,7 @@ impl TurnSteering for SpySteering {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_child_honors_the_soft_stop_but_never_eats_the_parents_steering() {
     let parent_provider = ScriptedProvider::new(vec![]);
     let child_provider = ScriptedProvider::new(vec![Ok(text_result("hi", 0.01))]);
@@ -36,7 +36,7 @@ async fn a_child_honors_the_soft_stop_but_never_eats_the_parents_steering() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &NoSleep,
+        &TokioSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
@@ -91,7 +91,7 @@ impl TurnGate for CountingGate {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_child_polls_the_parents_pause_gate() {
     // `assess` dropped the gate when it hand-rolled a verifier engine, so a
     // paused session kept spending inside the verifier. Inheritance here is
@@ -111,7 +111,7 @@ async fn a_child_polls_the_parents_pause_gate() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &NoSleep,
+        &TokioSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
@@ -138,7 +138,7 @@ async fn a_child_polls_the_parents_pause_gate() {
 /// sub-agent dispatcher can give a child the seams of the turn that asked for
 /// it. This pins the two properties that make it safe to call blindly at
 /// dispatch time.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn owned_turn_controls_stop_a_child_without_clobbering_an_attached_gate() {
     let parent_provider = ScriptedProvider::new(vec![]);
     let child_provider = ScriptedProvider::new(vec![Ok(text_result("hi", 0.01))]);
@@ -161,7 +161,7 @@ async fn owned_turn_controls_stop_a_child_without_clobbering_an_attached_gate() 
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &NoSleep,
+        &TokioSleeper,
         seams,
     )
     .with_turn_controls(&controls);
@@ -216,8 +216,14 @@ fn turn_controls_carrying_both_seams_give_a_child_both() {
     assert!(!both.is_empty());
 
     let seams = TurnCapabilities::none();
-    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &NoSleep, seams)
-        .with_turn_controls(&both);
+    let engine = Engine::assemble(
+        &provider,
+        &tools,
+        EngineConfig::default(),
+        &TokioSleeper,
+        seams,
+    )
+    .with_turn_controls(&both);
 
     assert!(engine.gate.is_some(), "the pause must survive the steering");
     assert!(
@@ -237,8 +243,14 @@ fn empty_turn_controls_leave_an_engine_exactly_as_it_was() {
         gate: Some(&gate),
         ..TurnCapabilities::none()
     };
-    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &NoSleep, seams)
-        .with_turn_controls(&nothing);
+    let engine = Engine::assemble(
+        &provider,
+        &tools,
+        EngineConfig::default(),
+        &TokioSleeper,
+        seams,
+    )
+    .with_turn_controls(&nothing);
 
     assert!(
         engine.gate.is_some(),
@@ -287,7 +299,7 @@ fn attribution_with_no_bus_is_a_no_op() {
 
 // ---- receipts ---------------------------------------------------------
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn the_child_claims_its_own_receipt_turn_slot() {
     // Receipts key on (execution_id, turn_instance, step, call_seq) and every
     // turn restarts step at 0, so a child sharing the parent's slot would
@@ -301,7 +313,7 @@ async fn the_child_claims_its_own_receipt_turn_slot() {
         ..EngineConfig::default()
     };
     let seams = TurnCapabilities::none();
-    let parent = Engine::assemble(&parent_provider, &tools, config, &NoSleep, seams);
+    let parent = Engine::assemble(&parent_provider, &tools, config, &TokioSleeper, seams);
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, mut rx) = mpsc::unbounded_channel();
 
@@ -358,7 +370,7 @@ impl HookRunner for RecordingHookRunner {
 /// on the parent fires around the child's turn. It carries the child's id
 /// and, for `Stop`, its outcome. It never blocks the child, even when the
 /// hook itself fails with a non-zero exit.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn subagent_start_and_stop_hooks_fire_around_a_child_turn() {
     let parent_provider = ScriptedProvider::new(vec![]);
     let child_provider = ScriptedProvider::new(vec![Ok(text_result("done", 0.01))]);
@@ -386,7 +398,7 @@ async fn subagent_start_and_stop_hooks_fire_around_a_child_turn() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &NoSleep,
+        &TokioSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
@@ -449,7 +461,7 @@ async fn subagent_start_and_stop_hooks_fire_around_a_child_turn() {
 /// The bus is attached to the PARENT, and the child inherits it — which is
 /// why one turn opens on it here rather than two: this parent never drives a
 /// turn of its own.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_forked_child_stamps_the_subagent_fork_lane() {
     let bus = HookBus::new("fork-lane-test", crate::ports::FixedClock(0));
     let seen: std::sync::Arc<Mutex<Vec<serde_json::Value>>> =
@@ -472,7 +484,7 @@ async fn a_forked_child_stamps_the_subagent_fork_lane() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &NoSleep,
+        &TokioSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);

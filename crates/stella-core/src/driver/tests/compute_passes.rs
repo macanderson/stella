@@ -24,7 +24,7 @@ use std::collections::HashMap;
 /// before every model call. The remaining two are the honest ones — compaction
 /// must measure before deciding, and the step must know its input size — and this
 /// asserts the count so a future refactor cannot quietly reintroduce a third.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_step_walks_the_transcript_to_estimate_it_at_most_twice() {
     const STEPS: usize = 3;
     let provider = ScriptedProvider {
@@ -39,7 +39,7 @@ async fn a_step_walks_the_transcript_to_estimate_it_at_most_twice() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -81,7 +81,7 @@ async fn a_step_walks_the_transcript_to_estimate_it_at_most_twice() {
 /// re-derives the manifest's estimate from something else (post-compaction
 /// messages, a calibrated figure) would silently desynchronize the pair that
 /// `StepUsage`'s drift sampling compares.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn the_receipt_and_the_usage_record_report_one_estimate_per_step() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
@@ -94,7 +94,7 @@ async fn the_receipt_and_the_usage_record_report_one_estimate_per_step() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -152,7 +152,7 @@ async fn the_receipt_and_the_usage_record_report_one_estimate_per_step() {
 /// A block's bytes do not change unless something rewrites them, so the memo
 /// makes the total linear. This asserts the SHAPE rather than a magic number:
 /// doubling the steps must not come close to quadrupling the hashing.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn per_step_hashing_grows_with_the_turn_not_with_its_square() {
     async fn hashes_for(steps: usize) -> usize {
         let mut script: Vec<_> = (0..steps)
@@ -197,7 +197,7 @@ async fn per_step_hashing_grows_with_the_turn_not_with_its_square() {
             }
         }
         let tools = EchoingTools;
-        let sleeper = NoopSleeper;
+        let sleeper = TokioSleeper;
         let seams = TurnCapabilities::none();
         let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
         let mut messages = vec![
@@ -239,7 +239,7 @@ async fn per_step_hashing_grows_with_the_turn_not_with_its_square() {
 /// rewrite one result, declare the new revision, emit again, and the manifest must
 /// name the new bytes. Disabling the invalidation makes this fail — the second
 /// manifest keeps citing the pre-rewrite id.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_rewritten_block_is_never_served_from_the_digest_memo() {
     use crate::receipts::{ReceiptLedger, ServedBy, TranscriptRevision};
     use stella_protocol::{ToolOutput, ToolResult};
@@ -366,7 +366,7 @@ impl ToolExecutor for BigOutputTools {
 /// A `Compaction` event names the blocks it stubbed (`evicted_blocks`, captured
 /// BEFORE mutation). Once those bytes are the eviction stub, no later manifest can
 /// still be citing their original ids — if one does, the memo outlived them.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn compaction_mid_turn_invalidates_the_receipt_ledgers_digest_memo() {
     let mut script: Vec<_> = (0..5)
         .map(|i| {
@@ -384,7 +384,7 @@ async fn compaction_mid_turn_invalidates_the_receipt_ledgers_digest_memo() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let tools = BigOutputTools { filler: 4_000 };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let config = EngineConfig {
         // Small enough that a couple of 4 KB results blow it, and no summarizer so
         // the rewrite comes purely from eviction/aging.
@@ -456,7 +456,7 @@ async fn compaction_mid_turn_invalidates_the_receipt_ledgers_digest_memo() {
     assert!(checked > 0, "manifests must cite blocks");
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_compaction_pass_journals_the_replacement_bytes_it_wrote() {
     // The wiring witness for #1667, on the same fixture as the memo test
     // above: the driver must forward the pass's replacement records onto the
@@ -481,7 +481,7 @@ async fn a_compaction_pass_journals_the_replacement_bytes_it_wrote() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let tools = BigOutputTools { filler: 4_000 };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let config = EngineConfig {
         compaction_budget_tokens: 800,
         summarize_overflow: false,

@@ -142,6 +142,10 @@ impl Sleeper for TokioSleeper {
         tokio::time::sleep(std::time::Duration::from_millis(duration_ms)).await;
     }
 
+    fn now(&self) -> std::time::Instant {
+        std::time::Instant::now()
+    }
+
     fn jitter(&self, upper: u64) -> u64 {
         rand::rng().random_range(0..=upper)
     }

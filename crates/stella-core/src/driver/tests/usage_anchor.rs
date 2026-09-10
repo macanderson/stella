@@ -61,7 +61,7 @@ async fn compaction_fired_with_report(usage: CompletionUsage) -> bool {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = NoopSleeper;
+    let sleeper = TokioSleeper;
     let mut messages = compactable_history();
     let raw = crate::estimator::estimate_conversation_tokens(&messages);
     let config = EngineConfig {
@@ -91,7 +91,7 @@ async fn compaction_fired_with_report(usage: CompletionUsage) -> bool {
 /// budget (#2671 measured the estimator ~1.8× low; this fixture makes the
 /// gap decisive rather than marginal). Anchored, the next step's decision is
 /// `reported + estimate(tail) > budget` and must compact.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn provider_reported_usage_rebases_the_compaction_decision() {
     let raw = crate::estimator::estimate_conversation_tokens(&compactable_history());
     assert!(
@@ -113,7 +113,7 @@ async fn provider_reported_usage_rebases_the_compaction_decision() {
 /// scripted default — reported, all counters zero) anchors nothing, and the
 /// same conversation under the same budget stays estimate-governed: no
 /// compaction, exactly the pre-anchor behavior.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn an_absent_usage_report_leaves_the_estimator_in_charge() {
     assert!(
         !compaction_fired_with_report(CompletionUsage::reported_zero()).await,
@@ -125,7 +125,7 @@ async fn an_absent_usage_report_leaves_the_estimator_in_charge() {
 /// toward it (they are prompt tokens the provider read — the same rule as
 /// the calibration feed), so a cache-writing first call anchors just as
 /// decisively as a plain one.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn cache_write_tokens_count_toward_the_anchor() {
     let raw = crate::estimator::estimate_conversation_tokens(&compactable_history());
     assert!(

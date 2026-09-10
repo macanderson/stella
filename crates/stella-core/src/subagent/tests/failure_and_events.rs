@@ -2,7 +2,7 @@ use super::*;
 
 // ---- failure is data --------------------------------------------------
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn an_aborted_child_salvages_the_last_answer_it_paid_for() {
     // The child answers, is told to keep going, then hits its step cap. Its
     // text is real work; throwing it away with the transcript would make an
@@ -33,7 +33,7 @@ async fn an_aborted_child_salvages_the_last_answer_it_paid_for() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &NoSleep,
+        &TokioSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
@@ -60,7 +60,7 @@ async fn an_aborted_child_salvages_the_last_answer_it_paid_for() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_failed_child_never_becomes_an_error_the_parent_has_to_handle() {
     // The provider errors terminally on the first call. The parent still
     // gets a value back, with the reason in it.
@@ -72,7 +72,7 @@ async fn a_failed_child_never_becomes_an_error_the_parent_has_to_handle() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &NoSleep,
+        &TokioSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
@@ -96,7 +96,7 @@ async fn a_failed_child_never_becomes_an_error_the_parent_has_to_handle() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn nesting_deeper_than_the_cap_is_refused_before_spending() {
     let parent_provider = ScriptedProvider::new(vec![]);
     let child_provider = ScriptedProvider::new(vec![Ok(text_result("hi", 0.01))]);
@@ -106,7 +106,7 @@ async fn nesting_deeper_than_the_cap_is_refused_before_spending() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &NoSleep,
+        &TokioSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
@@ -136,7 +136,7 @@ async fn nesting_deeper_than_the_cap_is_refused_before_spending() {
 
 // ---- the event plane --------------------------------------------------
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn the_childs_stage_and_narration_never_reach_the_parents_stream() {
     let parent_provider = ScriptedProvider::new(vec![]);
     let child_provider = ScriptedProvider::new(vec![
@@ -149,7 +149,7 @@ async fn the_childs_stage_and_narration_never_reach_the_parents_stream() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &NoSleep,
+        &TokioSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
@@ -200,7 +200,7 @@ async fn the_childs_stage_and_narration_never_reach_the_parents_stream() {
 /// The bracket cannot answer this, and that is the whole reason for the field:
 /// independent delegates are dispatched concurrently, so `Started`/`Finished`
 /// pairs interleave and enclose each other's calls.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_childs_metering_records_name_the_child_that_spent_them() {
     let parent_provider = ScriptedProvider::new(vec![]);
     let child_provider = ScriptedProvider::new(vec![Ok(text_result("done", 0.02))]);
@@ -210,7 +210,7 @@ async fn a_childs_metering_records_name_the_child_that_spent_them() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &NoSleep,
+        &TokioSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
@@ -249,12 +249,18 @@ async fn a_childs_metering_records_name_the_child_that_spent_them() {
 /// A call the lead made itself is the lead's, and must not acquire an id from
 /// a child that ran beside it. `None` is a fact — "the lead spent this" — so a
 /// reader summing by spender gets the turn's real shape.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn the_leads_own_calls_name_no_sub_agent() {
     let provider = ScriptedProvider::new(vec![Ok(text_result("answered", 0.05))]);
     let tools = MixedTools::default();
     let seams = TurnCapabilities::none();
-    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &NoSleep, seams);
+    let engine = Engine::assemble(
+        &provider,
+        &tools,
+        EngineConfig::default(),
+        &TokioSleeper,
+        seams,
+    );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut messages = vec![CompletionMessage::user("do it")];
@@ -272,7 +278,7 @@ async fn the_leads_own_calls_name_no_sub_agent() {
     assert_eq!(spenders, vec![None], "{spenders:?}");
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn step_usage_and_tool_activity_reach_the_parent_so_cost_rolls_up() {
     // Dropping StepUsage is precisely how child spend would vanish from
     // `stella stats` and quietly falsify the $/resolved-task number.
@@ -287,7 +293,7 @@ async fn step_usage_and_tool_activity_reach_the_parent_so_cost_rolls_up() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &NoSleep,
+        &TokioSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
@@ -339,7 +345,7 @@ async fn step_usage_and_tool_activity_reach_the_parent_so_cost_rolls_up() {
 /// under the parent execution id with nothing naming the child — the bracket
 /// cannot stand in for it, because independent delegates are dispatched
 /// concurrently and no `Started`/`Finished` pair encloses a particular call.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_childs_tool_calls_name_the_child_that_ran_them() {
     let parent_provider = ScriptedProvider::new(vec![]);
     let child_provider = ScriptedProvider::new(vec![
@@ -352,7 +358,7 @@ async fn a_childs_tool_calls_name_the_child_that_ran_them() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &NoSleep,
+        &TokioSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
@@ -388,7 +394,7 @@ async fn a_childs_tool_calls_name_the_child_that_ran_them() {
 
 /// The other half of the same fact: a call the lead made itself is the lead's,
 /// and `None` is that answer rather than the absence of one.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn the_leads_own_tool_calls_name_no_sub_agent() {
     let provider = ScriptedProvider::new(vec![
         Ok(tool_call_result("read_file", "c1", 0.01)),
@@ -396,7 +402,13 @@ async fn the_leads_own_tool_calls_name_no_sub_agent() {
     ]);
     let tools = MixedTools::default();
     let seams = TurnCapabilities::none();
-    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &NoSleep, seams);
+    let engine = Engine::assemble(
+        &provider,
+        &tools,
+        EngineConfig::default(),
+        &TokioSleeper,
+        seams,
+    );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut messages = vec![CompletionMessage::user("do it")];

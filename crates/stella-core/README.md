@@ -14,9 +14,11 @@ outside world is a trait the caller implements: `ToolExecutor`, `Clock`,
 ([`src/retry.rs`](src/retry.rs)), `HookRunner` ([`src/hooks.rs`](src/hooks.rs))
 — plus `Provider` from `stella-protocol`. `make core-no-io`
 (`scripts/check-core-no-io.py`) reads the shipping source and the manifest
-and fails on any of those surfaces named directly; the `Instant::now()` reads
-the deadline arithmetic still makes are a down-only count in
-`scripts/core-no-io-baseline.txt`, cleared by passing `now` in from the edge.
+and fails on any of those surfaces named directly — a hidden clock read
+(`.elapsed()`) and a tokio timer included. Every deadline is an `Instant`
+from `Sleeper::now`, every timeout is `retry::bounded` racing the port's
+sleep, and `scripts/core-no-io-baseline.txt` holds the `Instant::now()`
+count at zero.
 Even the working directory is passed in (`EngineConfig::cwd`) rather than read
 from `std::env`. That is what makes compaction, eviction, loop detection and
 budget arithmetic plain synchronous functions over owned data, testable against

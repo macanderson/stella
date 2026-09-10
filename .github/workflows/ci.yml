@@ -335,7 +335,8 @@ jobs:
       # read the source to check: the retry ladder drew its jitter from the
       # OS entropy pool and the hook bus stamped events from SystemTime while
       # both files' headers said otherwise. A floor over the I/O surfaces and
-      # the manifest, plus a down-only count of Instant::now() reads.
+      # the manifest, plus a down-only count of Instant::now() reads that
+      # reached zero on 2026-09-10 and may not rise.
       - name: no I/O in stella-core, and no new clock read
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: python3 ./scripts/check-core-no-io.py

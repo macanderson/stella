@@ -285,6 +285,10 @@ mod tests {
         async fn sleep(&self, _duration_ms: u64) {}
 
         // The floor: a test that asserts on retry timing wants no spread in it.
+        fn now(&self) -> std::time::Instant {
+            std::time::Instant::now()
+        }
+
         fn jitter(&self, _upper: u64) -> u64 {
             0
         }
@@ -341,7 +345,8 @@ mod tests {
             turn_halt: Some(Arc::new(AlwaysHalt)),
             ..EngineConfig::default()
         };
-        let mut state = TurnState::from_checkpoint(restored_at_step_one(), &config);
+        let mut state =
+            TurnState::from_checkpoint(restored_at_step_one(), &config, std::time::Instant::now());
         let seams = TurnCapabilities::none();
         let engine = Engine::assemble(&provider, &tools, config, &NoopSleeper, seams);
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -371,7 +376,8 @@ mod tests {
         };
         let tools = OkTool;
         let config = EngineConfig::default();
-        let mut state = TurnState::from_checkpoint(restored_at_step_one(), &config);
+        let mut state =
+            TurnState::from_checkpoint(restored_at_step_one(), &config, std::time::Instant::now());
         let seams = TurnCapabilities::none();
         let engine = Engine::assemble(&provider, &tools, config, &NoopSleeper, seams);
         let (tx, _rx) = mpsc::unbounded_channel();

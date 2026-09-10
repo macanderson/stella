@@ -692,7 +692,7 @@ impl Engine<'_> {
         let deadline = bounded_by_ceiling(
             carve.task_deadline(),
             self.config.tool_timeout,
-            std::time::Instant::now(),
+            self.sleeper.now(),
         );
         let outcome = match refusal(spec, &carve, &deadline) {
             Some(refusal) => SubAgentOutcome::Refused {
@@ -950,7 +950,7 @@ impl Engine<'_> {
         // The parent's own post-settlement numbers, since the child's ticks
         // were dropped at the boundary and a HUD would otherwise sit stale
         // for the whole child run.
-        let _ = events.send(budget.tick_event(std::time::Instant::now()));
+        let _ = events.send(budget.tick_event(self.sleeper.now()));
 
         let absorbed_messages = messages.len().saturating_sub(seeded);
         let steps = tally.steps();
