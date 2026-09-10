@@ -1,25 +1,26 @@
-"""The two-build A/B's run scripts hold two arms without one erasing the other.
+"""The two-build A/B's run scripts hold two arms, and one cannot erase the other.
 
-The pipeline A/B (#6155) is two builds of Stella measured against one task list.
-Before this suite, ``bench/evidence/run/env.sh`` gave every run one
-``STELLA_BINARY`` path and one ``$TB_ROOT``, so the second arm's build
-overwrote the first arm's binary and its two provenance files, and the hash a
-report cited belonged to whichever arm was built last. Nothing said so: both
-builds succeed, both write, and the survivor looks exactly like a correct
-single build.
+The pipeline A/B runs two builds of Stella over one task list. Its plan sits in
+``bench/evidence/pipeline-ab/``.
 
-What the cases below hold, in the order they matter:
+``bench/evidence/run/env.sh`` gave every run one ``STELLA_BINARY`` path and one
+``$TB_ROOT``. So the second arm's build wrote over the first arm's binary and
+its two provenance files. The hash a report cites then belongs to whichever arm
+was built last. Nothing says so. Both builds pass. Both write. The survivor
+looks just like a good single build.
+
+The cases below hold four things, in the order they matter:
 
 * a run with no arm reads and writes what it always did, so the single-build
-  scripts around this change keep working;
-* two arms land on two paths, which is the property the experiment needs;
-* the adapter comes from ``TB_REPO`` whatever ``TB_BUILD_REPO`` says, so the
-  arms differ by the binary and not by the instrument measuring them;
-* ``env.sh`` exports no ``STELLA_`` name the adapter has not registered, which
-  is a run-ending failure and cannot be seen by reading either file alone.
+  scripts keep working;
+* two arms land on two paths, which is what the experiment needs;
+* the adapter comes from ``TB_REPO``, whatever ``TB_BUILD_REPO`` says, so the
+  arms differ by the binary and not by the tool that measures them;
+* ``env.sh`` exports no ``STELLA_`` name the adapter has not registered. That
+  one ends a run, and reading either file alone will not show it.
 
-Standard library only, like its neighbours here, because CI runs this directory
-with ``--no-project``.
+Standard library only, like its neighbours here. CI runs this folder with
+``--no-project``.
 """
 
 from __future__ import annotations
@@ -36,13 +37,13 @@ PIPELINE_AB = RUN_DIR / "pipeline_ab.sh"
 
 #: Every ``STELLA_`` name ``env.sh`` may export.
 #:
-#: Each one is registered in the adapter's ``_HOST_ONLY_STELLA_ENV``
-#: (``bench/harbor_adapter/stella_harbor/__init__.py``). That registration is
-#: not bookkeeping: the adapter's ambient check fails closed, and every script
-#: in ``bench/evidence/run/`` sources ``env.sh`` before invoking Harbor, so an
-#: exported-but-unregistered ``STELLA_*`` name refuses the run outright — after
-#: the images are pulled, on every trial. Adding a name here without adding it
-#: there is how a run dies for a reason neither file shows on its own.
+#: Each one is listed in the adapter's ``_HOST_ONLY_STELLA_ENV``. That list is
+#: in ``bench/harbor_adapter/stella_harbor/__init__.py``.
+#:
+#: The adapter's ambient check fails closed. Every script in
+#: ``bench/evidence/run/`` sources ``env.sh`` before it calls Harbor. So a
+#: ``STELLA_*`` name exported here and missing there refuses the run. It does
+#: that after the images are pulled, on every trial.
 REGISTERED_STELLA_EXPORTS = frozenset(
     {
         "STELLA_TARGET_TRIPLE",
@@ -56,9 +57,9 @@ REGISTERED_STELLA_EXPORTS = frozenset(
     }
 )
 
-# What a shell that sources `env.sh` is given. No `STELLA_` name appears, so
-# anything the assertions below see was exported by the file under test rather
-# than inherited from whoever ran pytest.
+# What a shell that sources `env.sh` is given. It holds no `STELLA_` name. So
+# any such name the checks below see came from the file under test. None of it
+# came from whoever ran pytest.
 _BASE_ENV = {"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": "/tmp"}
 
 
@@ -107,8 +108,8 @@ def test_a_run_with_no_arm_reads_the_paths_it_always_did(tmp_path: Path) -> None
     assert values["STELLA_BINARY"] == str(
         repo / "target" / "x86_64-unknown-linux-gnu" / "release" / "stella"
     )
-    # The binary a single build runs is the one cargo just wrote, with no copy
-    # in between: `primary.sh` and its neighbours are unchanged by arms.
+    # A single build runs the binary cargo just wrote. No copy sits in between.
+    # So `primary.sh` and its neighbours do not change.
     assert values["STELLA_BINARY"] == values["TB_BUILD_OUTPUT"]
 
 
@@ -122,14 +123,14 @@ def test_two_arms_get_two_binaries_and_two_provenance_directories(
     assert control["STELLA_BINARY"] != treatment["STELLA_BINARY"]
     assert control["TB_ARM_DIR"] != treatment["TB_ARM_DIR"]
     # `build_sut.sh` writes sut_commit.txt and binary_sha256.txt into
-    # TB_ARM_DIR, so two directories is two records of which build ran.
+    # TB_ARM_DIR. Two dirs is two records of which build ran.
     arms = tmp_path / "root" / "arms"
     assert control["TB_ARM_DIR"] == str(arms / "control")
     assert treatment["TB_ARM_DIR"] == str(arms / "treatment")
     assert Path(control["TB_ARM_DIR"]).is_dir()
     assert Path(treatment["TB_ARM_DIR"]).is_dir()
-    # The arm's binary is a copy outside the target directory that built it, so
-    # rebuilding the other arm cannot replace it.
+    # The arm's binary is a copy. It sits outside the target dir that built it.
+    # So a rebuild of the other arm cannot replace it.
     assert control["STELLA_BINARY"] == str(arms / "control" / "stella")
     assert control["STELLA_BINARY"] != control["TB_BUILD_OUTPUT"]
 
@@ -137,13 +138,13 @@ def test_two_arms_get_two_binaries_and_two_provenance_directories(
 def test_the_adapter_comes_from_tb_repo_when_the_build_repo_is_elsewhere(
     tmp_path: Path,
 ) -> None:
-    """Only the binary may differ between arms — never the measuring instrument.
+    """Only the binary may differ between arms. Never the tool that measures.
 
-    The control arm is built from a checkout of a commit whose crate this
-    workspace deleted. Pointing ``TB_REPO`` at that checkout to reach its
-    ``target/`` would take ``PYTHONPATH`` along with it and swap in that
-    checkout's adapter, which predates the selector both arms are launched by.
-    ``TB_BUILD_REPO`` moves the build alone.
+    The control arm is built from a checkout of an old commit. Its crate is
+    gone from this workspace. Aim ``TB_REPO`` at that checkout to reach its
+    ``target/`` and ``PYTHONPATH`` goes with it. That swaps in the old
+    adapter, which has no ``--pipeline`` selector. ``TB_BUILD_REPO`` moves the
+    build alone.
     """
     old = tmp_path / "old-checkout"
     old.mkdir()
@@ -178,12 +179,13 @@ def test_env_sh_exports_no_stella_name_the_adapter_has_not_registered(
 
 
 def _run_arm(tmp_path: Path, *args: str, **overrides: str) -> subprocess.CompletedProcess[str]:
-    """Launch an arm against the real checkout, with scratch space in ``tmp_path``.
+    """Launch an arm against the real checkout. Scratch space is ``tmp_path``.
 
-    ``TB_REPO`` is this repository rather than a fixture, because the script
-    reads ``plugins/stella-witness/plugin.toml`` out of it to confirm the plugin
-    still declares the id the preregistration pinned. A fixture would answer for
-    itself. Nothing is written under ``TB_REPO``; the scratch tree is ``TB_ROOT``.
+    ``TB_REPO`` is this repo, not a fixture. The script reads
+    ``plugins/stella-witness/plugin.toml`` out of it. That check asks whether
+    the plugin still declares the id the plan pinned. A fixture would answer
+    for itself. Nothing is written under ``TB_REPO``. The scratch tree is
+    ``TB_ROOT``.
     """
     root = tmp_path / "root"
     root.mkdir(exist_ok=True)
@@ -213,9 +215,9 @@ def test_a_spend_limit_is_refused_because_the_experiment_is_uncapped(
 ) -> None:
     """A cap that binds on one arm and not the other measures the cap.
 
-    The control arm spends several model calls per step where the treatment arm
-    spends one, so the development default would truncate the arms unequally
-    and the preregistration fixes the run as uncapped.
+    The control arm makes several model calls per step. The treatment arm makes
+    one. So the default would cut the two arms by different amounts. The plan
+    fixes the run as uncapped.
     """
     result = _run_arm(tmp_path, "control", "job1", STELLA_SPEND_LIMIT="0.60")
     assert result.returncode == 1
@@ -225,14 +227,13 @@ def test_a_spend_limit_is_refused_because_the_experiment_is_uncapped(
 def test_the_treatment_arm_refuses_while_no_plugin_reaches_the_container(
     tmp_path: Path,
 ) -> None:
-    """The refusal costs one message; discovering it per trial costs the arm.
+    """The refusal costs one message. Finding it per trial costs the arm.
 
-    ``stella_harbor`` uploads the ``stella`` binary and nothing else, so the
-    plugin roster inside a task container is empty and ``PipelineChoice::resolve``
-    refuses ``--pipeline witness-v1``. That refusal is fail-closed — ``agent::goal``
-    turns it into a ``CliFailure`` — so the arm produces no number rather than a
-    wrong one. Delete this case in the change that lets the adapter stage a
-    plugin.
+    ``stella_harbor`` uploads the ``stella`` binary and nothing else. So the
+    plugin roster in a task container is empty, and ``PipelineChoice::resolve``
+    refuses ``--pipeline witness-v1``. That fails closed. ``agent::goal`` turns
+    it into a ``CliFailure``. The arm makes no number, rather than a wrong one.
+    Delete this case in the change that stages a plugin.
     """
     result = _run_arm(tmp_path, "treatment", "job1")
     assert result.returncode == 1
@@ -243,10 +244,10 @@ def test_the_treatment_arm_refuses_while_no_plugin_reaches_the_container(
 def test_the_script_launches_the_pipeline_ids_the_preregistration_named() -> None:
     """The plan's ``invocation`` strings and the launcher's flags are one thing.
 
-    ``compare_arms.py --treatment-fired`` reads ``loop_mode=PLUGIN:witness-v1``,
-    and the adapter derives that value from whatever ``--pipeline`` the launcher
-    passed. So an id edited in the script and left alone in the plan produces a
-    complete arm that the analysis then refuses, after the spend.
+    ``compare_arms.py --treatment-fired`` reads ``loop_mode=PLUGIN:witness-v1``.
+    The adapter builds that value from the ``--pipeline`` flag it was given. So
+    an id changed in the script and left alone in the plan yields a full arm.
+    The analysis then refuses it, after the spend.
     """
     import json
 
@@ -264,6 +265,6 @@ def test_the_script_launches_the_pipeline_ids_the_preregistration_named() -> Non
 
 
 def test_the_witness_plugin_still_declares_the_pinned_id() -> None:
-    """A rename would re-aim the treatment arm at a path nothing measures."""
+    """A rename would aim the treatment arm at a path nothing measures."""
     manifest = (REPO_ROOT / "plugins" / "stella-witness" / "plugin.toml").read_text()
     assert 'id = "witness-v1"' in manifest

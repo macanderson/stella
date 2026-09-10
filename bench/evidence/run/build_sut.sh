@@ -16,9 +16,9 @@
 #       checkout of that commit instead. `TB_REPO` stays where it is and keeps
 #       supplying the adapter, so the two arms differ by the binary alone.
 #   TB_ARM — the arm this build belongs to. The binary and the two provenance
-#       files land under `$TB_ROOT/arms/<arm>/` rather than in the one place
-#       both arms used to write, where the second build overwrote the first and
-#       the hash a report cited was whichever ran last.
+#       files land under `$TB_ROOT/arms/<arm>/`. Without it both arms write one
+#       path, the second build overwrites the first, and the hash a report
+#       cites belongs to whichever ran last.
 #
 # Pass a commit to skip the fetch and build exactly that revision. A wrapper
 # that fetches and checks out should pass what it checked out, because otherwise
