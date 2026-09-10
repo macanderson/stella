@@ -106,9 +106,9 @@ impl<'l> ToolAllowance<'l> {
     /// through.
     ///
     /// Says nothing about what it cuts. A caller with somewhere to put the
-    /// refusals adds one with [`Self::reporting`]; silence is the honest
-    /// default for a stack composed where no channel is open, and it is what
-    /// every witness test wants.
+    /// refusals adds one with [`Self::reporting`]. Silence is the default
+    /// because a stack can be composed where no channel is open at all, and
+    /// it is what every witness test wants.
     pub(crate) fn new(declared: ToolAdvertisement, ledger: &'l SteeringLedger) -> Self {
         Self {
             declared,
@@ -120,7 +120,7 @@ impl<'l> ToolAllowance<'l> {
     /// Send this allowance's refusals to `sink`.
     ///
     /// Each door names its own, because the right answer differs by door: a
-    /// turn on the deck puts them on the transcript, and a headless run
+    /// turn on the deck puts them on the transcript, and non-interactive mode
     /// writes stderr. Nothing here may pick for them — under the deck,
     /// stderr is the `ratatui` frame, and a line written to it scrolls the
     /// screen out from under the renderer's diff.
@@ -163,7 +163,7 @@ pub(crate) fn session_stack<'a>(
 }
 
 /// The advisory sink for a door whose output is a terminal it owns outright:
-/// the plain REPL, `stella run`, a resumed headless turn.
+/// non-interactive mode, `stella run`, and a resumed turn.
 ///
 /// The deck passes its own, which puts the same lines on the transcript. It
 /// must never reach for this one: its stderr is the drawn frame.
@@ -883,17 +883,16 @@ mod tests {
         .len()
     }
 
-    /// **The #643 witness, in the tool plane.** A composed stack says what it
-    /// cut to the sink the door named, and to nowhere else.
+    /// **The witness.** A composed stack says what it cut to the sink the
+    /// door named, and to nowhere else.
     ///
-    /// The default matters as much as the routing. `budgeted` used to print
-    /// its refusals with `eprintln!`, which under the deck is the drawn
-    /// `ratatui` frame — the bytes land between rows and scroll the screen
-    /// out from under the renderer's diff, which is what left the status bar
-    /// drawn three times over itself after a prompt. An allowance built
-    /// without [`ToolAllowance::reporting`] now reaches no terminal at all,
-    /// so a future door that forgets to name a sink is silent rather than
-    /// destructive.
+    /// The default matters as much as the routing. A library that prints its
+    /// refusals writes them into whatever owns the process's stderr, which
+    /// under the deck is the drawn `ratatui` frame: the bytes land between
+    /// rows and scroll the screen out from under the renderer's diff, and the
+    /// status bar comes back drawn several times over itself. An allowance
+    /// built without [`ToolAllowance::reporting`] reaches no terminal at all,
+    /// so a door that names no sink is silent rather than destructive.
     #[test]
     fn a_composed_stack_reports_its_cuts_to_the_named_sink_alone() {
         let leaf = WideLeaf { count: 40 };
@@ -921,7 +920,10 @@ mod tests {
 
         let unreported = ToolAllowance::new(ToolAdvertisement::Lean(quarter), &ledger);
         let advertised = stack(unreported);
-        assert!(advertised < 40, "the ceiling bound: {advertised} advertised");
+        assert!(
+            advertised < 40,
+            "the ceiling bound: {advertised} advertised"
+        );
         assert!(
             seen.borrow().is_empty(),
             "an allowance nobody asked to report says nothing: {:?}",

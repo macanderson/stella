@@ -821,51 +821,26 @@ pub enum AgentEvent {
     /// the two producers below answer two *different* questions, and only one
     /// of them is about the agent.
     ///
-    /// # The two producers, and what each one's answer means
+    /// Two producers can emit one, and they answer different questions.
+    /// **Candidate adoption** measures a candidate against a sealed baseline,
+    /// so it can tell the agent's edits from anyone else's. That is
+    /// attribution, and nothing in this workspace produces it: the staged
+    /// pipeline that did was deleted. **The shared-tree turn boundary** —
+    /// `stella-cli`'s `turn_files`, over `WorkJournal::snapshot_worktree` —
+    /// emits every event on the stream today, and it is not attribution. It
+    /// answers what changed in the tree during this turn, so a user editing a
+    /// file in another window lands here beside the agent's own writes. A
+    /// consumer that needs "what did the agent do" reads the git diff, or
+    /// adoption.
     ///
-    /// 1. **Candidate adoption** — `Pipeline::deliver_winner` (the built-in
-    ///    staged pipeline's `pipeline/delivery.rs`, deleted in #3865), one
-    ///    event per
-    ///    `AdoptedChange`, emitted beside the `CandidateWorkspace::attribute_adopted`
-    ///    call that writes the same rows to the host's durable ledger (#2907).
-    ///    This one **was** attribution: adoption measured a candidate against a
-    ///    sealed baseline, so it could tell the agent's edits from anyone
-    ///    else's. **It has no producer in this workspace any more** — that
-    ///    crate was deleted in #3865 — so every event on this stream today is
-    ///    the second kind. Read the distinction below as the contract a
-    ///    re-homed adoption producer would have to meet, not as two live
-    ///    sources (#3881).
-    /// 2. **The shared-tree turn boundary** — `stella-cli`'s `turn_files`, over
-    ///    `WorkJournal::snapshot_worktree` (#3413). This one is **not**
-    ///    attribution. It answers *what changed in the tree during this turn*,
-    ///    which is the question a whole-tree measurement can answer: a
-    ///    user editing a file in another window mid-turn lands here
-    ///    indistinguishably from the agent's own writes.
-    ///
-    /// A consumer that needs "what did the agent do" takes it from the git diff
-    /// of the tree, or from adoption. This stream is for showing a human what
-    /// moved.
-    ///
-    /// # Why an engine-only turn is measured rather than hooked (#3413)
-    ///
-    /// It once emitted from the tools, and for a while after that from nowhere:
-    /// the 12-tool purge (#3244) deleted every file-writing built-in and the
-    /// file-CRUD ledger that emitted these, and this doc went on naming a
-    /// `ToolRegistry::record_touch` that no longer existed. The file built-ins
-    /// have since been restored, so a tool hook is now available — and it is
-    /// still not right. A hook on `write_file` / `edit_file` / `delete_file`
-    /// would report a *subset* of the turn while looking exhaustive: `bash`
-    /// mutates the tree without naming a path, and so do MCP servers and
-    /// custom script tools, none of which describes its paths in any schema
-    /// the engine reads. And
-    /// synthesizing these from tool *inputs* is the known defect, not the
-    /// design: a wrapper that did exactly that, knowing four hard-coded tool
-    /// names and sitting on one of three tool stacks, is what reported files
-    /// edited in bulk or by a worker lane as `+0 -0` (#2290).
-    ///
-    /// So the answer is a measurement, taken once per turn at the boundary.
-    /// The cost is one `git add -A` plus a `write-tree` against a dedicated
-    /// index, after the model has answered.
+    /// Hooking the file tools instead would report a subset of the turn while
+    /// looking complete: `bash` mutates the tree without naming a path, and so
+    /// do MCP servers and custom script tools, none of which declares its
+    /// paths in any schema the engine reads. Reading paths out of tool
+    /// *inputs* is worse — a wrapper that did that, knowing four tool names
+    /// and sitting on one of three tool stacks, reported bulk edits as
+    /// `+0 -0`. One measurement at the boundary costs a `git add -A` and a
+    /// `write-tree` against a dedicated index, after the model has answered.
     ///
     /// `added`/`removed` are what the producer measured — git's `--numstat`
     /// against the two trees, or, for adoption, numstat plus the patch it

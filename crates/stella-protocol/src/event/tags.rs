@@ -673,8 +673,8 @@ agent_event_tags! {
     // What a turn's steering budgets refused. `RecordedOnly`: the deck folds
     // it to `TranscriptEntry::SteeringDropped` and draws the refusal beside
     // the turn that paid for it, which is the only place a user learns a
-    // matching skill lost its seat. #5229 covers the Observatory query that
-    // would earn `Surfaced` for this row and `SkillInjected` together.
+    // matching skill lost its seat. It earns `Surfaced` once an Observatory
+    // query names it, which is the same door `SkillInjected` waits at.
     SteeringDropped => "steering_dropped",
         ConsumerPosture::RecordedOnly { issue: "#5229" },
         &[];

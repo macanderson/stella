@@ -213,7 +213,7 @@ mod tests {
 
     /// A cut tool is named to the caller, and to nobody else.
     ///
-    /// The return type is the fix for #643's failure mode reappearing here:
+    /// The return type is what keeps a library out of the process's stderr:
     /// this layer is composed inside a turn, and under the deck that turn's
     /// stderr is the drawn `ratatui` frame. A reporter that printed would put
     /// these lines inside the frame and scroll it out from under the

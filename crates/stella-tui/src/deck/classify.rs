@@ -235,7 +235,9 @@ pub(super) fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
             TraceKind::Context,
             format!(
                 "dropped {}",
-                advisory.split_once(" — ").map_or(advisory.as_str(), |(h, _)| h)
+                advisory
+                    .split_once(" — ")
+                    .map_or(advisory.as_str(), |(h, _)| h)
             ),
         ),
         // Receipts are filtered out of the trace ring above (apply_event's

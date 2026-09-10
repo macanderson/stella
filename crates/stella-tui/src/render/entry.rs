@@ -690,13 +690,13 @@ fn entry_body(
             }
             push_note("⚠ steering", loud(theme::WARNING), content, width, out);
         }
-        // Composed from `textline::steering_dropped` for the reason the arm
-        // above gives: one wording, so the deck and the plain door cannot
-        // drift on a sentence whose whole point is naming the right remedy.
+        // Composed from `textline::steering_dropped`, for the reason the
+        // arm above gives. One wording, so the two surfaces cannot drift on
+        // a sentence whose point is naming the right remedy.
         //
-        // `strong` is false where the withheld row's is true: that row is a
-        // session refusing to be steered at all, and this one is one
-        // candidate priced out of a turn that is otherwise steered normally.
+        // `strong` is false where the withheld row's is true. That row is a
+        // whole session left unsteered. This one is a single candidate
+        // priced out of a turn that is steered as usual.
         TranscriptEntry::SteeringDropped { advisory } => {
             let line = steering_dropped(advisory);
             let mut content = vec![Span::styled(line.body, value())];

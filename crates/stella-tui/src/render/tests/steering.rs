@@ -90,19 +90,17 @@ fn the_remedy_names_the_authority_that_can_actually_lift_it() {
     );
 }
 
-/// **The witness for the frame this event exists to stop shredding.** A
-/// refused steering candidate renders as its own transcript row.
+/// **The witness.** A refused steering candidate draws its own row.
 ///
-/// Same failure as the withheld notice above, one plane over. The refusals
-/// `stella-cli`'s steering plane makes each turn went to stderr, which under
-/// the deck is the drawn frame: the bytes landed between rendered rows and
-/// scrolled the screen out from under `ratatui`'s diff, so the status bar
-/// came back drawn several times over itself after a prompt submission.
+/// Same failure as the withheld notice above, one plane over. These
+/// refusals went to stderr, which under the deck is the drawn frame. The
+/// bytes landed between rows and scrolled the screen out from under
+/// `ratatui`'s diff. The status bar came back drawn over itself.
 ///
-/// The transcript rather than `Inbound::Notice`, on the rule
-/// `command_deck::steering` already draws: a notice is dismissed by the next
-/// keystroke and stays dismissed for the session, and every one of these
-/// lines names a remedy a user needs to be able to scroll back to.
+/// The transcript, not `Inbound::Notice`, on the rule
+/// `command_deck::steering` already draws. A notice dies at the next
+/// keystroke and stays dead for the session. Each of these lines names a
+/// remedy, and a remedy has to be there to scroll back to.
 #[test]
 fn a_refused_candidate_renders_its_headline_and_its_remedy() {
     let mut model = SessionModel::new();
@@ -129,7 +127,10 @@ fn a_refused_candidate_renders_its_headline_and_its_remedy() {
         .collect::<Vec<_>>()
         .join("\n");
 
-    assert!(text.contains("steering"), "the row is headed as steering: {text}");
+    assert!(
+        text.contains("steering"),
+        "the row is headed as steering: {text}"
+    );
     assert!(
         text.contains("seat-loser"),
         "the handle that lost its seat is named: {text}"
@@ -140,8 +141,8 @@ fn a_refused_candidate_renders_its_headline_and_its_remedy() {
     );
 }
 
-/// The em dash splits the line, so a narrow frame keeps what was refused and
-/// drops the advice rather than the other way round.
+/// The em dash splits the line. A narrow frame then keeps what was refused
+/// and drops the advice.
 #[test]
 fn the_headline_is_what_was_refused_and_the_detail_is_the_remedy() {
     let line = crate::textline::steering_dropped(
@@ -149,7 +150,10 @@ fn the_headline_is_what_was_refused_and_the_detail_is_the_remedy() {
          raise `context.steering.max_tokens`",
     );
     assert!(line.body.contains("bash"), "{line:?}");
-    assert!(!line.body.contains("raise"), "the remedy left the head: {line:?}");
+    assert!(
+        !line.body.contains("raise"),
+        "the remedy left the head: {line:?}"
+    );
     assert_eq!(
         line.detail.as_deref(),
         Some("raise `context.steering.max_tokens`"),
@@ -157,11 +161,11 @@ fn the_headline_is_what_was_refused_and_the_detail_is_the_remedy() {
     );
 }
 
-/// A line with no remedy clause is still a whole line, not a truncated one.
+/// A line with no remedy clause is still whole, never cut short.
 ///
-/// `drop_message` writes an em dash into every advisory it produces today.
-/// This holds the renderer honest if one ever stops: the fallback keeps the
-/// text rather than splitting on a separator that is not there.
+/// `drop_message` writes an em dash into every advisory today. This pins the
+/// fallback if one ever stops. It keeps the whole text, and splits on no
+/// separator that is not there.
 #[test]
 fn an_advisory_with_no_remedy_clause_keeps_its_whole_text() {
     let line = crate::textline::steering_dropped("the plane refused something");

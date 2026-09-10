@@ -54,14 +54,12 @@ pub struct RecalledBlock {
     /// for the common turn whose skills carry no directive.
     pub skill_scopes: Vec<crate::extensions::SkillTurnScope>,
     /// What the turn's steering budgets refused, one advisory line each —
-    /// the material the `SteeringDropped` event is built from.
+    /// the material each `SteeringDropped` event is built from.
     ///
-    /// Carried out of the block rather than printed where it is discovered.
-    /// A `SessionMemory` under the deck shares its stderr with a `ratatui`
-    /// frame, so a line written here lands inside the drawn screen and
-    /// scrolls it out from under the renderer's diff (#643 ruled the same
-    /// way for the code-graph index pass). The caller owns a channel; this
-    /// layer owns none, and now says so in its return type.
+    /// Carried out rather than printed. A `SessionMemory` under the deck
+    /// shares its stderr with a `ratatui` frame, so a line written here lands
+    /// inside the drawn screen and scrolls it out from under the renderer's
+    /// diff. The caller owns a channel; this layer owns none.
     pub dropped: Vec<String>,
 }
 
@@ -75,17 +73,13 @@ impl RecalledBlock {
 
     /// Everything this block leaves for the turn runner's channel, in send
     /// order: the recall telemetry, then one `SkillInjected` per skill it
-    /// carried — SPEC 6.3's `✦ skill` rows — and last what the turn's
-    /// budgets refused.
+    /// carried — SPEC 6.3's `✦ skill` rows — and last one `SteeringDropped`
+    /// per candidate the turn's budgets refused.
     ///
-    /// One event per skill rather than one carrying a list, because each
-    /// becomes one transcript row with its own head, subject and cost; a list
-    /// would make the renderer split what the emitter had already separated.
-    /// The refusals go the other way for the reason `SteeringDropped`'s own
-    /// docs give: they are read together, and one of the sources they carry
-    /// arrives already summarized by count.
-    ///
-    /// Last because a refusal is only legible once the reader has seen what
+    /// One event each rather than one carrying a list, because each becomes
+    /// one transcript row with its own head, subject and cost; a list would
+    /// make the renderer split what the emitter had already separated. The
+    /// refusals come last: one is only legible once the reader has seen what
     /// did get a seat.
     #[must_use]
     pub fn telemetry_events(&self) -> Vec<stella_protocol::AgentEvent> {
@@ -408,7 +402,7 @@ impl SessionMemory {
         // A record edited since the last look joins this very block — see
         // `records_refresh` for what a swap can and cannot apply.
         self.refresh_records_if_changed();
-        // Every refusal this turn makes, gathered for the block to carry out
+        // Every refusal this turn makes, for the block to carry out
         // (`RecalledBlock::dropped`). The two reporters below run in
         // sequence, so one collector serves both and the lines keep the order
         // the plane refused them in.
@@ -506,36 +500,33 @@ impl SessionMemory {
     }
 
     /// The volatile block for a turn that has DRIFTED from its opening
-    /// prompt (#3243 Phase 3) — the same three selectors as
+    /// prompt — the same three selectors as
     /// [`Self::recall_block_reported`], queried against what the turn has
     /// become instead of what it was asked.
     ///
     /// The signal's touched paths do the work the prompt could not: they
-    /// join the recall anchors (when they resolve to real files — a created
-    /// file qualifies the moment it exists), they widen the domain scope
-    /// skills are selected in, and they join the record channel's
-    /// `applies_to` path facts. The prompt still carries the lexical query —
-    /// drift changes *where* the turn is, not what it was asked to do.
+    /// join the recall anchors once they resolve to real files, they widen
+    /// the domain scope skills are selected in, and they join the record
+    /// channel's `applies_to` path facts. The prompt still carries the
+    /// lexical query — drift changes *where* the turn is, not what it was
+    /// asked to do.
     ///
-    /// One deliberate omission against the pre-turn block: no date section
-    /// (the turn-opening block already carries today, and repeating it
-    /// mid-turn buys nothing). The `Recall` travels back with the text for
-    /// the same reason it does in [`Self::recall_block_reported`] — a
-    /// re-query is a full fan-out with provider spend behind it, and the
-    /// adapter that called it reports that spend into the turn's event
-    /// stream (#3366). `RecalledBlock::text` is `None` when nothing
-    /// surfaced, when the turn is an A/B control, or when steering is off —
-    /// the same gates, for the same reasons.
+    /// One omission against the pre-turn block: no date section, since the
+    /// turn-opening block already carries today. The `Recall` travels back
+    /// with the text for the reason it does in
+    /// [`Self::recall_block_reported`] — a re-query is a full fan-out with
+    /// provider spend behind it, and the adapter that called it reports that
+    /// spend into the turn's event stream. `RecalledBlock::text` is `None`
+    /// under the same three gates: nothing surfaced, an A/B control turn, or
+    /// steering off.
     ///
-    /// `produced` is what this turn's earlier blocks already rendered, and
-    /// every frame, skill and record in it is left out of this one (#4236,
-    /// records since #4498). Drift is
+    /// `produced` is what this turn's earlier blocks rendered, and every
+    /// frame, skill and record in it is left out of this one. Drift is
     /// incremental — a re-query answering `{A, B, C, D}` after one that
     /// answered `{A, B, C}` differs by one frame — so a block deduped by its
-    /// bytes alone is a block that always differs and is therefore always
-    /// injected, whole. These are `User` messages that only the overflow
-    /// summarizer can ever reclaim, so each repeat is permanent in the paid
-    /// prefix for the rest of the session.
+    /// bytes alone always differs, and is always injected whole. These are
+    /// `User` messages that only the overflow summarizer can reclaim, so each
+    /// repeat is permanent in the paid prefix for the rest of the session.
     pub async fn signal_recall_block(
         &self,
         signal: &stella_core::steering::TurnSignal<'_>,
@@ -1300,34 +1291,30 @@ fn record_section_text(rendered: RenderedChannel) -> Option<String> {
 }
 
 /// The eviction report for one dropped candidate — the single producer every
-/// source emits through (#3437).
-///
-/// One sentence shape for all of them, the record channel's:
-/// *what applied, which budget refused it, its handle, and the remedy*. The
-/// remedy is the half that differs, and it has to: telling a user whose skill
-/// lost its seat to "raise its precedence" is advice for a different channel.
+/// source emits through, in the record channel's sentence shape: *what
+/// applied, which budget refused it, its handle, and the remedy*. The remedy
+/// is the half that differs, and it has to — telling a user whose skill lost
+/// its seat to "raise its precedence" is advice for a different channel.
 ///
 /// `still_selected` is the section-budget class, and it is why this takes the
 /// whole ledger rather than a handle. A skill can be in `selected` *and*
-/// `dropped` by design — top-k kept it and `skills::section_fit` then left it
-/// out of the rendered section (`steering::skill_drops`' own doc). Both classes
-/// genuinely miss the prompt, so both are reported; only the remedy differs,
-/// because `SKILLS_SECTION_TOKEN_BUDGET` is a constant and nothing
-/// configurable widens it until #3243 Phase 4 collapses the two budgets.
+/// `dropped` by design: top-k kept it and `skills::section_fit` then left it
+/// out of the rendered section. Both classes miss the prompt, so both are
+/// reported, and only the remedy differs —
+/// `SKILLS_SECTION_TOKEN_BUDGET` is a constant, and nothing widens it until
+/// the two budgets are collapsed into one.
 ///
-/// Memory drops return `None`: the frame query already reported them as ONE
-/// summary line naming the budget and the remedy, and repeating the same
-/// advice once per evicted memory — with an internal id a user cannot act on
-/// — is the noise that line exists to replace.
+/// Memory drops return `None`. The frame query already reported them as one
+/// summary line naming the budget and the remedy.
 ///
-/// A tool drop names the tool and the allowance that refused it. The remedy
-/// is the allowance rather than the tool: withholding one is never a
-/// capability change (`crate::tool_lean`), so the advice is to widen what the
-/// session may spend on schemas, or to turn the lever off.
+/// A tool drop names the tool and the allowance that refused it, and the
+/// remedy is the allowance: withholding a tool is never a capability change
+/// (`crate::tool_lean`), so the advice is to widen what the session may spend
+/// on schemas, or to turn the lever off.
 ///
 /// A plugin drop names the plugin and the stage it spoke at, because the
-/// handle is `<plugin>/<stage>` and both halves are things a person can act on.
-/// The remedy is the allowance or the plugin, and never the stage.
+/// handle is `<plugin>/<stage>` and a person can act on both halves. The
+/// remedy is the allowance or the plugin, never the stage.
 fn drop_message(
     drop: &stella_core::steering::DroppedCandidate,
     still_selected: bool,
@@ -1343,7 +1330,7 @@ fn drop_message(
         SteeringSource::Memory => None,
         SteeringSource::Skill if still_selected => Some(format!(
             "a skill matching this turn did not fit the skills section's token budget: \
-             {handle} — nothing configurable widens that budget yet (#3243)"
+             {handle} — nothing configurable widens that budget yet"
         )),
         SteeringSource::Skill => Some(format!(
             "a skill matching this turn did not fit the skill budget: {handle} — raise \
@@ -1365,29 +1352,19 @@ fn drop_message(
 }
 
 /// Report every candidate the ledger says was dropped, whatever its source.
+/// The ledger records the cuts; this is the half a person reads.
 ///
-/// #3358 completed the *ledger* across records, skills and frames; this is the
-/// human-facing half (#3437). Before it, a skill that lost its seat every turn
-/// and a frame the recall host's merge evicted were queryable and said nothing
-/// to the person watching the run — the #2709 observability gap in its other
-/// half.
-///
-/// Memory drops are summarized, not enumerated: `memory_budget` is the
+/// Memory drops are summarized rather than listed. `memory_budget` is the
 /// `context.retrieval.max_tokens` the turn ran with, and the report is one
-/// line — how many memories missed the budget, the budget itself, and the
-/// knob that widens it — instead of one line per memory repeating the same
-/// remedy under an internal id.
+/// line: how many memories missed it, the budget, and the knob that widens
+/// it. One line per memory repeats that remedy under an id nobody can act on.
 ///
-/// Two recall-side filters are deliberately **not** reported here, and that is
-/// a decision rather than an omission. `project_recalled_frame` drops a frame
-/// the citation-label rule cannot name, and `is_suppressed_local_frame` drops
-/// one the session quarantined. Neither is a budget eviction: the first is a
-/// frame this process could not cite, and the second is deliberate
-/// suppression of a memory cited untruthful twice. Reporting either as
-/// `DroppedCandidate` would tell a user their budget was too small when it was
-/// not, and quarantine in particular wants its own vocabulary rather than a
-/// line advising a bigger retrieval budget. The provider's spend on both is
-/// already accounted for by the usage report captured above the filters.
+/// Two recall-side filters stay out of this report.
+/// `project_recalled_frame` drops a frame the citation-label rule cannot
+/// name, and `is_suppressed_local_frame` drops one the session quarantined.
+/// Neither is a budget eviction, so reporting either here would tell a user
+/// their budget was too small when it was not. The provider's spend on both
+/// is already in the usage report taken above the filters.
 pub(crate) fn report_steering_drops(
     set: &stella_core::steering::SteeringSet,
     memory_budget: u32,
@@ -1414,7 +1391,6 @@ pub(crate) fn report_steering_drops(
         }
     }
 }
-
 /// The wall clock's current instant, in Unix seconds. The one `SystemTime`
 /// read in this module — everything downstream of it (`render_today_section`)
 /// takes the value as a parameter instead of reading the clock itself, so a

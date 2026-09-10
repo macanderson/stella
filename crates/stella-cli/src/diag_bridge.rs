@@ -786,11 +786,10 @@ impl DomainBridge {
                     self.at_seq().with("tokens", *tokens),
                 );
             }
-            // The fact alone, on the rule the arm above states: the advisory
-            // names a workspace-authored handle, and a diagnostic field
-            // cannot hold that text. A log reader gets "this turn refused a
-            // steering candidate", which is what turns an unexplained answer
-            // into a budget question; the transcript names which one.
+            // The fact alone, on the rule the arm above states. The
+            // advisory names a workspace-authored handle, and a diagnostic
+            // field cannot hold that text. A log reader learns that the turn
+            // refused a candidate. The transcript names which one.
             AgentEvent::SteeringDropped { .. } => {
                 self.emit(Level::Debug, "agent.steering.dropped", self.at_seq());
             }

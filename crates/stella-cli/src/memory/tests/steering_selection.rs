@@ -785,7 +785,7 @@ fn every_dropped_source_gets_a_line_with_its_own_remedy() {
     assert!(
         lines[3].contains("section-cut")
             && lines[3].contains("skills section's token budget")
-            && lines[3].contains("#3243"),
+            && lines[3].contains("nothing configurable widens that budget"),
         "and one cut by the section budget says so, rather than advising a \
          knob that would not have saved it: {joined}"
     );
@@ -869,16 +869,16 @@ fn the_merge_drop_report_is_one_summary_line_per_class() {
     }
 }
 
-/// **The #643 witness, in the recall plane.** A refusal leaves the block as
-/// an event on the turn's stream, one row per candidate.
+/// **The witness.** A refusal leaves the block as an event on the turn's
+/// stream, one row per candidate.
 ///
-/// The channel is the whole point. These lines used to go straight to stderr
-/// from inside `recall_block_reported`, which under the deck is the drawn
-/// `ratatui` frame: the bytes landed between rendered rows and scrolled the
-/// screen out from under the renderer's diff, leaving the status bar drawn
-/// several times over itself after a prompt submission. `RecalledBlock` now
-/// carries them out to the caller, which owns a channel; this layer owns
-/// none.
+/// The channel is the whole point. A line written to stderr from inside
+/// `recall_block_reported` reaches whatever owns the process's stderr, which
+/// under the deck is the drawn `ratatui` frame: the bytes land between
+/// rendered rows and scroll the screen out from under the renderer's diff,
+/// leaving the status bar drawn several times over itself after a prompt
+/// submission. `RecalledBlock` carries them out to the caller, which owns a
+/// channel; this layer owns none.
 ///
 /// One event per line rather than one carrying the list, on the rule
 /// `AgentEvent::SkillInjected` already states: each becomes one transcript
@@ -925,10 +925,7 @@ fn a_turn_that_refused_nothing_announces_nothing() {
         !block
             .telemetry_events()
             .iter()
-            .any(|event| matches!(
-                event,
-                stella_protocol::AgentEvent::SteeringDropped { .. }
-            )),
+            .any(|event| matches!(event, stella_protocol::AgentEvent::SteeringDropped { .. })),
         "no refusal, no row"
     );
 }
