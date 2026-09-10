@@ -16,14 +16,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use rand::RngExt;
 use serde_json::Value;
 use stella_core::bus::{self, HookBus, HookEventDraft, names as hook_names};
 use stella_core::hooks::decision::{GateVerdict, OperatorPosture, resolve_precedence};
-use stella_core::ports::{
-    AuthzGate, Clock, DispatchAdmission, DispatchGate, Principal, ToolExecutor,
-};
-use stella_core::retry::Sleeper;
+use stella_core::ports::{AuthzGate, DispatchAdmission, DispatchGate, Principal, ToolExecutor};
 use stella_protocol::{
     CompletionRequestRef, CompletionResult, Provider, ProviderError, ToolCallObserver, ToolOutput,
     ToolSchema,
@@ -129,47 +125,6 @@ fn forward_delta(observer: Option<&dyn ToolCallObserver>, delta: &ProviderDelta)
     }
 }
 
-/// A Tokio-backed [`Sleeper`] for the session runtime's retry backoff. The
-/// session runtime is built with the time driver enabled, so `sleep` resolves
-/// there. The jitter draws from the OS entropy pool, which is the host's to
-/// hold: `stella-core` takes the draw through the port and links no entropy
-/// source of its own.
-pub(crate) struct TokioSleeper;
-
-#[async_trait]
-impl Sleeper for TokioSleeper {
-    async fn sleep(&self, duration_ms: u64) {
-        tokio::time::sleep(std::time::Duration::from_millis(duration_ms)).await;
-    }
-
-    fn now(&self) -> std::time::Instant {
-        std::time::Instant::now()
-    }
-
-    fn jitter(&self, upper: u64) -> u64 {
-        rand::rng().random_range(0..=upper)
-    }
-}
-
-/// The host's own clock, counting from the Unix epoch, for the stamp on
-/// every hook event an installed extension sees. Those stamps are read on
-/// the other side of the wire and compared with the host's own, so they have
-/// to share the host's origin; `stella-cli`'s `WallClock` answers the same
-/// port the same way. A system clock set before the epoch reads as `0`
-/// rather than failing the turn.
-#[derive(Debug, Default, Clone, Copy)]
-pub(crate) struct WallClock;
-
-impl Clock for WallClock {
-    fn now_ms(&self) -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |since| {
-                u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
-            })
-    }
-}
-
 /// The `Provider` port as a reverse-RPC to the host. `complete_ref` emits a
 /// [`ServerFrame::ProviderRequest`] and blocks the step on the host's answer.
 pub(crate) struct RemoteProvider {
@@ -235,12 +190,12 @@ impl RemoteProvider {
 impl RemoteProvider {
     /// The one remoted completion path, shared by both trait methods.
     ///
-    /// With an observer this is what closes #1165: fragments the host POSTs to
-    /// `/v1/turns/{id}/provider-delta` land on the registered feed and are
+    /// With an observer this is what closes #1165. Fragments the host POSTs to
+    /// `/v1/turns/{id}/provider-delta` land on the registered feed. They are
     /// forwarded inline, so the engine's gate emits `TextDelta` / `Reasoning`
-    /// events and the frames flow into `FrameHistory` — ordering, `seq`, and
-    /// replay for free, exactly as with a local streaming adapter. Without an
-    /// observer the fragments are drained and dropped; the aggregated result
+    /// events and the frames flow into `FrameHistory`. Ordering, `seq` and
+    /// replay come for free, as with a local streaming adapter. Without an
+    /// observer the fragments are drained and dropped. The aggregated result
     /// stays authoritative either way.
     async fn complete_remoted(
         &self,

@@ -210,6 +210,11 @@
       "status": "implemented",
       "title": "ADR 0041: The turn clock reaches dispatch by value"
     },
+    "adr/0042-the-engine-reads-time-through-the-sleeper-port": {
+      "path": "docs/adr/0042-the-engine-reads-time-through-the-sleeper-port.md",
+      "status": "implemented",
+      "title": "ADR 0042: The engine reads time through the Sleeper port"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",

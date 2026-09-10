@@ -27,6 +27,8 @@ schema = ["dep:schemars", "stella-protocol/schema"]
 schemars = { workspace = true, optional = true }
 stella-protocol = { path = "../stella-protocol" }
 stella-core = { path = "../stella-core" }
+# The real sleeper and clocks behind stella-core's time ports.
+stella-time = { path = "../stella-time" }
 # The step-scoped facade (#971 phase 1). `stella-serve` drives `run_step`
 # rather than `Engine::run_turn` so a turn can be cancelled at a step
 # boundary and checkpointed between steps (#1129).

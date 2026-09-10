@@ -427,7 +427,7 @@ async fn watch_branch_reports_green_ci_and_open_pr() {
         Some(r#"{"state":"OPEN","isDraft":false}"#),
     );
     let calls = gh.calls.clone();
-    let monitor = Monitor::new(gh, Box::new(SystemClock::new()));
+    let monitor = Monitor::new(gh, Box::new(MonotonicClock));
 
     let watched = branch_watch::watch_branch(&monitor, "t1", "fleet/t1-abc").await;
     assert!(watched.is_green());
@@ -455,7 +455,7 @@ async fn watch_branch_red_ci_and_a_missing_pr_are_states_not_errors() {
         r#"[{"status":"completed","conclusion":"failure","name":"ci"}]"#,
         None,
     );
-    let monitor = Monitor::new(gh, Box::new(SystemClock::new()));
+    let monitor = Monitor::new(gh, Box::new(MonotonicClock));
 
     let watched = branch_watch::watch_branch(&monitor, "t1", "fleet/t1-abc").await;
     assert!(!watched.is_green());
@@ -475,7 +475,7 @@ async fn watch_branch_treats_a_ci_timeout_as_red() {
     // first decision (elapsed >= grace with a 0ms grace) — the watch ends
     // as NoRunsStarted without sleeping, and the branch is red.
     let gh = RoutedGh::new("[]", None);
-    let monitor = Monitor::new(gh, Box::new(SystemClock::new())).with_config(WatchConfig {
+    let monitor = Monitor::new(gh, Box::new(MonotonicClock)).with_config(WatchConfig {
         poll_interval_ms: 1,
         max_total_ms: 60_000,
         stall_timeout_ms: 60_000,

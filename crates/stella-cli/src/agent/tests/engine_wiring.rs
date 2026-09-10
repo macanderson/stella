@@ -209,7 +209,7 @@ fn the_settings_model_is_inert_without_the_fix_but_routes_with_it() {
     // The full round trip through the actual router — `SessionFallback` is the
     // one live `Router::resolve` caller, and `Role::Worker` is the one role it
     // asks for, which is why that pin is the one #3908 kept.
-    let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
+    let breaker = CircuitBreaker::new(Box::new(MonotonicClock));
     let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
     assert_eq!(
         router.resolve(Role::Worker).unwrap().model_ref,
@@ -255,7 +255,7 @@ fn an_explicit_model_flag_outranks_the_settings_model() {
 
     // The round trip through the real router is the claim that matters: the
     // pin table being empty is only useful if resolution lands on the flag.
-    let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
+    let breaker = CircuitBreaker::new(Box::new(MonotonicClock));
     let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
     assert_eq!(
         router.resolve(Role::Worker).unwrap().model_ref,

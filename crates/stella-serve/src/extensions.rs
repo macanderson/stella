@@ -144,7 +144,7 @@ pub(crate) fn install_for_turn(
     if extensions.is_empty() {
         return None;
     }
-    let bus = HookBus::new(turn_id, crate::remote::WallClock);
+    let bus = HookBus::new(turn_id, stella_time::WallClock);
     for extension in extensions {
         extension.install(&bus);
     }

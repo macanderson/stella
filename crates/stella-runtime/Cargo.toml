@@ -11,6 +11,8 @@ publish.workspace = true
 [dependencies]
 stella-protocol = { path = "../stella-protocol" }
 stella-core = { path = "../stella-core" }
+# The real sleeper and clocks behind stella-core's time ports.
+stella-time = { path = "../stella-time" }
 stella-model = { path = "../stella-model" }
 stella-tools = { path = "../stella-tools" }
 stella-store = { path = "../stella-store" }

@@ -142,24 +142,13 @@ async fn run_with_timeout(
 
 // Sleeper (deferred-wait pacing; injectable so caps are testable)
 
-/// The pacing seam for the poll loop — real impl sleeps, the test impl
-/// advances the injected [`Clock`] instead so a 2h cap is proven in
+/// The pacing seam for the poll loop: the engine's own [`Sleeper`] port, so
+/// the fleet keeps no second one. The real impl sleeps; the test impl
+/// advances the injected [`Clock`] instead, so a 2h cap is proven in
 /// microseconds.
-#[async_trait]
-pub trait Sleeper: Send + Sync {
-    async fn sleep(&self, ms: u64);
-}
-
-/// Production [`Sleeper`] — a real `tokio` sleep.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct TokioSleeper;
-
-#[async_trait]
-impl Sleeper for TokioSleeper {
-    async fn sleep(&self, ms: u64) {
-        tokio::time::sleep(Duration::from_millis(ms)).await;
-    }
-}
+pub use stella_core::retry::Sleeper;
+/// Production [`Sleeper`] — a real `tokio` sleep, from `stella-time`.
+pub use stella_time::TokioSleeper;
 
 // Errors
 
@@ -836,6 +825,16 @@ mod tests {
     impl Sleeper for AdvancingSleeper {
         async fn sleep(&self, ms: u64) {
             self.0.fetch_add(ms, Ordering::SeqCst);
+        }
+
+        // The monitor reads the injected `Clock`, never this: the port's
+        // `now` and `jitter` exist for the engine's retry ladder.
+        fn now(&self) -> std::time::Instant {
+            std::time::Instant::now()
+        }
+
+        fn jitter(&self, _upper: u64) -> u64 {
+            0
         }
     }
 

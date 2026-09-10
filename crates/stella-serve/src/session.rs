@@ -42,9 +42,8 @@ use crate::observe::SharedObserver;
 use crate::observe::event::{ServeEvent, SettledOutcome, TurnRef, TurnTally, millis};
 use crate::observe::tally::TallyFold;
 use crate::pending::Pending;
-use crate::remote::{
-    DEFAULT_REVERSE_REQUEST_TIMEOUT, RemoteProvider, RemoteToolExecutor, TokioSleeper,
-};
+use crate::remote::{DEFAULT_REVERSE_REQUEST_TIMEOUT, RemoteProvider, RemoteToolExecutor};
+use stella_time::TokioSleeper;
 
 /// Everything needed to run one turn. The host assembles this — it owns prompt
 /// construction, recall, model selection, and the tool set (advertised as

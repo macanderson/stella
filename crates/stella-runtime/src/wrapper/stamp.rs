@@ -13,9 +13,8 @@
 //!
 //! [`stamped`] reads no clock and touches no file. The caller passes the two
 //! times in, which is what lets a test pin a whole stamp to the byte.
-//! [`HostClock`] is the source a real run passes them from.
+//! `stella-time`'s `WallClock` is the source a real run passes them from.
 
-use stella_core::ports::Clock;
 use stella_plugin::{
     EvidenceProvenance, EvidenceSet, FlipObservation, TamperFinding, UndecidedReason, Verdict,
     VerdictRule,
@@ -27,28 +26,6 @@ use super::arbitration::ArbiterClaim;
 
 /// The name a stamp carries when the host reached the answer itself.
 pub const HOST_AUTHOR: &str = "engine";
-
-/// The host's own clock, counting from the Unix epoch.
-///
-/// Two stamps are compared across runs and across machines, so they have to
-/// count from a shared start. A clock that counts from the moment a process
-/// began would make the gap between two stamps mean nothing. `stella-cli`'s
-/// `WallClock` answers the same port the same way and for the same reason.
-///
-/// A system clock set before the epoch reads as `0` rather than failing: a
-/// wrong time is a bad stamp, and a run that stops for one is worse.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct HostClock;
-
-impl Clock for HostClock {
-    fn now_ms(&self) -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |since| {
-                u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
-            })
-    }
-}
 
 /// When an observer decided, and how long it took.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -182,8 +159,8 @@ pub fn stamped(
 /// verdict could not say whether a check answered, stood aside, or was never
 /// heard from. This is what carries them.
 ///
-/// They go **ahead** of the arbiter's stamp, because they arrived first and
-/// the list is arrival order — the same order the fold's rows are in, so a
+/// They go **ahead** of the arbiter's stamp. They arrived first, and the
+/// list is in arrival order. That is the order of the fold's rows too, so a
 /// reader of the record and a reader of the fold see one sequence.
 ///
 /// Every stamp on one record shares a hash. The preimage drops the stamp

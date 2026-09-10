@@ -223,7 +223,7 @@ pub(crate) fn spawn_renderer(
             crate::diag_boot::dx(),
             Some(crate::diag_boot::workspace_root()),
         );
-        // The stream-json sink's clock. Wall-anchored, not `SystemClock`: a
+        // The stream-json sink's clock. Wall-anchored, not `MonotonicClock`: a
         // journal stamp has to stay comparable across processes and runs, and a
         // per-construction origin is exactly the wrong shape for that (#2111).
         let clock = WallClock;
