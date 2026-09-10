@@ -3,9 +3,22 @@
 #
 #   build_sut.sh [<commit>]
 #
-# The SUT is `origin/main` itself. The working tree may carry bench/ or docs
+# The SUT defaults to `origin/main`. The working tree may carry bench/ or docs
 # changes, which compile into nothing, so the check that matters is not "tree is
 # clean" but "every input to the Rust build is byte-identical to origin/main".
+#
+# Two variables move the build off that default, and both are read in `env.sh`:
+#
+#   TB_BUILD_REPO — the checkout to compile. Defaults to `TB_REPO`. An arm whose
+#       commit predates a crate this workspace deleted cannot be built from
+#       `main` with the commit as an argument, because the drift check below
+#       then sees every file that moved since as local contamination. Give it a
+#       checkout of that commit instead. `TB_REPO` stays where it is and keeps
+#       supplying the adapter, so the two arms differ by the binary alone.
+#   TB_ARM — the arm this build belongs to. The binary and the two provenance
+#       files land under `$TB_ROOT/arms/<arm>/`. Without it both arms write one
+#       path, the second build overwrites the first, and the hash a report
+#       cites belongs to whichever ran last.
 #
 # Pass a commit to skip the fetch and build exactly that revision. A wrapper
 # that fetches and checks out should pass what it checked out, because otherwise
@@ -16,7 +29,8 @@
 # says which of the two it is.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
-cd "$TB_REPO"
+BUILD_REPO="${TB_BUILD_REPO:-$TB_REPO}"
+cd "$BUILD_REPO"
 
 RUST_INPUTS=('*.rs' '*/Cargo.toml' Cargo.toml Cargo.lock rust-toolchain.toml)
 
@@ -56,8 +70,9 @@ if [ -n "$drift" ]; then
   fi
   echo "FATAL: build inputs differ from $SUT:"; echo "$drift"; exit 1
 fi
-echo "$SUT" > "$TB_ROOT/sut_commit.txt"
+echo "$SUT" > "$TB_ARM_DIR/sut_commit.txt"
 echo "SUT=$SUT ($(git describe --tags "$SUT" 2>/dev/null || echo no-tag))"
+echo "build_repo=$BUILD_REPO arm=${TB_ARM:-<single build>}"
 
 ZC="$(mktemp -d "${TMPDIR:-/tmp}/stella-zig.XXXXXX")"
 mkdir -p "$ZC/global" "$ZC/local"
@@ -68,6 +83,16 @@ STELLA_BUILD_GIT_SHA="$SUT" \
 "$(rustup which cargo)" zigbuild --release --locked \
   --target "$STELLA_TARGET_TRIPLE.$STELLA_GLIBC_FLOOR" --package stella-cli --bin stella
 
+test -x "$TB_BUILD_OUTPUT"
+# Move the artifact out of the target directory that produced it, so the next
+# arm's build cannot overwrite the binary this run will be reported as having
+# measured. For a single build the two paths are the same file and `cp` is
+# skipped. `cp` and not a symlink or a hard link: the arm directory has to hold
+# a copy that survives a `cargo clean` in the checkout that built it.
+if [ "$STELLA_BINARY" != "$TB_BUILD_OUTPUT" ]; then
+  cp "$TB_BUILD_OUTPUT" "$STELLA_BINARY"
+  chmod +x "$STELLA_BINARY"
+fi
 test -x "$STELLA_BINARY"
 # Verify the artifact, not that the right command was typed. Building through
 # this script and building through anything else are then distinguishable by
@@ -77,8 +102,9 @@ assert_portable_binary
 # against $SUT itself is an equality assertion on the binary's own compile-time
 # stamp, so a build that silently stamped something else — a stale target dir,
 # an env var the caller already had set — is caught here rather than becoming
-# the next thing that measures the wrong code.
-assert_fresh_sut "$STELLA_BINARY" --reference "$SUT" --max-behind 0
+# the next thing that measures the wrong code. `--repo` names the checkout that
+# built it, which holds $SUT whatever $TB_REPO is sitting on.
+assert_fresh_sut "$STELLA_BINARY" --repo "$BUILD_REPO" --reference "$SUT" --max-behind 0
 file "$STELLA_BINARY"
-shasum -a 256 "$STELLA_BINARY" | awk '{print $1}' > "$TB_ROOT/binary_sha256.txt"
-echo "binary_sha256=$(cat "$TB_ROOT/binary_sha256.txt")"
+shasum -a 256 "$STELLA_BINARY" | awk '{print $1}' > "$TB_ARM_DIR/binary_sha256.txt"
+echo "binary_sha256=$(cat "$TB_ARM_DIR/binary_sha256.txt")"

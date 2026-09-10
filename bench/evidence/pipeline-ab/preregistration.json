@@ -3,7 +3,7 @@
   "issue": "https://github.com/macanderson/stella/issues/6155",
   "epic": "https://github.com/macanderson/stella/issues/4029",
   "status": "plan_fixed_run_not_started",
-  "status_note": "The design, outcomes, seeds and decision rule below are fixed and were written before any data existed. The run has not been executed. It needs a benchmark host, a spend-capable credential, a build of a crate this workspace deleted, and the run scripts named under `preconditions`. The two adapter preconditions are met. The fields under `to_be_recorded_before_the_first_paid_call` are the run's identity and must be filled in — and this file committed — before the first paid call, not after; the two `loop_mode_field_values` are filled in already, because the adapter decides them and no data is needed to read them off it.",
+  "status_note": "The design, outcomes, seeds and decision rule below are fixed and were written before any data existed. The run has not been executed. It needs a benchmark host, a spend-capable credential, a build of a crate this workspace deleted, and a way to put the treatment arm's plugin inside a task container. The two adapter preconditions are met and the run scripts hold two arms; the two remaining preconditions both need the rig. The fields under `to_be_recorded_before_the_first_paid_call` are the run's identity and must be filled in — and this file committed — before the first paid call, not after; the two `loop_mode_field_values` are filled in already, because the adapter decides them and no data is needed to read them off it.",
   "plan_fixed_at": "2026-09-05",
   "question": "Is the plugin verification path at least as good as the built-in staged pipeline it replaced?",
   "why_it_is_owed": "docs/spec/pipeline-as-plugins.md §7 set one bar for deleting the built-in path: a side-by-side benchmark. The deletion shipped ahead of that bar as a recorded maintainer call. This run is the late payment.",
@@ -90,7 +90,12 @@
     "control_arm_must_build_and_the_run_scripts_hold_one_arm": {
       "what": "the control arm's crate is gone from this workspace, so its build comes from an old checkout with its own lockfile and toolchain pin. build_sut.sh refuses any difference between the working tree and the commit it is handed. env.sh gives both arms one STELLA_BINARY path and one TB_ROOT, so the second build overwrites the first. The same variable puts $TB_REPO/bench/harbor_adapter on PYTHONPATH, so aiming TB_REPO at the old checkout swaps the adapter too, and only the binary may differ between the arms.",
       "issue": "https://github.com/macanderson/stella/issues/6195",
-      "state": "open. It is tree-only and needs no rig."
+      "state": "half met. The run scripts hold two arms now: TB_ARM gives each arm its own binary and provenance files under $TB_ROOT/arms/<arm>/, and TB_BUILD_REPO moves the build to another checkout while TB_REPO keeps supplying the adapter, so only the binary differs between the arms. bench/evidence/run/pipeline_ab.sh launches one arm and refuses two arms sharing one binary hash. What remains needs the rig: no binary has been built from f4c24c12b, and whether `cargo zigbuild --locked` still resolves that commit's lock file today is unanswered."
+    },
+    "treatment_arm_has_no_plugin_in_the_task_container": {
+      "what": "bench/harbor_adapter/stella_harbor uploads the stella binary and nothing else, and a wrapper plugin is a directory the roster reads off disk. So PluginRoster::load finds an empty roster inside a task container, wrapper_plugin::resolve refuses witness-v1, and agent::goal turns that into a CliFailure on every treatment trial. The refusal is fail-closed, so the arm produces no number rather than a wrong one, and it costs a full arm of spend to discover.",
+      "issue": "https://github.com/macanderson/stella/issues/6490",
+      "state": "open. It needs the rig: which task images carry python3, and whether filesystem_settings_disabled() holds inside a trial, cannot be answered from a checkout. bench/evidence/run/pipeline_ab.sh refuses the treatment arm on the host until it lands."
     }
   },
   "to_be_recorded_before_the_first_paid_call": {

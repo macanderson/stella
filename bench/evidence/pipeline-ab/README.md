@@ -46,18 +46,55 @@ All of it is in `preregistration.json`. The short form:
 
 ## What blocks the run today
 
-One thing, and it is tree-only. `#6195` has it.
+Both blockers need the benchmark rig, and neither can be settled by reading
+the tree.
 
-**The control arm has no binary and the run scripts hold one arm.** Its crate
-is gone from this workspace, so its build comes from a checkout of
-`f4c24c12b`, with that commit's own lock file and toolchain pin.
-`build_sut.sh` refuses any difference between the working tree and the commit
-it is handed, so it has to run from that checkout rather than from `main` with
-the commit as an argument. `env.sh` then gives both arms one `STELLA_BINARY`
-path and one `$TB_ROOT`, so the second build overwrites the first. The same
-variable puts `$TB_REPO/bench/harbor_adapter` on `PYTHONPATH`, so aiming
-`TB_REPO` at the old checkout swaps in the old adapter too, and only the
-binary may differ between the arms.
+**The control arm has no binary** (`#6195`). Its crate is gone from this
+workspace. So the build comes from a checkout of `f4c24c12b`, with that
+commit's own lock file and toolchain pin. One question is open: does
+`cargo zigbuild --locked` still resolve that lock file today? A yanked crate
+shows up there first.
+
+**The treatment arm has no plugin in the task container** (`#6490`). The
+adapter uploads the `stella` binary and nothing else. A wrapper plugin is a
+folder read off disk. So the roster is empty, `PipelineChoice::resolve`
+refuses `witness-v1`, and every treatment trial exits non-zero.
+
+That fails closed. The arm yields no number, rather than a wrong one. But
+finding out costs a full arm of spend, so `pipeline_ab.sh` refuses the arm on
+the host.
+
+## How the two arms are launched
+
+One `STELLA_BINARY` path and one `$TB_ROOT` per run puts both arms' builds on
+the same file, and the hash a report cites then belongs to whichever arm was
+built last. Two variables keep them apart:
+
+- `TB_ARM` gives an arm its own binary, `sut_commit.txt` and
+  `binary_sha256.txt` under `$TB_ROOT/arms/<arm>/`.
+- `TB_BUILD_REPO` moves the build to another checkout. `TB_REPO` stays put and
+  still supplies the adapter, the venv and `PYTHONPATH`. Only the binary may
+  differ between two arms. Aim `TB_REPO` at the old checkout and you swap in
+  its adapter too. That one has no `--pipeline` selector at all.
+
+```bash
+TB_ARM=control TB_BUILD_REPO=/checkouts/stella-f4c24c12b \
+  bench/evidence/run/build_sut.sh f4c24c12bde5578818f1141ec4e438291ac4db55
+TB_ARM=treatment bench/evidence/run/build_sut.sh
+
+bench/evidence/run/pipeline_ab.sh control   pab1-control   "$TB_ROOT/pipeline_ab.tasks"
+bench/evidence/run/pipeline_ab.sh treatment pab1-treatment "$TB_ROOT/pipeline_ab.tasks"
+```
+
+An arm's binary must match the commit `build_sut.sh` wrote down for it. The
+usual check asks whether a binary is near `origin/main`. That is the wrong
+question here. The control arm is a thousand commits back on purpose. A
+tolerance wide enough to let it through would let a stale binary through on
+every other run.
+
+`pipeline_ab.sh` pins the task set across the pair. It refuses two arms with
+one binary hash. It refuses a per-trial spend cap, which the plan fixes as
+absent.
 
 ## Two blockers that have shipped
 
