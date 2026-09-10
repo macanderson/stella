@@ -436,7 +436,7 @@ fn gated_fixture(
     tool.name = gated_name.to_string();
 
     let registry = crate::registry::ToolRegistry::new(dir.to_path_buf());
-    let bus = HookBus::new("custom-gate-test");
+    let bus = HookBus::new("custom-gate-test", stella_core::ports::FixedClock(0));
     let gated_name = gated_name.to_string();
     bus.on_blocking(hook_names::TOOL_CALL_REQUESTED, move |event| {
         if event.payload["tool"] == gated_name.as_str() {
@@ -596,7 +596,7 @@ async fn a_name_that_falls_through_is_gated_exactly_once() {
 
     let dir = tempfile::tempdir().unwrap();
     let registry = crate::registry::ToolRegistry::new(dir.path().to_path_buf());
-    let bus = HookBus::new("once-test");
+    let bus = HookBus::new("once-test", stella_core::ports::FixedClock(0));
     let seen = Arc::new(AtomicUsize::new(0));
     let counter = seen.clone();
     bus.on_blocking(hook_names::TOOL_CALL_REQUESTED, move |_| {

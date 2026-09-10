@@ -17,9 +17,12 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
 async-trait = { workspace = true }
 futures-util = { workspace = true }
-rand = { workspace = true }
 sha2 = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+# Seeds the retry tests' jitter double. Shipping code draws nothing: the
+# entropy behind backoff jitter is a port (`retry::Sleeper::jitter`), and
+# `make core-no-io` refuses this crate an entropy source.
+rand = { workspace = true }
 proptest = { workspace = true }

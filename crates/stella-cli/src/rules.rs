@@ -50,6 +50,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::runtime::WallClock;
 use stella_core::bus::{HookBus, HookDecision, names as hook_names};
 use stella_learn::rules::{
     LoadRulesOptions, ProposedAction, Rule, RuleFile, RuleSource, evaluate_guards, load_rules,
@@ -587,7 +588,7 @@ pub(crate) fn attach_rule_guards(registry: &ToolRegistry, rules: &ResolvedRules)
         return;
     }
     let rules = Arc::clone(&rules.rules);
-    let bus = HookBus::new(format!("rules-{}", std::process::id()));
+    let bus = HookBus::new(format!("rules-{}", std::process::id()), WallClock);
     bus.on_blocking(hook_names::TOOL_CALL_REQUESTED, move |event| {
         let tool = canonical_tool(event.payload["tool"].as_str().unwrap_or_default());
         let input = &event.payload["input"];

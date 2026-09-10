@@ -156,6 +156,7 @@ step_command() {
   doc-links) echo 'check-doc-links' ;;
   module-reachability) echo 'check-module-reachability' ;;
   core-reachability) echo 'check-core-reachability' ;;
+  core-no-io) echo 'check-core-no-io' ;;
   retired-model-keys) echo 'check-retired-model-keys' ;;
   typed-errors) echo 'check-typed-errors' ;;
   tool-error-class) echo 'check-tool-error-class' ;;

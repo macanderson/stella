@@ -45,6 +45,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     release-wiring left-behind \
                     retired-model-keys \
                     stat-portability module-reachability core-reachability \
+                    core-no-io \
                     typed-errors \
                     tool-error-class \
                     dead-code-allows measured-constants diagnostic-codes consumer-sites \
@@ -926,6 +927,18 @@ core-reachability-update: ## Shrink the core-reachability baseline after an evic
 .PHONY: core-reachability-test
 core-reachability-test: ## Test the core-reachability walker (hermetic; not part of `gate`)
 	./scripts/test-core-reachability.sh
+
+.PHONY: core-no-io
+core-no-io: ## Assert no shipping stella-core source names an I/O surface, and no new Instant::now() read (down-only)
+	@python3 ./scripts/check-core-no-io.py
+
+.PHONY: core-no-io-update
+core-no-io-update: ## Shrink the core-no-io clock-read baseline after removing a read (refuses to grow)
+	@python3 ./scripts/check-core-no-io.py --update
+
+.PHONY: core-no-io-test
+core-no-io-test: ## Test the core-no-io guard (hermetic; not part of `gate`)
+	./scripts/test-core-no-io.sh
 
 .PHONY: god-files
 god-files: ## Assert AGENTS.md and the crate READMEs name the baselined god files (#1435)

@@ -463,7 +463,7 @@ mod tests {
     fn fixture(gate_event: &str, reason: &str) -> (tempfile::TempDir, ToolRegistry, HookBus) {
         let dir = tempfile::tempdir().unwrap();
         let reg = ToolRegistry::new(dir.path().to_path_buf());
-        let bus = HookBus::new("approval-test");
+        let bus = HookBus::new("approval-test", stella_core::ports::FixedClock(0));
         let reason = reason.to_string();
         bus.on_blocking(gate_event, move |_| HookDecision::RequireApproval {
             reason: reason.clone(),

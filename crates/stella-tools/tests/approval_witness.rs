@@ -18,7 +18,7 @@ use stella_tools::ToolRegistry;
 async fn headless_require_approval_names_the_missing_surface_and_grant_path() {
     let dir = tempfile::tempdir().unwrap();
     let reg = ToolRegistry::new(dir.path().to_path_buf());
-    let bus = HookBus::new("witness-2676");
+    let bus = HookBus::new("witness-2676", stella_core::ports::FixedClock(0));
     bus.on_blocking(hook_names::TOOL_CALL_REQUESTED, |_| {
         HookDecision::RequireApproval {
             reason: "policy wants a human".into(),

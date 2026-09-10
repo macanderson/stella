@@ -355,6 +355,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-core-reachability.sh
 
+      - name: the core-no-io floor, manifest check and clock ratchet
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-core-no-io.sh
+
       - name: the unverified-main detector, and that it fails open
         if: ${{ !cancelled() }}
         run: ./scripts/test-main-verified.sh

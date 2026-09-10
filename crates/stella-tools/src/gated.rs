@@ -890,7 +890,7 @@ mod tests {
     /// denied" is reconstructable after the fact.
     #[tokio::test]
     async fn an_attached_bus_journals_the_decision_with_its_trace() {
-        let bus = stella_core::bus::HookBus::new("test-session");
+        let bus = stella_core::bus::HookBus::new("test-session", stella_core::ports::FixedClock(0));
         let seen: Arc<std::sync::Mutex<Vec<Value>>> = Arc::default();
         let sink = Arc::clone(&seen);
         bus.on(stella_core::bus::names::POLICY_EVALUATED, move |event| {

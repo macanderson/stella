@@ -44,7 +44,7 @@ async fn a_structured_stop_denial_reaches_the_model_and_the_journal_intact() {
     let hooks: Hooks =
         serde_json::from_str(r#"{ "Stop": [ { "hooks": [{ "command": "verify" }] } ] }"#).unwrap();
 
-    let bus = crate::bus::HookBus::new("denial-test");
+    let bus = crate::bus::HookBus::new("denial-test", crate::ports::FixedClock(0));
     let blocked: Arc<std::sync::Mutex<Vec<serde_json::Value>>> = Arc::default();
     let sink = Arc::clone(&blocked);
     bus.on(crate::bus::names::HOOK_STOP_BLOCKED, move |event| {

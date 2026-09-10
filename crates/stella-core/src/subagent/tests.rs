@@ -31,6 +31,11 @@ pub(crate) struct NoSleep;
 #[async_trait]
 impl Sleeper for NoSleep {
     async fn sleep(&self, _duration_ms: u64) {}
+
+    // The floor: a test that asserts on retry timing wants no spread in it.
+    fn jitter(&self, _upper: u64) -> u64 {
+        0
+    }
 }
 
 /// A provider that returns a fixed sequence of results, then errors.

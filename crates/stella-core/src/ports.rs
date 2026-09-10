@@ -620,9 +620,30 @@ impl ToolExecutor for GrantedTools<'_> {
 /// here — the production implementation belongs to the binary that wires
 /// the engine (the CLI's `runtime` module), so `stella-core` never carries
 /// a concrete time source of its own.
+///
+/// The epoch is the holder's choice, and each holder says which it needs.
+/// The router's circuit breaker subtracts two reads, so any origin serves
+/// it; [`crate::bus::HookBus`] writes the reading into a stamp a hook script
+/// reads on the other side of a process boundary, so it needs one counting
+/// from the Unix epoch.
 pub trait Clock: Send + Sync {
-    /// Monotonic milliseconds since an arbitrary epoch.
+    /// Milliseconds since the holder's epoch, never decreasing.
     fn now_ms(&self) -> u64;
+}
+
+/// A [`Clock`] pinned at one reading.
+///
+/// A replay stamps its events from the record it is replaying, and a test
+/// asserting on a stamp needs one it can predict. Both want a clock that
+/// does not move, and neither is a reason for `stella-core` to read the
+/// real one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixedClock(pub u64);
+
+impl Clock for FixedClock {
+    fn now_ms(&self) -> u64 {
+        self.0
+    }
 }
 
 /// Call-outcome feedback into provider routing — the write half of

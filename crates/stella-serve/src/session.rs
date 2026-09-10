@@ -1153,7 +1153,8 @@ mod tests {
         );
 
         let calibration = stella_core::estimator::CalibrationMap::default();
-        let bus = stella_core::bus::HookBus::new("serve-lane-test");
+        let bus =
+            stella_core::bus::HookBus::new("serve-lane-test", stella_core::ports::FixedClock(0));
         let requery = SilentRequery;
         let host_supplied_all = served_capabilities(
             Some(&calibration),

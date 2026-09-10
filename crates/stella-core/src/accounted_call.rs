@@ -461,6 +461,11 @@ mod tests {
     #[async_trait]
     impl Sleeper for NoopSleeper {
         async fn sleep(&self, _duration_ms: u64) {}
+
+        // The floor: a test that asserts on retry timing wants no spread in it.
+        fn jitter(&self, _upper: u64) -> u64 {
+            0
+        }
     }
 
     struct RetryThenSuccess {
@@ -975,6 +980,12 @@ mod tests {
     impl Sleeper for TokioSleeper {
         async fn sleep(&self, duration_ms: u64) {
             tokio::time::sleep(Duration::from_millis(duration_ms)).await;
+        }
+
+        // The floor: the timeout under test is placed against the exact
+        // backoff, so the draw must not move it.
+        fn jitter(&self, _upper: u64) -> u64 {
+            0
         }
     }
 

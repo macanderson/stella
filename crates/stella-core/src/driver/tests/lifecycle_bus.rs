@@ -29,7 +29,7 @@ struct Recorder {
 impl Recorder {
     /// Register on a fresh bus and hand back both halves.
     fn attach() -> (HookBus, Arc<Recorder>) {
-        let bus = HookBus::new("lifecycle-test");
+        let bus = HookBus::new("lifecycle-test", crate::ports::FixedClock(0));
         let recorder = Arc::new(Recorder::default());
         let sink = Arc::clone(&recorder);
         bus.on("*", move |event| {
@@ -134,6 +134,11 @@ struct NoSleep;
 #[async_trait::async_trait]
 impl crate::retry::Sleeper for NoSleep {
     async fn sleep(&self, _duration_ms: u64) {}
+
+    // The floor: a test that asserts on retry timing wants no spread in it.
+    fn jitter(&self, _upper: u64) -> u64 {
+        0
+    }
 }
 
 async fn run_one_turn(provider: &dyn Provider, bus: &HookBus) -> TurnOutcome {

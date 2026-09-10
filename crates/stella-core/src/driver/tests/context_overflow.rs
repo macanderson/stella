@@ -106,6 +106,11 @@ struct NoSleep;
 #[async_trait::async_trait]
 impl crate::retry::Sleeper for NoSleep {
     async fn sleep(&self, _duration_ms: u64) {}
+
+    // The floor: a test that asserts on retry timing wants no spread in it.
+    fn jitter(&self, _upper: u64) -> u64 {
+        0
+    }
 }
 
 /// Completes every call — the wider-window replacement the spent ladder

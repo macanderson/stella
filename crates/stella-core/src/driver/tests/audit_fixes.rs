@@ -394,6 +394,11 @@ impl crate::retry::Sleeper for HangingSleeper {
         self.sleeping.notify_one();
         std::future::pending().await
     }
+
+    // The floor: this double never wakes, so the draw decides nothing.
+    fn jitter(&self, _upper: u64) -> u64 {
+        0
+    }
 }
 
 /// The other half of F9's contract: a hard cancel landing in a backoff sleep

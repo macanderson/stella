@@ -33,7 +33,7 @@ fn disconnected_port() -> (RemoteToolExecutor, Arc<Mutex<Vec<String>>>) {
         crate::observe::null_observer(),
         TurnRef::new("turn-remotetest"),
     );
-    let bus = HookBus::new("turn-remotetest");
+    let bus = HookBus::new("turn-remotetest", stella_core::ports::FixedClock(0));
     let seen = Arc::new(Mutex::new(Vec::new()));
     let recorder = Arc::clone(&seen);
     bus.on("tool.call.*", move |event: &HookEvent| {
@@ -164,7 +164,7 @@ async fn a_tool_call_the_host_never_answers_still_reports_an_outcome() {
         crate::observe::null_observer(),
         TurnRef::new("turn-remotetest"),
     );
-    let bus = HookBus::new("turn-remotetest");
+    let bus = HookBus::new("turn-remotetest", stella_core::ports::FixedClock(0));
     let seen = Arc::new(Mutex::new(Vec::new()));
     let recorder = Arc::clone(&seen);
     bus.on("tool.call.*", move |event: &HookEvent| {
@@ -387,7 +387,7 @@ async fn a_denying_gate_refuses_a_remoted_call_before_any_frame_leaves() {
     });
     // A bus recording `policy.evaluated`: the served surface must journal
     // the same rule-by-rule account the CLI's `GatedToolSet` does (#3362).
-    let bus = HookBus::new("turn-authztest0");
+    let bus = HookBus::new("turn-authztest0", stella_core::ports::FixedClock(0));
     let seen: Arc<Mutex<Vec<serde_json::Value>>> = Arc::default();
     let journal = Arc::clone(&seen);
     bus.on(hook_names::POLICY_EVALUATED, move |event: &HookEvent| {
@@ -501,7 +501,7 @@ fn policed_port(refused: &'static str) -> RemoteToolExecutor {
         crate::observe::null_observer(),
         TurnRef::new("turn-policedtest"),
     );
-    let bus = HookBus::new("turn-policedtest");
+    let bus = HookBus::new("turn-policedtest", stella_core::ports::FixedClock(0));
     bus.on_blocking(hook_names::TOOL_CALL_REQUESTED, move |event| {
         if event.payload["tool"].as_str() == Some(refused) {
             return stella_core::bus::HookDecision::Deny(

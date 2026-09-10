@@ -283,6 +283,11 @@ mod tests {
     #[async_trait]
     impl Sleeper for NoopSleeper {
         async fn sleep(&self, _duration_ms: u64) {}
+
+        // The floor: a test that asserts on retry timing wants no spread in it.
+        fn jitter(&self, _upper: u64) -> u64 {
+            0
+        }
     }
 
     /// Armed from the start, so the first committed boundary ends the turn.

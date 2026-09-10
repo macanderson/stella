@@ -539,7 +539,7 @@ mod tests {
     type Seen = Arc<Mutex<Vec<(String, Value)>>>;
 
     fn recording_bus() -> (HookBus, Seen) {
-        let bus = HookBus::new("test-session");
+        let bus = HookBus::new("test-session", stella_core::ports::FixedClock(0));
         let seen: Arc<Mutex<Vec<(String, Value)>>> = Arc::default();
         let sink = seen.clone();
         bus.on("tool.call.*", move |event| {

@@ -514,7 +514,7 @@ mod tests {
         let registry = Arc::new(stella_tools::registry::ToolRegistry::new(
             dir.path().to_path_buf(),
         ));
-        let bus = HookBus::new("gate-2793");
+        let bus = HookBus::new("gate-2793", stella_core::ports::FixedClock(0));
         bus.on_blocking(hook_names::TOOL_CALL_REQUESTED, |event| {
             match event.payload["tool"].as_str() {
                 Some("mcp__vendor__deploy") | Some("my_tool") => {
