@@ -139,12 +139,20 @@ pub(super) async fn run_lead_turn(
     let outcome = {
         // Customs, the operator's switches, and the authorization gate
         // (#3283) — the deck's lead turn acts as the human at the keyboard.
+        // The tool budget's refusals go where recall's already do: this
+        // turn's event channel, and from there the transcript. Never stderr —
+        // that is the drawn frame, and a line written into it scrolls the
+        // screen out from under the renderer's diff.
+        let advisories = |advisories: Vec<String>| {
+            let _ = tx.send(stella_protocol::AgentEvent::SteeringDropped { advisories });
+        };
         let permitted = agent::tool_stack::session_stack(
             &claims,
             custom_tools.to_vec(),
             cfg,
             Principal::User,
             registry.hook_bus(),
+            &advisories,
         );
         // Both read before the engine borrows `messages` mutably: the plan
         // gate's setup (`task_tap::plan_gate`, #4594/#4611) and this turn's

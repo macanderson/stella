@@ -53,6 +53,16 @@ pub struct RecalledBlock {
     /// restrict the surface the operator configured, never widen it. Empty
     /// for the common turn whose skills carry no directive.
     pub skill_scopes: Vec<crate::extensions::SkillTurnScope>,
+    /// What the turn's steering budgets refused, one advisory line each —
+    /// the material the `SteeringDropped` event is built from.
+    ///
+    /// Carried out of the block rather than printed where it is discovered.
+    /// A `SessionMemory` under the deck shares its stderr with a `ratatui`
+    /// frame, so a line written here lands inside the drawn screen and
+    /// scrolls it out from under the renderer's diff (#643 ruled the same
+    /// way for the code-graph index pass). The caller owns a channel; this
+    /// layer owns none, and now says so in its return type.
+    pub dropped: Vec<String>,
 }
 
 impl RecalledBlock {
@@ -65,11 +75,18 @@ impl RecalledBlock {
 
     /// Everything this block leaves for the turn runner's channel, in send
     /// order: the recall telemetry, then one `SkillInjected` per skill it
-    /// carried — SPEC 6.3's `✦ skill` rows.
+    /// carried — SPEC 6.3's `✦ skill` rows — and last what the turn's
+    /// budgets refused.
     ///
     /// One event per skill rather than one carrying a list, because each
     /// becomes one transcript row with its own head, subject and cost; a list
     /// would make the renderer split what the emitter had already separated.
+    /// The refusals go the other way for the reason `SteeringDropped`'s own
+    /// docs give: they are read together, and one of the sources they carry
+    /// arrives already summarized by count.
+    ///
+    /// Last because a refusal is only legible once the reader has seen what
+    /// did get a seat.
     #[must_use]
     pub fn telemetry_events(&self) -> Vec<stella_protocol::AgentEvent> {
         self.telemetry_event()
@@ -82,7 +99,17 @@ impl RecalledBlock {
                     trigger: stella_protocol::SkillTrigger::Auto,
                 }
             }))
+            .chain(self.dropped_event())
             .collect()
+    }
+
+    /// This block's refusals, ready to send. `None` when every candidate the
+    /// turn gathered fitted, which is the turn most sessions run.
+    #[must_use]
+    pub fn dropped_event(&self) -> Option<stella_protocol::AgentEvent> {
+        (!self.dropped.is_empty()).then(|| stella_protocol::AgentEvent::SteeringDropped {
+            advisories: self.dropped.clone(),
+        })
     }
 }
 
@@ -386,12 +413,17 @@ impl SessionMemory {
         // A record edited since the last look joins this very block — see
         // `records_refresh` for what a swap can and cannot apply.
         self.refresh_records_if_changed();
+        // Every refusal this turn makes, gathered for the block to carry out
+        // (`RecalledBlock::dropped`). The two reporters below run in
+        // sequence, so one collector serves both and the lines keep the order
+        // the plane refused them in.
+        let mut dropped: Vec<String> = Vec::new();
         let RecalledFrames {
             recall,
             dropped: frame_drops,
         } = self
             .recalled_frames_anchored(prompt, self.anchors_for(prompt, touched), |message| {
-                eprintln!("  {} {message}", "!".yellow())
+                dropped.push(message);
             })
             .await;
 
@@ -426,7 +458,7 @@ impl SessionMemory {
             record.as_ref(),
         );
         report_steering_drops(&set, self.retrieval.max_tokens, |message| {
-            eprintln!("  {} {message}", "!".yellow())
+            dropped.push(message);
         });
 
         // The holdout's memory arm, and this turn's memory join, in one door.
@@ -474,6 +506,7 @@ impl SessionMemory {
             produced,
             injected_skills: skills::injected_skills(&kept),
             skill_scopes: auto_skill_scopes(&kept),
+            dropped,
         }
     }
 
@@ -565,8 +598,9 @@ impl SessionMemory {
             &selected,
             record.as_ref(),
         );
+        let mut dropped: Vec<String> = Vec::new();
         report_steering_drops(&set, self.retrieval.max_tokens, |message| {
-            eprintln!("  {} {message}", "!".yellow())
+            dropped.push(message);
         });
 
         // The per-frame cut this block exists to make. It runs AFTER the plane
@@ -623,6 +657,7 @@ impl SessionMemory {
             // skill that surfaces here is context until the next turn opens
             // with it selected — the same rule an explicit invocation obeys.
             skill_scopes: Vec::new(),
+            dropped,
         }
     }
 

@@ -1436,6 +1436,31 @@ absence of a sibling key."
     /// terminal events and emitted its own in their place — which is a
     /// two-way connection between the engine and one of its callers.
     RunComplete { model: String, cost_usd: f64 },
+    /// What this turn's steering budgets refused, and what widens each one.
+    ///
+    /// The complement of [`Self::SkillInjected`] and [`Self::ContextRecall`],
+    /// which name what reached the prompt. A reader who sees only those reads
+    /// a turn that never mentioned a matching skill as a turn where no skill
+    /// matched, when the skill was found, ranked, and priced out.
+    ///
+    /// Not [`Self::SteeringWithheld`]: that one is a session fact about an
+    /// authority refusing a checkout's steering before any turn opens, and it
+    /// carries counts alone because the withheld text is repository-
+    /// controlled. These candidates were loaded and read by this process, so
+    /// naming the handle discloses nothing the session did not already hold.
+    ///
+    /// One event per turn carrying every line, rather than one per candidate.
+    /// The memory arm arrives already summarized by count
+    /// (`report_steering_drops`), so a per-candidate event would have no
+    /// handle to put in it; and four budgets each refusing one candidate is
+    /// one thing a reader wants in one place.
+    ///
+    /// Each line is a headline and a remedy separated by an em dash — the
+    /// shape `stella_tui::notice` splits into head and detail.
+    SteeringDropped {
+        /// One line per refusal, in the order the steering plane made them.
+        advisories: Vec<String>,
+    },
     /// The workspace's own steering — memories, rules and published context
     /// records, skills, commands, agents — was on disk and was **not** loaded,
     /// because the authority in `withheld_by` refused it (#2302, #3616).

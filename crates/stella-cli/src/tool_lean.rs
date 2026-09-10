@@ -52,18 +52,25 @@ impl<'a> LeanToolSet<'a> {
         }
     }
 
-    /// Name every cut tool on stderr. It goes through
-    /// `memory::report_steering_drops`, the one writer every other
-    /// steering source already uses.
+    /// Name every cut tool, one advisory line each. It goes through
+    /// `memory::report_steering_drops`, the one writer every other steering
+    /// source already uses.
+    ///
+    /// Returned rather than printed. The stack this layer sits in is
+    /// composed inside a turn, and under the deck that turn shares its
+    /// stderr with a `ratatui` frame — a line written here lands in the drawn
+    /// screen and scrolls it out from under the renderer's diff. The caller
+    /// owns the turn's event channel and puts these on it; this layer owns
+    /// nothing to say them through.
     ///
     /// The recall budget it takes is `0` and is never read. That number
     /// shapes the memory line, and a set built here holds tool drops
     /// alone.
-    pub(crate) fn report_drops(&self) {
-        use colored::Colorize;
-        crate::memory::report_steering_drops(&self.steering, 0, |message| {
-            eprintln!("  {} {message}", "!".yellow())
-        });
+    #[must_use]
+    pub(crate) fn drop_advisories(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        crate::memory::report_steering_drops(&self.steering, 0, |message| lines.push(message));
+        lines
     }
 
     /// What the plane kept and cut for this session.
