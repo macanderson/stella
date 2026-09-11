@@ -174,8 +174,14 @@ pub(crate) async fn run_turn(
         // Customs, the operator's switches, and the authorization gate,
         // outermost-last — one assembly for every driver.
         let bus = registry.hook_bus();
-        let tools =
-            tool_stack::session_stack(base_tools, custom_tools.to_vec(), cfg, Principal::User, bus);
+        let tools = tool_stack::session_stack(
+            base_tools,
+            custom_tools.to_vec(),
+            cfg,
+            Principal::User,
+            bus,
+            &tool_stack::stderr_advisories,
+        );
         // Above the whole session chain, for the same reason as the
         // process-free arm: the grant narrows the assembled surface —
         // customs and MCP included — and can never widen it.

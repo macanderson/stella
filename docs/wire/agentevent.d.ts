@@ -2682,6 +2682,16 @@ export type AgentEvent = {
   ts?: number;
   type: "run_complete";
 } | {
+  /**
+   * What was refused, and what widens the budget that refused it.
+   */
+  advisory: string;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
+  type: "steering_dropped";
+} | {
   agents: number;
   commands: number;
   memories: number;
@@ -2745,4 +2755,5 @@ export type KnownTypeTag =
   | "error"
   | "turn_complete"
   | "run_complete"
+  | "steering_dropped"
   | "steering_withheld";

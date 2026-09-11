@@ -52,18 +52,25 @@ impl<'a> LeanToolSet<'a> {
         }
     }
 
-    /// Name every cut tool on stderr. It goes through
-    /// `memory::report_steering_drops`, the one writer every other
-    /// steering source already uses.
+    /// Name every cut tool, one advisory line each. It goes through
+    /// `memory::report_steering_drops`, the one writer every other steering
+    /// source already uses.
+    ///
+    /// Returned rather than printed. The stack this layer sits in is
+    /// composed inside a turn, and under the deck that turn shares its
+    /// stderr with a `ratatui` frame — a line written here lands in the drawn
+    /// screen and scrolls it out from under the renderer's diff. The caller
+    /// owns the turn's event channel and puts these on it; this layer owns
+    /// nothing to say them through.
     ///
     /// The recall budget it takes is `0` and is never read. That number
     /// shapes the memory line, and a set built here holds tool drops
     /// alone.
-    pub(crate) fn report_drops(&self) {
-        use colored::Colorize;
-        crate::memory::report_steering_drops(&self.steering, 0, |message| {
-            eprintln!("  {} {message}", "!".yellow())
-        });
+    #[must_use]
+    pub(crate) fn drop_advisories(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        crate::memory::report_steering_drops(&self.steering, 0, |message| lines.push(message));
+        lines
     }
 
     /// What the plane kept and cut for this session.
@@ -202,6 +209,58 @@ mod tests {
 
     fn advertised_tokens(set: &LeanToolSet<'_>) -> u64 {
         set.schemas().iter().map(schema_tokens).sum()
+    }
+
+    /// A cut tool is named to the caller, and to nobody else.
+    ///
+    /// The return type is what keeps a library out of the process's stderr:
+    /// this layer is composed inside a turn, and under the deck that turn's
+    /// stderr is the drawn `ratatui` frame. A reporter that printed would put
+    /// these lines inside the frame and scroll it out from under the
+    /// renderer's diff — the mangled status bar this test exists to keep
+    /// fixed. Handing them back leaves the choice of channel to the door that
+    /// owns one.
+    #[test]
+    fn a_cut_tool_is_handed_back_rather_than_printed() {
+        let leaf = Leaf::new(40);
+        let full: u64 = leaf.schemas().iter().map(schema_tokens).sum();
+        let set = LeanToolSet::new(
+            Box::new(leaf),
+            ToolBudget {
+                max_tokens: full / 4,
+                mcp_max_tokens: full,
+            },
+        );
+
+        let advisories = set.drop_advisories();
+
+        assert!(
+            !advisories.is_empty(),
+            "a budget holding a quarter of forty tools cut something"
+        );
+        assert!(
+            advisories.iter().all(|line| line.contains(" — ")),
+            "every line names a remedy after an em dash: {advisories:?}"
+        );
+    }
+
+    /// A budget that affords every tool says nothing at all.
+    ///
+    /// The silent turn is the common one, and a door that emitted an empty
+    /// advisory every turn would put a blank row on every transcript.
+    #[test]
+    fn an_allowance_that_affords_everything_says_nothing() {
+        let leaf = Leaf::new(4);
+        let full: u64 = leaf.schemas().iter().map(schema_tokens).sum();
+        let set = LeanToolSet::new(
+            Box::new(leaf),
+            ToolBudget {
+                max_tokens: full * 2,
+                mcp_max_tokens: full * 2,
+            },
+        );
+
+        assert!(set.drop_advisories().is_empty());
     }
 
     /// **The witness.** Forty tools, and a budget that holds a quarter of

@@ -228,6 +228,18 @@ pub(super) fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
         AgentEvent::SkillInjected { name, tokens, .. } => {
             (TraceKind::Context, format!("skill {name}, {tokens} tok"))
         }
+        // The headline alone. The remedy is advice for a person reading the
+        // transcript, and the trace ring is a fixed-width record of what
+        // happened.
+        AgentEvent::SteeringDropped { advisory } => (
+            TraceKind::Context,
+            format!(
+                "dropped {}",
+                advisory
+                    .split_once(" — ")
+                    .map_or(advisory.as_str(), |(h, _)| h)
+            ),
+        ),
         // Receipts are filtered out of the trace ring above (apply_event's
         // guard); these arms exist only to keep this mapping total.
         AgentEvent::BlockRegistered { kind, .. } => {

@@ -502,6 +502,10 @@ fn note_kind(event: &AgentEvent) -> NoteKind {
         // colors both of these (`render/entry.rs`), so the plain and
         // exported forms must not mute them to the same glyph (`#5748`).
         AgentEvent::Error { .. } | AgentEvent::SteeringWithheld { .. } => NoteKind::Alert,
+        // Alert too, and for the same reason. The live deck draws it in
+        // `theme::WARNING`. Muting it here would make the exported
+        // transcript disagree with the screen it records.
+        AgentEvent::SteeringDropped { .. } => NoteKind::Alert,
         // `Steered` stays in the wildcard on purpose: the live deck folds it
         // into a full user-turn row, not a note, and the plain `Note` model
         // has no such row to match it with (`#5748`).
