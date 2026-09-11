@@ -142,6 +142,24 @@ printf 'pub fn t() { let _ = std::fs::read_to_string("x"); }\n' >"$src/driver/te
 printf 'fn t() { let _ = std::fs::read_to_string("x"); }\n' >"$TMP/testfiles/crates/stella-core/tests/witness.rs"
 want "tests.rs, a tests/ module, and an integration test are not shipping code" expect-pass testfiles
 
+# A module is test code because the `mod` line that names it sits under
+# `#[cfg(test)]`, whatever the file is called. `src/tests.rs` was the first
+# such file, and it read as shipping code until this case.
+src="$(new_core cfgmod)"
+mkdir -p "$src/driver/helpers"
+printf 'pub mod driver;\n#[cfg(test)]\npub(crate) mod doubles;\n' >"$src/lib.rs"
+printf 'pub fn t() { let _ = std::fs::read_to_string("x"); }\n' >"$src/doubles.rs"
+printf 'pub fn drive() {}\n#[cfg(test)]\n#[allow(dead_code)]\nmod helpers;\n' >"$src/driver.rs"
+printf 'pub mod deep;\n' >"$src/driver/helpers.rs"
+printf 'pub fn t() { let _ = std::time::SystemTime::now(); }\n' >"$src/driver/helpers/deep.rs"
+want "a module named under #[cfg(test)] is not shipping code, by any name and at any depth" expect-pass cfgmod
+
+# The control: the same file named by a plain `mod` line is shipping code.
+src="$(new_core plainmod)"
+printf 'pub mod driver;\npub(crate) mod doubles;\n' >"$src/lib.rs"
+printf 'pub fn t() { let _ = std::fs::read_to_string("x"); }\n' >"$src/doubles.rs"
+want "a module named by a plain mod line is shipping code" expect-fail plainmod "doubles.rs"
+
 # ── The manifest ─────────────────────────────────────────────────────────────
 src="$(new_core denied)"
 printf '[package]\nname = "stella-core"\n\n[dependencies]\nrand = "0.10"\n' >"$TMP/denied/crates/stella-core/Cargo.toml"

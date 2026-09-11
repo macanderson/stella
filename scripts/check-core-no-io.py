@@ -16,8 +16,9 @@ somebody reads the prose.
 **The floor.** No shipping source in the crate may name a filesystem,
 process, network, environment, entropy, wall-clock, or standard-stream API.
 Absolute: one hit fails, and there is no baseline, because the tree has
-none. `#[cfg(test)]` bodies, `tests/` directories, and `tests.rs` files are
-stripped first — a test may read a fixture; the engine may not.
+none. `#[cfg(test)]` bodies, `tests/` directories, `tests.rs` files, and any
+module a `#[cfg(test)] mod name;` line names are stripped first — a test may
+read a fixture; the engine may not.
 
 **The manifest.** `[dependencies]` may not name a crate whose purpose is I/O
 or entropy, and `tokio` may take only the features that schedule (`sync`,
@@ -171,18 +172,47 @@ DEP_KEY = re.compile(r"^\s*([A-Za-z0-9_-]+)\s*(?:\.\s*workspace\s*)?=")
 FEATURES = re.compile(r"features\s*=\s*\[([^\]]*)\]")
 
 
+CFG_TEST_MOD = re.compile(
+    r"#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]\s*(?:#\s*\[[^\]]*\]\s*)*(?:pub\s*(?:\([^)]*\))?\s*)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;"
+)
+
+
+def cfg_test_module_roots(src: Path) -> set[Path]:
+    """Every path a `#[cfg(test)] mod name;` line points at.
+
+    The name is a test file whatever it is called: the `mod` line that names
+    it is what puts it under `cfg(test)`, the same way a `tests.rs` file or
+    a `tests/` directory is. Both the file (`name.rs`) and the directory
+    (`name/`) are returned, because either may hold the module.
+    """
+    roots: set[Path] = set()
+    for path in src.rglob("*.rs"):
+        text = strip_comments(path.read_text(encoding="utf-8", errors="replace"))
+        for match in CFG_TEST_MOD.finditer(text):
+            name = match.group(1)
+            parent = path.parent if path.name in ("lib.rs", "main.rs", "mod.rs") else path.with_suffix("")
+            roots.add(parent / f"{name}.rs")
+            roots.add(parent / name)
+    return roots
+
+
 def shipping_sources(src: Path) -> list[Path]:
     """Every `.rs` file under `src/` that is not a test file.
 
     A `tests/` directory anywhere under `src/`, and a file named `tests.rs`,
     are the two spellings this workspace uses for a module's tests; both are
     compiled only under `cfg(test)` by the `mod` line that names them, and
-    the sibling guard skips them the same way.
+    the sibling guard skips them the same way. A module declared under
+    `#[cfg(test)]` by any other name is test code for the same reason, so
+    the `mod` lines are read too.
     """
+    test_roots = cfg_test_module_roots(src)
     out: list[Path] = []
     for path in sorted(src.rglob("*.rs")):
         rel = path.relative_to(src)
         if "tests" in rel.parts[:-1] or rel.name == "tests.rs":
+            continue
+        if path in test_roots or any(root in path.parents for root in test_roots):
             continue
         out.append(path)
     return out
