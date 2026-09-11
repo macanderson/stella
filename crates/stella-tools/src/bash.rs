@@ -465,7 +465,10 @@ impl Tool for Bash {
                 lose the record for every one of them. You can only CHANGE things inside this \
                 session's directories (get_environment reports the workspace root), so a \
                 command that creates, edits, deletes or moves a file elsewhere is refused \
-                before it runs. Prefer write_file/edit_file/delete_file over shell equivalents \
+                before it runs. A command that would sit in sleep for longer than the default \
+                timeout is refused before it runs too: poll for what you are waiting on in a \
+                short loop, so the call returns when the thing is ready instead of costing you \
+                however long you guessed. Prefer write_file/edit_file/delete_file over shell equivalents \
                 for files in the workspace: their changes are what this turn's diff and \
                 verification are computed from.{scratch}"
             ),
