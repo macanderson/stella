@@ -3284,6 +3284,7 @@ dependencies = [
  "serde_json_canonicalizer",
  "sha2 0.11.0",
  "stella-protocol",
+ "stella-time",
  "thiserror 2.0.20",
  "tokio",
 ]
@@ -3329,6 +3330,7 @@ dependencies = [
  "serde_json",
  "stella-core",
  "stella-protocol",
+ "stella-time",
  "tokio",
 ]
 

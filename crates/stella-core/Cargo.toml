@@ -20,6 +20,10 @@ futures-util = { workspace = true }
 sha2 = { workspace = true }
 
 [dev-dependencies]
+# The engine's tests take the shared sleeper doubles from the crate that
+# holds the real sleeper. A dev-dependency cycle is allowed, and this is the
+# tokio / tokio-test shape.
+stella-time = { path = "../stella-time", features = ["test-util"] }
 tokio = { workspace = true, features = ["test-util"] }
 # Seeds the retry tests' jitter double. Shipping code draws nothing: the
 # entropy behind backoff jitter is a port (`retry::Sleeper::jitter`), and

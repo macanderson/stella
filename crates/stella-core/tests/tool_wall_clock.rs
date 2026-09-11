@@ -26,28 +26,13 @@ use async_trait::async_trait;
 use serde_json::Value;
 use stella_core::budget::BudgetGuard;
 use stella_core::ports::ToolExecutor;
-use stella_core::retry::Sleeper;
 use stella_core::{Engine, EngineConfig, TurnCapabilities, TurnOutcome};
 use stella_protocol::{
     AgentEvent, BudgetMode, CompletionMessage, CompletionRequestRef, CompletionResult,
     CompletionUsage, Provider, ProviderError, ToolCall, ToolOutput, ToolSchema,
 };
+use stella_time::test_util::NoopSleeper;
 use tokio::sync::mpsc;
-
-struct NoopSleeper;
-#[async_trait]
-impl Sleeper for NoopSleeper {
-    async fn sleep(&self, _duration_ms: u64) {}
-
-    // The floor: a test that asserts on retry timing wants no spread in it.
-    fn now(&self) -> std::time::Instant {
-        std::time::Instant::now()
-    }
-
-    fn jitter(&self, _upper: u64) -> u64 {
-        0
-    }
-}
 
 /// First call: one long shell command. Second call: an answer. The turn only
 /// gets there because a refusal is a result it can go on from.
