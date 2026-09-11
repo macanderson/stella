@@ -60,26 +60,37 @@ publish = false
 
 [workspace.dependencies]
 # Context Graph Protocol — the wire types, host runtime, conformance suite, and
-# execution-trace vocabulary stella speaks (#819). Declared ONCE here so a
-# version bump is a one-line edit rather than six scattered across three member
-# manifests, which is how these drifted onto a git rev in the first place.
+# execution-trace vocabulary stella speaks. Declared ONCE here so a version
+# bump is a one-line edit rather than six scattered across three member
+# manifests.
 #
-# These were `{ git = ..., rev = ... }` until #819. That pin named a commit
-# living on a history line this repository's upstream had since re-rooted away
-# from: it was on no branch and no PR, reachable only by raw SHA, and eligible
-# for garbage collection — a cold cargo cache away from breaking every build.
-# Registry versions get us a reviewable release, a checksum in Cargo.lock, and
-# an audit trail (`cargo audit`/`cargo vet` cannot see a git rev).
+# Pinned to a git revision, not a registry version. CGP cut a new major
+# version — `ContextQueryResult` gained `frame_attestations` and
+# `result_attestation` — but has not published it: the release workflow's
+# publish token and environment do not exist yet, so no registry version
+# carries this release. The `rev` below is CGP's `main` HEAD at the time of
+# this change.
+#
+# A git pin is normally unsafe here: this workspace once pinned a commit that
+# its upstream had rewritten away from, reachable from no branch, and a
+# garbage collection on a cold cache broke every build. This pin does not
+# share that risk, because the commit is an ancestor of an actively-merged
+# branch — garbage collection reclaims only commits no ref can reach, and
+# `main` moving forward does not orphan its own history. `allow-git` in
+# `deny.toml` carries the matching reasoning.
+#
+# Move this back to a registry version the moment CGP publishes one — do not
+# let a git pin linger past that.
 #
 # `contextgraph-trace` is SKETCH STAGE and deliberately exempt from the
 # protocol's stability promise — its journal wire format may change in any 0.x
 # release. Gate behaviour on its `TRACE_FORMAT` constant, not on this version.
-# Hence exact `=` requirements: a silent minor bump here would change a wire
+# Hence exact rev requirements: an unpinned move here would change a wire
 # format `stella arena` writes to disk.
-contextgraph-types = "=0.1.2"
-contextgraph-host = "=0.1.2"
-contextgraph-trace = "=0.1.2"
-contextgraph-conformance = "=0.1.2"
+contextgraph-types = { git = "https://github.com/macanderson/context-graph-protocol", rev = "d446bb55dc48604b9e664546dc30ce8cb7531920" }
+contextgraph-host = { git = "https://github.com/macanderson/context-graph-protocol", rev = "d446bb55dc48604b9e664546dc30ce8cb7531920" }
+contextgraph-trace = { git = "https://github.com/macanderson/context-graph-protocol", rev = "d446bb55dc48604b9e664546dc30ce8cb7531920" }
+contextgraph-conformance = { git = "https://github.com/macanderson/context-graph-protocol", rev = "d446bb55dc48604b9e664546dc30ce8cb7531920" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # RFC 8785 JSON Canonicalization Scheme — the version the Context Graph Protocol
