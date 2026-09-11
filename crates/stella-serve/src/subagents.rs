@@ -270,7 +270,7 @@ impl SubAgentDispatcher for ServedSubAgents {
                         &*provider,
                         &read_only,
                         config,
-                        &crate::remote::TokioSleeper,
+                        &stella_time::TokioSleeper,
                         seams,
                     );
                     // Carve from the shared pool, run, settle. The lock is

@@ -161,7 +161,7 @@ lib.rs), never as a planning assumption.
 | [`src/estimator.rs`](src/estimator.rs) | Conservative token estimate plus `Calibration`/`CalibrationMap`, the per-model drift correction fed by reported usage. |
 | [`src/loop_detect.rs`](src/loop_detect.rs) + [`src/loop_detect/`](src/loop_detect) | `detect_loop()` — five rungs over `CallRecord`s: exact repeats, short cycles, stagnation, interleaved repeats, and a wrapped monotonic sweep. |
 | [`src/shell_text.rs`](src/shell_text.rs) | Reading a shell command as *text*: the quote-aware `shell_words` splitter, `is_operator_word`, and `bare_sleep_seconds` — the stall classifier the `bash` advisory and the engine's stall rung ([`src/driver/loop_escalation.rs`](src/driver/loop_escalation.rs)) share, so one operator list serves both (#2022). |
-| [`src/retry.rs`](src/retry.rs) | `RetryPolicy`, backoff computation, `retry_with_backoff*`, and the `Sleeper` port. |
+| [`src/retry.rs`](src/retry.rs) | `RetryPolicy`, backoff computation, `retry_with_backoff*`, `bounded`, and the `Sleeper` port; its real impl and its two test doubles are `stella-time`'s. |
 | [`src/starvation.rs`](src/starvation.rs) | Reasoning-starvation arithmetic: output-contract headroom, the empty-`length` signature, and the retry cap. Written to serve two chokepoints from one copy, because one copy is what makes a fix reach both (#2128, #2174): `stella-cli`'s standalone-call chokepoint, and the staged pipeline's management chokepoint until that crate was deleted (#3865). |
 | [`src/speculation.rs`](src/speculation.rs) | Early execution of read-only tool calls announced mid-stream (`pub(crate)`). |
 | [`src/receipts.rs`](src/receipts.rs) | `ReceiptLedger` — `BlockRegistered` + `StepManifest` context receipts, content-free (digests, never payloads). |
@@ -293,9 +293,11 @@ system message and the latest user message are never touched.
   with: a nested turn that dropped `gate`, `steering` and `hooks` at once.
   Do not hand-roll a child engine. Call
   [`src/subagent.rs`](src/subagent.rs)'s `run_sub_agent`, which constructs the
-  child in-crate and carries every seam. The crate still exports the `Sleeper`
-  port with no production implementation — wiring a real one is the binary's
-  job, and tests wire a no-op to run retries at zero wall-clock cost.
+  child in-crate and carries every seam. The crate exports the `Sleeper` and
+  `Clock` ports with no production implementation — `stella-time` holds
+  those, and every host passes them to `Engine::assemble`. Tests wire a
+  no-op or a paused-clock double, so a retry costs no wall clock and a
+  timeout still means what it says.
 - **A sub-agent's steering is filtered, not inherited.** `drain_steering` is
   destructive by contract, so a child that inherited the parent's `TurnSteering`
   would swallow a message the user addressed to the parent. `ChildSteering`
@@ -330,7 +332,8 @@ turn-driver audit witnesses; also `budget_boundaries.rs`,
 [`src/loop_detect.rs`](src/loop_detect.rs); a failing case writes its seed to
 `proptest-regressions/`, and that seed is committed. No feature flag, no env var, no
 fixture server and no network — driver tests wire scripted `Provider`s, counting
-`ToolExecutor`s and no-op `Sleeper`s, so the suite runs in seconds. Keep it that
+`ToolExecutor`s and sleeper doubles on a paused runtime, so the suite runs in
+seconds. Keep it that
 way: a test here that needs a file or a socket means the logic under test is in
 the wrong crate.
 

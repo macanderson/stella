@@ -1341,8 +1341,9 @@ empty and is meant to stay empty.
 
 ## Workspace layout — where a change goes
 
-Twenty-nine crates, every one under the `crates/` directory (`crates/stella-core`,
-`crates/stella-cli`, …; the two bench members stay under `bench/`). The
+Every crate lives under the `crates/` directory (`crates/stella-core`,
+`crates/stella-cli`, …; the two bench members stay under `bench/`); the
+`members` list in the root `Cargo.toml` is the roll. The
 one-sentence rule of thumb below routes you to the right one; **each crate's
 own `README.md`** (linked from the table) then covers its boundary, layout,
 invariants, gotchas, and extension recipe in depth. Read that before changing
@@ -1365,6 +1366,7 @@ the files you must plan around (see below).
 | Change the wrapper socket's **trait** — `TurnWrapper`, `admissible`, `judge`/`again`, the in-process/subprocess transports | [`stella-runtime`](crates/stella-runtime/README.md) | `src/wrapper/` (#3380, landed #3479, `doc:wrapper-socket`). Lives one layer above `stella-core` because `before_turn`/`after_turn` do I/O, which invariant 2 bans in the engine; consumes `stella-plugin`'s wire types rather than redefining them. It is reached four ways now: a `--pipeline` run, a goal round, a fleet attempt, and an auto-resolved plugin — see the crate's own README. |
 | Change how a plugin is **installed, listed, removed, or trusted** — `.stella/plugins/` and `~/.stella/plugins/` resolution, install consent, the project-tier trust gate | [`stella-cli`](crates/stella-cli/README.md) | `src/plugin_cmd.rs` + `src/plugin_cmd/{roster,process}.rs` — renders `stella_plugin::consent_text` before anything executes, gates a cloned repository's plugins on `project_code_execution_trusted()` (#3509), and is the one place `LoopGrant::permits_hook`/`permits_point` get consulted against an installed manifest. |
 | Decide whether a human is present to see/answer a mid-run prompt | [`stella-tty`](crates/stella-tty/README.md) | **A leaf with NO dependencies at all** (#3036) — one pure `human_can_answer(interactive_output, stdin_is_terminal, prompt_is_visible)`, which is what lets `stella-cli`'s approval prompts and `stella-model`'s credential prompt share one derivation without `stella-model` depending on `stella-cli` (invariant 1). |
+| Read the real clock, wait on the real timer, or stand in for either under test, behind `stella-core`'s `Sleeper` and `Clock` ports | [`stella-time`](crates/stella-time/README.md) | **Near-leaf: `stella-core` is its only workspace dependency.** `TokioSleeper` (the engine's real sleeper and `now`), `WallClock` (Unix epoch, for a stamp another process reads) and `MonotonicClock` (one origin per process, for a span compared as a number), plus `test_util`'s `PausedSleeper` and `NoopSleeper` behind the `test-util` feature. One home, because `stella-serve` may not link `stella-cli` or `stella-runtime` and `stella-core` may not carry a timer (ADR 0042). |
 | Emit a diagnostic — a record explaining *why* the program did something | [`stella-diag`](crates/stella-diag/README.md) | **A leaf: `serde` only, so anything may depend on it.** Field values cannot hold a `String`, a `Path`, or model output — that is a compile error, not a review question. Design: [`docs/spec/diagnostics.md`](docs/spec/diagnostics.md). |
 | Compute a line-oriented unified diff (`@@` hunks, git's exact shape) | [`stella-diff`](crates/stella-diff/README.md) | **A leaf with NO dependencies at all** (#1511) — pure functions over borrowed strings, which is what lets [`stella-observatory`](crates/stella-observatory/README.md) and [`stella-cli`](crates/stella-cli/README.md) share one differ without costing the observatory its isolation. |
 | Strip ANSI escape sequences from tool output | [`stella-ansi`](crates/stella-ansi/README.md) | **A leaf with NO dependencies at all** — one pure function over a borrowed `&str`, extracted from `stella-tui` so [`stella-observatory`](crates/stella-observatory/README.md) could strip a colourised tool's output before it reaches the journal route's `<pre>` without linking `ratatui`. `stella-tui`'s `ansi` module re-exports it and keeps only the `ratatui`-shaped emission half. |
@@ -1492,7 +1494,7 @@ a plan needs and the part that rarely changes:
 | `stella-store` | `src/tests.rs`, `src/lib.rs`, `src/usage.rs` |
 | `stella-tui` | `src/deck_ui.rs` |
 
-The other twenty-four crates carry no god files — keep it that way. Each crate's
+Every crate not named there carries no god files — keep it that way. Each crate's
 README repeats its own list under "God files — do not add lines", so the
 constraint is in view wherever planning starts.
 

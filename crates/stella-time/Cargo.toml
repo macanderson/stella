@@ -1,0 +1,30 @@
+[package]
+name = "stella-time"
+description = "The real time sources behind stella-core's Sleeper and Clock ports — one Tokio sleeper, one wall clock, one monotonic clock — shared by every host that assembles an engine, none of which may depend on another; plus, behind `test-util`, the two sleeper doubles every test against the engine shares."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# The ports come from stella-core; the effects behind them come from the
+# runtime and the entropy pool. stella-core may link neither (its manifest
+# says so, and `make core-no-io` holds it there), and stella-serve may not
+# link stella-cli or stella-runtime, so the copies these replaced had no
+# home below all of their callers until this crate.
+[dependencies]
+stella-core = { path = "../stella-core" }
+tokio = { workspace = true, features = ["time"] }
+async-trait = { workspace = true }
+rand = { workspace = true }
+
+[features]
+# The two sleeper doubles every test against the engine shares: `NoopSleeper`
+# and `PausedSleeper` (`test_util`). Off in a release build. This is the
+# tokio-test shape: the doubles live beside the real sources, and the crate
+# under test takes them as a dev-dependency.
+test-util = []
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros", "test-util"] }

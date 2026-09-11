@@ -37,7 +37,7 @@ use crate::memory::{
     turn_warrants_reflection,
 };
 use crate::plain::{self, accent};
-use crate::runtime::{SystemClock, TokioSleeper};
+use crate::runtime::{MonotonicClock, TokioSleeper};
 use crate::{OutputFormat, config::Config};
 use stella_context::EpisodeOutcome;
 

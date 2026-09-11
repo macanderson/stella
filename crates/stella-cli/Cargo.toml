@@ -44,6 +44,8 @@ contextgraph-host.workspace = true
 # see the exact-version note in the root manifest.
 contextgraph-trace.workspace = true
 stella-core = { path = "../stella-core" }
+# The real sleeper and clocks behind stella-core's time ports.
+stella-time = { path = "../stella-time" }
 # The context-record plane — the typed taxonomy, the ingestion boundary, and
 # the registry the prompt's rule block renders from. It left `stella-core`
 # because the engine reached it through one hash call and nothing else;

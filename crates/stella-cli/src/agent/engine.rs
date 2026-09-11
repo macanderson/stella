@@ -754,7 +754,7 @@ pub(crate) fn session_router(cfg: &Config, worker_ref: &ModelRef) -> Router {
     Router::new(
         wiring.pins,
         wiring.profiles,
-        CircuitBreaker::new(Box::new(SystemClock::new())),
+        CircuitBreaker::new(Box::new(MonotonicClock)),
     )
 }
 
