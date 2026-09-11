@@ -1,29 +1,23 @@
 //! The shared event→text vocabulary — one lookup table for both rendering
-//! surfaces (issue #66).
+//! surfaces.
 //!
-//! Two independent renderers consume [`stella_protocol::AgentEvent`]s: the
-//! plain `colored`+`println` surface in `stella-cli` (REPL and one-shot
-//! modes) and this crate's ratatui transcript. Before this module each kept
-//! its own event→string mapping, so every new `AgentEvent` variant had to be
-//! worded twice. The contract now: **wording lives here, styling stays with
-//! each surface.** A constructor per annotation variant yields an
-//! [`EventLine`] of semantic pieces (glyph, tone, body, detail) that each
-//! surface maps onto its own palette — `colored` codes on the plain surface,
-//! `ratatui` styles on the deck.
+//! Two independent renderers consume [`stella_protocol::AgentEvent`]s:
+//! non-interactive mode's `colored`+`println` surface in `stella-cli`, and
+//! this crate's ratatui transcript. **Wording lives here, styling stays with
+//! each surface.** A constructor per annotation case yields an [`EventLine`]
+//! of semantic pieces (glyph, tone, body, detail) that each surface maps onto
+//! its own palette.
 //!
-//! The wording is byte-exact: the plain renderer's observable output
-//! is composed as `"  {glyph} {body}"` (plus `" {detail}"` when present), and
-//! the fixture tests at the bottom pin every line to the exact strings the
-//! plain surface printed before the extraction. Change a string here and the
-//! plain CLI's output changes with it — that is the point, but it must be
-//! deliberate.
+//! The wording is byte-exact: the plain renderer composes `"  {glyph}
+//! {body}"`, plus `" {detail}"` when present, and the fixture tests at the
+//! bottom pin every line. Change a string here and the plain output changes
+//! with it, which is the point.
 //!
-//! Deliberately *not* here: streaming `Text`/`Reasoning` (accumulated, then
-//! markdown-rendered or printed raw per surface), `Stage` transitions (the
-//! deck draws rules, the plain surface prints only a "thinking…" cue), and
-//! the `ToolStart`/`ToolResult` cards (the two surfaces present tool traffic
-//! structurally differently — key=value cards vs an aligned label column —
-//! and unifying them is a behavior change out of scope for #66).
+//! Not here: streaming `Text`/`Reasoning`, which each surface accumulates and
+//! renders its own way; `Stage` transitions, where the deck draws rules and
+//! the plain surface prints a "thinking…" cue; and the
+//! `ToolStart`/`ToolResult` cards, which the two surfaces lay out
+//! differently — key=value cards against an aligned label column.
 
 use stella_protocol::{
     AgentEvent, BudgetMode, CiStatus, FileChangeKind, MediaJobState, MediaKind, PrStatus,
@@ -33,6 +27,8 @@ use stella_protocol::{
 // SPEC 6.3's two memory lines, in their own module: this file is at its
 // 1500-line ceiling and a crossing takes no baseline entry (AGENTS.md).
 mod memory;
+mod steering;
+pub use steering::steering_dropped;
 
 mod gate;
 pub use gate::gate_board;
@@ -382,17 +378,14 @@ pub fn file_change(path: &str, kind: FileChangeKind) -> EventLine {
 
 /// One recall, on a surface that gets exactly one line for it.
 ///
-/// The deck renders a recall as a table (`render::entry`); this surface prints
-/// one line per event and cannot fold, so it states the same *facts* in the
-/// order they answer questions: how much did the model get, what did it cost,
-/// was recall the reason the turn felt slow, what kinds came back, and from
+/// The deck renders a recall as a table (`render::entry`); this surface
+/// prints one line per event and cannot fold, so it states the same *facts*
+/// in the order they answer questions: how much the model got, what it cost,
+/// whether recall is why the turn felt slow, what kinds came back, and from
 /// which legs.
 ///
-/// The two surfaces used to disagree about what a recall even is — this one
-/// named the provider mix and no labels, the deck named the labels and no
-/// provider mix, and neither said the latency the wire had carried since #875.
-/// `kinds` and `cited` are both passed in so the wording stays here, in the one
-/// module that owns wording.
+/// `kinds` and `cited` are both passed in so the wording stays here, in the
+/// one module that owns wording.
 ///
 /// `latency_ms` of `0` means *not measured* on the wire, so it is omitted
 /// rather than printed as `0ms`.
@@ -462,9 +455,8 @@ pub fn context_write(provider: &str, upserts: u32, superseded: u32) -> EventLine
 
 /// One injected skill, for the surfaces that render a stream as text.
 ///
-/// The summary rides `detail` rather than the body so a narrow terminal drops
-/// the description and keeps the two facts a reader acts on — which skill, and
-/// what it cost.
+/// The summary rides `detail` so a narrow terminal drops the description and
+/// keeps the two facts a reader acts on: which skill, and what it cost.
 pub fn skill_injected(
     name: &str,
     summary: &str,
@@ -802,6 +794,7 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
             tokens,
             trigger,
         } => Some(skill_injected(name, summary, *tokens, *trigger)),
+        AgentEvent::SteeringDropped { advisory } => Some(steering_dropped(advisory)),
         AgentEvent::MediaProgress {
             artifact_id,
             kind,
@@ -869,8 +862,8 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
 /// not always the wire spelling — `context_recall` reads "context recall",
 /// because the underscore is a wire detail and the deck writes prose.
 ///
-/// For a **contributed** stage it is the plugin's own word, verbatim. That is
-/// the honest fallback and the same one the `/models` role table settled on
+/// For a **contributed** stage it is the plugin's own word, verbatim — the
+/// same fallback the `/models` role table settled on
 /// (`envelope::roles`): the deck has no word for a stage it has never heard of,
 /// and inventing one — "plugin", "custom", "other" — would name the row after a
 /// category instead of after itself.

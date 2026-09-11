@@ -76,7 +76,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::config::Config;
 use crate::lane_capabilities;
-use crate::runtime::{SystemClock, TokioSleeper, WallClock};
+use crate::runtime::{MonotonicClock, TokioSleeper, WallClock};
 // The trait is in scope for `AttemptPointStream::publish` below — a fleet
 // attempt publishes its own channel across the dispatch's points (#4730).
 use crate::wrapper_plugin::PointStream;
@@ -235,10 +235,10 @@ pub async fn run_fleet(
         WorktreeManager::new(SystemGitCli, root.clone()).with_run_scope(&run_id),
         ledger,
         agent::build_budget_guard(budget_limit),
-        // Wall-anchored, NOT `SystemClock`: every stamp this clock feeds is
+        // Wall-anchored, NOT `MonotonicClock`: every stamp this clock feeds is
         // a durable ledger row that must stay comparable across runs — the
         // warmth projection (#1222) reads a PRIOR run's `finished_at_ms`.
-        // `SystemClock`'s per-process origin made every run start near zero.
+        // A per-process origin would make every run start near zero.
         WallClock,
         {
             let mut config =
@@ -365,8 +365,7 @@ pub async fn run_fleet(
             );
         } else {
             let config = WatchConfig::default();
-            let monitor =
-                Monitor::new(SystemGhCli, Box::new(SystemClock::new())).with_config(config);
+            let monitor = Monitor::new(SystemGhCli, Box::new(MonotonicClock)).with_config(config);
             println!(
                 "  watching CI for {} fleet branch(es) — polling every {}s, wall cap {}m\n",
                 targets.len(),

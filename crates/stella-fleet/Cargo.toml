@@ -15,6 +15,8 @@ publish.workspace = true
 stella-autonomy = { path = "../stella-autonomy" }
 stella-protocol = { path = "../stella-protocol" }
 stella-core = { path = "../stella-core" }
+# The real sleeper and clocks behind stella-core's time ports.
+stella-time = { path = "../stella-time" }
 stella-store = { path = "../stella-store" }
 stella-tools = { path = "../stella-tools" }
 serde.workspace = true

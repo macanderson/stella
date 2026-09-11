@@ -83,7 +83,7 @@ use stella_plugin::{
 use stella_protocol::completion::CompletionMessage;
 use stella_protocol::{GateBoard, LadderRung, LadderSnapshot, VerdictEvidence};
 
-use super::stamp::{HostClock, StampTiming};
+use super::stamp::StampTiming;
 use super::{
     ArbiterClaim, Arbitration, TurnHoldBudget, TurnWrapper, WrapperError, admissible, again,
     fold_stamps, judge, stamp,
@@ -585,7 +585,7 @@ impl WrapperDispatch {
             hold_grant: composition.hold_grant,
             host_max_holds: DEFAULT_HOST_MAX_HOLDS,
             context: None,
-            clock: Arc::new(HostClock),
+            clock: Arc::new(stella_time::WallClock),
         })
     }
 

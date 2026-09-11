@@ -108,6 +108,7 @@ open; nothing before Phase 3 forces it.
 | [0039](0039-a-live-smoke-provider-is-armed-or-declared-unarmed.md) | A Live Smoke Provider Is Armed or Declared Unarmed | Accepted |
 | [0040](0040-host-does-not-pick-the-tests.md) | The Host Does Not Pick the Tests | Accepted |
 | [0041](0041-the-turn-clock-reaches-dispatch-by-value.md) | The Turn Clock Reaches Dispatch by Value | Accepted |
+| [0042](0042-the-engine-reads-time-through-the-sleeper-port.md) | The Engine Reads Time Through the Sleeper Port | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible
@@ -255,6 +256,12 @@ passed down by value; the executor declares the bound it would enforce through
 a defaulted port method, because the key that carries it belongs to one tool.
 A call that cannot finish and still leave room to report back is refused before
 it starts, which is the only moment AGENTS.md #6 leaves.
+
+ADR 0042 records how the engine reads time at all: every instant, wait and
+timeout goes through `retry::Sleeper`, whose `now` joined `sleep` and `jitter`
+because one double has to answer all three from one timeline. The real sources
+live in one crate, `stella-time`, below every host, and the two test doubles
+ship from it behind a `test-util` feature.
 
 ## The number is a shared cell
 

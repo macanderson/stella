@@ -237,11 +237,11 @@ PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
         "issue-reference",
         # An issue number in prose sends the reader to a tracker to find out
         # what the sentence means. The sentence must say it instead. Tracking
-        # markers (TODO and friends) keep their numbers: a gate requires them
-        # there, and they are bookkeeping, not explanation.
-        # A CSS hex is not one: `#10100F` read as issue 10100. A colour here is
-        # always six hex digits, so that form and `#RRGGBBAA` are exempt.
-        re.compile(r"^(?!.*(?:TODO|FIXME|XXX|HACK|Closes #|Refs #)).*?"
+        # markers (TODO and friends) keep theirs: a gate requires them there.
+        # Two more are not prose. A CSS hex reads as one -- `#10100F` as issue
+        # 10100 -- so the six- and eight-digit forms are exempt. And an
+        # `issue:` field is a value a type requires, with no sentence in it.
+        re.compile(r"^(?!.*(?:TODO|FIXME|XXX|HACK|Closes #|Refs #|issue: \"#)).*?"
                    r"(#(?![\da-fA-F]{6}\b)(?![\da-fA-F]{8}\b)\d{2,})"),
         "say the fact; drop the issue number from the prose",
     ),

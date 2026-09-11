@@ -92,13 +92,44 @@ pub(crate) fn session_gate(workspace_root: &std::path::Path) -> Arc<dyn AuthzGat
 pub(crate) struct ToolAllowance<'l> {
     declared: ToolAdvertisement,
     ledger: &'l SteeringLedger,
+    advisories: Option<AdvisorySink<'l>>,
 }
+
+/// Where a composed stack says which tools the budget priced out.
+///
+/// A borrowed `dyn Fn` rather than an owned box, so [`ToolAllowance`] stays
+/// `Copy` and every existing call site keeps passing it by value.
+pub(crate) type AdvisorySink<'a> = &'a dyn Fn(Vec<String>);
 
 impl<'l> ToolAllowance<'l> {
     /// The budget and the cell, named — the seam a witness test builds one
     /// through.
+    ///
+    /// Says nothing about what it cuts. A caller with somewhere to put the
+    /// refusals adds one with [`Self::reporting`]. Silence is the default
+    /// because a stack can be composed where no channel is open at all, and
+    /// it is what every witness test wants.
     pub(crate) fn new(declared: ToolAdvertisement, ledger: &'l SteeringLedger) -> Self {
-        Self { declared, ledger }
+        Self {
+            declared,
+            ledger,
+            advisories: None,
+        }
+    }
+
+    /// Send this allowance's refusals to `sink`.
+    ///
+    /// Each door names its own, because the right answer differs by door: a
+    /// turn on the deck puts them on the transcript, and non-interactive mode
+    /// writes stderr. Nothing here may pick for them — under the deck,
+    /// stderr is the `ratatui` frame, and a line written to it scrolls the
+    /// screen out from under the renderer's diff.
+    #[must_use]
+    pub(crate) fn reporting(self, sink: AdvisorySink<'l>) -> Self {
+        Self {
+            advisories: Some(sink),
+            ..self
+        }
     }
 
     /// This session's own, off its resolved config.
@@ -115,6 +146,7 @@ pub(crate) fn session_stack<'a>(
     cfg: &Config,
     principal: Principal,
     bus: Option<HookBus>,
+    advisories: AdvisorySink<'_>,
 ) -> GatedToolSet<'a> {
     with_journal(
         session_stack_with_gate(
@@ -122,12 +154,24 @@ pub(crate) fn session_stack<'a>(
             custom_tools,
             cfg.workspace_root.clone(),
             session_tool_policy(cfg),
-            ToolAllowance::of(cfg),
+            ToolAllowance::of(cfg).reporting(advisories),
             session_gate(&cfg.workspace_root),
             principal,
         ),
         bus,
     )
+}
+
+/// The advisory sink for a door whose output is a terminal it owns outright:
+/// non-interactive mode, `stella run`, and a resumed turn.
+///
+/// The deck passes its own, which puts the same lines on the transcript. It
+/// must never reach for this one: its stderr is the drawn frame.
+pub(crate) fn stderr_advisories(advisories: Vec<String>) {
+    use colored::Colorize;
+    for message in advisories {
+        eprintln!("  {} {message}", "!".yellow());
+    }
 }
 
 /// Attach the session bus the gate journals its evaluations onto (#3289),
@@ -311,7 +355,12 @@ fn budgeted<'a>(
         ToolAdvertisement::Full => permitted,
         ToolAdvertisement::Lean(declared) => {
             let lean = LeanToolSet::new(permitted, allowance.ledger.settle(declared));
-            lean.report_drops();
+            if let Some(sink) = allowance.advisories {
+                let advisories = lean.drop_advisories();
+                if !advisories.is_empty() {
+                    sink(advisories);
+                }
+            }
             Box::new(lean)
         }
     }
@@ -832,6 +881,64 @@ mod tests {
         )
         .schemas()
         .len()
+    }
+
+    /// **The witness.** A composed stack says what it cut to the sink the
+    /// door named, and to nowhere else.
+    ///
+    /// The default matters as much as the routing. A library that prints its
+    /// refusals writes them into whatever owns the process's stderr, which
+    /// under the deck is the drawn `ratatui` frame: the bytes land between
+    /// rows and scroll the screen out from under the renderer's diff, and the
+    /// status bar comes back drawn several times over itself. An allowance
+    /// built without [`ToolAllowance::reporting`] reaches no terminal at all,
+    /// so a door that names no sink is silent rather than destructive.
+    #[test]
+    fn a_composed_stack_reports_its_cuts_to_the_named_sink_alone() {
+        let leaf = WideLeaf { count: 40 };
+        let ledger = SteeringLedger::default();
+        let quarter = stella_core::steering::tools::ToolBudget {
+            max_tokens: full_cost(&leaf) / 4,
+            mcp_max_tokens: full_cost(&leaf),
+        };
+        let seen = std::cell::RefCell::new(Vec::new());
+        let sink = |advisories: Vec<String>| seen.borrow_mut().extend(advisories);
+
+        let stack = |allowance| {
+            session_stack_with_gate(
+                &leaf,
+                Vec::new(),
+                PathBuf::from("."),
+                ToolPolicy::allow_all(),
+                allowance,
+                Arc::new(NoAuthz),
+                Principal::User,
+            )
+            .schemas()
+            .len()
+        };
+
+        let unreported = ToolAllowance::new(ToolAdvertisement::Lean(quarter), &ledger);
+        let advertised = stack(unreported);
+        assert!(
+            advertised < 40,
+            "the ceiling bound: {advertised} advertised"
+        );
+        assert!(
+            seen.borrow().is_empty(),
+            "an allowance nobody asked to report says nothing: {:?}",
+            seen.borrow()
+        );
+
+        assert_eq!(
+            stack(unreported.reporting(&sink)),
+            advertised,
+            "naming a sink changes what is said, never what is advertised"
+        );
+        assert!(
+            !seen.borrow().is_empty(),
+            "and the same cut reaches the sink once one is named"
+        );
     }
 
     /// A declared allowance wide enough to hold `leaf`'s whole surface.

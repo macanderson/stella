@@ -44,7 +44,14 @@ minimumReleaseAgeExclude:
 # direct `postcss` devDependency in `package.json` moving together.
 overrides:
   postcss: ">=8.5.23"
-  sharp: ">=0.35.0"
+  # sharp <0.35.4 and js-yaml <4.3.2 each carry a high-severity advisory
+  # (GHSA-rgj7-g3m4-5g8c, GHSA-2883-xcg3-v3hh). Both arrive transitively —
+  # sharp through `next`, js-yaml through `fumadocs-core` and `fumadocs-mdx` —
+  # so, as with postcss above, no direct bump reaches them; the floor does.
+  # js-yaml takes a caret, like nanoid below: a bare floor resolves to 5.x,
+  # which fumadocs does not call.
+  sharp: ">=0.35.4"
+  js-yaml: "^4.3.2"
   # nanoid <3.3.18: a custom alphabet with a non-integer or zero `size` makes
   # the generator loop indefinitely (GHSA high, patched at 3.3.18). It arrives
   # transitively through postcss@8.5.23, which both `next` and

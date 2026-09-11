@@ -785,7 +785,7 @@ fn every_dropped_source_gets_a_line_with_its_own_remedy() {
     assert!(
         lines[3].contains("section-cut")
             && lines[3].contains("skills section's token budget")
-            && lines[3].contains("#3243"),
+            && lines[3].contains("nothing configurable widens that budget"),
         "and one cut by the section budget says so, rather than advising a \
          knob that would not have saved it: {joined}"
     );
@@ -867,4 +867,65 @@ fn the_merge_drop_report_is_one_summary_line_per_class() {
             "no per-frame handle leaks into the summary: {joined}"
         );
     }
+}
+
+/// **The witness.** A refusal leaves the block as an event on the turn's
+/// stream, one row per candidate.
+///
+/// The channel is the whole point. A line written to stderr from inside
+/// `recall_block_reported` reaches whatever owns the process's stderr, which
+/// under the deck is the drawn `ratatui` frame: the bytes land between
+/// rendered rows and scroll the screen out from under the renderer's diff,
+/// leaving the status bar drawn several times over itself after a prompt
+/// submission. `RecalledBlock` carries them out to the caller, which owns a
+/// channel; this layer owns none.
+///
+/// One event per line rather than one carrying the list, on the rule
+/// `AgentEvent::SkillInjected` already states: each becomes one transcript
+/// row, and a list would make the renderer split what the emitter had
+/// already separated.
+#[test]
+fn a_refused_candidate_leaves_the_block_as_its_own_event() {
+    let block = crate::memory::recall::RecalledBlock {
+        dropped: vec![
+            "a skill matching this turn did not fit the skill budget: seat-loser — raise \
+             `skills.max_skills`"
+                .to_string(),
+            "2 memories did not fit this turn's 1200-token retrieval budget — raise \
+             context.retrieval.max_tokens in stella.toml to include them"
+                .to_string(),
+        ],
+        ..Default::default()
+    };
+
+    let advisories: Vec<String> = block
+        .telemetry_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            stella_protocol::AgentEvent::SteeringDropped { advisory } => Some(advisory),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        advisories, block.dropped,
+        "every refusal reaches the stream, in the order the plane made them"
+    );
+}
+
+/// A turn that refused nothing puts no row on the transcript.
+///
+/// The silent turn is the common one. An empty advisory emitted every turn
+/// would be a blank warning row under every prompt, which is how a signal
+/// stops being read.
+#[test]
+fn a_turn_that_refused_nothing_announces_nothing() {
+    let block = crate::memory::recall::RecalledBlock::default();
+    assert!(
+        !block
+            .telemetry_events()
+            .iter()
+            .any(|event| matches!(event, stella_protocol::AgentEvent::SteeringDropped { .. })),
+        "no refusal, no row"
+    );
 }

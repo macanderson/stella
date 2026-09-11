@@ -23,6 +23,7 @@ members = [
   "crates/stella-mcp",
   "crates/stella-engine",
   "crates/stella-runtime",
+  "crates/stella-time",
   "crates/stella-fleet",
   "crates/stella-observatory",
   "crates/stella-serve",

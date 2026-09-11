@@ -134,6 +134,7 @@ task_tagged_events! {
     }
     untagged {
         SkillInjected,
+        SteeringDropped,
         Stage,
         Text,
         TextDelta,

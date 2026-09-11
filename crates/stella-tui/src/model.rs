@@ -756,6 +756,11 @@ impl SessionModel {
             AgentEvent::ContextWrite { .. }
             | AgentEvent::MemoryLogged { .. }
             | AgentEvent::MemoryPromoted { .. } => self.fold_memory_write(event),
+            AgentEvent::SteeringDropped { advisory } => {
+                self.transcript.push(TranscriptEntry::SteeringDropped {
+                    advisory: advisory.clone(),
+                });
+            }
             AgentEvent::SkillInjected {
                 name,
                 summary,

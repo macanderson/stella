@@ -3240,6 +3240,7 @@ dependencies = [
  "stella-records",
  "stella-runtime",
  "stella-store",
+ "stella-time",
  "stella-tools",
  "stella-transcript",
  "stella-tty",
@@ -3345,6 +3346,7 @@ dependencies = [
  "stella-core",
  "stella-protocol",
  "stella-store",
+ "stella-time",
  "stella-tools",
  "tempfile",
  "thiserror 2.0.20",
@@ -3529,6 +3531,7 @@ dependencies = [
  "stella-plugin",
  "stella-protocol",
  "stella-store",
+ "stella-time",
  "stella-tools",
  "tempfile",
  "thiserror 2.0.20",
@@ -3548,6 +3551,7 @@ dependencies = [
  "stella-core",
  "stella-engine",
  "stella-protocol",
+ "stella-time",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
@@ -3569,6 +3573,16 @@ dependencies = [
  "stella-protocol",
  "tempfile",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "stella-time"
+version = "0.9.417"
+dependencies = [
+ "async-trait",
+ "rand 0.10.2",
+ "stella-core",
+ "tokio",
 ]
 
 [[package]]
