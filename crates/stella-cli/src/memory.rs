@@ -874,7 +874,20 @@ impl SessionMemory {
         if trials::holdout_kind(ordinal) != Some(stella_learn::ledger::ArtifactKind::Skill) {
             return None;
         }
-        let loaded = self.load_skills();
+        // The population is the skills this turn's prompt matched — the
+        // survivors plus the ones the top-k cut threw away, which cleared the
+        // same score floor. A pick from the whole catalog can name a skill
+        // this turn never matched; nothing is then withheld, the slot
+        // produces no trial, and the schedule still counts it. The pick is
+        // settled here, at the first site to score, and read back by
+        // every later site (`trials::held_for`), so a turn holds one skill
+        // back no matter how many times it renders.
+        let matched: Vec<&str> = selection
+            .selected
+            .iter()
+            .chain(selection.over_top_k.iter())
+            .map(|s| s.skill.name.as_str())
+            .collect();
         let counts = appraisals::control_arm_counts(
             &self.workspace_root,
             stella_learn::ledger::ArtifactKind::Skill,
@@ -882,20 +895,16 @@ impl SessionMemory {
         let bar = stella_learn::skills::appraisal::AppraisalConfig::default()
             .selection
             .min_samples_per_arm;
-        let starved: Vec<&str> = loaded
+        let starved: Vec<&str> = matched
             .iter()
-            .map(|s| s.name.as_str())
+            .copied()
             .filter(|name| counts.get(*name).copied().unwrap_or(0) < bar)
             .collect();
-        let names: Vec<&str> = if starved.is_empty() {
-            loaded.iter().map(|s| s.name.as_str()).collect()
-        } else {
-            starved
-        };
-        let held = stella_learn::holdout::pick(ordinal, &names)?;
+        let names: Vec<&str> = if starved.is_empty() { matched } else { starved };
+        let held = self.held_for_skill(&names)?;
         let before = selection.selected.len();
         selection.selected.retain(|s| s.skill.name != held);
-        (selection.selected.len() != before).then(|| held.to_string())
+        (selection.selected.len() != before).then_some(held)
     }
 
     /// Render selected skills as `(name, why)` — the matched domains and terms
