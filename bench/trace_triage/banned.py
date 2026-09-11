@@ -275,6 +275,19 @@ LEDGER: dict[str, Disposition] = {
             "worth reading, not worth killing."
         )
     ),
+    "blind-wait": ReportOnly(
+        reason=(
+            "a build carrying the rung in `crates/stella-tools/src/bash/wait.rs` "
+            "declines these before the spawn, so on a current binary this is close "
+            "to the `FIXED_REGRESSION` shape. It stays report-only for two reasons. "
+            "The before/after this detector exists to measure (`#3753`) runs the "
+            "pre-rung build as its control arm, and a first-trial trip would abort "
+            "the control. And a finding is not proof the fix is absent: the rung "
+            "covers `bash`, and the predicate cannot see a duration reached through "
+            "a variable, so both a false positive and a false negative are "
+            "reachable. It describes an agent waiting badly, which is a result."
+        )
+    ),
     "repeated-file-read": ReportOnly(
         reason=(
             "same shape as the band metrics above — 2 of 20 trials on s5b2. It "

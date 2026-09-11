@@ -98,13 +98,18 @@ const SLEEP_REFUSAL_THRESHOLD_SECS: u64 = super::DEFAULT_TIMEOUT_SECS;
 /// calls. This one is a constant the tool already has, not a number fitted to
 /// that gap.
 ///
-/// A polling loop survives the rung by construction.
-/// [`blocking_sleep_seconds`] reads one `sleep` per segment. So
-/// `for i in $(seq 25); do sleep 20; <check> && break; done` reports the
-/// twenty seconds of one pass, not the five hundred of its worst case. That
-/// is what it pays when the check passes early. The same panel measured that
-/// loop at 20.9s, against 280.4s for the blind wait it replaces. This rung
-/// declines guaranteed waste. It never declines waiting.
+/// A polling loop survives the rung. [`blocking_sleep_seconds`] reads a
+/// segment of exactly `sleep N`, so it sees one pass of
+/// `…; <check> && break; sleep 1; done` and answers one second, not the
+/// thirty of the worst case. Where the loop keyword shares the segment, as in
+/// `do sleep 20;`, it sees no sleep at all. Both readings fall under the
+/// bound, so neither shape is declined. The same panel measured such a loop
+/// at 20.9s, against 280.4s for the blind wait it replaces.
+///
+/// That second reading is the predicate under-reading, and the direction is
+/// the safe one here: a wait this rung cannot see is a wait it never
+/// declines. It costs the advisory below, which stays silent on the same
+/// shape.
 pub(super) fn blocking_wait_refusal(command: &str) -> Option<String> {
     let secs = blocking_sleep_seconds(command)?;
     if secs < SLEEP_REFUSAL_THRESHOLD_SECS {
