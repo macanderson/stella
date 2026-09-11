@@ -3577,7 +3577,7 @@ dependencies = [
 
 [[package]]
 name = "stella-time"
-version = "0.9.416"
+version = "0.9.417"
 dependencies = [
  "async-trait",
  "rand 0.10.2",
