@@ -86,6 +86,7 @@ class TrialCensus:
     reattempted_ms: int
     reattempted_exact_ms: int
     tool_calls: int
+    bash_calls: int
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,7 @@ class Census:
     reattempted_ms: int
     reattempted_exact_ms: int
     tool_calls: int
+    bash_calls: int
 
     @property
     def timed_trials(self) -> int:
@@ -188,6 +190,7 @@ def census_of(trial: Trial, *, similarity: float = REPEAT_SIMILARITY) -> TrialCe
         reattempted_ms=reattempted_ms,
         reattempted_exact_ms=exact_ms,
         tool_calls=len(trial.tool_calls),
+        bash_calls=len(bash_commands),
     )
 
 
@@ -213,6 +216,7 @@ def summarize(censuses: Iterable[TrialCensus]) -> Census:
         reattempted_ms=sum(row.reattempted_ms for row in rows),
         reattempted_exact_ms=sum(row.reattempted_exact_ms for row in rows),
         tool_calls=sum(row.tool_calls for row in rows),
+        bash_calls=sum(row.bash_calls for row in rows),
     )
 
 
@@ -225,7 +229,14 @@ def _hours(milliseconds: int) -> str:
 
 
 def render(census: Census, *, label: str) -> str:
-    """The census as text, with its basis on the first line."""
+    """The census as text, with each section's basis above it.
+
+    The shell figures are printed apart from the wall-clock ones because they
+    are over a wider set. A share needs a clock and so is held to the trials
+    that carry one; a duration does not, so a trace on the older schema still
+    contributes its shell time. Printing them as one block read as though the
+    shell total were a part of the tool total, which it is not, and can exceed.
+    """
     basis = f"{census.timed_trials} trials with a wall clock"
     if census.untimed_trials:
         basis += f", {census.untimed_trials} on a schema without one"
@@ -233,15 +244,18 @@ def render(census: Census, *, label: str) -> str:
         basis += f", {census.empty_trials} that recorded nothing"
     lines = [
         f"{label}: {basis}",
-        f"  wall clock       {_hours(census.wall_ms)}",
-        f"  tool execution   {_hours(census.tool_ms)}  {_percent(census.tool_share)} of wall clock",
-        f"  model            {_hours(census.model_ms)}  {_percent(census.model_share)} of wall clock",
-        f"  bash             {_hours(census.bash_ms)}  over {census.tool_calls} tool calls",
-        f"    killed by the timeout      {_hours(census.timed_out_ms)}  "
+        f"  over the {census.timed_trials} trials that carry a clock:",
+        f"    wall clock     {_hours(census.wall_ms)}",
+        f"    tool execution {_hours(census.tool_ms)}  {_percent(census.tool_share)} of wall clock",
+        f"    model          {_hours(census.model_ms)}  {_percent(census.model_share)} of wall clock",
+        f"  over all {census.trials} trials, which needs no clock:",
+        f"    bash           {_hours(census.bash_ms)}  over {census.bash_calls} bash calls "
+        f"of {census.tool_calls} tool calls",
+        f"      killed by the timeout    {_hours(census.timed_out_ms)}  "
         f"{_percent(census.timed_out_share)} of bash",
-        f"    killed and tried again     {_hours(census.reattempted_ms)}  "
+        f"      killed and tried again   {_hours(census.reattempted_ms)}  "
         f"{_percent(census.reattempted_share)} of bash",
-        f"    ...of which run verbatim   {_hours(census.reattempted_exact_ms)}",
+        f"      ...of which run verbatim {_hours(census.reattempted_exact_ms)}",
     ]
     return "\n".join(lines)
 
