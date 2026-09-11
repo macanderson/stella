@@ -79,6 +79,17 @@ pub(super) fn sleep_advisory(command: &str) -> Option<String> {
 /// [`super::DEFAULT_TIMEOUT_SECS`].
 const SLEEP_REFUSAL_THRESHOLD_SECS: u64 = super::DEFAULT_TIMEOUT_SECS;
 
+/// The two rungs must stay ordered: a call cannot be refused before it has been
+/// advised. `SLEEP_REFUSAL_THRESHOLD_SECS` follows `DEFAULT_TIMEOUT_SECS`, so a
+/// future change to the default timeout could cross the advisory without anyone
+/// touching this file.
+///
+/// Asserted at compile time rather than in a test. Both sides are constants, so
+/// a runtime `assert!` over them can never fail a run that compiled — which is
+/// what `clippy::assertions_on_constants` objects to, and it is right. This form
+/// fails the build instead, which is where an impossible state belongs.
+const _: () = assert!(SLEEP_ADVISORY_THRESHOLD_SECS < SLEEP_REFUSAL_THRESHOLD_SECS);
+
 /// The rung above the advisory. A `sleep` this long is the command, not part
 /// of one, so the call is declined before the spawn.
 ///
@@ -215,7 +226,6 @@ mod tests {
         }
     }
 
-    #[test]
     /// **The witness for `#3753`.** The two calls that dominated the panel's
     /// tool time are declined before they spawn. Both command strings are the
     /// ones the trials sent — arenabench match `13f7f2bb533d`,
@@ -262,7 +272,6 @@ mod tests {
     /// still runs, and only the upper one declines.
     #[test]
     fn the_advisory_and_the_refusal_are_two_rungs() {
-        assert!(SLEEP_ADVISORY_THRESHOLD_SECS < SLEEP_REFUSAL_THRESHOLD_SECS);
         let between = "sleep 60; echo done";
         assert!(sleep_advisory(between).is_some(), "named at the lower rung");
         assert_eq!(blocking_wait_refusal(between), None, "and still runs");
