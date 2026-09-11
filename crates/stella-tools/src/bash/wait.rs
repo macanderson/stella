@@ -79,15 +79,14 @@ pub(super) fn sleep_advisory(command: &str) -> Option<String> {
 /// [`super::DEFAULT_TIMEOUT_SECS`].
 const SLEEP_REFUSAL_THRESHOLD_SECS: u64 = super::DEFAULT_TIMEOUT_SECS;
 
-/// The two rungs must stay ordered: a call cannot be refused before it has been
-/// advised. `SLEEP_REFUSAL_THRESHOLD_SECS` follows `DEFAULT_TIMEOUT_SECS`, so a
-/// future change to the default timeout could cross the advisory without anyone
-/// touching this file.
+/// The rungs must stay in order. A call is advised first and refused second.
 ///
-/// Asserted at compile time rather than in a test. Both sides are constants, so
-/// a runtime `assert!` over them can never fail a run that compiled — which is
-/// what `clippy::assertions_on_constants` objects to, and it is right. This form
-/// fails the build instead, which is where an impossible state belongs.
+/// The refusal bound is `DEFAULT_TIMEOUT_SECS`. Lower that and it could drop
+/// under the advisory, and no one would edit this file.
+///
+/// This is checked when the code builds, not when tests run. Both sides are
+/// constants, so a plain `assert!` could never fail a build that compiled.
+/// Clippy says as much. This form breaks the build instead.
 const _: () = assert!(SLEEP_ADVISORY_THRESHOLD_SECS < SLEEP_REFUSAL_THRESHOLD_SECS);
 
 /// The rung above the advisory. A `sleep` this long is the command, not part
