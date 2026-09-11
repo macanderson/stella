@@ -67,9 +67,10 @@ use stella_protocol::tool::{ToolOutput, ToolSchema};
 
 use crate::registry::Tool;
 
+mod wait;
 mod words;
 
-use stella_core::shell_text::blocking_sleep_seconds;
+use wait::{blocking_wait_refusal, sleep_advisory};
 use words::{cd_escape_target, shell_words};
 
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
@@ -377,58 +378,6 @@ fn drift_advisory(command: &str, root: &Path) -> Option<String> {
     None
 }
 
-/// The per-call half of #2022: a `sleep` long enough to be worth naming in
-/// the result the model reads.
-///
-/// The cheap rung, and a low one — 30s catches the shape on the very call
-/// that made it, before any accumulation. What it cannot see is the *turn*:
-/// loop detection reads interleaved calls as progress and the budget guard is
-/// spend-based, so idling costs $0. That blind spot is the engine's to close,
-/// over the seconds a whole turn has asked for (`stella_core`'s stall rung,
-/// `driver::loop_escalation`), and this advisory is not it.
-///
-/// The threshold is also what keeps a retry backoff quiet, now that
-/// [`blocking_sleep_seconds`] counts a sleep beside real work. A `sleep 2 &&
-/// curl` reports two seconds and is ignored here; a `sleep 490` next to a
-/// backgrounded install reports 490 and is named.
-///
-/// Honest visibility, not a refusal, on either rung: a static text-shape check
-/// on the command ([`blocking_sleep_seconds`]), never a measured elapsed time,
-/// so it stays deterministic for the loop detector. A timing in
-/// [`stella_protocol::tool::ToolOutput`] makes identical calls look distinct
-/// and defeats that detector, which is why none is embedded here.
-const SLEEP_ADVISORY_THRESHOLD_SECS: u64 = 30;
-
-/// A footer naming a `sleep` that crossed the advisory threshold, and a
-/// remedy the agent can actually perform.
-///
-/// **The remedy has to name a tool that exists.** This advisory shipped for a
-/// while pointing at `read_output`/`wait_for` — the managed-process family,
-/// which #3244 deleted and the tool restore did not bring back. Every long
-/// `sleep` therefore handed the model a directive with no tool behind it,
-/// which is worse than the silence it replaced: an instruction that cannot be
-/// followed teaches the model to discount the next one too. The text was
-/// restored verbatim along with the rest of `bash`, and the stale half was
-/// only caught by an issue sweep afterwards.
-///
-/// So the wording now stays inside what the surface offers: a short poll in a
-/// loop, which `bash` can do on its own, and which returns as soon as the
-/// condition holds instead of blocking the whole interval.
-fn sleep_advisory(command: &str) -> Option<String> {
-    let secs = blocking_sleep_seconds(command)?;
-    if secs < SLEEP_ADVISORY_THRESHOLD_SECS {
-        return None;
-    }
-    Some(format!(
-        "\n\nnote: this call spent {secs}s inside `sleep`, and the whole interval was charged \
-         to the turn whether or not the thing you are waiting for finished early. If you are \
-         waiting on something, poll for the condition instead of sleeping through it — a \
-         bounded retry loop that checks and exits as soon as the check passes (for example \
-         `for i in $(seq 30); do <check> && break; sleep 1; done`) costs a fraction of a blind \
-         wait."
-    ))
-}
-
 /// How long this call may run: the model's `timeout_secs`, clamped to
 /// [`crate::exec::MAX_TIMEOUT_SECS`], or the default when it asked for
 /// nothing usable.
@@ -547,6 +496,17 @@ impl Tool for Bash {
         // Read `shell_write_audit` on why this permits far more than it
         // refuses, and on why it is not a sandbox.
         if let Some(refusal) = shell_write_audit(command, ctx) {
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::RefusedByPolicy,
+                refusal,
+            );
+        }
+        // The same moment, for the same reason. `sleep_advisory` below names a
+        // long wait in the result, by which time the turn has already paid for
+        // it; past `SLEEP_REFUSAL_THRESHOLD_SECS` the wait is declined here
+        // instead, and the model answers at the cost of one model call rather
+        // than the interval it asked to sit through (#3753).
+        if let Some(refusal) = blocking_wait_refusal(command) {
             return ToolOutput::classified_error(
                 stella_protocol::ErrorClass::RefusedByPolicy,
                 refusal,
@@ -1084,89 +1044,31 @@ mod tests {
         }
     }
 
-    /// #2022 witness: the exact observed pathological shape
-    /// (`sleep 300; echo done`, `sleep 120` alone) is caught and its
-    /// accumulated seconds are named, so the advisory can fire on it.
-    #[test]
-    fn a_sleep_is_detected_and_summed() {
-        assert_eq!(blocking_sleep_seconds("sleep 300; echo done"), Some(300));
-        assert_eq!(blocking_sleep_seconds("sleep 120"), Some(120));
-        assert_eq!(blocking_sleep_seconds("sleep 60"), Some(60));
-        // Several sleeps in one call accumulate.
-        assert_eq!(
-            blocking_sleep_seconds("sleep 30 && sleep 30"),
-            Some(60),
-            "accumulated sleep across the whole call, not just the last segment"
-        );
-        assert_eq!(
-            blocking_sleep_seconds("sleep 2.5"),
-            Some(3),
-            "rounds to the nearest second"
-        );
-    }
-
-    /// A short wait stays unflagged, and the threshold is what keeps it that
-    /// way. A retry backoff and a five-second pause before a `tail` both
-    /// report their seconds; neither crosses the line.
-    #[test]
-    fn a_short_sleep_beside_real_work_is_not_flagged() {
-        for command in [
-            "sleep 2 && curl -s http://localhost:8080",
-            "sleep 5; tail -f build.log",
-            "echo waiting; sleep 5; ls",
-            "for i in $(seq 30); do curl -sf http://localhost:8080 && break; sleep 1; done",
-        ] {
-            assert_eq!(
-                sleep_advisory(command),
-                None,
-                "advice was appended for `{command}`"
-            );
-        }
-        // A command that never calls `sleep` has nothing to report at all.
-        assert_eq!(blocking_sleep_seconds("grep sleep /app/main.c"), None);
-    }
-
-    /// The two waits that cost `13f7f2bb533d` most of a quarter of its
-    /// measured tool time. Both sit beside real work, so both were silent
-    /// while the predicate demanded a command made of nothing but sleeps.
-    ///
-    /// `pytorch-model-cli` backgrounded a `pip install torch` and then blocked
-    /// on a fixed 490s wait instead of on the install; `rstan-to-pystan` slept
-    /// 280s and then tailed the apt log it was waiting for. Each one is what
-    /// the advisory's own remedy describes — poll for the condition — and
-    /// neither was ever told.
-    #[test]
-    fn a_long_sleep_beside_real_work_is_named() {
-        let backgrounded_install = "timeout 500 pip install --quiet torch &\nBGPID=$!\nsleep 490\nwait $BGPID 2>/dev/null\necho DONE";
-        let note = sleep_advisory(backgrounded_install).expect("over threshold");
-        assert!(note.contains("490s"), "{note}");
-
-        let blind_poll = "sleep 280; tail -30 apt_install.log; ps aux | grep apt";
-        let note = sleep_advisory(blind_poll).expect("over threshold");
-        assert!(note.contains("280s"), "{note}");
-        assert!(note.contains("poll"), "{note}");
-    }
-
-    #[test]
-    fn the_sleep_advisory_only_fires_past_the_threshold() {
+    /// The refusal is what the tool returns, not just what the predicate
+    /// says: `execute` answers immediately and never spawns the shell. A
+    /// `sleep 300` that ran would take five minutes, so the elapsed time is
+    /// the proof that it did not.
+    #[tokio::test]
+    async fn a_declined_wait_returns_at_once_and_never_spawns() {
+        let dir = std::env::temp_dir();
+        let started = std::time::Instant::now();
+        let out = Bash::new(None)
+            .execute(
+                &serde_json::json!({"command": "sleep 300; echo woke", "timeout_secs": 400}),
+                &cx(&dir),
+            )
+            .await;
+        let elapsed = started.elapsed();
+        let ToolOutput::Error { message, class, .. } = out else {
+            panic!("a 300s wait must be declined, got: {out:?}");
+        };
+        assert_eq!(class, Some(stella_protocol::ErrorClass::RefusedByPolicy));
+        assert!(message.contains("300s"), "{message}");
+        assert!(!message.contains("woke"), "the shell ran: {message}");
         assert!(
-            sleep_advisory("sleep 5").is_none(),
-            "under threshold, no nudge"
+            elapsed < std::time::Duration::from_secs(2),
+            "the wait was spent rather than declined: {elapsed:?}"
         );
-        let note = sleep_advisory("sleep 300; echo done").expect("over threshold");
-        assert!(note.contains("300s"));
-        // The remedy must be one the agent can actually perform. This
-        // assertion used to require the string `read_output` — a tool #3244
-        // deleted — so it kept a directive with no tool behind it green for
-        // as long as it existed. Now it pins that the note names polling,
-        // and that it names NO tool the catalog does not carry.
-        assert!(note.contains("poll"), "{note}");
-        for gone in ["read_output", "wait_for", "start_process"] {
-            assert!(
-                !note.contains(gone),
-                "the advisory names `{gone}`, which is not on the tool surface: {note}"
-            );
-        }
     }
 
     #[tokio::test]
