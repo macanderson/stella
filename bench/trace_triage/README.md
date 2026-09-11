@@ -112,11 +112,12 @@ Delete `posture` later and the record is still true.
 | `cache-collapse` | pooled prompt cache hit below the floor measured across nine arms |
 | `repeated-file-read` | one path named by five or more read-shaped calls in one trial |
 | `grep-ere-false-negative` | a `grep` zero-match on an ERE pattern with none of the POSIX-fallback disclosure #2989 attaches |
+| `blind-wait` | a `bash` call whose text waits in `sleep` past the bound `bash/wait.rs` declines at |
 
 `--list-detectors` prints the live registry.
 
-The last two read their thresholds from [`bands.py`](bands.py), which records
-the nine-arm survey they were measured off — and which is also where a metric
+`cache-collapse` and `repeated-file-read` read their thresholds from
+[`bands.py`](bands.py), which records the nine-arm survey they were measured off — and which is also where a metric
 that *cannot* separate a healthy arm from a broken one is marked as such, so it
 is reported and never concluded from.
 
