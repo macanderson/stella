@@ -34,7 +34,7 @@ exist in no default install. Written in Rust as a workspace of focused crates.
 ### Stella and Oxagen
 
 **Stella runs the agent. [Oxagen](https://oxagen.sh) governs the run.** They
-are two products from one company, and the split between them is deliberate:
+are two products from one company, and neither duplicates the other:
 
 - **Stella is the coding agent.** It plans, runs tools, verifies, and
   records what it did. It is also the reference implementation of the
@@ -48,9 +48,9 @@ are two products from one company, and the split between them is deliberate:
   configure a `cloud.json` drain or an Enterprise enrollment (see
   [Telemetry](#telemetry)); Oxagen grades and rates that record and never
   re-runs it. Oxagen's own in-app assistant flows the *other* way: it is a
-  turn on [`stella-serve`](crates/stella-serve/README.md), the headless
-  engine, which holds no key and runs no tool, so every completion and tool
-  call comes back to Oxagen's gates.
+  turn on [`stella-serve`](crates/stella-serve/README.md), which drives the
+  engine over a wire protocol and holds no key and runs no tool itself, so
+  every completion and tool call comes back to Oxagen's gates.
 
 Both products share the [Oxagen house brand system](https://github.com/macanderson/oxagen-house-brand):
 one typeface, one gold, and one glyph in that gold per wordmark. Stella's mark
