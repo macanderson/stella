@@ -76,10 +76,14 @@ publish = false
 # release. Gate behaviour on its `TRACE_FORMAT` constant, not on this version.
 # Hence exact `=` requirements: a silent minor bump here would change a wire
 # format `stella arena` writes to disk.
-contextgraph-types = "=0.1.2"
-contextgraph-host = "=0.1.2"
-contextgraph-trace = "=0.1.2"
-contextgraph-conformance = "=0.1.2"
+#
+# 2.0.0 adds `frame_attestations`/`result_attestation` to `ContextQueryResult`.
+# Take it from the registry, never from a git rev: a rev pin is the drift
+# described above, and `tests/cgp_deps_centralized.rs` fails if one returns.
+contextgraph-types = "=2.0.0"
+contextgraph-host = "=2.0.0"
+contextgraph-trace = "=2.0.0"
+contextgraph-conformance = "=2.0.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # RFC 8785 JSON Canonicalization Scheme — the version the Context Graph Protocol

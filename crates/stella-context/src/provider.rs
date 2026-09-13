@@ -272,6 +272,15 @@ impl ProviderRegistry {
             frames,
             truncated,
             dropped_estimate,
+            // Every registered provider today is one of stella's own — no
+            // signing key, no commitment minted — so there is nothing to
+            // aggregate yet. If a future provider ever attests (`result.
+            // frame_attestations`/`result.result_attestation` non-empty on a
+            // leg above), fan it through here rather than dropping it: this
+            // loop already threads `truncated`/`dropped_estimate` from each
+            // leg for exactly that reason.
+            frame_attestations: Vec::new(),
+            result_attestation: None,
         })
     }
 
@@ -465,6 +474,9 @@ mod tests {
                 frames: self.frames.clone(),
                 truncated: self.truncated,
                 dropped_estimate: self.dropped_estimate,
+                // Test double — unattested, same as every in-tree provider.
+                frame_attestations: Vec::new(),
+                result_attestation: None,
             })
         }
     }
@@ -653,6 +665,9 @@ mod tests {
                 frames: vec![],
                 truncated: false,
                 dropped_estimate: None,
+                // Test double — unattested, same as every in-tree provider.
+                frame_attestations: Vec::new(),
+                result_attestation: None,
             })
         }
     }
