@@ -346,6 +346,10 @@ impl From<RecallResult> for ContextQueryResult {
             truncated: !result.dropped.is_empty(),
             dropped_estimate: u32::try_from(result.dropped.len()).ok(),
             frames: result.frames,
+            // This pipeline holds no signing key. It mints no commitment. Its
+            // answers are always unattested.
+            frame_attestations: Vec::new(),
+            result_attestation: None,
         }
     }
 }

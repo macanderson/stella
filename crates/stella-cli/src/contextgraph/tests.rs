@@ -74,6 +74,9 @@ impl ContextProvider for Scripted {
             frames: self.frames.clone(),
             truncated: false,
             dropped_estimate: None,
+            // Test double — unattested, same as every in-tree provider.
+            frame_attestations: Vec::new(),
+            result_attestation: None,
         })
     }
 }
@@ -427,6 +430,9 @@ impl PlaneProvider for PlaneScripted {
             frames: self.frames.clone(),
             truncated: self.truncated,
             dropped_estimate: None,
+            // Test double — unattested, same as every in-tree provider.
+            frame_attestations: Vec::new(),
+            result_attestation: None,
         })
     }
 }
@@ -1000,16 +1006,91 @@ async fn the_in_tree_providers_still_declare_no_egress() {
     }
 }
 
+/// `ContextQueryResult` carries two attestation fields, alongside `frames`,
+/// `truncated`, and `dropped_estimate`. The struct literal below is the same
+/// shape `session_host`'s providers build.
+///
+/// This test checks a full serde round trip, not just construction. The wire
+/// claim to prove: an unattested answer must serialize to the same bytes as
+/// an answer with no attestation fields at all. `frame_attestations` skips
+/// serializing when empty. `result_attestation` skips serializing when
+/// `None`. So an unattested result must omit both keys — never emit
+/// `"frame_attestations": []`.
+#[test]
+fn unattested_context_query_result_round_trips_without_the_attestation_fields_on_the_wire() {
+    let unattested = ContextQueryResult {
+        frames: vec![frame("f1", 0.9, 42)],
+        truncated: false,
+        dropped_estimate: None,
+        frame_attestations: Vec::new(),
+        result_attestation: None,
+    };
+
+    let json = serde_json::to_value(&unattested).expect("serialize");
+    let obj = json.as_object().expect("object");
+    assert!(
+        !obj.contains_key("frame_attestations"),
+        "an unattested result must omit frame_attestations from the wire entirely, not emit []: {obj:?}"
+    );
+    assert!(
+        !obj.contains_key("result_attestation"),
+        "an unattested result must omit result_attestation from the wire entirely, not emit null: {obj:?}"
+    );
+
+    let round_tripped: ContextQueryResult = serde_json::from_value(json).expect("deserialize");
+    assert_eq!(round_tripped, unattested);
+
+    // The control: a genuinely attested result, proving the omission above is
+    // `skip_serializing_if` doing its job on an empty value, not a field that
+    // never serializes at all.
+    let attestation = contextgraph_types::ProvenanceAttestation {
+        signed_commitment: "sha256:deadbeef".to_string(),
+        key_id: "test-key".to_string(),
+        algorithm: "ed25519".to_string(),
+        attester_id: "test-attester".to_string(),
+        signature: "ab".repeat(64),
+        issued_at: "2026-09-11T00:00:00Z".to_string(),
+    };
+    let attested = ContextQueryResult {
+        frame_attestations: vec![contextgraph_types::FrameAttestation {
+            frame: contextgraph_types::FrameId {
+                provider_id: "workspace-memory".to_string(),
+                frame_id: "f1".to_string(),
+                content_digest: None,
+            },
+            attestation: Some(attestation.clone()),
+            inclusion_proof: None,
+        }],
+        result_attestation: Some(attestation),
+        ..unattested.clone()
+    };
+    let attested_json = serde_json::to_value(&attested).expect("serialize");
+    let attested_obj = attested_json.as_object().expect("object");
+    assert!(
+        attested_obj.contains_key("frame_attestations"),
+        "a populated frame_attestations must be on the wire: {attested_obj:?}"
+    );
+    assert!(
+        attested_obj.contains_key("result_attestation"),
+        "a populated result_attestation must be on the wire: {attested_obj:?}"
+    );
+    let attested_round_tripped: ContextQueryResult =
+        serde_json::from_value(attested_json).expect("deserialize");
+    assert_eq!(attested_round_tripped, attested);
+    assert_ne!(
+        attested, unattested,
+        "attested and unattested results must differ"
+    );
+}
+
 #[test]
 fn pinned_protocol_version_is_a_conformance_verified_wire_version() {
-    // Tripwire: our conformance is verified against these exact wire
-    // versions. The released 0.1.x crates speak the draft string; the CGP
-    // 1.0 freeze graduates the same wire format to its frozen name, and
-    // the downstream canary re-runs this suite against CGP HEAD, so both
-    // spellings are conformance-verified. Any move past them fails loudly
-    // so conformance is re-audited rather than silently assumed to hold.
-    // Delete the draft entry when the workspace pin moves off 0.1.x.
-    let verified = ["contextgraph/1.0-draft", "contextgraph/1.0"];
+    // Tripwire: our conformance is verified against this exact wire version.
+    // The current pin speaks the frozen `contextgraph/1.0` wire name. The
+    // `contextgraph/1.0-draft` spelling belongs to an older pin this
+    // workspace does not carry. Any move past this fails loudly, so
+    // conformance gets re-checked instead of assumed.
+    let verified = ["contextgraph/1.0"];
     assert!(
         verified.contains(&contextgraph_types::PROTOCOL_VERSION),
         "CGP protocol version changed to {} — re-verify the conformance suite before widening the pin",

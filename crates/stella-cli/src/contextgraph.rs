@@ -240,6 +240,11 @@ impl ContextProvider for MemoryProvider {
             truncated: result.truncated,
             dropped_estimate: result.dropped_estimate,
             frames,
+            // `result` came from the in-process plane registry (`ProviderRegistry
+            // ::query_all`), which is itself unattested end to end — nothing to
+            // carry forward here either.
+            frame_attestations: Vec::new(),
+            result_attestation: None,
         })
     }
 
@@ -293,6 +298,10 @@ impl ContextProvider for GraphProvider {
                 frames: Vec::new(),
                 truncated: false,
                 dropped_estimate: None,
+                // No index to attest against, and this provider mints no
+                // commitment regardless.
+                frame_attestations: Vec::new(),
+                result_attestation: None,
             });
         };
         let root = self.workspace_root.clone();
@@ -316,6 +325,11 @@ impl ContextProvider for GraphProvider {
             frames,
             truncated: false,
             dropped_estimate: None,
+            // The code-graph provider holds no signing key and mints no
+            // commitment — an unattested answer, same as every other in-tree
+            // provider.
+            frame_attestations: Vec::new(),
+            result_attestation: None,
         })
     }
 }
