@@ -94,7 +94,7 @@ export const DECK_SHOTS = {
     height: 470,
     alt: "The deck's issues tab: a tracker backlog sorted by heat, one issue expanded to show its linked plan, branch and evidence, and a start-work strip.",
     caption:
-      "The backlog arrives over MCP and sorts by heat — the coupling of the files an issue touches against its age, read off the graph. Status syncs back when the gates go green.",
+      "The issues tab lists your GitHub backlog, and starting work on an issue begins here.",
   },
   palette: {
     file: "08-command-palette",
@@ -118,7 +118,7 @@ export const DECK_SHOTS = {
     height: 520,
     alt: "An issue being turned into a draft plan: the sources it was built from, four tasks each with a done-means clause, and an estimate of cost, tokens and time above an approval row.",
     caption:
-      "An issue becomes a plan while you watch. The sources line names exactly what went in — the issue text, the coupled files from the graph, the memory rules that applied — and nothing is touched before you approve it.",
+      "An issue becomes a draft plan. The sources line names the files the graph links to the issue and the memory rules that applied, and nothing is touched before you approve it.",
   },
 } as const satisfies Record<string, DeckShot>;
 
