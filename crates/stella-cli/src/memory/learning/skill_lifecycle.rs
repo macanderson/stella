@@ -568,6 +568,86 @@ async fn the_holdout_picks_the_skill_whose_control_arm_is_short() {
     );
 }
 
+/// **The holdout cannot name a skill the turn never matched.** The pick used
+/// to read the whole loaded catalog, so a turn whose prompt matched only one
+/// of two skills could have the other one's name drawn — nothing was then
+/// withheld, the slot produced no trial, and the schedule still counted it
+/// (#6464). The pick now comes from the trigger-matched population, so a
+/// holdout turn always pays for exactly one control row.
+///
+/// The fixture arms the schedule so the ordinal points at the skill the
+/// prompt does NOT match. Before the fix that pick withheld nothing and the
+/// turn recorded no trial; after it, the pick lands on the matched skill and
+/// the ledger gains a control row for it.
+#[tokio::test]
+async fn the_holdout_cannot_pick_a_skill_the_turn_never_matched() {
+    let dir = workspace_with_log();
+    set_gate(dir.path(), false);
+
+    let mut miner = session(dir.path());
+    miner.auto_create_skills(&log_path(dir.path()), true);
+    let written = skill_files(dir.path());
+    assert_eq!(written.len(), 1, "the lesson promoted into a skill");
+    let name = written[0].trim_end_matches(".md").to_string();
+
+    // A second skill the prompt does not match, so the catalog holds a name
+    // the turn never scored. The holdout's ordinal must not be able to reach
+    // it.
+    let other = dir.path().join(".stella/skills/zzz-unrelated.md");
+    std::fs::write(
+        &other,
+        "---\nname: zzz-unrelated\ndescription: quantum knitting patterns for sweaters\n---\n\nknit one purl one\n",
+    )
+    .expect("write unrelated skill");
+
+    let mut memory = session(dir.path());
+
+    // Arm the holdout so its ordinal names the unmatched skill. With two
+    // skills in the catalog and the schedule on the skill arm, ordinal 0
+    // picks the first name in sorted order — the mined skill, which sorts
+    // before `zzz-unrelated`. Ordinal 1 would pick the unmatched one, so we
+    // claim one holdout turn to advance the counter.
+    assert!(
+        !memory.arm_controls_at(0, 2),
+        "the plane control is off here"
+    );
+    let _ = memory.note_turn_skills(MATCHING_PROMPT);
+    memory
+        .record_episode(MATCHING_PROMPT, EpisodeOutcome::Success, &[], 1_000, None)
+        .await;
+
+    // Turn 2: the holdout's ordinal is now 1, which names `zzz-unrelated` in
+    // the full catalog. The prompt still matches only the mined skill.
+    assert!(
+        !memory.arm_controls_at(0, 2),
+        "still no plane control"
+    );
+    let injected: Vec<String> = memory
+        .note_turn_skills(MATCHING_PROMPT)
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
+    assert_eq!(
+        injected,
+        Vec::<String>::new(),
+        "the holdout must withhold the matched skill, not the unmatched one"
+    );
+    memory
+        .record_episode(MATCHING_PROMPT, EpisodeOutcome::Success, &[], 1_000, None)
+        .await;
+
+    assert_eq!(
+        trials(dir.path(), &name),
+        vec![true, false],
+        "the turn records a control trial for the skill it actually matched"
+    );
+    assert_eq!(
+        trials(dir.path(), "zzz-unrelated"),
+        Vec::<bool>::new(),
+        "the unmatched skill is not evidence about anything"
+    );
+}
+
 /// **The two schedules cannot land on the same turn.** A turn the plane
 /// control already took claims no holdout number, so the holdout's counter
 /// advances only over the turns it could act on.

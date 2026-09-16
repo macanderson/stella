@@ -150,20 +150,36 @@ impl SessionMemory {
     /// `None` on three counts: this turn is not a holdout turn, the schedule
     /// is on another kind, or there was nothing to pick from.
     fn held_for(&self, kind: ArtifactKind, population: &[String]) -> Option<String> {
+        let ids: Vec<&str> = population.iter().map(String::as_str).collect();
+        self.held_for_refs(kind, &ids)
+    }
+
+    /// The borrow form of [`Self::held_for`], for a caller whose population
+    /// is already `&str`.
+    fn held_for_refs(&self, kind: ArtifactKind, population: &[&str]) -> Option<String> {
         let ordinal = self.holdout_ordinal?;
         if holdout_kind(ordinal) != Some(kind) {
             return None;
         }
         let mut guard = self.context_trials.lock().ok()?;
         if guard.held.is_none() {
-            let ids: Vec<&str> = population.iter().map(String::as_str).collect();
             guard.held =
-                stella_learn::holdout::pick(ordinal, &ids).map(|id| (kind, id.to_string()));
+                stella_learn::holdout::pick(ordinal, population).map(|id| (kind, id.to_string()));
         }
         match &guard.held {
             Some((held, id)) if *held == kind => Some(id.clone()),
             _ => None,
         }
+    }
+
+    /// The skill this turn holds back, settled from the first selection pass
+    /// to ask and read back by every later one.
+    ///
+    /// Skills keep their own join on the session, but the holdout pick is one
+    /// per turn across all three kinds, so it lives on the shared cell beside
+    /// the memory and rule picks rather than on `turn_skill_join`.
+    pub(super) fn held_for_skill(&self, population: &[&str]) -> Option<String> {
+        self.held_for_refs(ArtifactKind::Skill, population)
     }
 
     /// Fold one render pass into this turn's join for `kind`.
