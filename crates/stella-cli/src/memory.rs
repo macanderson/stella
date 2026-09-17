@@ -878,8 +878,8 @@ impl SessionMemory {
         // survivors plus the ones the top-k cut threw away, which cleared the
         // same score floor. A pick from the whole catalog can name a skill
         // this turn never matched; nothing is then withheld, the slot
-        // produces no trial, and the schedule still counts it. The pick is
-        // settled here, at the first site to score, and read back by
+        // produces no trial, and the schedule still counts it (#6464). The
+        // pick is settled here, at the first site to score, and read back by
         // every later site (`trials::held_for`), so a turn holds one skill
         // back no matter how many times it renders.
         let matched: Vec<&str> = selection

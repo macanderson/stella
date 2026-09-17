@@ -571,9 +571,9 @@ async fn the_holdout_picks_the_skill_whose_control_arm_is_short() {
 /// **The holdout cannot name a skill the turn never matched.** The pick used
 /// to read the whole loaded catalog, so a turn whose prompt matched only one
 /// of two skills could have the other one's name drawn — nothing was then
-/// withheld, the slot produced no trial, and the schedule still counted it.
-/// The pick now comes from the trigger-matched population, so a holdout
-/// turn always pays for exactly one control row.
+/// withheld, the slot produced no trial, and the schedule still counted it
+/// (#6464). The pick now comes from the trigger-matched population, so a
+/// holdout turn always pays for exactly one control row.
 ///
 /// The fixture arms the schedule so the ordinal points at the skill the
 /// prompt does NOT match. Before the fix that pick withheld nothing and the
@@ -591,22 +591,22 @@ async fn the_holdout_cannot_pick_a_skill_the_turn_never_matched() {
     let name = written[0].trim_end_matches(".md").to_string();
 
     // A second skill the prompt does not match, so the catalog holds a name
-    // the turn never scored. It sorts before the mined skill, so the first
-    // holdout ordinal names it when the pick reads the whole catalog. The
-    // pick must not be able to reach it.
-    let other = dir.path().join(".stella/skills/aaa-unrelated.md");
+    // the turn never scored. The holdout's ordinal must not be able to reach
+    // it.
+    let other = dir.path().join(".stella/skills/zzz-unrelated.md");
     std::fs::write(
         &other,
-        "---\nname: aaa-unrelated\ndescription: quantum knitting patterns for sweaters\n---\n\nknit one purl one\n",
+        "---\nname: zzz-unrelated\ndescription: quantum knitting patterns for sweaters\n---\n\nknit one purl one\n",
     )
     .expect("write unrelated skill");
 
     let mut memory = session(dir.path());
 
-    // Turn 1 is not a holdout turn at rate 2; turn 2 is holdout ordinal 0,
-    // which the arm rotation points at skills and the pick resolves to the
-    // first name in sorted order. In the full catalog that is
-    // `aaa-unrelated`; in the matched population it is the mined skill.
+    // Arm the holdout so its ordinal names the unmatched skill. With two
+    // skills in the catalog and the schedule on the skill arm, ordinal 0
+    // picks the first name in sorted order — the mined skill, which sorts
+    // before `zzz-unrelated`. Ordinal 1 would pick the unmatched one, so we
+    // claim one holdout turn to advance the counter.
     assert!(
         !memory.arm_controls_at(0, 2),
         "the plane control is off here"
@@ -616,8 +616,12 @@ async fn the_holdout_cannot_pick_a_skill_the_turn_never_matched() {
         .record_episode(MATCHING_PROMPT, EpisodeOutcome::Success, &[], 1_000, None)
         .await;
 
-    // Turn 2: the holdout. The prompt still matches only the mined skill.
-    assert!(!memory.arm_controls_at(0, 2), "still no plane control");
+    // Turn 2: the holdout's ordinal is now 1, which names `zzz-unrelated` in
+    // the full catalog. The prompt still matches only the mined skill.
+    assert!(
+        !memory.arm_controls_at(0, 2),
+        "still no plane control"
+    );
     let injected: Vec<String> = memory
         .note_turn_skills(MATCHING_PROMPT)
         .into_iter()
@@ -638,7 +642,7 @@ async fn the_holdout_cannot_pick_a_skill_the_turn_never_matched() {
         "the turn records a control trial for the skill it actually matched"
     );
     assert_eq!(
-        trials(dir.path(), "aaa-unrelated"),
+        trials(dir.path(), "zzz-unrelated"),
         Vec::<bool>::new(),
         "the unmatched skill is not evidence about anything"
     );
