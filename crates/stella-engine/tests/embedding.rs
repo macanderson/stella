@@ -41,14 +41,15 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
+use stella_time::test_util::NoopSleeper;
 use tokio::sync::mpsc;
 
 use stella_engine::{
     AbortKind, AgentEvent, BudgetGuard, BudgetMode, CheckpointSink, CompletionMessage,
     CompletionRequestRef, CompletionResult, CompletionUsage, DispatchAdmission, DispatchGate,
-    Engine, EngineConfig, LiveService, Provider, ProviderError, RECALL_MARKER, Sleeper,
-    SteeringRequery, ToolCall, ToolContract, ToolExecutor, ToolOutput, ToolSchema,
-    TurnCapabilities, TurnOutcome, TurnSignal, WaitCall, WaitRequest, admit_dispatch,
+    Engine, EngineConfig, LiveService, Provider, ProviderError, RECALL_MARKER, SteeringRequery,
+    ToolCall, ToolContract, ToolExecutor, ToolOutput, ToolSchema, TurnCapabilities, TurnOutcome,
+    TurnSignal, WaitCall, WaitRequest, admit_dispatch,
 };
 
 /// The one tool the host advertises. Its only job is to make the model's first
@@ -302,22 +303,6 @@ async fn a_host_can_wrap_its_tool_surface_without_dropping_what_the_port_forward
         "the gate is forwarded, so the dispatch is still governed — a dropped \
          gate reads as `Admit` and the call runs ungated"
     );
-}
-
-struct NoopSleeper;
-
-#[async_trait]
-impl Sleeper for NoopSleeper {
-    async fn sleep(&self, _duration_ms: u64) {}
-
-    // The floor: a test that asserts on retry timing wants no spread in it.
-    fn now(&self) -> std::time::Instant {
-        std::time::Instant::now()
-    }
-
-    fn jitter(&self, _upper: u64) -> u64 {
-        0
-    }
 }
 
 /// What one consult of the re-query port was shown, owned so the port can keep

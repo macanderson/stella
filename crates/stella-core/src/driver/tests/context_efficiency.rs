@@ -59,7 +59,7 @@ async fn a_long_turn_ages_old_tool_results_far_below_the_compaction_budget() {
     let tools = BigOutputTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let config = EngineConfig {
         compaction_budget_tokens: 20_000,
         ..EngineConfig::default()
@@ -147,7 +147,7 @@ async fn a_spent_allowance_retains_an_elided_partial_not_the_scratchpad() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -213,7 +213,7 @@ async fn a_truncated_step_with_tool_calls_retains_elided_narration() {
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![

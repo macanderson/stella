@@ -61,7 +61,7 @@ async fn compaction_fired_with_report(usage: CompletionUsage) -> bool {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let mut messages = compactable_history();
     let raw = crate::estimator::estimate_conversation_tokens(&messages);
     let config = EngineConfig {

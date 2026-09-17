@@ -65,7 +65,7 @@ async fn a_retried_attempt_re_sends_the_same_slices_it_did_the_first_time() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let (tx, _rx) = mpsc::unbounded_channel();
@@ -122,7 +122,7 @@ async fn the_adapter_serializes_off_the_callers_own_transcript() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let (tx, _rx) = mpsc::unbounded_channel();

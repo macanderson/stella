@@ -17,6 +17,7 @@ use stella_protocol::{CompletionResult, ToolSchema};
 
 use super::super::*;
 use crate::TurnCapabilities;
+use crate::tests::NoopSleeper;
 
 /// Answers immediately, recording the transcript it was handed.
 #[derive(Default)]
@@ -59,22 +60,6 @@ impl Provider for RecordingProvider {
     }
 }
 
-struct NoSleep;
-
-#[async_trait::async_trait]
-impl crate::retry::Sleeper for NoSleep {
-    async fn sleep(&self, _duration_ms: u64) {}
-
-    // The floor: a test that asserts on retry timing wants no spread in it.
-    fn now(&self) -> std::time::Instant {
-        std::time::Instant::now()
-    }
-
-    fn jitter(&self, _upper: u64) -> u64 {
-        0
-    }
-}
-
 struct NoTools;
 
 #[async_trait::async_trait]
@@ -96,7 +81,7 @@ async fn run_turn_with_deadline(
     deadline: Option<std::time::Duration>,
 ) {
     let tools = NoTools;
-    let sleeper = NoSleep;
+    let sleeper = NoopSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(provider, &tools, EngineConfig::default(), &sleeper, seams);
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();

@@ -15,6 +15,7 @@ use super::super::*;
 use crate::TurnCapabilities;
 use crate::ports::Clock;
 use crate::router::{CircuitBreaker, ProviderProfile, RoleTable, Router};
+use crate::tests::NoopSleeper;
 use serde_json::Value;
 use stella_protocol::{CompletionResult, ModelRef, Role, ToolSchema};
 
@@ -76,22 +77,6 @@ impl ToolExecutor for NoTools {
     }
 }
 
-struct NoSleep;
-
-#[async_trait::async_trait]
-impl crate::retry::Sleeper for NoSleep {
-    async fn sleep(&self, _duration_ms: u64) {}
-
-    // The floor: a test that asserts on retry timing wants no spread in it.
-    fn now(&self) -> std::time::Instant {
-        std::time::Instant::now()
-    }
-
-    fn jitter(&self, _upper: u64) -> u64 {
-        0
-    }
-}
-
 /// Cooldown timing is irrelevant here (nothing advances), so a frozen clock
 /// keeps the breaker's open state deterministic for the whole test.
 struct FrozenClock;
@@ -121,7 +106,7 @@ fn router() -> Router {
 /// production wiring shape (`&Router`, shared, at the call site).
 async fn run_turn_feeding(provider: &dyn Provider, router: &Router) -> TurnOutcome {
     let tools = NoTools;
-    let sleeper = NoSleep;
+    let sleeper = NoopSleeper;
     let seams = TurnCapabilities {
         outcomes: Some(router),
         ..TurnCapabilities::none()

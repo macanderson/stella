@@ -431,7 +431,7 @@ mod tests {
 
         let provider = crate::subagent::tests::ScriptedProvider::new(vec![]);
         let tools = crate::subagent::tests::MixedTools::default();
-        let sleeper = crate::subagent::tests::TokioSleeper;
+        let sleeper = crate::tests::PausedSleeper;
 
         let owned = built_elsewhere();
         let seams = owned.as_borrowed();
@@ -473,7 +473,7 @@ mod tests {
     fn assemble_carries_the_bare_capability_set_onto_the_engine() {
         let provider = crate::subagent::tests::ScriptedProvider::new(vec![]);
         let tools = crate::subagent::tests::MixedTools::default();
-        let sleeper = crate::subagent::tests::TokioSleeper;
+        let sleeper = crate::tests::PausedSleeper;
 
         let seams = TurnCapabilities::none();
         let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);

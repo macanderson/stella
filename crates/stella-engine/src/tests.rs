@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use async_trait::async_trait;
 use serde_json::Value;
+use stella_time::test_util::NoopSleeper;
 use tokio::sync::mpsc;
 
 // Everything through `crate::`, including the three completion types that used
@@ -19,25 +20,9 @@ use tokio::sync::mpsc;
 use crate::{
     AgentEvent, BudgetGuard, BudgetMode, CANCELLED_REASON, CancelToken, CompletionMessage,
     CompletionRequestRef, CompletionResult, CompletionUsage, Engine, EngineConfig, EventSender,
-    MessageRole, Provider, ProviderError, Sleeper, StepOutcome, ToolCall, ToolExecutor, ToolOutput,
+    MessageRole, Provider, ProviderError, StepOutcome, ToolCall, ToolExecutor, ToolOutput,
     ToolSchema, TurnCapabilities, TurnOutcome,
 };
-
-/// A `Sleeper` that records but never actually waits.
-struct NoopSleeper;
-#[async_trait]
-impl Sleeper for NoopSleeper {
-    async fn sleep(&self, _duration_ms: u64) {}
-
-    // The floor: a test that asserts on retry timing wants no spread in it.
-    fn now(&self) -> std::time::Instant {
-        std::time::Instant::now()
-    }
-
-    fn jitter(&self, _upper: u64) -> u64 {
-        0
-    }
-}
 
 /// A scripted provider: one response per call, in order, looping the last
 /// entry once exhausted so a runaway loop fails loudly rather than panicking.
@@ -171,9 +156,9 @@ fn event_type(event: &AgentEvent) -> String {
         .unwrap_or_default()
 }
 
-/// Context receipts are the one thing a resumed turn re-emits, because the
-/// block registry is a per-turn memo a `Checkpoint` does not
-/// carry (see `stella_core::step`). Compared separately, never mixed in.
+/// Context receipts are the one thing a resumed turn re-emits. The block
+/// registry is a per-turn memo, and a `Checkpoint` does not carry it (see
+/// `stella_core::step`). They are compared on their own, never mixed in.
 fn is_receipt(event: &AgentEvent) -> bool {
     matches!(
         event_type(event).as_str(),
@@ -432,9 +417,9 @@ async fn a_turn_resumed_from_a_checkpoint_emits_the_same_downstream_events() {
         "the downstream event stream must be indistinguishable from the un-interrupted run"
     );
 
-    // The one documented difference, asserted rather than assumed: the block
-    // registry is a per-turn memo the checkpoint drops, so a resumed turn
-    // re-registers the blocks the reference run had already seen.
+    // The one documented difference, asserted here. The block registry is a
+    // per-turn memo the checkpoint drops, so a resumed turn re-registers the
+    // blocks the reference run had already seen.
     let reference_receipts = reference[1].iter().filter(|e| is_receipt(e)).count();
     let resumed_receipts = resumed_events.iter().filter(|e| is_receipt(e)).count();
     assert!(

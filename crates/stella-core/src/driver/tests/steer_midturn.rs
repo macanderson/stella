@@ -62,7 +62,7 @@ async fn a_soft_stop_closes_caller_supplied_open_tool_calls() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let steering = StopNow;
     let seams = TurnCapabilities {
         steering: Some(&steering),
@@ -126,7 +126,7 @@ async fn a_steer_after_a_tool_round_keeps_every_call_paired_with_its_result() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let steering = SteerAtDrain {
         queue: std::sync::Mutex::new(vec!["also check the tests".into()]),
         fire_on_drain: 2,
@@ -199,7 +199,7 @@ async fn a_mid_tool_round_steer_leaves_a_tool_message_immediately_before_it() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let steering = SteerAtDrain {
         queue: std::sync::Mutex::new(vec!["actually, stop after this".into()]),
         fire_on_drain: 2,

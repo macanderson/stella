@@ -33,12 +33,13 @@ use stella_core::hooks::{
     HookAction, HookExecError, HookExecResult, HookMatcher, HookRunner, Hooks,
 };
 use stella_core::ports::{FallbackResolver, ResolvedFallback, ToolExecutor};
-use stella_core::retry::{ParkPlan, Sleeper, plan_park};
+use stella_core::retry::{ParkPlan, plan_park};
 use stella_core::{Engine, EngineConfig, TurnCapabilities, TurnOutcome};
 use stella_protocol::{
     BudgetMode, CompletionMessage, CompletionRequestRef, CompletionResult, CompletionUsage,
     Provider, ProviderError, ToolCall, ToolOutput, ToolSchema,
 };
+use stella_time::test_util::NoopSleeper;
 use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::mpsc;
 
@@ -56,22 +57,6 @@ struct Spend {
     model_calls: u32,
     tool_calls: u32,
     cost_usd: f64,
-}
-
-/// A `Sleeper` that never waits, so a retry ladder costs no test time.
-struct NoopSleeper;
-#[async_trait]
-impl Sleeper for NoopSleeper {
-    async fn sleep(&self, _duration_ms: u64) {}
-
-    // The floor: a test that asserts on retry timing wants no spread in it.
-    fn now(&self) -> std::time::Instant {
-        std::time::Instant::now()
-    }
-
-    fn jitter(&self, _upper: u64) -> u64 {
-        0
-    }
 }
 
 /// A scripted `Provider`: one entry per call, repeating the last entry once

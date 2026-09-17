@@ -65,7 +65,7 @@ async fn run_productive_turn(steps: u32, config: EngineConfig) -> (TurnOutcome, 
         script: TokioMutex::new(productive_script(steps)),
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &DistinctTools, config, &sleeper, seams);
     let mut messages = vec![

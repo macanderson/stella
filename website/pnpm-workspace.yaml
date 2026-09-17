@@ -8,13 +8,13 @@
 # package with a workspace wrapped around it. The Rust crates were never pnpm
 # packages, so nothing was ever shared across the two toolchains.
 
-# pnpm 11 reads build-script approvals from here. Both deps ship prebuilt
-# platform binaries via optional deps, so approving their build scripts just
+# pnpm 11 reads build-script approvals from here. esbuild ships prebuilt
+# platform binaries via optional deps, so approving its build script just
 # lets `pnpm install` exit cleanly — which Next 16's pre-build dependency
-# check (and Vercel) require.
+# check (and Vercel) require. sharp used to sit beside it; the override
+# below removes sharp from the tree, so there is nothing of its to approve.
 allowBuilds:
   esbuild: true
-  sharp: true
 
 # Supply-chain policy: refuse any version published less than this many minutes
 # ago. A compromised release is typically yanked within hours, so waiting a day
@@ -35,22 +35,28 @@ minimumReleaseAgeExclude:
 
 # Next 16.2.11 pulls in postcss@8.4.31 (path traversal + XSS, patched at
 # 8.5.10/8.5.18; GHSA-fxqj-rqcc-2cmp then found the sourceMappingURL fix
-# incomplete, re-patched at 8.5.23) and sharp@0.34.5 (patched at 0.35.0)
-# through its own dependency tree — not through anything this package depends
-# on directly, so there's no version bump here that fixes it. `pnpm audit`
-# clears once these are forced across every resolution. NOTE: with an override
+# incomplete, re-patched at 8.5.23) through its own dependency tree — not
+# through anything this package depends on directly, so there's no version
+# bump here that fixes it. `pnpm audit` clears once the floor is forced across
+# every resolution. NOTE: with an override
 # in force, `pnpm install --frozen-lockfile` (docs.yml) checks the importer
 # specifiers against the override-applied range — keep this floor and the
 # direct `postcss` devDependency in `package.json` moving together.
 overrides:
   postcss: ">=8.5.23"
-  # sharp <0.35.4 and js-yaml <4.3.2 each carry a high-severity advisory
-  # (GHSA-rgj7-g3m4-5g8c, GHSA-2883-xcg3-v3hh). Both arrive transitively —
-  # sharp through `next`, js-yaml through `fumadocs-core` and `fumadocs-mdx` —
-  # so, as with postcss above, no direct bump reaches them; the floor does.
-  # js-yaml takes a caret, like nanoid below: a bare floor resolves to 5.x,
-  # which fumadocs does not call.
-  sharp: ">=0.35.4"
+  # sharp is removed, not floored. `next` lists it as an optional dependency
+  # for every platform, and this site imports no `next/image`, so it was
+  # never loaded — inert weight that carried a high advisory (<0.35.4,
+  # GHSA-rgj7-g3m4-5g8c) and fourteen LGPL-3.0 libvips tuples, each of which
+  # `dependency-review` had to be told about by name every time `next` moved
+  # (#2532). `-` is pnpm's spelling for "drop this dependency everywhere".
+  # If the site ever renders a `next/image`, restore a floor here and put the
+  # tuples back in `.github/workflows/dependency-review.yml`.
+  sharp: "-"
+  # js-yaml <4.3.2 carries a high advisory (GHSA-2883-xcg3-v3hh). It arrives
+  # through `fumadocs-core` and `fumadocs-mdx`, so no direct bump reaches it;
+  # the floor does. A caret, like nanoid below: a bare floor resolves to
+  # 5.x, which fumadocs does not call.
   js-yaml: "^4.3.2"
   # nanoid <3.3.18: a custom alphabet with a non-integer or zero `size` makes
   # the generator loop indefinitely (GHSA high, patched at 3.3.18). It arrives

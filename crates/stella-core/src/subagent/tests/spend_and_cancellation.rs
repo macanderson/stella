@@ -62,7 +62,7 @@ async fn tool_dispatched_child_spend_aborts_the_parent_at_the_next_step_boundary
         &provider,
         &tools,
         EngineConfig::default(),
-        &TokioSleeper,
+        &PausedSleeper,
         seams,
     );
     let mut messages = vec![CompletionMessage::user("go")];
@@ -135,7 +135,7 @@ async fn the_drain_is_destructive_so_child_spend_is_never_charged_twice() {
         &provider,
         &tools,
         EngineConfig::default(),
-        &TokioSleeper,
+        &PausedSleeper,
         seams,
     );
     let mut messages = vec![CompletionMessage::user("go")];
@@ -244,7 +244,7 @@ async fn a_cancelled_child_closes_its_bracket_with_committed_steps_and_cost() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &TokioSleeper,
+        &PausedSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
@@ -379,7 +379,7 @@ async fn a_child_is_bounded_by_the_ceiling_its_whole_run_sits_under() {
             model_timeout: None,
             ..EngineConfig::default()
         },
-        &TokioSleeper,
+        &PausedSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
@@ -491,7 +491,7 @@ async fn a_ceiling_too_short_refuses_the_whole_spawn_loudly() {
             tool_timeout: Some(Duration::from_secs(30)),
             ..EngineConfig::default()
         },
-        &TokioSleeper,
+        &PausedSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);

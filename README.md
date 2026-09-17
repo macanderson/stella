@@ -1,12 +1,13 @@
 <p align="center">
   <picture>
-    <source srcset="docs/brand/logo/svg/lockup-color-light.svg">
-    <img src="docs/brand/logo/svg/lockup-color-light.svg" alt="stella" width="300">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/logo/svg/stella-wordmark-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/brand/logo/svg/stella-wordmark-light.svg">
+    <img src="docs/brand/logo/svg/stella-wordmark-light.svg" alt="stella*" width="300">
   </picture>
 </p>
 
-<p align="center"><strong>Reference Grade Agent Loop</strong></p>
-<p align="center">Open Source · Rust · BYOK · No Phone Home</p>
+<p align="center"><strong>A terminal coding agent that proves its work finished.</strong></p>
+<p align="center">Open source · Rust · BYOK · Nothing leaves your machine</p>
 
 <p align="center">
   <a href="https://github.com/macanderson/stella/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/macanderson/stella/ci.yml?branch=main&style=flat-square&logo=github&label=ci" alt="CI status"></a>
@@ -29,6 +30,31 @@ enforces a hard per-run budget. Nothing leaves your machine except calls to the
 provider you configured — the two paths that would export anything else
 (Oxagen Enterprise enrollment, or a `drain` block in `~/.stella/cloud.json`)
 exist in no default install. Written in Rust as a workspace of focused crates.
+
+### Stella and Oxagen
+
+**Stella runs the agent. [Oxagen](https://oxagen.sh) governs the run.** They
+are two products from one company, and neither duplicates the other:
+
+- **Stella is the coding agent.** It plans, runs tools, verifies, and
+  records what it did. It is also the reference implementation of the
+  [Context Graph Protocol](https://github.com/macanderson/context-graph-protocol)
+  and of the run/turn/step trace vocabulary Oxagen reads.
+- **Oxagen is the governance plane.** It grounds, governs, explains, meters,
+  and rates agents. It runs no agent loop of its own, so nothing in this
+  repository is duplicated there and nothing there runs a sandbox, a file
+  system, or a subagent. Those stay on your machine, in this CLI.
+- **They meet at two seams, both opt in.** Evidence flows *out* only when you
+  configure a `cloud.json` drain or an Enterprise enrollment (see
+  [Telemetry](#telemetry)); Oxagen grades and rates that record and never
+  re-runs it. Oxagen's own in-app assistant flows the *other* way: it is a
+  turn on [`stella-serve`](crates/stella-serve/README.md), which drives the
+  engine over a wire protocol and holds no key and runs no tool itself, so
+  every completion and tool call comes back to Oxagen's gates.
+
+Both products share the [Oxagen house brand system](https://github.com/macanderson/oxagen-house-brand):
+one typeface, one gold, and one glyph in that gold per wordmark. Stella's mark
+is the asterisk in `stella*`, and nothing is ever set to its left.
 
 ## Features
 
@@ -641,10 +667,15 @@ Alongside the Rust workspace, the documentation site
 ([stella.oxagen.sh](https://stella.oxagen.sh)) lives at `website/` (Next.js +
 Fumadocs) as a **self-contained** package: its own `package.json`,
 `pnpm-lock.yaml`, and pnpm settings all sit in that directory, and the repo
-root is pure cargo. The two toolchains share no code — the one thing crossing
-between them is the brand palette: `crates/stella-tui/src/palette.rs` is the
-hand-maintained normative source, mirrored by `website/src/app/tokens.css`
-(`--stella-*`), and the two must be edited together.
+root is pure cargo. The two toolchains share no code. The one thing crossing
+between them is the brand: `design/tokens/stella-tokens.json` is the normative
+palette, and it adopts the Oxagen house table. `scripts/gen-tokens.py` emits
+the terminal tokens (`stella-tui-theme`) and `design/tokens/stella-tokens.css`
+from it, which the site's `tokens.css` carries verbatim under a checker
+(`make tokens-update` regenerates, `make tokens` checks), and
+`scripts/sync-brand-assets.mjs` vendors the marks, icons, and spinner from the
+house kit into `docs/brand/` (`--check` runs in CI). Edit the JSON or rebuild
+the kit; never the generated files.
 
 ## Development
 

@@ -295,9 +295,10 @@ system message and the latest user message are never touched.
   [`src/subagent.rs`](src/subagent.rs)'s `run_sub_agent`, which constructs the
   child in-crate and carries every seam. The crate exports the `Sleeper` and
   `Clock` ports with no production implementation — `stella-time` holds
-  those, and every host passes them to `Engine::assemble`. Tests wire a
-  no-op or a paused-clock double, so a retry costs no wall clock and a
-  timeout still means what it says.
+  those, and every host passes them to `Engine::assemble`. Tests take
+  `PausedSleeper` and `NoopSleeper` from `stella_time::test_util` — the unit
+  tests from `crate::tests`, the one copy the compiler forces — so a
+  retry costs no wall clock and a timeout still means what it says.
 - **A sub-agent's steering is filtered, not inherited.** `drain_steering` is
   destructive by contract, so a child that inherited the parent's `TurnSteering`
   would swallow a message the user addressed to the parent. `ChildSteering`
@@ -332,8 +333,8 @@ turn-driver audit witnesses; also `budget_boundaries.rs`,
 [`src/loop_detect.rs`](src/loop_detect.rs); a failing case writes its seed to
 `proptest-regressions/`, and that seed is committed. No feature flag, no env var, no
 fixture server and no network — driver tests wire scripted `Provider`s, counting
-`ToolExecutor`s and sleeper doubles on a paused runtime, so the suite runs in
-seconds. Keep it that
+`ToolExecutor`s and `stella-time`'s shared sleeper doubles on a paused runtime,
+so the suite runs in seconds. Keep it that
 way: a test here that needs a file or a socket means the logic under test is in
 the wrong crate.
 

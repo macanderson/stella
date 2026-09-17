@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use stella_protocol::{BudgetMode, CompletionRequestRef, CompletionResult, ProviderError};
 use tokio::sync::mpsc;
 
-use super::{MixedTools, ScriptedProvider, TokioSleeper, text_result, tool_call_result};
+use super::{MixedTools, PausedSleeper, ScriptedProvider, text_result, tool_call_result};
 use crate::subagent::*;
 
 // ---- forked-skill scoping: allowed_tools + effort (#2682) ---------------
@@ -81,7 +81,7 @@ async fn a_grant_scoped_child_cannot_see_or_call_outside_its_grant() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &TokioSleeper,
+        &PausedSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
@@ -134,7 +134,7 @@ async fn a_forked_skills_effort_overrides_the_parents_and_absent_inherits() {
         ..EngineConfig::default()
     };
     let seams = TurnCapabilities::none();
-    let parent = Engine::assemble(&parent_provider, &tools, config, &TokioSleeper, seams);
+    let parent = Engine::assemble(&parent_provider, &tools, config, &PausedSleeper, seams);
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, _rx) = mpsc::unbounded_channel();
 

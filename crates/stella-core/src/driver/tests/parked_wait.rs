@@ -124,7 +124,7 @@ async fn a_change_on_the_nth_probe_re_invokes_the_model_exactly_once() {
     let tools = ParkingTools::depositing(ci_wait_request(600), 3);
     let probe_calls = tools.probe_calls.clone();
     let wake_calls = tools.wake_calls.clone();
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -239,7 +239,7 @@ async fn an_unchanged_condition_wakes_once_at_the_deadline() {
     let tools = ParkingTools::depositing(ci_wait_request(20), u32::MAX);
     let probe_calls = tools.probe_calls.clone();
     let wake_calls = tools.wake_calls.clone();
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -297,7 +297,7 @@ async fn a_non_read_only_probe_is_refused_not_replayed() {
     request.probe.name = "bash".into(); // not in the read-only schema set
     let tools = ParkingTools::depositing(request, 1);
     let probe_calls = tools.probe_calls.clone();
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -361,7 +361,7 @@ async fn sustained_rate_limiting_parks_within_budget_and_recovers() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -425,7 +425,7 @@ async fn a_long_retry_after_hint_is_honored_by_parking_when_budget_allows() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -475,7 +475,7 @@ async fn a_hint_past_the_remaining_deadline_still_fails_fast_without_parking() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -534,7 +534,7 @@ async fn a_sustained_529_brownout_parks_within_budget_and_recovers() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -597,7 +597,7 @@ async fn a_sustained_transport_fault_still_exhausts_the_ladder_and_aborts() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -662,7 +662,7 @@ async fn a_soft_stop_during_a_park_ends_the_turn_as_a_deliberate_stop() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     // Ask 1 is the step boundary's, which must answer "no" or the turn ends
     // before a park exists; ask 2 is the park's first per-chunk tick.
     let steering = StopOnAsk {

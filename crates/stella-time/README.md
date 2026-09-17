@@ -55,13 +55,12 @@ its own copy, and about thirty test files each kept a double.
 
 `test_util` lives here and not in `stella-core` for the same reason: a
 faithful sleeper double needs the Tokio timer, and `stella-core` may not
-link it. A crate that tests the engine takes this crate as a dev-dependency
-with the feature on; for `stella-core`'s integration tests that is a
-cycle, which cargo allows. That is the tokio / tokio-test shape.
-`stella-core`'s own unit tests are the one place that cannot: a lib's unit
-tests are a second build of the lib, and a dev-dependency that links the
-lib implements the trait for the first. They keep one copy, and
-`tests/one_home.rs` names it and fails on any other.
+link it. `stella-core`'s integration tests take this crate as a
+dev-dependency, which cargo allows in a cycle. That is the tokio /
+tokio-test shape. `stella-core`'s own unit tests keep one copy,
+`tests`, because a lib's unit tests are a second build of the lib
+and a dev-dependency that links the lib implements the trait for the
+first. `tests/one_home.rs` names that copy and fails on any other.
 
 ## God files — do not add lines
 
@@ -78,3 +77,4 @@ it crosses.
   extension bus from `WallClock`.
 - `stella-runtime` stamps wrapper verdicts from `WallClock`.
 - `stella-fleet` paces its CI monitor with `TokioSleeper`.
+- `stella-core` and `stella-engine` test against `test_util`.

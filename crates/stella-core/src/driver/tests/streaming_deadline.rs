@@ -61,7 +61,7 @@ async fn a_streaming_generation_outlives_the_deadline_because_it_is_not_stalled(
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let config = EngineConfig {
         model_timeout: Some(Duration::from_millis(50)),
         ..EngineConfig::default()
@@ -153,7 +153,7 @@ async fn a_call_only_stream_outlives_the_deadline_because_it_is_not_stalled() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let config = EngineConfig {
         model_timeout: Some(Duration::from_millis(50)),
         ..EngineConfig::default()

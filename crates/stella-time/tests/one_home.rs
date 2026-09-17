@@ -5,21 +5,22 @@
 //! doubles live here and nowhere else.
 //!
 //! Three crates each kept a wall clock. Two kept a Tokio sleeper. One kept a
-//! sleeper trait of its own. This test reads the shipping tree and fails on
-//! the first copy that comes back. It reads source, which a test of "where
-//! does this live" has to do. `stella-core` would refuse that read. This
-//! crate does not.
-//!
-//! Test files are skipped here: the per-file test doubles are the next
-//! sweep, and it widens this scan to them.
+//! sleeper trait of its own. About thirty test files each wrote the same
+//! no-op double. This test reads the tree and fails on the first copy that
+//! comes back. It reads source, which a test of "where does this live" has
+//! to do. `stella-core` would refuse that read. This crate does not.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// A `Sleeper` impl in shipping source outside this crate that stays on
-/// purpose, with the reason. Each one is a test double with a shape a shared
-/// double cannot have, kept in the file its one test lives in.
+/// A `Sleeper` impl outside this crate that stays on purpose, with the
+/// reason. Each one has a shape a shared double cannot have.
 const SLEEPER_IMPLS_KEPT: &[(&str, &str)] = &[
+    (
+        "crates/stella-core/src/tests.rs",
+        "the copy the compiler forces: a lib's unit tests are a second build of the lib, and a \
+         dev-dependency that links the lib implements Sleeper for the first",
+    ),
     (
         "crates/stella-core/src/retry.rs",
         "the retry tests' recording sleeper: it logs every requested delay and draws a seeded jitter",
@@ -29,24 +30,12 @@ const SLEEPER_IMPLS_KEPT: &[(&str, &str)] = &[
         "the monitor tests' advancing sleeper: a sleep moves the injected clock instead of waiting",
     ),
     (
-        "crates/stella-core/src/accounted_call.rs",
-        "two doubles beside the accounted-call tests; the test-double sweep retires them",
+        "crates/stella-core/src/driver/tests/audit_fixes.rs",
+        "the hanging sleeper: it announces its first sleep and then parks forever, for a test that drops a turn mid-backoff",
     ),
     (
-        "crates/stella-core/src/driver/dispatch.rs",
-        "a no-op double beside the dispatch tests; the test-double sweep retires it",
-    ),
-    (
-        "crates/stella-core/src/driver/drive.rs",
-        "a no-op double beside the drive tests; the test-double sweep retires it",
-    ),
-    (
-        "crates/stella-core/src/driver/restore.rs",
-        "a no-op double beside the restore tests; the test-double sweep retires it",
-    ),
-    (
-        "crates/stella-core/src/goal.rs",
-        "a no-op double beside the goal tests; the test-double sweep retires it",
+        "crates/stella-core/src/step/tests.rs",
+        "a sleeper on unpaused tokio time: the bound tests race a trickling call against a sleep that has to take time",
     ),
 ];
 
@@ -74,17 +63,12 @@ fn rust_sources(root: &Path) -> Vec<(String, String)> {
         if dir.file_name().is_some_and(|name| name == "stella-time") {
             continue;
         }
-        collect(&dir.join("src"), root, &mut out);
+        for sub in ["src", "tests"] {
+            collect(&dir.join(sub), root, &mut out);
+        }
     }
     out.sort();
     out
-}
-
-/// A test file, by the names `make core-no-io` uses: a `tests/` directory
-/// or a file called `tests.rs`.
-fn is_test_path(path: &Path) -> bool {
-    path.file_name().is_some_and(|name| name == "tests.rs")
-        || path.components().any(|part| part.as_os_str() == "tests")
 }
 
 fn collect(dir: &Path, root: &Path, out: &mut Vec<(String, String)>) {
@@ -93,9 +77,6 @@ fn collect(dir: &Path, root: &Path, out: &mut Vec<(String, String)>) {
     };
     for entry in entries {
         let path = entry.expect("a directory entry").path();
-        if is_test_path(&path) {
-            continue;
-        }
         if path.is_dir() {
             collect(&path, root, out);
         } else if path.extension().is_some_and(|ext| ext == "rs") {

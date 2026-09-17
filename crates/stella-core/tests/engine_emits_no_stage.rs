@@ -23,27 +23,12 @@ use serde_json::Value;
 use stella_core::budget::BudgetGuard;
 use stella_core::event_sender::EventSender;
 use stella_core::ports::ToolExecutor;
-use stella_core::retry::Sleeper;
 use stella_core::{Engine, EngineConfig, TurnCapabilities};
 use stella_protocol::{
     AgentEvent, BudgetMode, CompletionMessage, CompletionRequestRef, CompletionResult,
     CompletionUsage, Provider, ProviderError, ToolOutput, ToolSchema,
 };
-
-struct NoopSleeper;
-#[async_trait]
-impl Sleeper for NoopSleeper {
-    async fn sleep(&self, _duration_ms: u64) {}
-
-    // The floor: a test that asserts on retry timing wants no spread in it.
-    fn now(&self) -> std::time::Instant {
-        std::time::Instant::now()
-    }
-
-    fn jitter(&self, _upper: u64) -> u64 {
-        0
-    }
-}
+use stella_time::test_util::NoopSleeper;
 
 /// Answers once, with text and no tool calls, so the turn completes in one
 /// step — the shortest turn that still passes through the whole framing.

@@ -11,30 +11,7 @@ use tokio::sync::mpsc;
 use super::{CONTINUATION_MARKER_PREFIX as NUDGE, *};
 use crate::TurnCapabilities;
 use crate::hooks::{HookAction, HookExecError, HookExecResult, HookMatcher};
-use crate::retry::Sleeper;
-
-/// A `Sleeper` on tokio's clock, which every test here runs paused: a sleep
-/// costs nothing while the runtime is idle and still lets a pending call
-/// finish first, and `now` reads the same virtual timeline. A sleeper that
-/// returned at once would make every engine timeout fire the moment a
-/// provider future waited on another task, which is not what a timeout is.
-#[derive(Default)]
-struct TokioSleeper;
-#[async_trait]
-impl Sleeper for TokioSleeper {
-    async fn sleep(&self, duration_ms: u64) {
-        tokio::time::sleep(std::time::Duration::from_millis(duration_ms)).await;
-    }
-
-    fn now(&self) -> std::time::Instant {
-        tokio::time::Instant::now().into_std()
-    }
-
-    // The floor: a test that asserts on retry timing wants no spread in it.
-    fn jitter(&self, _upper: u64) -> u64 {
-        0
-    }
-}
+use crate::tests::PausedSleeper;
 
 /// A `ToolExecutor` that always succeeds and counts real invocations — the
 /// counter is what `retry_never_re_executes_a_tool_call` asserts against.
@@ -252,7 +229,7 @@ async fn run_speculation_turn(
     provider: &SpeculatingProvider,
     tools: &dyn ToolExecutor,
 ) -> (TurnOutcome, Vec<AgentEvent>) {
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(provider, tools, EngineConfig::default(), &sleeper, seams);
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -444,7 +421,7 @@ async fn budget_abort_after_speculation_discards_the_pool() {
         executed,
     };
 
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -557,7 +534,7 @@ async fn a_failed_attempts_speculative_pool_emits_discarded_events() {
         calls: calls.clone(),
         executed,
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![CompletionMessage::user("read a.rs")];
@@ -617,7 +594,7 @@ async fn text_deltas_precede_the_authoritative_text_and_concatenate_to_it() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -737,7 +714,7 @@ async fn a_wedged_generation_trips_the_deadline_once_instead_of_burning_the_retr
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let config = EngineConfig {
         model_timeout: Some(Duration::from_millis(50)),
         ..EngineConfig::default()
@@ -778,7 +755,7 @@ async fn simple_turn_with_no_tool_calls_completes() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -848,7 +825,7 @@ async fn a_halt_ends_the_turn_at_the_next_step_boundary_as_completed() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let config = EngineConfig {
         turn_halt: Some(Arc::new(AlwaysHalt)),
         ..EngineConfig::default()
@@ -896,7 +873,7 @@ async fn a_halt_that_never_fires_leaves_the_turn_exactly_as_it_was() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let config = EngineConfig {
         turn_halt: Some(Arc::new(NeverHalt)),
         ..EngineConfig::default()
@@ -995,7 +972,7 @@ async fn steered_messages_inject_before_the_next_model_call() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let steering = TestSteering {
         queue: std::sync::Mutex::new(vec!["also check the tests".into()]),
         stop_after_drains: None,
@@ -1053,7 +1030,7 @@ async fn soft_stop_ends_the_turn_keeping_completed_steps() {
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     // Stop latches after the first boundary: step 0 runs fully (model
     // call + tool), step 1's boundary honors the stop.
     let steering = TestSteering {
@@ -1100,7 +1077,7 @@ async fn overflow_of_protected_content_is_summarized_and_metered() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     let mut messages = vec![
@@ -1165,7 +1142,7 @@ async fn summarization_disabled_leaves_history_untouched() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let config = EngineConfig {
         summarize_overflow: false,
         ..overflow_config()
@@ -1205,7 +1182,7 @@ async fn summarizer_failure_is_non_fatal_and_leaves_history() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     let mut messages = vec![
@@ -1244,7 +1221,7 @@ async fn summarization_never_orphans_tool_results_at_the_span_edge() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     // The naive span end (len - keep_recent) lands ON the tool-result
@@ -1330,7 +1307,7 @@ async fn empty_completion_aborts_with_a_visible_message_not_a_silent_success() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -1381,7 +1358,7 @@ async fn a_step_out_of_time_completes_with_a_truthful_partial_instead_of_abortin
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(
         &provider,
@@ -1475,7 +1452,7 @@ async fn a_length_truncated_tool_less_step_continues_the_turn_instead_of_complet
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -1535,7 +1512,7 @@ async fn length_continuations_are_bounded_per_turn() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -1592,7 +1569,7 @@ async fn tool_calls_execute_and_feed_back_into_history() {
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -1645,7 +1622,7 @@ async fn retry_never_re_executes_a_tool_call() {
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -1693,7 +1670,7 @@ async fn malformed_tool_call_input_is_repaired_not_executed_blindly() {
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -1737,7 +1714,7 @@ async fn stuck_loop_aborts_the_turn_cleanly_before_the_step_cap() {
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -1776,7 +1753,7 @@ async fn stuck_loop_steers_once_then_aborts_on_re_detection() {
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -1898,7 +1875,7 @@ async fn identical_polls_with_changing_output_complete_without_abort() {
     let tools = PollingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -1960,7 +1937,7 @@ async fn period_three_cycle_with_no_progress_steers_then_aborts() {
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let config = EngineConfig {
         loop_detection: LoopDetectionConfig {
             exact_repeat_threshold: 3,
@@ -2014,7 +1991,7 @@ async fn enforced_budget_aborts_the_turn_cleanly_between_steps() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -2141,10 +2118,10 @@ async fn run_synthetic_survival_turn(dialect: &str, id_style: fn(u32) -> String)
         }
     }
     let tools = GrowingTools;
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let config = EngineConfig {
         // Keep the retry backoff floor at 0 so 200 steps with injected
-        // 429s/drops still runs near-instantly under TokioSleeper.
+        // 429s/drops still runs near-instantly under PausedSleeper.
         retry_policy: RetryPolicy::new(3, 0, 0),
         // A tight-ish compaction budget so the growing tool output
         // actually forces multiple compaction passes over 200 steps.
@@ -2263,7 +2240,7 @@ async fn read_only_calls_in_one_step_execute_concurrently() {
     let tools = BarrierTools {
         barrier: tokio::sync::Barrier::new(2),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -2361,7 +2338,7 @@ async fn mutating_calls_are_barriers_and_history_keeps_call_order() {
         read1_started: tokio::sync::Notify::new(),
         read2_done: tokio::sync::Notify::new(),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -2464,7 +2441,7 @@ async fn every_committed_step_emits_exactly_one_step_usage_record() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -2555,7 +2532,7 @@ async fn a_wedged_tool_trips_the_dispatch_ceiling_instead_of_hanging() {
         ]),
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let config = EngineConfig {
         tool_timeout: Some(Duration::from_secs(900)),
         ..EngineConfig::default()
@@ -2611,7 +2588,7 @@ async fn a_none_ceiling_leaves_tool_dispatch_unbounded() {
         ]),
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let config = EngineConfig {
         tool_timeout: None,
         ..EngineConfig::default()
@@ -2704,7 +2681,7 @@ async fn a_turn_checkpoints_at_every_step_boundary_and_clears_when_it_ends() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let sink = Arc::new(RecordingSink::default());
     let config = EngineConfig {
         checkpoint_sink: Some(sink.clone() as Arc<dyn crate::step::CheckpointSink>),
@@ -2766,7 +2743,7 @@ async fn a_turn_without_a_sink_is_unchanged() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     assert!(
         EngineConfig::default().checkpoint_sink.is_none(),
         "durability is opt-in: a default engine writes no checkpoints"

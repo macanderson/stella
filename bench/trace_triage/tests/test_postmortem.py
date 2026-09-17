@@ -21,7 +21,7 @@ from pathlib import Path
 
 from bands import arm_metrics, trial_metrics
 from fixtures import event, ok, tool_pair, write_run
-from postmortem import build_report, cohort_of, render_markdown, write_report
+from postmortem import build_report, render_markdown, write_report
 from run_trace import load_run
 
 # --------------------------------------------------------------------------

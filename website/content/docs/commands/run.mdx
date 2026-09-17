@@ -15,7 +15,7 @@ stella run <prompt> [--pipeline <VARIANT>] [--test-command <CMD>] [global flags]
 
 By default, `stella run` sends your prompt through the **raw step loop**. Here's how that works: the model suggests a tool to run, stella runs it, the result goes back to the model, and this repeats until the model has nothing more to do. There's no interactive prompt window, and stella never asks you for more input. It's the non-interactive version of [`stella chat`](/docs/commands/chat).
 
-Use `--pipeline <variant>` to run the turn through an installed [wrapper plugin](/docs/plugins) instead. The plugin can add context before the turn starts and reports its own results after it ends.
+Use `--pipeline <variant>` to run the turn through an installed [wrapper plugin](/docs/plugins) instead. The plugin can add context before the turn starts and reports its own results after it ends. You can name more than one. Separate the ids with commas. They run in the order you give.
 
 Because `stella run` is non-interactive, it works well with `--output-format json` or `--output-format stream-json` for automated scripts, and with `--spend-limit` to set a hard cap on spending.
 
@@ -37,6 +37,12 @@ A run you start in a terminal is [supervised](/docs/commands/daemon): it keeps g
     declared at install time to decide whether another turn should run. The variant id is
     saved with the run, so you can compare two variants later. If you leave this out, the
     raw step loop runs on its own.
+
+    **Several plugins at once.** Separate the ids with commas. They run in the order you
+    write them. So `--pipeline research-v1,plan-v1` grounds first and plans second. The
+    order is yours to set. No manifest states it. Each plugin gets its own host plane. So
+    one member cannot reach a role that another member declared. An id named twice is
+    refused as a typo. So is an empty entry.
   </OptionCard>
   <OptionCard name="--test-command <CMD>">
     The test command that an installed verification plugin's own `[oracle]` runs, for

@@ -26,6 +26,7 @@ use stella_protocol::{CompletionResult, ToolSchema};
 use super::super::*;
 use crate::TurnCapabilities;
 use crate::driver::output_budget_recovery::SessionOutputCeilings;
+use crate::tests::NoopSleeper;
 
 /// Rejects the first `refusals` calls as an unaffordable ceiling, naming
 /// `affordable` each time, then completes. Records the ceiling every attempt
@@ -153,22 +154,6 @@ impl ToolExecutor for NoTools {
     }
 }
 
-struct NoSleep;
-
-#[async_trait::async_trait]
-impl crate::retry::Sleeper for NoSleep {
-    async fn sleep(&self, _duration_ms: u64) {}
-
-    // The floor: a test that asserts on retry timing wants no spread in it.
-    fn now(&self) -> std::time::Instant {
-        std::time::Instant::now()
-    }
-
-    fn jitter(&self, _upper: u64) -> u64 {
-        0
-    }
-}
-
 /// One real turn against `provider` with a configured output ceiling, and
 /// optionally the session-scoped carry a host attaches (#3307). Passing the
 /// same handle to two calls is what makes them two turns of ONE session
@@ -179,7 +164,7 @@ async fn run_turn_with_ceiling_and_carry(
     carry: Option<&std::sync::Arc<SessionOutputCeilings>>,
 ) -> TurnOutcome {
     let tools = NoTools;
-    let sleeper = NoSleep;
+    let sleeper = NoopSleeper;
     let config = EngineConfig {
         max_output_tokens: Some(ceiling),
         session_output_ceilings: carry.cloned(),

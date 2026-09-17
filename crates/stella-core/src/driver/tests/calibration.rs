@@ -62,7 +62,7 @@ async fn calibrated_estimate_changes_the_compaction_decision() {
         let tools = CountingTools {
             calls: Arc::new(AtomicU32::new(0)),
         };
-        let sleeper = TokioSleeper;
+        let sleeper = PausedSleeper;
         let mut messages = compactable_history();
         // A budget the RAW estimate just fits under: uncalibrated, no
         // compaction can fire.
@@ -141,7 +141,7 @@ async fn each_committed_step_feeds_the_calibration_and_reports_its_estimate() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let calibration = CalibrationMap::new();
     let seams = TurnCapabilities {
         calibration: Some(&calibration),
@@ -228,7 +228,7 @@ async fn cache_write_tokens_count_toward_the_calibration_actual() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let calibration = CalibrationMap::new();
     let seams = TurnCapabilities {
         calibration: Some(&calibration),
@@ -273,7 +273,7 @@ async fn attachment_weight_is_excluded_from_the_drift_sample_estimate() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user_with_attachments(
@@ -359,7 +359,7 @@ async fn a_fresh_sessions_calibration_factor_leaves_identity_within_the_turn() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     // Unseeded, exactly like a bench container's first run: warm-up happens
     // (or fails to matter) entirely inside this one turn.
     let calibration = CalibrationMap::new();

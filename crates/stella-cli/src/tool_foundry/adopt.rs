@@ -7,8 +7,9 @@
 //!   candidate and, only on a flip, writes an adoption record. The tool is
 //!   **not usable** afterwards — [`stella_tools::foundry_gate`] withholds it,
 //!   because adoption is evidence, not permission.
-//! - `stella tools --enable <name>` is the permission, and the only step a
-//!   machine never takes on its own.
+//! - `stella tools --enable <name>` is the permission. Under the default
+//!   `foundry.autonomy = "auto"`, `autonomy.rs` takes this step itself after
+//!   a turn; under `draft-only`, only a person takes it.
 //! - `stella tools --foundry` reports what the workspace has adopted and what
 //!   each adoption has actually been worth — including the ones that were
 //!   proven and never used, which #830 asks be tracked as the cost.

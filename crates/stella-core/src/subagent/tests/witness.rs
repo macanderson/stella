@@ -30,7 +30,7 @@ async fn the_parent_transcript_does_not_grow_by_the_childs_intermediate_work() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &TokioSleeper,
+        &PausedSleeper,
         seams,
     );
 
@@ -139,7 +139,7 @@ async fn a_child_turn_never_writes_or_clears_the_parents_resume_point() {
         ..EngineConfig::default()
     };
     let seams = TurnCapabilities::none();
-    let parent = Engine::assemble(&parent_provider, &tools, config, &TokioSleeper, seams);
+    let parent = Engine::assemble(&parent_provider, &tools, config, &PausedSleeper, seams);
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
     let (tx, mut rx) = mpsc::unbounded_channel();
 
@@ -188,7 +188,7 @@ async fn the_report_is_clamped_to_the_spec_cap_and_says_so() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &TokioSleeper,
+        &PausedSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);

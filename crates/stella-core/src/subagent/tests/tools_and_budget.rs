@@ -15,7 +15,7 @@ async fn a_read_only_child_cannot_execute_a_mutating_tool_even_when_it_tries() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &TokioSleeper,
+        &PausedSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
@@ -50,7 +50,7 @@ async fn write_access_is_opt_in_per_spawn() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &TokioSleeper,
+        &PausedSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
@@ -82,7 +82,7 @@ async fn child_spend_settles_into_the_parent_exactly_once() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &TokioSleeper,
+        &PausedSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
@@ -124,7 +124,7 @@ async fn an_enforced_carve_stops_the_child_without_touching_the_parents_turn() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &TokioSleeper,
+        &PausedSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Enforced, None, Some(100.0));
@@ -167,7 +167,7 @@ async fn a_child_can_never_be_carved_past_the_parents_remaining_headroom() {
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &TokioSleeper,
+        &PausedSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Enforced, None, Some(1.0));
@@ -214,7 +214,7 @@ async fn an_enforced_parent_with_no_headroom_refuses_before_spending_anything() 
         &parent_provider,
         &tools,
         EngineConfig::default(),
-        &TokioSleeper,
+        &PausedSleeper,
         seams,
     );
     let mut budget = BudgetGuard::new(BudgetMode::Enforced, None, Some(1.0));

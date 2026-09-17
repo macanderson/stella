@@ -348,8 +348,8 @@ mod tests {
 
     use super::super::TurnHalt;
     use crate::event_sender::EventSender;
-    use crate::retry::Sleeper;
     use crate::step::{BudgetSnapshot, CHECKPOINT_VERSION, Checkpoint, TurnState};
+    use crate::tests::NoopSleeper;
     use crate::{Engine, EngineConfig, TurnCapabilities, TurnOutcome};
     use stella_protocol::{
         AgentEvent, BudgetMode, CompletionMessage, CompletionRequestRef, CompletionResult,
@@ -446,22 +446,6 @@ mod tests {
                     }
                 }
             }
-        }
-    }
-
-    #[derive(Debug)]
-    struct NoopSleeper;
-    #[async_trait]
-    impl Sleeper for NoopSleeper {
-        async fn sleep(&self, _duration_ms: u64) {}
-
-        // The floor: a test that asserts on retry timing wants no spread in it.
-        fn now(&self) -> std::time::Instant {
-            std::time::Instant::now()
-        }
-
-        fn jitter(&self, _upper: u64) -> u64 {
-            0
         }
     }
 

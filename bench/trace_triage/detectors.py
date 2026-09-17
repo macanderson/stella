@@ -53,6 +53,7 @@ from typing import Any
 import bands
 from fingerprint import Fingerprint, fingerprint_of
 from run_trace import Run, Trial
+from waits import REFUSAL_BOUND_SECS, waits_in
 
 # A `bash` error envelope whose message is at least this long, and this many
 # lines, before its `[exit code: N]` trailer is carrying real output that the
@@ -1275,6 +1276,77 @@ def _graded_void_trial(run: Run) -> list[Finding]:
                 "Overlaps `void-model-call` on a trial that streamed reasoning and was "
                 "graded. That is two true observations of one trial, not double "
                 "counting: this one is about the grade, the other about the thinking.",
+            ],
+        )
+    ]
+
+
+
+@detector(
+    code="blind-wait",
+    title="a bash call sat in `sleep` for longer than a whole command's default limit",
+    site="crates/stella-tools/src/bash/wait.rs",
+    search_terms=("blind sleep tool time", "sleep instead of polling"),
+)
+def _blind_wait(run: Run) -> list[Finding]:
+    """`bash` calls that wait on a fixed number past the rung.
+
+    The measurement behind `#3753`. A blind `sleep N` costs N. A poll loop
+    costs one pass. Both look like a wait. Elapsed time tells them apart. So
+    each row carries the seconds asked for and the seconds spent.
+    """
+    occurrences = []
+    total_declared = 0
+    total_elapsed = 0.0
+    for trial in run.trials:
+        for wait in waits_in(trial):
+            if not wait.declined_by_the_shipped_rung:
+                continue
+            total_declared += wait.declared_sleep_secs
+            total_elapsed += wait.elapsed_secs or 0.0
+            spent = (
+                f"{wait.elapsed_secs:.1f}s spent"
+                if wait.elapsed_secs is not None
+                else "no result recorded"
+            )
+            occurrences.append(
+                Occurrence(
+                    trial_uuid=trial.trial_uuid,
+                    task_id=trial.task_id,
+                    s3_key=trial.s3_key(),
+                    location=(
+                        f"bash call `{wait.call_id}` — {wait.declared_sleep_secs}s of "
+                        f"`sleep` asked for, {spent}"
+                    ),
+                    excerpt=wait.command[:800],
+                )
+            )
+    if not occurrences:
+        return []
+    return [
+        Finding(
+            detector="blind-wait",
+            site="crates/stella-tools/src/bash/wait.rs",
+            variant_source=f"foreground sleep over {REFUSAL_BOUND_SECS}s",
+            title="a bash call waited on a number of seconds instead of on the thing",
+            summary=(
+                f"These calls asked for {total_declared}s of `sleep`. They spent "
+                f"{total_elapsed:.0f}s. The turn pays the whole wait. It pays it even "
+                "when the thing arrives early. A poll loop returns when it is ready. "
+                "A build with the rung in `bash/wait.rs` declines these before the "
+                "spawn. So on a new build the count is the finding, not the seconds."
+            ),
+            occurrences=occurrences,
+            denominator=len(run.trials),
+            search_terms=("blind sleep tool time", "sleep instead of polling"),
+            caveats=[
+                "This reads the command text, never a measured wait. A `sleep` "
+                "reached through a variable is invisible. So it is a floor on the "
+                "blind waiting in a run, not a census.",
+                f"The {REFUSAL_BOUND_SECS}s bound is the shipped one. An old trace is "
+                "scored against a rule its binary never ran. That is what makes a "
+                "before and an after line up. It is not a claim about what the old "
+                "build refused.",
             ],
         )
     ]

@@ -19,7 +19,7 @@ async fn summarize_keep_recent_zero_does_not_panic() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let config = EngineConfig {
         summarize_keep_recent: 0,
         ..overflow_config()
@@ -61,7 +61,7 @@ async fn observed_budget_breach_emits_a_warning_event() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -116,7 +116,7 @@ async fn budget_abort_synthetic_results_are_visible_in_the_event_stream() {
     let tools = CountingTools {
         calls: tool_calls.clone(),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -160,7 +160,7 @@ async fn whitespace_only_completion_aborts_without_a_text_event() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -335,7 +335,7 @@ async fn hard_cancel_mid_stream_emits_a_cancelled_usage_envelope() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![CompletionMessage::user("secret prompt text")];
@@ -497,7 +497,7 @@ async fn overflow_summarizer_retries_a_transient_error() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     let mut messages = overflow_messages();
@@ -551,7 +551,7 @@ async fn budget_aborted_summary_is_applied_not_discarded() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     let mut messages = overflow_messages();
@@ -615,7 +615,7 @@ async fn overflow_summary_names_the_folded_tool_result_blocks() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
 
@@ -716,7 +716,7 @@ async fn repeated_summarizer_failures_emit_events_and_latch() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, overflow_config(), &sleeper, seams);
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
@@ -814,7 +814,7 @@ async fn observed_budget_breach_warns_once_per_axis_per_turn() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -871,7 +871,7 @@ async fn enforced_session_breach_abort_reason_names_the_axis() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -906,7 +906,7 @@ async fn enforced_session_breach_at_step_boundary_names_the_axis() {
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let mut messages = vec![
@@ -1267,7 +1267,7 @@ async fn a_recycled_speculation_call_id_reports_the_execution_it_displaces() {
     let tools = CountingReadTools {
         executions: executions.clone(),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
     let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -1385,7 +1385,7 @@ async fn the_system_prefix_stays_byte_stable_across_a_compacting_turn() {
         prefixes: std::sync::Mutex::new(Vec::new()),
         step: AtomicU32::new(0),
     };
-    let sleeper = TokioSleeper;
+    let sleeper = PausedSleeper;
     let config = EngineConfig {
         // Small enough that every step after the first compacts, and small
         // enough that the pure passes cannot get under it alone — so the
