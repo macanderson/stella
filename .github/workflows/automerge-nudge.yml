@@ -4,7 +4,7 @@ name: automerge-nudge
 # while main's branch protection has required_status_checks.strict on, and it
 # does not today (ADR 0029, #6078). Read straight from the protection API:
 #
-#   $ gh api repos/macanderson/stella/branches/main/protection \
+#   $ gh api repos/oxagenai/stella/branches/main/protection \
 #       --jq '.required_status_checks.strict'
 #   false
 #

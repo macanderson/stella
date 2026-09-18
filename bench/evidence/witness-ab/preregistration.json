@@ -1,6 +1,6 @@
 {
   "schema": "stella-witness-ab-preregistration-v1",
-  "issue": "https://github.com/macanderson/stella/issues/1284",
+  "issue": "https://github.com/oxagenai/stella/issues/1284",
   "status": "plan_fixed_run_not_started",
   "status_note": "The design, outcomes, seeds and decision rule below are fixed and were written before any data existed. The run has not been executed: it needs a spend-capable credential and a host able to run the task images. The fields under `to_be_recorded_before_the_first_paid_call` are the run's identity and must be filled in — and this file committed — before the first paid call, not after.",
   "plan_fixed_at": "2026-08-03",

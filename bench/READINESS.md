@@ -2,14 +2,14 @@
 
 Prepared 2026-07-23 as the offline preparation for the maintainer-audited public
 Stella row described in [`terminal-bench-2.1-protocol.md`](terminal-bench-2.1-protocol.md).
-Re-frozen 2026-07-30 under [#909](https://github.com/macanderson/stella/issues/909).
+Re-frozen 2026-07-30 under [#909](https://github.com/oxagenai/stella/issues/909).
 
 **Status: NOT submission-ready. The claim path was silently unlaunchable for
 five days, and the audited run's host requirement is still unmet.** Two things
 changed since the 07-23 report, and both had to be found by actually trying to
 run the harness rather than by reading it:
 
-1. **The claim launcher could not launch.** [#659](https://github.com/macanderson/stella/pull/659),
+1. **The claim launcher could not launch.** [#659](https://github.com/oxagenai/stella/pull/659),
    an automated dependency update, moved `harbor==0.6.1` to `0.20.0` in
    `bench/harbor_adapter/pyproject.toml` and touched none of the five other
    sites that name that version — including `secure_launcher`'s guard, which
@@ -54,7 +54,7 @@ code nobody ships — the specific objection #909 raises.
 > identity is the source-commit stamp plus the SHA the run manifest freezes for
 > the exact uploaded binary (the adapter re-verifies the upload SHA per trial).
 >
-> **Addendum 2026-08-02 ([#910](https://github.com/macanderson/stella/issues/910)):**
+> **Addendum 2026-08-02 ([#910](https://github.com/oxagenai/stella/issues/910)):**
 > the sentence above used to read "release builds", and that generalisation is
 > no longer true. Release builds now go through `scripts/repro-build.sh`, which
 > remaps `$CARGO_HOME` and the rustup sysroot out of the binary, and
@@ -240,7 +240,7 @@ of offline review had, and the first two are blockers for the audited row.
 
 ### 8.1 The claim path had been unlaunchable for five days — and CI said so
 
-[#659](https://github.com/macanderson/stella/pull/659) moved `harbor==0.6.1` to
+[#659](https://github.com/oxagenai/stella/pull/659) moved `harbor==0.6.1` to
 `0.20.0` in `bench/harbor_adapter/pyproject.toml` — one line, nothing else. The
 version is not a dependency, it is an audited constant named in six places, one
 of which is `secure_launcher`'s guard that refuses to launch on a mismatch. The
@@ -334,7 +334,7 @@ benchmark is scored against is *"Claude Code using GLM-5.1 at **max effort**"*
 variation, it was **less compute applied to one side only**.
 
 Every Terminal-Bench number published before this change was produced under that
-handicap, including the retracted run on [#1002](https://github.com/macanderson/stella/issues/1002).
+handicap, including the retracted run on [#1002](https://github.com/oxagenai/stella/issues/1002).
 
 Fixed: default/worker/verifier now use `max`. `triage` stays `low`/`off` — it emits
 a three-line classification and never edits the workspace, so raising it would
@@ -662,7 +662,7 @@ What this does and does not invalidate:
 
 See `bench/evidence/` for the run manifest, per-trial rows, per-task results and
 the two scripts that recompute the number from them. Its preregistration is
-[#950](https://github.com/macanderson/stella/issues/950), filed before any paid
+[#950](https://github.com/oxagenai/stella/issues/950), filed before any paid
 call. The manifest's `claim_eligibility` block states in full why it is a
 development baseline and not the audited row — start there before quoting the
 number anywhere.
@@ -674,7 +674,7 @@ number anywhere.
 Stella verifies work on a ladder, and a benchmark number is only a measurement
 of the ladder that actually ran. Every scored run declares its rungs in the
 manifest's `assurance` block and in each trial's metadata; nothing here is
-inferable only from a log line ([#1007](https://github.com/macanderson/stella/issues/1007)).
+inferable only from a log line ([#1007](https://github.com/oxagenai/stella/issues/1007)).
 
 | Rung | Control arm (`witness-off`) | Treatment arm (`witness-on`) |
 |---|---|---|
@@ -702,7 +702,7 @@ export STELLA_WITNESS_AUTHOR_MODEL=openrouter/deepseek/deepseek-v4-pro
 
 > [!WARNING]
 > **The treatment arm is unrunnable on this workspace's engine and is refused
-> rather than measured** ([#4103](https://github.com/macanderson/stella/issues/4103)).
+> rather than measured** ([#4103](https://github.com/oxagenai/stella/issues/4103)).
 > `AgentEngineConfig::model_for` resolves `agents.default.model` >
 > `default_model` with no role argument (#3944), and `pipeline_verifier_model` /
 > `agents.verifier` are retired keys the launcher recognizes, reports and
@@ -720,7 +720,7 @@ SUT — that is intended. Two arms over the same 89 tasks on the same SUT is a
 direct, falsifiable test of whether the ladder's witness rung improves outcomes;
 one arm alone cannot answer it in either direction.
 
-**That test is now a procedure rather than a suggestion** ([#1284](https://github.com/macanderson/stella/issues/1284)):
+**That test is now a procedure rather than a suggestion** ([#1284](https://github.com/oxagenai/stella/issues/1284)):
 `bench/evidence/run/witness_ab.sh` runs one arm with the arm named as an
 argument and the task list pinned across both, and
 `bench/evidence/compare_arms.py` turns the two into the answer — tasks gained

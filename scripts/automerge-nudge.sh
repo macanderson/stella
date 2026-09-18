@@ -12,7 +12,7 @@
 # only reports `BEHIND` when `main`'s branch protection has
 # `required_status_checks.strict` on. That is off today, per ADR 0029:
 #
-#   gh api repos/macanderson/stella/branches/main/protection \
+#   gh api repos/oxagenai/stella/branches/main/protection \
 #     --jq '.required_status_checks.strict'
 #   false
 #

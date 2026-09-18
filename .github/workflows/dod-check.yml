@@ -12,7 +12,7 @@
 # a moving ref both fails `action-pins` and lets another repository change
 # what runs here without a commit in this one. Re-pin when the implementation
 # changes, which is a reviewable one-line diff naming the version it moved to.
-# The decision and what it costs are recorded in macanderson/oxagen's
+# The decision and what it costs are recorded in oxagenai/oxagen's
 # docs/adr/ADR-045-pin-cross-repo-reusable-workflows.md.
 name: dod-check
 
@@ -32,4 +32,4 @@ permissions:
 
 jobs:
   dod:
-    uses: macanderson/oxagen/.github/workflows/dod-check.yml@94e8f5de96aa33d853a6dfc628444e5d0f1e210a # oxagen main, #2551
+    uses: oxagenai/oxagen/.github/workflows/dod-check.yml@94e8f5de96aa33d853a6dfc628444e5d0f1e210a # oxagen main, #2551

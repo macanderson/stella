@@ -228,7 +228,7 @@ leaves bandwidth for the rest.
 
 ## Known: every trial burns its full timeout
 
-Until [#960](https://github.com/macanderson/stella/issues/960) is fixed, Stella's
+Until [#960](https://github.com/oxagenai/stella/issues/960) is fixed, Stella's
 headless process does not exit after completing its turn, so Harbor kills it at
 the agent timeout and records `AgentTimeoutError` even on trials that scored
 `1.0`. Budget accordingly: wall clock is the sum of the task timeouts, not the

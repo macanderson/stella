@@ -33,7 +33,7 @@ HOST_LAUNCH_BINDING_SCHEMA = "stella-tb21-host-launch-binding-v1"
 HOST_FINGERPRINT_DOMAIN = "stella-tb21-host-fingerprint-v1"
 HOST_ATTESTATION_FILENAME = "stella-host-attestation.json"
 FIXED_STUDY_ID = "stella-tb21-scientific-study-v1"
-FIXED_REPOSITORY = "macanderson/stella"
+FIXED_REPOSITORY = "oxagenai/stella"
 PUBLIC_REPORT_PATH_PREFIX = "bench/evidence/host-attestations"
 MIN_VCPUS = 4
 # A provider's nominal 32-GiB class exposes slightly less through Linux

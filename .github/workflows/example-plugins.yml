@@ -1,6 +1,6 @@
 # Track C rule 4, enforced from *this* side (#3523).
 #
-# `macanderson/stella-examples` already grades its three `verify-{rs,py,ts}`
+# `oxagenai/stella-examples` already grades its three `verify-{rs,py,ts}`
 # plugins against its own vectors in its own CI. What that cannot catch is the
 # direction this workflow exists for: the socket's grammar and wire types live
 # *here*, so a change to `stella-plugin` can invalidate all three examples with

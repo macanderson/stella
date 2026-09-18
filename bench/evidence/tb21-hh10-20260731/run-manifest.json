@@ -97,7 +97,7 @@
     "vcpu": 32,
     "vm": null
   },
-  "preregistration_url": "https://github.com/macanderson/stella/issues/1013",
+  "preregistration_url": "https://github.com/oxagenai/stella/issues/1013",
   "recorded_by_the_run": {
     "assurance_arm": "witness-off",
     "assurance_tiers_sha256": "dc61da7ba0b24c5cca002ba9540f2773d706cfb8e8c6ae6331a36c9549b1dbde",

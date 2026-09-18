@@ -10,7 +10,7 @@ status: living
   Amends [ADR 0005](0005-storage-authority.md).
 - Date: 2026-07-25 (ratified 2026-07-26)
 - Deciders: repository owner (ratified 2026-07-26)
-- Tracking: [issue #711](https://github.com/macanderson/stella/issues/711)
+- Tracking: [issue #711](https://github.com/oxagenai/stella/issues/711)
   (part of Epic #469)
 
 ## Context
@@ -152,5 +152,5 @@ promotion history, or the Markdown-canonical rule.
    release that depends on complete historical reconstruction must state that
    dependency and gate on the remaining-row count reaching zero. Nothing before
    Phase 3 forces this, so it stays open.
-2. ~~**Do `node`/`edge` transfer at all?**~~ **Resolved 2026-07-26** ([#711](https://github.com/macanderson/stella/issues/711)
+2. ~~**Do `node`/`edge` transfer at all?**~~ **Resolved 2026-07-26** ([#711](https://github.com/oxagenai/stella/issues/711)
    decision 2): no. Folded into the decision above as point 6.

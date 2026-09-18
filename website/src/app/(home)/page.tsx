@@ -178,14 +178,14 @@ export default function HomePage() {
               </a>{" "}
               —{" "}
               <a
-                href="https://github.com/macanderson/stella"
+                href="https://github.com/oxagenai/stella"
                 className="underline underline-offset-4 hover:text-fd-foreground"
               >
                 star <span className="lp-brand-face">stella</span> on GitHub
               </a>{" "}
               and follow for{" "}
               <a
-                href="https://github.com/macanderson/stella-examples"
+                href="https://github.com/oxagenai/stella-examples"
                 className="underline underline-offset-4 hover:text-fd-foreground"
               >
                 examples

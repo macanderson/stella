@@ -242,7 +242,7 @@ pub(crate) enum RulePublication {
 /// exists". The no-clobber posture checks the **filesystem** rather than a
 /// loaded list: the rules loader silently skips unreadable files and
 /// directories, so a list-membership test would have the same blind spot
-/// [#737](https://github.com/macanderson/stella/issues/737) describes on the
+/// [#737](https://github.com/oxagenai/stella/issues/737) describes on the
 /// skills side — and the write itself is `create_new` inside
 /// [`crate::context_records::write_record`], because the exists checks here
 /// are advisory and racy.

@@ -8,7 +8,7 @@ status: implemented
 
 **Status:** **Built** — `crates/stella-serve/src/observe/`, all four slices of §11 in
 one change. Corrects audit dimension 30 (Observability, 62/100) and closes
-[#930](https://github.com/macanderson/stella/issues/930). Two things below were
+[#930](https://github.com/oxagenai/stella/issues/930). Two things below were
 changed *by* building them, and are marked **[amended]** where they appear:
 the per-frame debug record in §7 was dropped (it would have put model output in
 a log), and the handlers moved to a new `routes.rs` (§11). Everything else

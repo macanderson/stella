@@ -133,7 +133,7 @@ This has to exist and be writable before the first release:
      classic PAT with `repo`. The default `GITHUB_TOKEN` can't push to
      another repo, so a dedicated one is required either way.
 
-3. **Add it as a secret** on **this** repo (`macanderson/stella`):
+3. **Add it as a secret** on **this** repo (`oxagenai/stella`):
    Settings → Secrets and variables → Actions → New repository secret →
    name `HOMEBREW_TAP_DEPLOY_KEY` (deploy key) or `HOMEBREW_TAP_TOKEN` (PAT).
 
@@ -291,12 +291,12 @@ published binary checkable against the published source rather than merely
 asserted to match it (#910).
 
 ```bash
-git clone --depth 1 --branch v<version> https://github.com/macanderson/stella
+git clone --depth 1 --branch v<version> https://github.com/oxagenai/stella
 cd stella
 rustup show                       # must report the rust-toolchain.toml pin
 ./scripts/repro-build.sh x86_64-unknown-linux-gnu
 
-curl -fsSLO https://github.com/macanderson/stella/releases/download/v<version>/SHA256SUMS.bin
+curl -fsSLO https://github.com/oxagenai/stella/releases/download/v<version>/SHA256SUMS.bin
 grep "stella-<version>-x86_64-unknown-linux-gnu" SHA256SUMS.bin
 ```
 
@@ -370,7 +370,7 @@ means cutting a new version.
 ## The engine container
 
 Every release tag also publishes `packaging/docker/Dockerfile.serve` as
-`ghcr.io/macanderson/stella-serve:<version>` and `:latest`, for linux/amd64
+`ghcr.io/oxagenai/stella-serve:<version>` and `:latest`, for linux/amd64
 and linux/arm64 (`.github/workflows/docker-serve-publish.yml`). Each
 architecture is built on its own runner, smoked with
 `scripts/smoke-serve-image.sh` before its digest is pushed, and the two
@@ -391,7 +391,7 @@ brew install macanderson/tap/stella
 Shell installer (macOS/Linux, no Homebrew):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/macanderson/stella/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/oxagenai/stella/main/install.sh | sh
 ```
 
 The installer detects the platform, downloads the matching tarball from the

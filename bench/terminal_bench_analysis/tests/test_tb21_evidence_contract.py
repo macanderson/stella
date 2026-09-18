@@ -251,7 +251,7 @@ def publication_record(
         "subject_id": subject_id,
         "ledger_preimage_sha256": ledger_preimage_sha256,
         "ledger_commit": "c" * 40,
-        "public_url": f"https://github.com/macanderson/stella/commit/{'c' * 40}",
+        "public_url": f"https://github.com/oxagenai/stella/commit/{'c' * 40}",
         "published_at": "2026-07-21T12:03:00-07:00",
     }
 

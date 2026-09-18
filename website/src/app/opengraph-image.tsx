@@ -43,7 +43,7 @@ import {
  * implied. The kit's PNGs render through librsvg and do get the real face.
  */
 export const alt =
-  "stella — the terminal agent. brew install macanderson/tap/stella · star macanderson/stella on GitHub";
+  "stella — the terminal agent. brew install macanderson/tap/stella · star oxagenai/stella on GitHub";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -55,7 +55,7 @@ const SURFACE_TOP = "#201f1c";
 const BORDER = "#292722";
 
 /** The repo this card advertises, and the one command that installs it. */
-const REPO_SLUG = "macanderson/stella";
+const REPO_SLUG = "oxagenai/stella";
 const INSTALL_CMD = "brew install macanderson/tap/stella";
 
 /** The GitHub mark — same path as `GitHubMark`, inlined for Satori's subset. */

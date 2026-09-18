@@ -129,7 +129,7 @@ export function PageFooter({ path, title }: { path: string; title: string }) {
           className="inline-flex items-center gap-1.5 transition-colors hover:text-fd-foreground"
         >
           <GitHubMark className="size-3.5" />
-          macanderson/stella
+          oxagenai/stella
         </a>
         <a
           href={SPONSOR_URL}

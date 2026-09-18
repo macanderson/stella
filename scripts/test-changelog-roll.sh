@@ -121,7 +121,7 @@ else
   no "the section has a body" "an empty section" "a releases-page pointer"
 fi
 check "the pointer names the releases page" \
-  "$(grep -c 'github.com/macanderson/stella/releases' "$f")" "1"
+  "$(grep -c 'github.com/oxagenai/stella/releases' "$f")" "1"
 
 # ── C5: a hand-written [Unreleased] survives a degraded draft ────────────────
 printf '\nC5  hand-written [Unreleased] is not eaten by the fallback\n'

@@ -54,7 +54,7 @@ the headline claim to `plugins/stella-witness`, which ships in this repository.
 | 4 | **stella-candidates** | this repo, `plugins/` | **NOT BUILT** | no `plugins/stella-candidates` directory exists |
 | 5 | **stella-selfdriving** | this repo, `plugins/` | **DECLARATION ONLY** | `plugins/stella-selfdriving/` holds `plugin.toml` and `README.md` and nothing else — no program, no `[runtime]`, `participation = "none"`. Its own README says so: *"It is not the extraction."* |
 | 6 | **stella-goal** | this repo, `plugins/` | **BUILT, graded, INERT** | `plugins/stella-goal/{plugin.toml,main.py}` and three test harnesses exist; but `crates/stella-cli/src/wrapper_plugin.rs:519` documents *"No `verifier` seat is bound"*, which is #3838 — the plugin's one job degrades to `HostCallRefusal::Unavailable` on every shipping door |
-| 7 | **example-rs** | `stella-examples`, `plugins/verify-rs` | **BUILT, ungated here** | present in `macanderson/stella-examples`; workflow `plugins.yml`; **nothing in this repository references it** (`rg 'verify-rs' --glob '!docs/**'` returns no non-doc hit) |
+| 7 | **example-rs** | `stella-examples`, `plugins/verify-rs` | **BUILT, ungated here** | present in `oxagenai/stella-examples`; workflow `plugins.yml`; **nothing in this repository references it** (`rg 'verify-rs' --glob '!docs/**'` returns no non-doc hit) |
 | 8 | **example-py** | `stella-examples`, `plugins/verify-py` | **BUILT, ungated here** | same |
 | 9 | **example-ts** | `stella-examples`, `plugins/verify-ts` | **BUILT, ungated here** | same |
 
@@ -398,12 +398,12 @@ third-party-usable must **not** live here, or it proves nothing.
 
 | Plugin | Repository | Why |
 |---|---|---|
-| `stella-research`, `stella-plan`, `stella-goal` | **`macanderson/stella` — `plugins/`** (unchanged) | first-party stage extractions; graded by in-tree harnesses on every PR |
-| **`stella-witness`** | **`macanderson/stella` — `plugins/`** | §4.1: the open referent for the project's central claim; also the heaviest consumer of the wire contract, so it must break the PR that breaks it |
-| **`stella-candidates`** | **`macanderson/stella` — `plugins/`** | consumes `candidate_fanout`, a capability that lives here and is still moving |
-| **`stella-selfdriving`** | **`macanderson/stella` — `plugins/`** (unchanged) | consumes `DriverCall`, which is still growing verb by verb through #3599 |
+| `stella-research`, `stella-plan`, `stella-goal` | **`oxagenai/stella` — `plugins/`** (unchanged) | first-party stage extractions; graded by in-tree harnesses on every PR |
+| **`stella-witness`** | **`oxagenai/stella` — `plugins/`** | §4.1: the open referent for the project's central claim; also the heaviest consumer of the wire contract, so it must break the PR that breaks it |
+| **`stella-candidates`** | **`oxagenai/stella` — `plugins/`** | consumes `candidate_fanout`, a capability that lives here and is still moving |
+| **`stella-selfdriving`** | **`oxagenai/stella` — `plugins/`** (unchanged) | consumes `DriverCall`, which is still growing verb by verb through #3599 |
 | **`vera`** | **`oxageninc/vera`, private** | commercial superset, and **not a deliverable of this plan** (§4.1); holds a README and nothing else today. It depends on the published wire contract, never on this tree's internals, which is the whole of what this repository owes it |
-| `verify-rs`, `verify-py`, `verify-ts` | **`macanderson/stella-examples` — `plugins/`** (unchanged) | third-party-shaped by design; pinned by SHA from this repo's CI (§4.5b) |
+| `verify-rs`, `verify-py`, `verify-ts` | **`oxagenai/stella-examples` — `plugins/`** (unchanged) | third-party-shaped by design; pinned by SHA from this repo's CI (§4.5b) |
 
 **The one rule that keeps this from rotting:** a plugin in this repository is
 graded by a harness in `crates/stella-runtime/tests/`; a plugin outside it is

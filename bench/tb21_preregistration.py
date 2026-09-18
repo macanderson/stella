@@ -170,7 +170,7 @@ def _stage_command(stage: str, job_name: str, intent_sha256: str) -> list[str]:
         "--jobs-dir", "/srv/stella-tb21-jobs",
         "--intent-sha256", intent_sha256,
         "--intent-comment-url",
-        "https://github.com/macanderson/stella/issues/1#issuecomment-1",
+        "https://github.com/oxagenai/stella/issues/1#issuecomment-1",
         "--n-attempts", str(s["attempts"]),
         "--n-concurrent", str(s["n_concurrent"]),
         "--max-retries", "0",

@@ -53,7 +53,7 @@ from detectors import Finding
 from fingerprint import Fingerprint, Ledger, LedgerEntry, markers_in
 from run_trace import Run
 
-REPO = "macanderson/stella"
+REPO = "oxagenai/stella"
 
 
 class Decision(StrEnum):
@@ -343,7 +343,7 @@ def render_comment(
             "Reopening is a human call; this tool does not reopen. If it is a regression:",
             "",
             "```sh",
-            "gh issue reopen <this issue> --repo macanderson/stella",
+            "gh issue reopen <this issue> --repo oxagenai/stella",
             "```",
             "",
         ]

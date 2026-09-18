@@ -10,7 +10,7 @@ status: implemented
   step manifest; no parallel aggregate)
 - Date: 2026-07-23
 - Deciders: (Phase 0 baseline); amendment recorded 2026-07-26
-- Tracking: [issue #713](https://github.com/macanderson/stella/issues/713)
+- Tracking: [issue #713](https://github.com/oxagenai/stella/issues/713)
   deliverable 6 (part of Epic #469)
 
 > **Amendment notice, 2026-07-26.** The *distinction* below stands:

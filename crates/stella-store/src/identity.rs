@@ -386,8 +386,8 @@ mod tests {
     #[test]
     fn ssh_and_https_remotes_normalize_identically() {
         assert_eq!(
-            normalize_remote_url("git@github.com:MacAnderson/Stella.git"),
-            normalize_remote_url("https://github.com/macanderson/stella"),
+            normalize_remote_url("git@github.com:OxagenAi/Stella.git"),
+            normalize_remote_url("https://github.com/oxagenai/stella"),
         );
         assert_eq!(
             normalize_remote_url("ssh://git@github.com/org/repo.git"),

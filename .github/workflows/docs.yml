@@ -117,7 +117,7 @@ jobs:
   #
   # Authentication is OIDC, not a stored key: the job exchanges its GitHub
   # token for a session on `gha-deploy-stella`. That role trusts exactly one
-  # subject — `repo:macanderson/stella:environment:production` — so the
+  # subject — `repo:oxagenai/stella:environment:production` — so the
   # `environment: production` line below is load-bearing rather than
   # decorative. Removing it does not weaken the deploy, it breaks it.
   deploy:

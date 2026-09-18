@@ -19,7 +19,7 @@ AUDIT_SCHEMA_VERSION = "stella-tb21-github-public-timing-audit-v3"
 EVIDENCE_SCHEMA_VERSION = "stella-tb21-github-public-timing-evidence-v2"
 ATTESTATION_SCHEMA_VERSION = "stella-tb21-github-attestation-v2"
 PUBLICATION_SAFETY_MARGIN_SECONDS = 2
-FIXED_REPOSITORY = "macanderson/stella"
+FIXED_REPOSITORY = "oxagenai/stella"
 FIXED_WEB_ROOT = f"https://github.com/{FIXED_REPOSITORY}"
 FIXED_API_ROOT = f"https://api.github.com/repos/{FIXED_REPOSITORY}"
 DEFAULT_PROTOCOL_PATH = "bench/terminal-bench-2.1-protocol.md"
@@ -54,13 +54,13 @@ ATTESTATION_COMMON_FIELDS = frozenset(
     }
 )
 COMMENT_URL_RE = re.compile(
-    r"https://github\.com/macanderson/stella/issues/(?P<issue>[1-9][0-9]*)"
+    r"https://github\.com/oxagenai/stella/issues/(?P<issue>[1-9][0-9]*)"
     r"#issuecomment-(?P<comment>[1-9][0-9]*)"
 )
 SHA40_RE = re.compile(r"[0-9a-f]{40}")
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
 ISSUE_URL_RE = re.compile(
-    r"https://github\.com/macanderson/stella/issues/(?P<issue>[1-9][0-9]*)"
+    r"https://github\.com/oxagenai/stella/issues/(?P<issue>[1-9][0-9]*)"
 )
 
 

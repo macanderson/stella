@@ -3,7 +3,7 @@ title: stella tune
 description: Test one setting against another over two loop-bench runs, then apply the winner only if it clearly wins, or roll it back.
 ---
 
-`stella tune` tunes stella's own settings using evidence instead of a gut feeling. It runs an A/B test on one setting over two [loop-bench](https://github.com/macanderson/stella/tree/main/bench/loop-bench) runs, scores each side using the reward from every trial, and applies the winning setting **only** when it clearly beats the current one. Either way, it saves a record so you can undo the change.
+`stella tune` tunes stella's own settings using evidence instead of a gut feeling. It runs an A/B test on one setting over two [loop-bench](https://github.com/oxagenai/stella/tree/main/bench/loop-bench) runs, scores each side using the reward from every trial, and applies the winning setting **only** when it clearly beats the current one. Either way, it saves a record so you can undo the change.
 
 The first setting you can tune this way is the worker's reasoning effort. This command works offline: it reads two result files and your local record of past tests, and only writes new settings when you pass `--promote`. It needs no model provider and no API key.
 

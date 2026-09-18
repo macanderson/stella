@@ -6,7 +6,7 @@ status: implemented
 
 # The deck's verification surface in the plugin era
 
-*Decides [#3790](https://github.com/macanderson/stella/issues/3790). Context:
+*Decides [#3790](https://github.com/oxagenai/stella/issues/3790). Context:
 the PROOF rail was removed in #3791 ahead of `stella-pipeline`'s extraction
 into an installable verification plugin (`doc:pipeline-as-plugins`, #3511).*
 

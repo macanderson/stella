@@ -1,7 +1,7 @@
 name: docker-serve-publish
 
 # Publishes packaging/docker/Dockerfile.serve to the GitHub container registry
-# on every release tag, as `ghcr.io/macanderson/stella-serve:<version>` and
+# on every release tag, as `ghcr.io/oxagenai/stella-serve:<version>` and
 # `:latest`, for linux/amd64 and linux/arm64.
 #
 # Until this workflow existed nothing published the image at all. docker-serve.yml
@@ -41,7 +41,7 @@ permissions:
   packages: write
 
 env:
-  IMAGE: ghcr.io/macanderson/stella-serve
+  IMAGE: ghcr.io/oxagenai/stella-serve
 
 jobs:
   build:

@@ -9,7 +9,7 @@ status: proposed
 - Status: **Proposed** — awaiting ratification by the repository owner.
 - Date: 2026-08-26
 - Deciders: repository owner (pending)
-- Tracking: [issue #5047](https://github.com/macanderson/stella/issues/5047)
+- Tracking: [issue #5047](https://github.com/oxagenai/stella/issues/5047)
 - Scope note: outside the Phase 0 series. It decides a gate on an existing
   surface — the MCP tool set — rather than a new feature.
 

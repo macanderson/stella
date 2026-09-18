@@ -89,7 +89,7 @@ you already discovered so the next agent does not rediscover them), **Done when*
 ## Before you file, every time
 
 ```bash
-gh search issues --repo macanderson/stella "<distinctive terms>" --state all
+gh search issues --repo oxagenai/stella "<distinctive terms>" --state all
 gh issue list --state open --label area:<crate> --limit 50
 ```
 

@@ -620,7 +620,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
         ev(
             ci,
             AgentEvent::Pr {
-                url: "https://github.com/macanderson/stella/pull/981".into(),
+                url: "https://github.com/oxagenai/stella/pull/981".into(),
                 status: PrStatus::Open,
                 number: Some(981),
                 ci: Some(stella_protocol::CiStatus::Running),

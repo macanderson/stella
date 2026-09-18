@@ -32,7 +32,7 @@ A dedicated cloud VM, nothing else running on it:
 - **x86_64/amd64**, **≥4 effective vCPU**, **32 GiB memory class** (measured Linux
   `MemTotal` must be **≥31 GiB**), **≥150 GiB free** on the jobs filesystem.
 - Ubuntu 22.04+ with: Docker Engine + the Compose plugin, `git`, `gh` (logged in
-  as the `macanderson/stella` owner), `curl`, `rustup`, `zig` + `cargo-zigbuild`,
+  as the `oxagenai/stella` owner), `curl`, `rustup`, `zig` + `cargo-zigbuild`,
   and `uv`.
 - Zero other Docker containers at each paid launch (`docker ps` empty) — the host
   attestation requires it.
@@ -55,7 +55,7 @@ The SUT is finalized to **`fa2ec5b`** (public 0.5.1; see READINESS.md §1). Use 
 current public `origin/main` tip — the `==@{upstream}` guard must pass unchanged.
 
 ```bash
-git clone https://github.com/macanderson/stella.git && cd stella
+git clone https://github.com/oxagenai/stella.git && cd stella
 export claim_repo="$PWD"
 export claim_venv="$claim_repo/bench/harbor_adapter/.venv"
 uv sync --project "$claim_repo/bench/harbor_adapter" --locked --extra dev

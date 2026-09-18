@@ -579,7 +579,7 @@ mod tests {
             labels: vec![IssueLabel::from("P1"), IssueLabel::from("area:core")],
             created_at: "2026-08-19T05:00:00Z".into(),
             updated_at: "2026-08-24T11:30:00Z".into(),
-            url: "https://github.com/macanderson/stella/issues/1234".into(),
+            url: "https://github.com/oxagenai/stella/issues/1234".into(),
             parent: Some(IssueKey::from("1200")),
         }
     }

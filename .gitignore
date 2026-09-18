@@ -245,7 +245,7 @@ stella-bench-handoff/
 # survives the arenabench ejection, #2380 — runs are fetched beside the repo)
 arenabench-cloud/
 
-# A checkout of macanderson/stella-examples, which `example-plugins.yml` clones
+# A checkout of oxagenai/stella-examples, which `example-plugins.yml` clones
 # to this path to grade the three verify-{rs,py,ts} plugins. It is another
 # repository's tree living under this one for the length of a job, and
 # reproducing that job locally is the documented way to debug it — so the

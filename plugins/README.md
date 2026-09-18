@@ -39,7 +39,7 @@ gate's `wire-schema` step:
 | `wrapper.d.ts` | The same contract as TypeScript declarations. |
 
 `doc:wrapper-socket` is the prose behind them, and
-`macanderson/stella-examples` carries `verify-rs` / `verify-py` / `verify-ts` —
+`oxagenai/stella-examples` carries `verify-rs` / `verify-py` / `verify-ts` —
 one plugin written three times over this socket, with no library in any of the
 three.
 
@@ -63,7 +63,7 @@ written against.
 
 ## Why they live here rather than in `stella-examples`
 
-`macanderson/stella-examples` carries the *proof of the surface* — the
+`oxagenai/stella-examples` carries the *proof of the surface* — the
 `verify-rs` / `verify-py` / `verify-ts` trio, one plugin written three times,
 which is how "the plugin surface is a platform" stops being a claim
 (`doc:pipeline-as-plugins` §9). Those are third-party-shaped by design.

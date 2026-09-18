@@ -417,7 +417,7 @@ Claim mode also requires `--run-ledger`. Its exact top-level schema is
       "subject_type": "preregistration | intent",
       "subject_id": "prereg-kind-or-intent-sha256",
       "ledger_commit": "later_distinct_40_lowercase_hex",
-      "public_url": "https://github.com/macanderson/stella/commit/later_distinct_40_lowercase_hex",
+      "public_url": "https://github.com/oxagenai/stella/commit/later_distinct_40_lowercase_hex",
       "published_at": "timezone-aware ISO-8601"
     }
   ],
@@ -507,7 +507,7 @@ controls object is exactly:
 The analyzer verifies the exact nested preflight proof and receipt binding,
 declared timestamps, and exact GitHub commit-link shapes offline and emits
 `external_public_timing_audit_required`. The stdlib-only live
-verifier fixes the repository to public `macanderson/stella`, deliberately
+verifier fixes the repository to public `oxagenai/stella`, deliberately
 omits credentials, disables ambient proxies and CA overrides, requires public
 system trust roots with TLS 1.2 or newer, refuses redirects, requires exact
 requested URLs and HTTP 200, bounds every response to 8 MiB, rejects duplicate
@@ -532,17 +532,17 @@ The evidence file has this exact schema:
 ```json
 {
   "schema_version": "stella-tb21-github-public-timing-evidence-v2",
-  "repository": "macanderson/stella",
+  "repository": "oxagenai/stella",
   "protocol_path": "bench/terminal-bench-2.1-protocol.md",
   "analyzer_path": "bench/terminal_bench_analysis/tb21_analysis.py",
   "public_timing_path": "bench/terminal_bench_analysis/github_public_timing.py",
   "manifest_path": "bench/evidence/stella-tb21-study-manifest.json",
-  "issue_url": "https://github.com/macanderson/stella/issues/123",
+  "issue_url": "https://github.com/oxagenai/stella/issues/123",
   "comments": [
     {
       "subject_type": "preregistration",
       "subject_id": "readiness",
-      "html_url": "https://github.com/macanderson/stella/issues/123#issuecomment-456"
+      "html_url": "https://github.com/oxagenai/stella/issues/123#issuecomment-456"
     }
   ],
   "final_ledger_commit": "completed_ledger_snapshot_40_lowercase_hex"

@@ -9,7 +9,7 @@ status: proposed
 - Status: **Proposed** — awaiting ratification by the repository owner.
 - Date: 2026-08-26
 - Deciders: repository owner (pending)
-- Tracking: [issue #5045](https://github.com/macanderson/stella/issues/5045)
+- Tracking: [issue #5045](https://github.com/oxagenai/stella/issues/5045)
 - Scope note: outside the Phase 0 adaptive-context series. It decides where one
   field of an existing read-model is written.
 

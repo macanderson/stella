@@ -918,7 +918,7 @@ mode this project exists to end.
 
 ## 9. Track C — proving three languages in `stella-examples`
 
-`macanderson/stella-examples` is public and already organised by capability —
+`oxagenai/stella-examples` is public and already organised by capability —
 `agents/`, `commands/`, `fleet/`, `hooks/`, `mcp/`, `memory/`, `rules/`,
 `scripting/`, `settings/`, `skills/`, `tools/`. A `plugins/` directory slots in
 beside them.

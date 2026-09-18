@@ -1238,6 +1238,6 @@ fn enrollment_signature_matches_the_committed_conformance_vector() {
         fixture["signature_hex"].as_str().unwrap(),
         "the enrollment signature does not match the conformance vector — an \
          encoding change must update the fixture here AND the vendored copy in \
-         macanderson/oxagen in the same change"
+         oxagenai/oxagen in the same change"
     );
 }

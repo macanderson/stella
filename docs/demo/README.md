@@ -35,7 +35,7 @@ So the film is an honest picture of **what the deck looks like** and a
 dishonest one of **what a run costs**, if anyone reads the elapsed timers and
 spend figures as measurements. They are fixture values. A film of a real run —
 one that replays a captured `AgentEvent` log instead of the fixture — is
-[#3556](https://github.com/macanderson/stella/issues/3556); it reuses every
+[#3556](https://github.com/oxagenai/stella/issues/3556); it reuses every
 stage below except the source of the events.
 
 ## The pipeline

@@ -28,7 +28,7 @@ Every one of these is genuinely valued — pick the one that fits your energy:
 
 | Contribution | Where to start | Effort |
 |---|---|---|
-| 🐛 **A bug report with a repro** | [Bug report form](https://github.com/macanderson/stella/issues/new?template=bug_report.yml) | 10 minutes |
+| 🐛 **A bug report with a repro** | [Bug report form](https://github.com/oxagenai/stella/issues/new?template=bug_report.yml) | 10 minutes |
 | 🧭 **Docs & examples** — fix a lie in the docs before it fools someone else | `website/content/docs/**.mdx` for anything a *user* reads, `docs/**` for contributor-facing specs, plus `README.md`, `--help` text, doc comments | Small |
 | 🔌 **A new provider adapter** — Stella is BYOK; every model provider we speak makes it more useful | `crates/stella-model/src/` — copy the shape of an existing adapter | Medium |
 | 🛠 **A new built-in tool** | `crates/stella-tools/src/` — implement the tool trait, register it in `ToolRegistry`, then declare one line in [`catalog.rs`](crates/stella-tools/src/catalog.rs) | Medium |
@@ -45,7 +45,7 @@ is pinned in `rust-toolchain.toml`, so rustup will fetch the right one
 automatically) and `git`.
 
 ```bash
-git clone https://github.com/macanderson/stella.git
+git clone https://github.com/oxagenai/stella.git
 cd stella
 
 cargo build --workspace          # first build compiles bundled SQLite — quick
@@ -382,8 +382,8 @@ normal part of the loop here, not a rejection.
 
 ## Issues and labels
 
-- **[Bug report](https://github.com/macanderson/stella/issues/new?template=bug_report.yml)** — include `stella --version`, OS, provider/model, and a repro.
-- **[Feature request](https://github.com/macanderson/stella/issues/new?template=feature_request.yml)** — say what you're trying to do, not just what to add.
+- **[Bug report](https://github.com/oxagenai/stella/issues/new?template=bug_report.yml)** — include `stella --version`, OS, provider/model, and a repro.
+- **[Feature request](https://github.com/oxagenai/stella/issues/new?template=feature_request.yml)** — say what you're trying to do, not just what to add.
 
 Labels you'll see: `area:*` routes an issue to a crate; a `P` label is priority,
 and [SCR-005](docs/scr/SCR-005-triage-separation-of-duties.md) names the levels;

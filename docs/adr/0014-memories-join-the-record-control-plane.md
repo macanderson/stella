@@ -9,9 +9,9 @@ status: proposed
 - Status: **Proposed** — awaiting ratification by the repository owner.
 - Date: 2026-08-08
 - Deciders: repository owner (pending)
-- Tracking: [issue #2283](https://github.com/macanderson/stella/issues/2283)
+- Tracking: [issue #2283](https://github.com/oxagenai/stella/issues/2283)
   (epic); resolves the memory half of
-  [#2284](https://github.com/macanderson/stella/issues/2284)
+  [#2284](https://github.com/oxagenai/stella/issues/2284)
 - Scope note: outside the Phase 0 series, like ADR 0013. It decides governance
   of an existing surface, not a new feature.
 

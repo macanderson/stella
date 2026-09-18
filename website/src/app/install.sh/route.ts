@@ -14,7 +14,7 @@ import { bump } from "@/lib/counters";
  */
 
 const UPSTREAM =
-  "https://raw.githubusercontent.com/macanderson/stella/main/install.sh";
+  "https://raw.githubusercontent.com/oxagenai/stella/main/install.sh";
 
 export async function GET(): Promise<Response> {
   // Count first: a hit that ends in the fallback redirect is still a hit.

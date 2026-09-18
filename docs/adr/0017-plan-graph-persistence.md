@@ -9,7 +9,7 @@ status: proposed
 - Status: **Proposed** — awaiting ratification by the repository owner.
 - Date: 2026-08-26
 - Deciders: repository owner (pending)
-- Tracking: [issue #5037](https://github.com/macanderson/stella/issues/5037)
+- Tracking: [issue #5037](https://github.com/oxagenai/stella/issues/5037)
 - Scope note: not part of the Phase 0 adaptive-context series (ADRs 0001–0012).
   It is filed here because this is where Stella's numbered, ratifiable decision
   records live — see [README](README.md).

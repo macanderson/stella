@@ -1,7 +1,7 @@
 //! The three `verify-{rs,py,ts}` example plugins, graded **here** (#3523).
 //!
 //! `doc:pipeline-as-plugins` §9 rule 4 asks that the three reference plugins in
-//! `macanderson/stella-examples` fail the PR that breaks them. They did not:
+//! `oxagenai/stella-examples` fail the PR that breaks them. They did not:
 //! before this file, `rg 'verify-rs' --glob '!docs/**'` returned no hit in this
 //! repository at all. The examples are the public proof that a plugin can be
 //! written in any language against this socket, and the socket's grammar lives

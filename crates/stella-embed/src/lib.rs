@@ -16,7 +16,7 @@
 //! out of `stella-cli` so the Observatory could share one differ without
 //! costing itself its isolation (#1511).
 //!
-//! [`stella-diff`]: https://github.com/macanderson/stella/tree/main/crates/stella-diff
+//! [`stella-diff`]: https://github.com/oxagenai/stella/tree/main/crates/stella-diff
 //!
 //! # What lives here
 //!

@@ -13,12 +13,12 @@ version, searchable and filterable by kind. This is the record to read when
 you're deciding whether to upgrade: what a version added, fixed, or
 changed.
 
-It's generated straight from [`CHANGELOG.md`](https://github.com/macanderson/stella/blob/main/CHANGELOG.md)
+It's generated straight from [`CHANGELOG.md`](https://github.com/oxagenai/stella/blob/main/CHANGELOG.md)
 when the site builds, so the page always matches the file in the project.
 
 ## Build notes
 
-**[The releases page on GitHub](https://github.com/macanderson/stella/releases)**
+**[The releases page on GitHub](https://github.com/oxagenai/stella/releases)**
 has notes for every tagged build, generated from that build's own changes.
 
 Every merge to `main` cuts a new patch release, so this is the page to use
@@ -27,7 +27,7 @@ history for one version.
 
 <Callout title="Why GitHub's page and /releases differ">
 `/releases` is the curated, human-readable record, built straight from
-[`CHANGELOG.md`](https://github.com/macanderson/stella/blob/main/CHANGELOG.md)
+[`CHANGELOG.md`](https://github.com/oxagenai/stella/blob/main/CHANGELOG.md)
 so it can never fall out of sync with the project. GitHub's per-build page
 is the finer-grained one, with a note for every single tagged build.
 </Callout>
@@ -37,9 +37,9 @@ is the finer-grained one, with a note for every single tagged build.
 Changelog entries are written by an automated process, not by individual
 contributors, so every entry reads in one consistent voice. When a minor or
 major version is cut,
-[`scripts/changelog-ai.sh`](https://github.com/macanderson/stella/blob/main/scripts/changelog-ai.sh)
+[`scripts/changelog-ai.sh`](https://github.com/oxagenai/stella/blob/main/scripts/changelog-ai.sh)
 drafts the section from the full set of changes, and
-[`scripts/changelog-roll.sh`](https://github.com/macanderson/stella/blob/main/scripts/changelog-roll.sh)
+[`scripts/changelog-roll.sh`](https://github.com/oxagenai/stella/blob/main/scripts/changelog-roll.sh)
 adds it under the new version heading.
 
 If your change needs context that the code alone won't convey, put it in

@@ -1664,7 +1664,7 @@ fn refuses_a_database_stamped_by_a_newer_build() {
     assert!(
         msg.contains("brew upgrade stella")
             && msg.contains("install.sh")
-            && msg.contains("github.com/macanderson/stella/releases"),
+            && msg.contains("github.com/oxagenai/stella/releases"),
         "message must name every supported upgrade path: {err}"
     );
     std::fs::remove_dir_all(&root).ok();

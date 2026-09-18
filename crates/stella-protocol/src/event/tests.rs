@@ -699,7 +699,7 @@ fn scope_proposal_roundtrips_its_scope_card_facts_and_stays_additive() {
         steps: vec!["extract types".into()],
         estimated_files: 4,
         estimated_cost_usd: Some(0.42),
-        repo: Some("macanderson/stella".into()),
+        repo: Some("oxagenai/stella".into()),
         branch: Some("feat/automations".into()),
         write_globs: vec!["apps/api/**".into(), "apps/app/automations/**".into()],
         read_globs: vec!["packages/shared/**".into()],

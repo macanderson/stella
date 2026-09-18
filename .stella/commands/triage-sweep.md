@@ -10,7 +10,7 @@ Target repo: **$ARGUMENTS**
 > **Not `/backlog-triage`.** The `stella` repo also ships `/backlog-triage`, which
 > is *specific to that repo*: it drives a six-facet contract, writes an Impact
 > score to Projects v2 field IDs, and knows stella's crate→`area:*` routing. Use
-> that one inside `macanderson/stella`. `/triage-sweep` is the **repo-agnostic**
+> that one inside `oxagenai/stella`. `/triage-sweep` is the **repo-agnostic**
 > sibling — it discovers whatever taxonomy the target repo has, re-derives every
 > issue's claim from the source tree, and fixes the trivially-fixable into one
 > cleanup PR. Where they overlap, `/backlog-triage` is the more specific tool and

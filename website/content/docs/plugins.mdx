@@ -280,9 +280,9 @@ consent prompt, which you already approved.
 ## Writing one in Python
 
 A plugin needs no SDK, in any language. The `verify` plugin above is real
-and ready to use — [`plugins/verify-py/`](https://github.com/macanderson/stella-examples/tree/main/plugins/verify-py)
+and ready to use — [`plugins/verify-py/`](https://github.com/oxagenai/stella-examples/tree/main/plugins/verify-py)
 in `stella-examples` — and its
-[`main.py`](https://github.com/macanderson/stella-examples/blob/main/plugins/verify-py/main.py)
+[`main.py`](https://github.com/oxagenai/stella-examples/blob/main/plugins/verify-py/main.py)
 is about 320 lines of Python, using only `json`, `subprocess`, `sys`, and
 `time` from the standard library. If you want to learn the protocol, that
 file is the shortest complete example there is.
@@ -362,8 +362,8 @@ if __name__ == "__main__":
 The real `main.py` is stricter than this: it rejects unknown fields at
 every level, tells a timed-out test apart from a signal-killed one, and
 never guesses at a command it wasn't given. But the shape above is the
-whole protocol. Read the [real file](https://github.com/macanderson/stella-examples/blob/main/plugins/verify-py/main.py)
-and its [README](https://github.com/macanderson/stella-examples/blob/main/plugins/verify-py/README.md)
+whole protocol. Read the [real file](https://github.com/oxagenai/stella-examples/blob/main/plugins/verify-py/main.py)
+and its [README](https://github.com/oxagenai/stella-examples/blob/main/plugins/verify-py/README.md)
 for the full version, including how to run it by hand with
 `echo | python3 main.py`, and how its tests check it against the same
 reference cases the Rust and TypeScript versions use.
@@ -385,10 +385,10 @@ checks this stays true.
 
 <CardGrid size="md">
   <OptionCard name="verify-ts">
-    [`plugins/verify-ts/`](https://github.com/macanderson/stella-examples/tree/main/plugins/verify-ts). No runtime dependencies at all, not even `@types/node`. The small part of Node it uses is declared by hand in a 14-line `.d.ts` file. `npm run build` compiles `src/main.ts` to `dist/main.js`, and `[runtime].argv` is `["node", "${plugin_dir}/dist/main.js"]`. Build it before you install it — stella never runs a compiler for you.
+    [`plugins/verify-ts/`](https://github.com/oxagenai/stella-examples/tree/main/plugins/verify-ts). No runtime dependencies at all, not even `@types/node`. The small part of Node it uses is declared by hand in a 14-line `.d.ts` file. `npm run build` compiles `src/main.ts` to `dist/main.js`, and `[runtime].argv` is `["node", "${plugin_dir}/dist/main.js"]`. Build it before you install it — stella never runs a compiler for you.
   </OptionCard>
   <OptionCard name="verify-rs">
-    [`plugins/verify-rs/`](https://github.com/macanderson/stella-examples/tree/main/plugins/verify-rs). The reference version, and the one tested over the actual wire protocol rather than in-process, so that path stays exercised. It depends only on `serde` and `serde_json`, not on any of stella's own code — a third-party Rust author couldn't link against stella's internals either. `cargo build --release` produces the binary that `[runtime].argv` names directly, the simplest thing stella can run.
+    [`plugins/verify-rs/`](https://github.com/oxagenai/stella-examples/tree/main/plugins/verify-rs). The reference version, and the one tested over the actual wire protocol rather than in-process, so that path stays exercised. It depends only on `serde` and `serde_json`, not on any of stella's own code — a third-party Rust author couldn't link against stella's internals either. `cargo build --release` produces the binary that `[runtime].argv` names directly, the simplest thing stella can run.
   </OptionCard>
 </CardGrid>
 
@@ -436,4 +436,4 @@ it:
 - [`stella plugin`](/docs/commands/plugin) — the full command reference for `install` / `list` / `remove`, including scopes and shadowing.
 - [Hooks](/docs/agent-tools/hooks) — the config-driven, no-code lifecycle hooks a plugin's own hook grants are not merged into.
 - [Permissions](/docs/agent-tools/permissions) — the authorization gate that sees a plugin as a caller of its own, distinct from you.
-- [`stella-examples`](https://github.com/macanderson/stella-examples/tree/main/plugins) — all three reference plugins, their shared conformance vectors, and the CI that runs them on every pull request.
+- [`stella-examples`](https://github.com/oxagenai/stella-examples/tree/main/plugins) — all three reference plugins, their shared conformance vectors, and the CI that runs them on every pull request.

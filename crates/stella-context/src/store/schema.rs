@@ -651,7 +651,7 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), ContextError> {
              knows {SCHEMA_VERSION} — your stella binary is out of date, not \
              the workspace. Upgrade with `brew upgrade stella`, re-run \
              install.sh, or grab a newer build from \
-             https://github.com/macanderson/stella/releases, then reopen \
+             https://github.com/oxagenai/stella/releases, then reopen \
              this workspace."
         )));
     }

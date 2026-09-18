@@ -1,6 +1,6 @@
 # stella docs
 
-The documentation site for [stella](https://github.com/macanderson/stella) —
+The documentation site for [stella](https://github.com/oxagenai/stella) —
 destined for **stella.oxagen.sh**.
 
 Built with [Next.js](https://nextjs.org) (App Router) + [Fumadocs](https://fumadocs.dev)
@@ -148,7 +148,7 @@ Three constraints on that job, each of which has already been paid for once:
 - **`environment: production` is required.** There is no stored AWS key.
   The job exchanges its GitHub OIDC token for a session on the
   `gha-deploy-stella` role, which trusts exactly one subject:
-  `repo:macanderson/stella:environment:production`. Deleting that line does not
+  `repo:oxagenai/stella:environment:production`. Deleting that line does not
   loosen the deploy, it breaks it. The environment must exist in repository
   settings for the exchange to succeed at all.
 - **The role has no shell on the instance.** It may write one S3 object and

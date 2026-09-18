@@ -97,7 +97,7 @@ workflow)
   exit 0
   ;;
 repo)
-  echo "macanderson/stella"
+  echo "oxagenai/stella"
   exit 0
   ;;
 esac

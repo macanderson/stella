@@ -259,7 +259,7 @@ PUBLIC_INTENT_PROVIDER_SNAPSHOT_FIELDS = frozenset(
     }
 )
 PUBLIC_INTENT_COMMENT_URL_RE = re.compile(
-    r"https://github\.com/macanderson/stella/issues/(?P<issue>[1-9][0-9]*)"
+    r"https://github\.com/oxagenai/stella/issues/(?P<issue>[1-9][0-9]*)"
     r"#issuecomment-(?P<comment>[1-9][0-9]*)"
 )
 HOST_REPORT_FIELDS = frozenset(

@@ -310,7 +310,7 @@ fn boundary_rules(markdown: Vec<Rule>, records: &RecordRegistry) -> Vec<Rule> {
 /// authority policy, and a workspace whose project prompts are untrusted would
 /// return an empty list — handing the miner an empty "already captured" set and
 /// letting it re-propose rules that are sitting right there. That is the same
-/// shape as [#737](https://github.com/macanderson/stella/issues/737) on the
+/// shape as [#737](https://github.com/oxagenai/stella/issues/737) on the
 /// skills side, where an authority-filtered list blinded a guard that is about
 /// what is on the filesystem, not about what the session is allowed to read.
 ///

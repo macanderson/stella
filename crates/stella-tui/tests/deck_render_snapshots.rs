@@ -1344,7 +1344,7 @@ fn deck_render_snapshots_state_a_failing_pr_on_the_issues_tab() {
     model.apply_inbound(&stella_tui::envelope::Inbound::Event {
         agent,
         event: stella_protocol::AgentEvent::Pr {
-            url: "https://github.com/macanderson/stella/pull/981".into(),
+            url: "https://github.com/oxagenai/stella/pull/981".into(),
             status: stella_protocol::PrStatus::Open,
             number: Some(981),
             ci: Some(stella_protocol::CiStatus::Failing),

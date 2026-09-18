@@ -55,7 +55,7 @@ STELLA_INSTALL_DIR=/usr/local/bin STELLA_VERSION=v0.9.0 \
 
 `v0.9.0` here is just an example. Every merge to `main` cuts a new patch
 release, so pick the tag you actually want from the
-[releases page](https://github.com/macanderson/stella/releases). This page
+[releases page](https://github.com/oxagenai/stella/releases). This page
 can't keep up with a version that changes daily.
 
 ### Homebrew
@@ -74,14 +74,14 @@ brew tap macanderson/tap && brew install stella
 Requires Rust 1.90 or later, and git:
 
 ```bash
-cargo install --locked --git https://github.com/macanderson/stella stella-cli
+cargo install --locked --git https://github.com/oxagenai/stella stella-cli
 stella --version
 ```
 
 ### From source
 
 ```bash
-git clone https://github.com/macanderson/stella.git
+git clone https://github.com/oxagenai/stella.git
 cd stella
 cargo build --release
 ./target/release/stella --version

@@ -29,7 +29,7 @@
 set -euo pipefail
 
 # ── Config ──────────────────────────────────────────────────────────────────
-REPO="macanderson/stella"
+REPO="oxagenai/stella"
 TAP_REPO="macanderson/homebrew-tap"   # repo the formula is pushed to (git)
 TAP="macanderson/tap"                 # brew tap name → maps to repo homebrew-tap
 BIN="stella"                          # the crate that produces it is

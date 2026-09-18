@@ -1,7 +1,7 @@
 # ADR 0003: Bitemporal Semantics
 
 - Status: Accepted (Phase 0) — the recall-layer gap noted below was closed
-  2026-07-26 by Phase 1 ([#712](https://github.com/macanderson/stella/issues/712))
+  2026-07-26 by Phase 1 ([#712](https://github.com/oxagenai/stella/issues/712))
 - Date: 2026-07-23
 - Deciders: (Phase 0 baseline)
 

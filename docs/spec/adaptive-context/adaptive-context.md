@@ -116,7 +116,7 @@ Against that baseline, the gap is much narrower than eleven phases:
 Four of the nine are defects in shipped code, and they sit underneath every
 remaining gap. That ordering drives the plan.
 
-**Status, 2026-07-26.** Phase 1 ([#712](https://github.com/macanderson/stella/issues/712))
+**Status, 2026-07-26.** Phase 1 ([#712](https://github.com/oxagenai/stella/issues/712))
 closed all four defects: candidate generation is bounded by the requested frame
 count, the point-in-time cutoff reaches every signal, supersede and tombstone
 live in the plane that owns the records, and a memory's identity is its lineage
@@ -124,11 +124,11 @@ so an edit revises rather than duplicates. The table is left as written — it i
 the analysis the plan was ordered by.
 
 **All nine rows are now closed.** Phase 2
-([#713](https://github.com/macanderson/stella/issues/713)) decomposed the recall
+([#713](https://github.com/oxagenai/stella/issues/713)) decomposed the recall
 block and gave the frame a deterministic identity; Phase 3
-([#714](https://github.com/macanderson/stella/issues/714)) made proposals typed
+([#714](https://github.com/oxagenai/stella/issues/714)) made proposals typed
 and auditable; Phase 4
-([#715](https://github.com/macanderson/stella/issues/715)) added context-use
+([#715](https://github.com/oxagenai/stella/issues/715)) added context-use
 records, opportunity-aware attribution, derived selection health, and reversible
 retirement. The loop in §7 runs end to end.
 
@@ -338,10 +338,10 @@ vector, recency, and adjacency alike. The world-validity axis
 **Note on 0006.** Its distinction stands, but it predates the receipts plane. The
 compiled frame is now reached by *extending the step manifest* (§6.2), not by
 building a second aggregate. The amendment recording this **landed 2026-07-26**
-in the ADR's own body ([#713](https://github.com/macanderson/stella/issues/713)
+in the ADR's own body ([#713](https://github.com/oxagenai/stella/issues/713)
 deliverable 6), so Phase 2's documentation gate is met before it ships.
 
-**Note on 0010.** Ratified 2026-07-26 ([#711](https://github.com/macanderson/stella/issues/711)).
+**Note on 0010.** Ratified 2026-07-26 ([#711](https://github.com/oxagenai/stella/issues/711)).
 It amends 0005 by replacing a big-bang authority cutover with incremental
 transfer, and settles in the same act that the retrieval index — `node`, `edge`,
 `embedding` — never transfers authority: `lineage_id` lands on `memory` and

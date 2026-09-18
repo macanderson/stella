@@ -34,7 +34,7 @@ members = [
   "bench/loop-bench",
   "bench/request-bench",
 ]
-# `example-plugins.yml` clones macanderson/stella-examples into
+# `example-plugins.yml` clones oxagenai/stella-examples into
 # `.stella-examples/` *inside this checkout* and builds `verify-rs` there. A
 # Cargo.toml anywhere under a workspace root is assumed to be a member, so
 # cargo refuses it outright:
@@ -54,7 +54,7 @@ version = "0.9.425"
 edition = "2024"
 rust-version = "1.90"
 license = "AGPL-3.0-only"
-repository = "https://github.com/macanderson/stella"
+repository = "https://github.com/oxagenai/stella"
 homepage = "https://stella.oxagen.sh"
 publish = false
 

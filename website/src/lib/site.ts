@@ -5,5 +5,5 @@
  */
 export const SITE_URL = "https://stella.oxagen.sh";
 export const SITE_NAME = "stella";
-export const REPO_URL = "https://github.com/macanderson/stella";
+export const REPO_URL = "https://github.com/oxagenai/stella";
 export const SPONSOR_URL = "https://github.com/sponsors/macanderson";

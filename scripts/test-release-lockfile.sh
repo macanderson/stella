@@ -102,7 +102,7 @@ TOML
   echo 'pub fn demo() {}' >"$dir/crates/demo/src/lib.rs"
   cat >"$dir/packaging/homebrew/stella.rb" <<TOML
 class Stella < Formula
-  url "https://github.com/macanderson/stella.git", tag: "v$version"
+  url "https://github.com/oxagenai/stella.git", tag: "v$version"
   version "$version"
 end
 TOML

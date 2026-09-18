@@ -213,7 +213,7 @@ fn git_shas_and_paths_are_not_mistaken_for_secrets() {
     assert_untouched(
         "See stella-context/src/store/schema.rs and docs/adr/0010-incremental-authority-transfer.md",
     );
-    assert_untouched("The URL https://github.com/macanderson/stella/issues/714 tracks this.");
+    assert_untouched("The URL https://github.com/oxagenai/stella/issues/714 tracks this.");
 }
 
 #[test]

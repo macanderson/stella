@@ -156,7 +156,7 @@ impl PanelSlot {
     /// Landing a frame clears any standing throttle, because the tag describes
     /// the frame on screen and this is a new one.
     ///
-    /// [#5253]: https://github.com/macanderson/stella/issues/5253
+    /// [#5253]: https://github.com/oxagenai/stella/issues/5253
     pub fn settle(&mut self, frame: PanelFrame) -> bool {
         if !self.awaiting || frame.surface != self.surface || frame.tick != self.tick {
             return false;

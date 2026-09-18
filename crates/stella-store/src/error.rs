@@ -69,7 +69,7 @@ pub enum StoreError {
         "store.db is at schema version {file_version}, but this build only knows \
          {build_version} — your stella binary is out of date, not the workspace. Upgrade \
          with `brew upgrade stella`, re-run install.sh, or grab a newer build from \
-         https://github.com/macanderson/stella/releases, then reopen this workspace."
+         https://github.com/oxagenai/stella/releases, then reopen this workspace."
     )]
     SchemaTooNew {
         /// The version stamped in the file.

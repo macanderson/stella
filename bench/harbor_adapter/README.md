@@ -1,7 +1,7 @@
 # stella-harbor
 
 A [Harbor](https://github.com/laude-institute/harbor) installed-agent adapter
-for the [Stella](https://github.com/macanderson/stella) coding CLI. It lets you
+for the [Stella](https://github.com/oxagenai/stella) coding CLI. It lets you
 benchmark the `stella` binary on Terminal-Bench 2.x and SWE-bench in the same
 container and under the same verifier as Claude Code, Codex CLI, Terminus, and
 any other Harbor-supported agent.
@@ -266,7 +266,7 @@ new run, never delete the receipt from an evidence tree. The required
 Harbor parses the command; missing, uppercase, or non-64-hex values fail before
 launch. A matching `--intent-comment-url` is also mandatory. Immediately before
 reserving the job, the launcher performs credential-free GitHub API GETs with
-ambient proxies disabled. It requires the fixed `macanderson/stella` repository
+ambient proxies disabled. It requires the fixed `oxagenai/stella` repository
 to be public, verifies the dedicated owner-authored issue and unedited owner
 comment, fetches the ledger bytes at the comment's public ledger commit, and
 recomputes the exact intent digest while matching stage, job, and model roster.

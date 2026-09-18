@@ -9,7 +9,7 @@
 //!
 //! # Graded the way Track C grades, not by hand-rolled assertions
 //!
-//! `macanderson/stella-examples`'s `plugins/ci/conformance.py` feeds the same
+//! `oxagenai/stella-examples`'s `plugins/ci/conformance.py` feeds the same
 //! vectors to three programs in three languages and compares each answer
 //! against the same golden. This is that harness with one thing added and one
 //! thing changed:

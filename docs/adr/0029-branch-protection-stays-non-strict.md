@@ -21,7 +21,7 @@ a green run from an older `main`, even many commits behind.
 protection API, with an admin-scoped token:
 
 ```
-$ gh api repos/macanderson/stella/branches/main/protection \
+$ gh api repos/oxagenai/stella/branches/main/protection \
     --jq '.required_status_checks | {strict, contexts}'
 {
   "contexts": [

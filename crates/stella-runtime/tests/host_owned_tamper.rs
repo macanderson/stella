@@ -3,7 +3,7 @@
 //!
 //! Before this, it could not, and the reason was a contract defect rather than
 //! a bug in any plugin — Track C hit it identically in Rust, Python and
-//! TypeScript (macanderson/stella-examples#1). `[oracle] tamper` was mandatory
+//! TypeScript (oxagenai/stella-examples#1). `[oracle] tamper` was mandatory
 //! with one value, tamper snapshotting is host-side by design
 //! (`doc:pipeline-as-plugins` §4 A10), and yet the `tamper` field sat on the
 //! evidence the *plugin* returns. So an honest plugin declared a policy it

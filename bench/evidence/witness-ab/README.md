@@ -1,6 +1,6 @@
 # The authored-witness A/B
 
-Does an independent checker earn its cost? ([#1284](https://github.com/macanderson/stella/issues/1284))
+Does an independent checker earn its cost? ([#1284](https://github.com/oxagenai/stella/issues/1284))
 
 Stella decides whether finished work is correct on a ladder. Two of its rungs
 are model calls, and they are not equally strong:
@@ -20,17 +20,17 @@ numbers are a lower bound on the ladder, not a measurement of it
 
 Two things used to block turning it on, and both were fixed:
 
-* [#1007](https://github.com/macanderson/stella/issues/1007) added
+* [#1007](https://github.com/oxagenai/stella/issues/1007) added
   `STELLA_WITNESS_AUTHOR_MODEL`, which names a second model on the worker's
   provider and reaches Stella only as `pipeline_judge_model` inside the hashed
   posture;
-* [#1225](https://github.com/macanderson/stella/issues/1225) gave each task
+* [#1225](https://github.com/oxagenai/stella/issues/1225) gave each task
   folder a git baseline, so a witness has something to be diffed against.
 
 > [!IMPORTANT]
 > **A third thing blocks it now, and this one is structural: the treatment arm
 > cannot be run on the binary this workspace builds**
-> ([#4103](https://github.com/macanderson/stella/issues/4103)).
+> ([#4103](https://github.com/oxagenai/stella/issues/4103)).
 >
 > The engine has one role. `AgentEngineConfig::model_for` resolves
 > `agents.default.model` > `default_model` and takes no role argument;
@@ -86,7 +86,7 @@ twice.
    decided.
 3. **Cost.** Total spend, the treatment/control ratio, and spend per additional
    task passed. Wall clock is reported but is not a time measurement while
-   [#960](https://github.com/macanderson/stella/issues/960) is open — Stella's
+   [#960](https://github.com/oxagenai/stella/issues/960) is open — Stella's
    headless process does not exit after its turn, so Harbor kills it at the
    agent timeout and every such trial burns the full timeout regardless of how
    long the work took.
@@ -117,7 +117,7 @@ is in hand is not a decision rule, it is a preference with arithmetic attached.
   arm they ran, or two arms that ran different SUT commits or binaries;
 * **the treatment arm authored no witness on any task.** A posture that
   *declares* the rung is not a run that *exercised* it. This is
-  [#1147](https://github.com/macanderson/stella/issues/1147) exactly: an author
+  [#1147](https://github.com/oxagenai/stella/issues/1147) exactly: an author
   Stella's offline seed catalog did not carry failed model validation, the
   judge pin was dropped, and the control arm executed under a treatment-arm
   digest. The run's own proof stream is the only thing that can answer it, and

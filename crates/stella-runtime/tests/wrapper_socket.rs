@@ -694,7 +694,7 @@ fn only_an_arbiter_can_hold_a_turn_open() {
 /// Failing before the change because `AfterTurnRequest::candidate` was a bare
 /// `CandidateHandle` whose six operations existed only as in-process async
 /// Rust over a `&dyn` port. A plugin holding one could do nothing with it, so
-/// the three reference plugins of macanderson/stella-examples#1 took their test
+/// the three reference plugins of oxagenai/stella-examples#1 took their test
 /// command and baseline from two `[runtime] env` names — default-deny and
 /// visible at install consent, but a bend in the socket's own rule that every
 /// capability arrives in the request (`doc:wrapper-socket` §6).

@@ -291,7 +291,7 @@ three preregistration kinds and all three nonhistorical paid intents.
 
 Public chronology is established by the stdlib-only live verifier, never by a
 manifest boolean or a replayed audit JSON. Its evidence map covers exactly six
-unedited GitHub issue comments in `macanderson/stella`: the three
+unedited GitHub issue comments in `oxagenai/stella`: the three
 preregistrations and three paid intents. Each machine-readable comment body
 binds study ID, subject type/ID, stage or preregistration kind, the frozen
 `subject_commit`, a distinct later `ledger_commit`, ledger path, and canonical

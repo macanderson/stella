@@ -9,7 +9,7 @@ status: implemented
 - Status: **Implemented** — landed with #5039. Not part of the Phase 0
   adaptive-context series.
 - Date: 2026-08-26
-- Tracking: [issue #5039](https://github.com/macanderson/stella/issues/5039)
+- Tracking: [issue #5039](https://github.com/oxagenai/stella/issues/5039)
 
 ## Context
 
@@ -107,8 +107,8 @@ one rule in two places. The two counts it is computed from ride the row instead.
   is empty, under-reports rather than misattributes.
 - A `task_assign` worker lane runs on its own, empty board. Its source is the
   one task it was spawned to work, not a board read
-  ([#5158](https://github.com/macanderson/stella/issues/5158)). Board ids are
+  ([#5158](https://github.com/oxagenai/stella/issues/5158)). Board ids are
   per-session ordinals, so its `"1"` is not the lead's `"1"`.
 - `TaskItem::id` remains a `String` while the tag is a `TaskId`, which is a seam
   rather than a design; tracked in
-  [#5159](https://github.com/macanderson/stella/issues/5159).
+  [#5159](https://github.com/oxagenai/stella/issues/5159).

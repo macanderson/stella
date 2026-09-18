@@ -51,7 +51,7 @@ first extraction, not a claim about the state after this branch.
   is now the host sequence, and `stella run --pipeline <variant>` drives it.
 - **Phase 3 (Track C, the language proof).** No evidence in this repository
   either way — `verify-rs`/`verify-py`/`verify-ts` are specified to live in
-  `macanderson/stella-examples`, a separate repository this census did not
+  `oxagenai/stella-examples`, a separate repository this census did not
   have access to. Treat as **not verified**, not as landed.
 - **Phase 4 (Track B extraction).** Started, not finished. Of the five-item
   order (`stella-research` → `stella-plan` → `vera` → `stella-candidates` →
@@ -95,7 +95,7 @@ first extraction, not a claim about the state after this branch.
   rewritten. Do not trust this paragraph as a full audit of
   `website/content/docs/`: verify each page against the tree before assuming
   it is done or stale. Also not yet verified as done:
-  `macanderson/stella-examples`'s `plugins/README.md` (separate repository,
+  `oxagenai/stella-examples`'s `plugins/README.md` (separate repository,
   not in this checkout), `llms.txt`'s generated description text, and the
   turn-loop deck under `website/public/presentations/turn-loop/`. This phase
   is explicitly not optional and is not closed by this pass.
@@ -288,7 +288,7 @@ Runs **immediately after A5**, not at the end. The examples are the test that
 Track A produced a platform rather than a library, and finding that out late is
 the expensive failure mode.
 
-Three plugins in `macanderson/stella-examples` under `plugins/`, implementing
+Three plugins in `oxagenai/stella-examples` under `plugins/`, implementing
 the same behaviour: `verify-rs`, `verify-py`, `verify-ts`. Identical manifests
 except `[runtime].argv`. No SDK — stdlib and a JSON parser only. CI runs all
 three on every PR there, and a smoke check runs in `stella`.
@@ -349,7 +349,7 @@ whose documentation still describes the previous architecture is not shipped.
   participation grades, the four points, how to install one, how to write one in
   Rust, Python and TypeScript. The inference-pipeline page must stop describing
   stages the engine no longer owns.
-- `macanderson/stella-examples` — a top-level `plugins/README.md` explaining the
+- `oxagenai/stella-examples` — a top-level `plugins/README.md` explaining the
   model, linked from the repo README.
 - `llms.txt` and the commands parity lock, if command surfaces changed.
 - The turn-loop deck under `website/public/presentations/` — it is the artifact

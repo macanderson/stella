@@ -40,7 +40,7 @@ manifest, the socket in `doc:wrapper-socket`, and those three files.
 
 **The contract is a wire.** A library over it is a nicety. A first-party one
 in one language starts a queue: Go next, then TypeScript, then Rust. Each one
-is a new place to state the wire wrongly. `macanderson/stella-examples`
+is a new place to state the wire wrongly. `oxagenai/stella-examples`
 carries `verify-rs`, `verify-py` and `verify-ts`. That is one plugin written
 three times over this socket, with no library in any of them.
 

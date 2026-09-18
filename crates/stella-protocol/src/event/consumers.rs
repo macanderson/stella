@@ -25,8 +25,8 @@
 //! ancestor of [`ConsumerPosture::RecordedOnly`] and
 //! [`ConsumerPosture::Unclassified`] here.
 //!
-//! [`content_free`]: https://github.com/macanderson/stella/blob/main/crates/stella-store/src/content_free.rs
-//! [`DRAIN_FORMATS`]: https://github.com/macanderson/stella/blob/main/crates/stella-store/src/content_free.rs
+//! [`content_free`]: https://github.com/oxagenai/stella/blob/main/crates/stella-store/src/content_free.rs
+//! [`DRAIN_FORMATS`]: https://github.com/oxagenai/stella/blob/main/crates/stella-store/src/content_free.rs
 //!
 //! # What is machine-checked, and what is not
 //!

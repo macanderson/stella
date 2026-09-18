@@ -597,7 +597,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 steps: vec!["read".into(), "edit".into()],
                 estimated_files: 12,
                 estimated_cost_usd: Some(1.5),
-                repo: Some("macanderson/stella".into()),
+                repo: Some("oxagenai/stella".into()),
                 branch: Some("feat/router".into()),
                 write_globs: vec!["src/router/**".into()],
                 read_globs: vec!["src/**".into()],

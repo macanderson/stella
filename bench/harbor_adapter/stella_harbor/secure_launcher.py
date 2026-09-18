@@ -102,7 +102,7 @@ _CANONICAL_PROVIDER_ROUTE_POLICY = "openrouter-auto"
 _OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
 _OPENROUTER_KEYS_URL = "https://openrouter.ai/api/v1/keys"
 _OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
-_FIXED_REPOSITORY = "macanderson/stella"
+_FIXED_REPOSITORY = "oxagenai/stella"
 _FIXED_WEB_ROOT = f"https://github.com/{_FIXED_REPOSITORY}"
 _FIXED_API_ROOT = f"https://api.github.com/repos/{_FIXED_REPOSITORY}"
 _FIXED_STUDY_ID = "stella-tb21-scientific-study-v1"
@@ -570,7 +570,7 @@ _VERSION_TEXT_BYTES_RE = re.compile(
     rb"(?=[^0-9A-Za-z.-]|$)"
 )
 _COMMENT_URL_RE = re.compile(
-    r"https://github\.com/macanderson/stella/issues/(?P<issue>[1-9][0-9]*)"
+    r"https://github\.com/oxagenai/stella/issues/(?P<issue>[1-9][0-9]*)"
     r"#issuecomment-(?P<comment>[1-9][0-9]*)"
 )
 _ISOLATED_HARBOR_SHIM = """\

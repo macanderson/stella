@@ -104,9 +104,9 @@ explicitly enrolled Oxagen Enterprise managed deployment has the single signed
 operational egress exception documented above.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/macanderson/stella/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/oxagenai/stella/main/install.sh | sh
 export ANTHROPIC_API_KEY=…        # or OPENAI_API_KEY, GEMINI_API_KEY, a local server, …
 stella run "fix the failing test in src/auth.rs"
 ```
 
-<sub>AGPL-3.0-only, commercial licenses available · Rust 1.90+ · <a href="https://github.com/macanderson/stella">github.com/macanderson/stella</a></sub>
+<sub>AGPL-3.0-only, commercial licenses available · Rust 1.90+ · <a href="https://github.com/oxagenai/stella">github.com/oxagenai/stella</a></sub>

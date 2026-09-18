@@ -126,7 +126,7 @@ Do not file, and do not count toward the streak:
 
 - Style preferences `rustfmt` and clippy already settle. The gate is the arbiter.
 - "Consider adding tests" with no named behaviour that is untested.
-- Anything already open — `gh search issues --repo macanderson/stella "<terms>"`
+- Anything already open — `gh search issues --repo oxagenai/stella "<terms>"`
   before you file, every time. Link, do not duplicate.
 - Findings in generated or vendored files.
 - A god file being large. `scripts/file-size-baseline.txt` grandfathers those

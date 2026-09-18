@@ -56,7 +56,7 @@ from stella_harbor.secure_launcher import (  # noqa: E402
 
 _TEST_INTENT_SHA256 = "a" * 64
 _TEST_SOURCE_COMMIT = "d" * 40
-_TEST_COMMENT_URL = "https://github.com/macanderson/stella/issues/123#issuecomment-456"
+_TEST_COMMENT_URL = "https://github.com/oxagenai/stella/issues/123#issuecomment-456"
 _TEST_MANAGEMENT_CREDENTIAL = "test-management-secret"
 _CANONICAL_DATASET = (
     "terminal-bench/terminal-bench-2-1@"
@@ -522,17 +522,17 @@ class _FakePublicIntentReader:
         self.host_report = host_module.canonical_json_bytes(host_report)
         self.host_report_fetches: list[tuple[str, str]] = []
         self.repository = {
-            "full_name": "macanderson/stella",
-            "url": "https://api.github.com/repos/macanderson/stella",
-            "html_url": "https://github.com/macanderson/stella",
+            "full_name": "oxagenai/stella",
+            "url": "https://api.github.com/repos/oxagenai/stella",
+            "html_url": "https://github.com/oxagenai/stella",
             "private": False,
             "default_branch": "main",
         }
         self.issue = {
             "number": 123,
-            "url": "https://api.github.com/repos/macanderson/stella/issues/123",
-            "html_url": "https://github.com/macanderson/stella/issues/123",
-            "repository_url": "https://api.github.com/repos/macanderson/stella",
+            "url": "https://api.github.com/repos/oxagenai/stella/issues/123",
+            "html_url": "https://github.com/oxagenai/stella/issues/123",
+            "repository_url": "https://api.github.com/repos/oxagenai/stella",
             "title": (
                 "Stella Terminal-Bench 2.1 preregistration: "
                 "stella-tb21-scientific-study-v1"
@@ -554,10 +554,10 @@ class _FakePublicIntentReader:
         self.comment = {
             "id": 456,
             "url": (
-                "https://api.github.com/repos/macanderson/stella/issues/comments/456"
+                "https://api.github.com/repos/oxagenai/stella/issues/comments/456"
             ),
             "html_url": _TEST_COMMENT_URL,
-            "issue_url": ("https://api.github.com/repos/macanderson/stella/issues/123"),
+            "issue_url": ("https://api.github.com/repos/oxagenai/stella/issues/123"),
             "user": {"login": "macanderson"},
             "author_association": "OWNER",
             "body": json.dumps(body, sort_keys=True, separators=(",", ":")),
@@ -584,7 +584,7 @@ class _FakePublicIntentReader:
                 "subject_id": "readiness",
                 "ledger_commit": "a" * 40,
                 "public_url": (
-                    f"https://github.com/macanderson/stella/commit/{'a' * 40}"
+                    f"https://github.com/oxagenai/stella/commit/{'a' * 40}"
                 ),
                 "published_at": "2025-12-31T00:00:00Z",
             }
@@ -603,7 +603,7 @@ class _FakePublicIntentReader:
                 "subject_id": subject_id,
                 "ledger_commit": ledger_sha,
                 "public_url": (
-                    f"https://github.com/macanderson/stella/commit/{ledger_sha}"
+                    f"https://github.com/oxagenai/stella/commit/{ledger_sha}"
                 ),
                 "published_at": published_at,
             }
@@ -985,8 +985,8 @@ class _FakePublicIntentReader:
         assert isinstance(commit_sha, str) and len(commit_sha) == 40
         return {
             "sha": commit_sha,
-            "url": f"https://api.github.com/repos/macanderson/stella/commits/{commit_sha}",
-            "html_url": f"https://github.com/macanderson/stella/commit/{commit_sha}",
+            "url": f"https://api.github.com/repos/oxagenai/stella/commits/{commit_sha}",
+            "html_url": f"https://github.com/oxagenai/stella/commit/{commit_sha}",
             "commit": {"tree": {"sha": commit_sha}},
         }
 
@@ -1550,7 +1550,7 @@ def test_exec_bundles_only_roster_key_and_scrubs_unrelated_keys(
         == hashlib.sha256(receipt_path.read_bytes()).hexdigest()
     )
     assert sidecar["public_report"] == {
-        "repository": "macanderson/stella",
+        "repository": "oxagenai/stella",
         "commit": public_reader.ledger_commit,
         "path": host_module.public_report_path(public_reader.intent_sha256),
         "sha256": hashlib.sha256(public_reader.host_report).hexdigest(),
@@ -2167,7 +2167,7 @@ def test_public_intent_failure_never_reserves_or_execs(
         public_reader.comment["user"] = {"login": "someone-else"}
     elif failure_case == "wrong-returned-url":
         public_reader.comment["html_url"] = (
-            "https://github.com/macanderson/stella/issues/123#issuecomment-999"
+            "https://github.com/oxagenai/stella/issues/123#issuecomment-999"
         )
     elif failure_case == "private":
         public_reader.repository["private"] = True
@@ -2495,9 +2495,9 @@ def test_arbitrary_confirmatory_task_set_never_reserves_or_execs(
 @pytest.mark.parametrize(
     "comment_url",
     [
-        "https://api.github.com/repos/macanderson/stella/issues/comments/456",
+        "https://api.github.com/repos/oxagenai/stella/issues/comments/456",
         "https://github.com/other/stella/issues/123#issuecomment-456",
-        "https://github.com/macanderson/stella/issues/123#issuecomment-456?x=1",
+        "https://github.com/oxagenai/stella/issues/123#issuecomment-456?x=1",
     ],
 )
 def test_intent_comment_url_requires_exact_fixed_repository_html_form(
@@ -3030,14 +3030,14 @@ def test_default_github_reader_uses_no_auth_or_ambient_proxy(
             return 200
 
         def geturl(self) -> str:
-            return "https://api.github.com/repos/macanderson/stella"
+            return "https://api.github.com/repos/oxagenai/stella"
 
         def read(self, _limit: int) -> bytes:
             return json.dumps(
                 {
-                    "full_name": "macanderson/stella",
-                    "url": "https://api.github.com/repos/macanderson/stella",
-                    "html_url": "https://github.com/macanderson/stella",
+                    "full_name": "oxagenai/stella",
+                    "url": "https://api.github.com/repos/oxagenai/stella",
+                    "html_url": "https://github.com/oxagenai/stella",
                     "private": False,
                 }
             ).encode()

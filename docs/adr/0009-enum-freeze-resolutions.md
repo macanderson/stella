@@ -10,7 +10,7 @@ status: implemented
   resolved by existing spec/ADR; three (decisions 1, 3, and 5a) ratified here.
 - Date: 2026-07-24
 - Deciders: repository owner (ratified 2026-07-24)
-- Tracking: [issue #483](https://github.com/macanderson/stella/issues/483)
+- Tracking: [issue #483](https://github.com/oxagenai/stella/issues/483)
   (part of Epic #469)
 
 ## Context

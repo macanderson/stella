@@ -33,7 +33,7 @@ Either way, the full local record always stays on your machine.
 
 ## stella-examples
 
-[github.com/macanderson/stella-examples](https://github.com/macanderson/stella-examples)
+[github.com/oxagenai/stella-examples](https://github.com/oxagenai/stella-examples)
 is an open library of working examples for stella: one for every
 configurable part of the CLI. Each file matches the format stella actually
 reads, and each directory's README says exactly where the file goes on
@@ -41,107 +41,107 @@ disk. Clone it, copy a file into place, and it works.
 
 <CardGrid size="md">
   <SpecCard title="Settings profiles">
-    [minimal](https://github.com/macanderson/stella-examples/blob/main/settings/minimal.settings.json),
-    [balanced](https://github.com/macanderson/stella-examples/blob/main/settings/balanced.settings.json),
-    [max-quality](https://github.com/macanderson/stella-examples/blob/main/settings/max-quality.settings.json),
-    [dirt-cheap](https://github.com/macanderson/stella-examples/blob/main/settings/dirt-cheap.settings.json),
-    [local-ollama](https://github.com/macanderson/stella-examples/blob/main/settings/local-ollama.settings.json),
-    and [team](https://github.com/macanderson/stella-examples/blob/main/settings/team.settings.json)
+    [minimal](https://github.com/oxagenai/stella-examples/blob/main/settings/minimal.settings.json),
+    [balanced](https://github.com/oxagenai/stella-examples/blob/main/settings/balanced.settings.json),
+    [max-quality](https://github.com/oxagenai/stella-examples/blob/main/settings/max-quality.settings.json),
+    [dirt-cheap](https://github.com/oxagenai/stella-examples/blob/main/settings/dirt-cheap.settings.json),
+    [local-ollama](https://github.com/oxagenai/stella-examples/blob/main/settings/local-ollama.settings.json),
+    and [team](https://github.com/oxagenai/stella-examples/blob/main/settings/team.settings.json)
     `settings.json` profiles, plus the
-    [`credentials.toml`](https://github.com/macanderson/stella-examples/blob/main/settings/credentials.example.toml)
+    [`credentials.toml`](https://github.com/oxagenai/stella-examples/blob/main/settings/credentials.example.toml)
     shape. These are the model lineups from the docs, ready to copy.
 
-    [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/settings) · [Examples docs](/docs/examples)
+    [Browse the directory](https://github.com/oxagenai/stella-examples/tree/main/settings) · [Examples docs](/docs/examples)
   </SpecCard>
   <SpecCard title="Lifecycle hooks">
-    A [`SessionStart` context injector](https://github.com/macanderson/stella-examples/blob/main/hooks/scripts/session-context.sh),
-    a [`PreToolUse` bash guard](https://github.com/macanderson/stella-examples/blob/main/hooks/scripts/guard-bash.sh)
+    A [`SessionStart` context injector](https://github.com/oxagenai/stella-examples/blob/main/hooks/scripts/session-context.sh),
+    a [`PreToolUse` bash guard](https://github.com/oxagenai/stella-examples/blob/main/hooks/scripts/guard-bash.sh)
     that blocks destructive commands, and a
-    [`PostToolUse` JSONL audit log](https://github.com/macanderson/stella-examples/blob/main/hooks/scripts/log-tool-use.sh),
+    [`PostToolUse` JSONL audit log](https://github.com/oxagenai/stella-examples/blob/main/hooks/scripts/log-tool-use.sh),
     all wired together in one
-    [`hooks` block](https://github.com/macanderson/stella-examples/blob/main/hooks/settings.json).
+    [`hooks` block](https://github.com/oxagenai/stella-examples/blob/main/hooks/settings.json).
 
-    [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/hooks) · [Hooks docs](/docs/agent-tools/hooks)
+    [Browse the directory](https://github.com/oxagenai/stella-examples/tree/main/hooks) · [Hooks docs](/docs/agent-tools/hooks)
   </SpecCard>
   <SpecCard title="Custom commands">
-    [`/fix-issue`](https://github.com/macanderson/stella-examples/blob/main/commands/fix-issue.md)
+    [`/fix-issue`](https://github.com/oxagenai/stella-examples/blob/main/commands/fix-issue.md)
     (with `$ARGUMENTS`),
-    [`/changelog`](https://github.com/macanderson/stella-examples/blob/main/commands/changelog.md),
-    and [`/pr-description`](https://github.com/macanderson/stella-examples/blob/main/commands/pr-description.md).
+    [`/changelog`](https://github.com/oxagenai/stella-examples/blob/main/commands/changelog.md),
+    and [`/pr-description`](https://github.com/oxagenai/stella-examples/blob/main/commands/pr-description.md).
 
-    [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/commands) · [Commands docs](/docs/agent-tools/commands)
+    [Browse the directory](https://github.com/oxagenai/stella-examples/tree/main/commands) · [Commands docs](/docs/agent-tools/commands)
   </SpecCard>
   <SpecCard title="Custom agents">
-    [`code-reviewer`](https://github.com/macanderson/stella-examples/blob/main/agents/code-reviewer.md)
+    [`code-reviewer`](https://github.com/oxagenai/stella-examples/blob/main/agents/code-reviewer.md)
     (read-only toolbelt),
-    [`test-writer`](https://github.com/macanderson/stella-examples/blob/main/agents/test-writer.md)
+    [`test-writer`](https://github.com/oxagenai/stella-examples/blob/main/agents/test-writer.md)
     (witness tests), and
-    [`docs-writer`](https://github.com/macanderson/stella-examples/blob/main/agents/docs-writer.md)
+    [`docs-writer`](https://github.com/oxagenai/stella-examples/blob/main/agents/docs-writer.md)
     (no shell).
 
-    [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/agents) · [Custom agents docs](/docs/agent-tools/custom-agents)
+    [Browse the directory](https://github.com/oxagenai/stella-examples/tree/main/agents) · [Custom agents docs](/docs/agent-tools/custom-agents)
   </SpecCard>
   <SpecCard title="Skills">
-    [`conventional-commits`](https://github.com/macanderson/stella-examples/blob/main/skills/conventional-commits/SKILL.md)
-    and [`release-checklist`](https://github.com/macanderson/stella-examples/blob/main/skills/release-checklist/SKILL.md).
+    [`conventional-commits`](https://github.com/oxagenai/stella-examples/blob/main/skills/conventional-commits/SKILL.md)
+    and [`release-checklist`](https://github.com/oxagenai/stella-examples/blob/main/skills/release-checklist/SKILL.md).
 
-    [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/skills) · [Skills docs](/docs/agent-tools/skills)
+    [Browse the directory](https://github.com/oxagenai/stella-examples/tree/main/skills) · [Skills docs](/docs/agent-tools/skills)
   </SpecCard>
   <SpecCard title="Rules &amp; guards">
     Hard guards:
-    [`no-force-push`](https://github.com/macanderson/stella-examples/blob/main/rules/no-force-push.md),
-    [`protect-migrations`](https://github.com/macanderson/stella-examples/blob/main/rules/protect-migrations.md),
-    and [`no-shell`](https://github.com/macanderson/stella-examples/blob/main/rules/no-shell.md).
+    [`no-force-push`](https://github.com/oxagenai/stella-examples/blob/main/rules/no-force-push.md),
+    [`protect-migrations`](https://github.com/oxagenai/stella-examples/blob/main/rules/protect-migrations.md),
+    and [`no-shell`](https://github.com/oxagenai/stella-examples/blob/main/rules/no-shell.md).
     Plus a soft
-    [`code-conventions`](https://github.com/macanderson/stella-examples/blob/main/rules/code-conventions.md)
+    [`code-conventions`](https://github.com/oxagenai/stella-examples/blob/main/rules/code-conventions.md)
     rule.
 
-    [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/rules) · [Permissions docs](/docs/agent-tools/permissions)
+    [Browse the directory](https://github.com/oxagenai/stella-examples/tree/main/rules) · [Permissions docs](/docs/agent-tools/permissions)
   </SpecCard>
   <SpecCard title="Custom tools">
-    [`todo_scan`](https://github.com/macanderson/stella-examples/blob/main/tools/todo-scan.toml)
+    [`todo_scan`](https://github.com/oxagenai/stella-examples/blob/main/tools/todo-scan.toml)
     (input schema + `STELLA_INPUT_*` env) and
-    [`loc_report`](https://github.com/macanderson/stella-examples/blob/main/tools/loc-report.toml)
+    [`loc_report`](https://github.com/oxagenai/stella-examples/blob/main/tools/loc-report.toml)
     (minimal manifest).
 
-    [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/tools) · [Custom tools docs](/docs/agent-tools/custom-tools)
+    [Browse the directory](https://github.com/oxagenai/stella-examples/tree/main/tools) · [Custom tools docs](/docs/agent-tools/custom-tools)
   </SpecCard>
   <SpecCard title="MCP servers">
-    An [`mcp.toml`](https://github.com/macanderson/stella-examples/blob/main/mcp/mcp.toml)
+    An [`mcp.toml`](https://github.com/oxagenai/stella-examples/blob/main/mcp/mcp.toml)
     with both stdio and HTTP transports.
 
-    [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/mcp) · [MCP servers docs](/docs/agent-tools/mcp)
+    [Browse the directory](https://github.com/oxagenai/stella-examples/tree/main/mcp) · [MCP servers docs](/docs/agent-tools/mcp)
   </SpecCard>
   <SpecCard title="Fleet plans">
     A feature build-out plan in
-    [TOML](https://github.com/macanderson/stella-examples/blob/main/fleet/plan.toml)
+    [TOML](https://github.com/oxagenai/stella-examples/blob/main/fleet/plan.toml)
     and a parallel cleanup sweep in
-    [JSON](https://github.com/macanderson/stella-examples/blob/main/fleet/plan.json),
+    [JSON](https://github.com/oxagenai/stella-examples/blob/main/fleet/plan.json),
     both using claims and worktree isolation.
 
-    [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/fleet) · [Agent fleets docs](/docs/agent-fleets)
+    [Browse the directory](https://github.com/oxagenai/stella-examples/tree/main/fleet) · [Agent fleets docs](/docs/agent-fleets)
   </SpecCard>
   <SpecCard title="Memory &amp; domains">
     A hand-tuned
-    [`domains.toml`](https://github.com/macanderson/stella-examples/blob/main/memory/domains.toml),
+    [`domains.toml`](https://github.com/oxagenai/stella-examples/blob/main/memory/domains.toml),
     and the lesson-to-skill-to-rule promotion loop.
 
-    [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/memory) · [Memory docs](/docs/commands/memory)
+    [Browse the directory](https://github.com/oxagenai/stella-examples/tree/main/memory) · [Memory docs](/docs/commands/memory)
   </SpecCard>
   <SpecCard title="Scripting &amp; CI">
-    [`ci-autofix.sh`](https://github.com/macanderson/stella-examples/blob/main/scripting/ci-autofix.sh)
+    [`ci-autofix.sh`](https://github.com/oxagenai/stella-examples/blob/main/scripting/ci-autofix.sh)
     (budget-capped, with a verification check armed) and
-    [`nightly-goal.sh`](https://github.com/macanderson/stella-examples/blob/main/scripting/nightly-goal.sh)
+    [`nightly-goal.sh`](https://github.com/oxagenai/stella-examples/blob/main/scripting/nightly-goal.sh)
     (goal runs you can schedule with cron).
 
-    [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/scripting) · [Scripting docs](/docs/scripting)
+    [Browse the directory](https://github.com/oxagenai/stella-examples/tree/main/scripting) · [Scripting docs](/docs/scripting)
   </SpecCard>
 </CardGrid>
 
 Clone it once, and the whole library is a single `cp` away:
 
 ```bash
-git clone https://github.com/macanderson/stella-examples.git
+git clone https://github.com/oxagenai/stella-examples.git
 cd your-project
 
 # A settings profile — user scope, so every project inherits it.
@@ -165,10 +165,10 @@ cloned repository until you opt in with `STELLA_TRUST_PROJECT=1`.
 ## Add your project
 
 Shipping with stella? Open a pull request against
-[macanderson/stella](https://github.com/macanderson/stella) that adds an
+[oxagenai/stella](https://github.com/oxagenai/stella) that adds an
 entry to `website/content/docs/showcase.mdx`: who you are, a link, and a
 few sentences on how stella fits your workflow. Entries should be real,
 shipped projects — a hello-world example fits better in the
 [examples](/docs/examples) page. If you have a hook, agent, profile, or
 plan worth sharing instead, send it to
-[stella-examples](https://github.com/macanderson/stella-examples).
+[stella-examples](https://github.com/oxagenai/stella-examples).

@@ -8,7 +8,7 @@ status: implemented
 
 - Status: **Implemented** — landed with #5032.
 - Date: 2026-08-27
-- Tracking: [issue #5032](https://github.com/macanderson/stella/issues/5032)
+- Tracking: [issue #5032](https://github.com/oxagenai/stella/issues/5032)
 
 ## Context
 

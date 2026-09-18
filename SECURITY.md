@@ -10,7 +10,7 @@ we appreciate the researchers who help keep it tight.
 **Please do not open a public issue for security problems.**
 
 Report privately via
-[GitHub's private vulnerability reporting](https://github.com/macanderson/stella/security/advisories/new)
+[GitHub's private vulnerability reporting](https://github.com/oxagenai/stella/security/advisories/new)
 — it goes straight to the maintainers, and you get credit in the advisory when
 it's published.
 
@@ -98,13 +98,13 @@ verifier that cannot run (no `gh`, a `gh` too old, or a release predating
 provenance) is a warning — so to demand the strong guarantee, ask for it:
 
 ```bash
-STELLA_REQUIRE_PROVENANCE=1 curl -fsSL https://raw.githubusercontent.com/macanderson/stella/main/install.sh | sh
+STELLA_REQUIRE_PROVENANCE=1 curl -fsSL https://raw.githubusercontent.com/oxagenai/stella/main/install.sh | sh
 ```
 
 To verify an already-downloaded artifact by hand:
 
 ```bash
-gh attestation verify stella-<version>-<target>.tar.gz --repo macanderson/stella
+gh attestation verify stella-<version>-<target>.tar.gz --repo oxagenai/stella
 ```
 
 Releases cut through the degraded local path (`scripts/release.sh`, used only

@@ -1412,20 +1412,20 @@ mod tests {
     #[test]
     fn pr_number_parses_from_pull_urls_only() {
         assert_eq!(
-            parse_pr_number("https://github.com/macanderson/stella/pull/183"),
+            parse_pr_number("https://github.com/oxagenai/stella/pull/183"),
             Some(183)
         );
         assert_eq!(
-            parse_pr_number("https://github.com/macanderson/stella/pull/183/"),
+            parse_pr_number("https://github.com/oxagenai/stella/pull/183/"),
             Some(183)
         );
         assert_eq!(
-            parse_pr_number("https://github.com/macanderson/stella/issues/183"),
+            parse_pr_number("https://github.com/oxagenai/stella/issues/183"),
             None
         );
         assert_eq!(parse_pr_number("not a url"), None);
         assert_eq!(
-            parse_pr_number("https://github.com/macanderson/stella/pull/abc"),
+            parse_pr_number("https://github.com/oxagenai/stella/pull/abc"),
             None
         );
     }

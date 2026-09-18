@@ -172,7 +172,7 @@ failing run, and the canary closes it itself on the next green run.
 
 \`\`\`sh
 gh run view --log-failed \\
-  \"\$(gh run list --repo macanderson/stella --workflow CodeQL --limit 1 \\
+  \"\$(gh run list --repo oxagenai/stella --workflow CodeQL --limit 1 \\
       --json databaseId --jq '.[0].databaseId')\"
 \`\`\`
 

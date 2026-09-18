@@ -47,7 +47,7 @@ export NEW_VERSION
 changelog="${1:-CHANGELOG.md}"
 
 # The releases page carries every tag's notes; the fallback body points there.
-releases_url="https://github.com/macanderson/stella/releases"
+releases_url="https://github.com/oxagenai/stella/releases"
 
 # Checking the patch component here — rather than trusting a caller to pass the
 # bump kind — keeps the rule true at both call sites with no third place to

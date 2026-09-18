@@ -1170,7 +1170,7 @@ def _validate_publications(
         )
         if (
             record["public_url"]
-            != f"https://github.com/macanderson/stella/commit/{commit}"
+            != f"https://github.com/oxagenai/stella/commit/{commit}"
         ):
             raise ValueError(f"{label} public URL is not the immutable ledger commit")
         _require_timestamp(record["published_at"], label=f"{label} published_at")
