@@ -21,9 +21,9 @@ Every text role that carries meaning clears 4.5:1 on its ground, and the build c
 
 ## Gold
 
-`#D4AF37`, bright `#F1CE65`, deep `#977017`. The bright and deep shades are derived from the gold in OKLCH, not picked. Gold is the identity. It appears in the hive's two lit cells, the x of oxagen, and the asterisk of stella, and on at most one action per screen. The focus ring is gold too, because it marks where the one action is. Gold is never a state colour, never a surface fill, never a border on a card, never a highlight on a row, and never a paragraph or a full heading. If a second gold thing appears on a screen, one of them is wrong.
+`#D4AF37`, bright `#F1CE65`, deep `#8A7223`. The bright and deep shades are derived from the gold in OKLCH, not picked. Gold is the identity. It appears in the hive's two lit cells, the x of oxagen, and the asterisk of stella, and on at most one action per screen. The focus ring is gold too, because it marks where the one action is. Gold is never a state colour, never a surface fill, never a border on a card, never a highlight on a row, and never a paragraph or a full heading. If a second gold thing appears on a screen, one of them is wrong.
 
-Gold on obsidian is 9.5:1. Gold on white is 2.1:1, so gold as text on white is always the deep shade (4.5:1). The mark keeps its metal; words do not.
+Gold on obsidian is 9.5:1. Gold on white is 2.1:1, so gold as text on white is always the deep shade (4.7:1). The mark keeps its metal; words do not.
 
 ## State by shape
 
@@ -35,7 +35,7 @@ Verdicts and statuses are carried by border shape, not colour, so they survive g
 | pending, approval | dashed border |
 | broken, denied, failed | single border |
 
-The semantic colours (`--st-allowed`, `--st-approval`, `--st-denied`, `--st-proven`, `--st-failed`, `--st-critical`) exist for badges and dots inside tables where shape alone is too small to read. They are never the only signal. The destructive red (`#D5584D` on obsidian, `#992F28` on white) is the one state colour that is also text and a button fill, and it clears 4.5:1 both ways.
+The semantic colours (`--state-allowed`, `--state-approval`, `--state-denied`, `--state-proven`, `--state-failed`, `--state-critical`) exist for badges and dots inside tables where shape alone is too small to read. They are never the only signal. The destructive red (`#D5584D` on obsidian, `#992F28` on white) is the one state colour that is also text and a button fill, and it clears 4.5:1 both ways.
 
 ## Type
 

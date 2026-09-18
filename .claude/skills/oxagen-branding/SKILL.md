@@ -91,5 +91,5 @@ Full guidance, with before and after pairs, is in `references/voice.md`.
 - [ ] Space Grotesk for wordmarks and h1 to h3 only, Geist for h4 to h6, body, and UI, Monaspace Neon for code, data, digests, and commands
 - [ ] One type scale per surface: marketing (`text-m-*`) or app (`text-a-*`)
 - [ ] 12px card radius, 1120px wrap, dark first on obsidian with the white light theme intact
-- [ ] Gold as text on white is gold-deep `#977017`
+- [ ] Gold as text on white is gold-deep `#8A7223`
 - [ ] Every text role that carries meaning clears 4.5:1 on its ground

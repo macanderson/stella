@@ -167,21 +167,16 @@ def check_clamp(
                 f"authors one."
             )
         return None
-    if clamp == "warm-neutral":
-        # One clamp for every neutral in the system. v5.0 needed three because
-        # it had three neutral families (a blue-tipped dark ramp, two silvers,
-        # a warm paper ramp); the house system has one, warm end to end.
-        if not (r >= g >= b):
+    if clamp == "neutral":
+        # One clamp for every neutral in the system: a grey carries no hue, in
+        # either direction. v6.0 held the ramp warm (r >= g >= b); the house
+        # system's zinc ramp leans a few units blue, so the law is the spread.
+        spread = max(r, g, b) - min(r, g, b)
+        if spread > spec["spread"]:
             return (
-                f"{name} {hexv} fails warm-neutral: needs r >= g >= b -- warm "
-                f"or neutral, never cool; got r={r} g={g} b={b}"
-            )
-        if g * 100 < r * spec["green_pct"] or b * 100 < r * spec["blue_pct"]:
-            return (
-                f"{name} {hexv} fails warm-neutral floors: needs "
-                f"100*g >= {spec['green_pct']}*r and 100*b >= {spec['blue_pct']}*r; "
-                f"got r={r} g={g} b={b}. Below the floors a grey reads as sepia "
-                f"and the gold stops reading as a separate colour."
+                f"{name} {hexv} fails neutral: its channels spread {spread}, over "
+                f"{spec['spread']}; got r={r} g={g} b={b}. A grey that carries a hue "
+                f"competes with the gold."
             )
         return None
     if clamp in ("verdict", "surface"):
@@ -346,7 +341,7 @@ def render_rust(doc: dict) -> str:
     resting = clamps["resting-gold"]
     lift = clamps["gold-lift"]
     shade = clamps["gold-shade"]
-    neutral = clamps["warm-neutral"]
+    neutral = clamps["neutral"]
 
     def doc_block(text, indent: str = "//! ") -> list[str]:
         if isinstance(text, str):
@@ -418,15 +413,12 @@ def render_rust(doc: dict) -> str:
         "/// The name, in [`ALL`], of the token a shade is anchored to.",
         f'pub const GOLD_SHADE_ANCHOR: &str = "{shade["anchor"]}";',
         "",
-        "/// The green floor every neutral must clear, as a percentage of red.",
+        "/// The widest spread of channels a neutral may have: max - min.",
         "///",
     ]
     out += doc_block(neutral["why"], "/// ")
     out += [
-        f"pub const NEUTRAL_GREEN_PCT: u32 = {neutral['green_pct']};",
-        "",
-        "/// The blue floor every neutral must clear, as a percentage of red.",
-        f"pub const NEUTRAL_BLUE_PCT: u32 = {neutral['blue_pct']};",
+        f"pub const NEUTRAL_SPREAD: u8 = {neutral['spread']};",
         "",
         "// ── Tokens ─────────────────────────────────────────────────────────",
         "",
@@ -459,10 +451,9 @@ def render_rust(doc: dict) -> str:
         "    /// [`Clamp::GoldLift`], and what frees the green ratio from policing",
         "    /// a value that darkening moves off it.",
         "    GoldShade,",
-        "    /// `r >= g >= b`, `100 g >= NEUTRAL_GREEN_PCT r`,",
-        "    /// `100 b >= NEUTRAL_BLUE_PCT r` -- every neutral in the system, ink to",
-        "    /// paper. Warm or exactly neutral, never cool.",
-        "    WarmNeutral,",
+        "    /// `max(r, g, b) - min(r, g, b) <= NEUTRAL_SPREAD` -- every neutral in",
+        "    /// the system, ink to paper. A grey carries no hue, in either direction.",
+        "    Neutral,",
         "    /// Pass and fail. Neither metal nor gray; no channel predicate.",
         "    Verdict,",
         "    /// A tint carrying a sign column, not a hue in a role; no channel predicate.",
@@ -476,7 +467,7 @@ def render_rust(doc: dict) -> str:
         "resting-gold": "Clamp::RestingGold",
         "gold-lift": "Clamp::GoldLift",
         "gold-shade": "Clamp::GoldShade",
-        "warm-neutral": "Clamp::WarmNeutral",
+        "neutral": "Clamp::Neutral",
         "verdict": "Clamp::Verdict",
         "surface": "Clamp::Surface",
     }

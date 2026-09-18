@@ -238,7 +238,7 @@ PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
         # An issue number in prose sends the reader to a tracker to find out
         # what the sentence means. The sentence must say it instead. Tracking
         # markers (TODO and friends) keep theirs: a gate requires them there.
-        # Two more are not prose. A CSS hex reads as one -- `#10100F` as issue
+        # Two more are not prose. A CSS hex reads as one -- `#09090B` as issue
         # 10100 -- so the six- and eight-digit forms are exempt. And an
         # `issue:` field is a value a type requires, with no sentence in it.
         re.compile(r"^(?!.*(?:TODO|FIXME|XXX|HACK|Closes #|Refs #|issue: \"#)).*?"
