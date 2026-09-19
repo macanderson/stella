@@ -108,16 +108,14 @@ pub const GOLD_SHADE_ANCHOR: &str = "gold";
 
 /// The widest spread of channels a neutral may have: max - min.
 ///
-/// One neutral clamp for the whole system, ink to paper. v6.0's `warm-neutral`
-/// held every grey to r >= g >= b; the house system's zinc ramp leans a few units
-/// blue (its 500 step has b - r = 9), so the direction clause no longer describes it.
+/// One neutral clamp for the whole system, ink to paper. The house system's
+/// zinc ramp leans a few units blue (its 500 step has b - r = 9).
 ///
-/// What a black-and-gold scheme must still never do is let a grey carry a hue:
-/// a tan grey competes with the gold, a blue one fights it. A bound on the
-/// spread of the channels says exactly that, in both directions. 12 is the
-/// tightest bound the zinc ramp clears with room (its widest stop spreads 9) and
-/// the loosest that still rejects the sepia v6.0's floors were written against
-/// (a sepia grey spreading 13).
+/// A black-and-gold scheme must not let a grey carry a hue: a tan grey competes
+/// with the gold, a blue one fights it. A bound on the spread of the channels
+/// says exactly that, in both directions. 12 is the tightest bound the zinc
+/// ramp clears with room (its widest stop spreads 9) and the loosest that still
+/// rejects a sepia grey spreading 13.
 pub const NEUTRAL_SPREAD: u8 = 12;
 
 // ── Tokens ─────────────────────────────────────────────────────────

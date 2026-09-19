@@ -17,7 +17,7 @@ import { SITE_NAME, SITE_URL } from "@/lib/site";
  * GEIST is the text face: body, h4 to h6, UI, navigation.
  *
  * MONASPACE NEON is the code face: code and terminal transcripts, where column
- * alignment is load-bearing, with texture healing on.
+ * alignment is required, with texture healing on.
  */
 const display = localFont({
   src: [

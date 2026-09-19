@@ -20,15 +20,15 @@
 //! in both. It became sRGB (HSV) hue, which fixed that.
 //!
 //! sRGB hue in turn breaks against a *yellow* brand, because sRGB's hue circle
-//! is badly non-uniform through the warm quadrant. Measured on this palette's
-//! own values: the accent and the success green are 79.0° apart in OKLCH but
-//! 103.1° in sRGB, while the accent and the danger rose are 63.7° in OKLCH but
-//! 47.9° in sRGB — sRGB stretches yellow→green and compresses yellow→red by
-//! roughly 20° each. The consequence is not academic. The 47.9° sRGB arc
-//! between the accent and danger cannot hold a warning 30° from both, so that
-//! metric rejects the one hue which is *actually* 31.8° from each. It is an
-//! unbuildable law, not a strict one — and the house gold narrows the arc, so
-//! the metric decides whether this palette can be built at all.
+//! is badly non-uniform through the warm quadrant. Measured on this palette:
+//! accent and success green are 62.8° apart in OKLCH but 94.6° in sRGB; accent
+//! and danger rose are 79.9° in OKLCH but 56.4° in sRGB — sRGB stretches
+//! yellow→green and compresses yellow→red by tens of degrees each. The warning
+//! sits 48.0° from the accent and 31.8° from danger in OKLCH, clearing the
+//! floor on both sides, yet only 28.2° from the accent in sRGB — so that metric
+//! rejects a hue the eye and OKLCH both accept. It is an unbuildable law, not a
+//! strict one — and the house gold narrows the arc, so the metric decides
+//! whether this palette can be built at all.
 //!
 //! Do not re-derive the metric a third time without stating why, here.
 //!
@@ -46,10 +46,9 @@
 /// the instrument-surface parity test — one law with two numbers, which means
 /// the stricter one was never the law and the looser one was never enforced
 /// (#4071). Every shipped pair clears 30° on both web schemes; the tightest is
-/// `--identity` to `--warn` at 31.8° dark and 31.4° light.
+/// `--warn` to `--bad` at 31.8° dark and 31.1° light.
 ///
-/// That pair is tight by design. The house gold sits 16° nearer the warning
-/// than the gold before it. So the warning was re-cut to the hue with the
+/// That pair is tight by design. The warning was cut to the hue with the
 /// widest smallest gap: to the identity on one side, the danger rose on the
 /// other. The whole arc holds about two degrees of room. A warning anywhere
 /// else in it fails this floor.

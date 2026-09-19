@@ -248,13 +248,10 @@ pub fn is_shade_of(shade: (u8, u8, u8), base: (u8, u8, u8)) -> bool {
 /// `max(r, g, b) - min(r, g, b) <= NEUTRAL_SPREAD`. One predicate for every
 /// neutral in the system, ink to paper.
 ///
-/// v6.0 held the ramp warm (`r >= g >= b` with green and blue floors). The house
-/// system moved to obsidian and white with a zinc ramp that leans a few units
-/// blue (its 500 step has `b - r = 9`), so the direction clause no longer describes
-/// it. What must still never happen is a grey that carries a hue: tan competes
-/// with the gold, blue fights it. A bound on the channel spread says that in
-/// both directions, and still rejects the sepia the old floors were written
-/// against (a sepia grey spreading 13).
+/// The house system uses obsidian and white with a zinc ramp that leans a few
+/// units blue (its 500 step has `b - r = 9`). A grey must not carry a hue: tan
+/// competes with the gold, blue fights it. A bound on the channel spread says
+/// that in both directions, and rejects a sepia grey that spreads 13.
 #[must_use]
 pub const fn is_neutral(r: u8, g: u8, b: u8) -> bool {
     let hi = if r > g {

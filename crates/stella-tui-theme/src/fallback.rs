@@ -72,17 +72,11 @@ pub fn detect_truecolor() -> bool {
 #[must_use]
 pub fn ansi16(color: Color) -> Color {
     match color {
-        // One arm per distinct value. Under v7.0 several tokens share a value,
-        // and a match on a shared value reaches only its first arm, so each
-        // shared token is named in a comment beside the arm that serves it:
-        //   `INK` is `BG`;
-        //   `INK_MUTED` is `DIM`; `PAPER`, `PAPER_RAISED`, `PAPER_PANEL` and
-        //   `PAPER_GROUND` are `TEXT`; `PAPER_BORDER` and `PAPER_SEAM` are
-        //   `SILVER_TYPE`.
-        // Where two roles once wanted different fallbacks, the dark-theme role
-        // wins: `INK_MUTED` falls to dark grey with `DIM` rather than to black,
-        // which still reads on a white ground at sixteen colours, and the paper
-        // hairlines fall to white with `SILVER_TYPE`.
+        // One arm per distinct value. Shared tokens ride the arm of the value
+        // they share: `INK` with `BG`; `INK_MUTED` with `DIM`; `PAPER`,
+        // `PAPER_RAISED`, `PAPER_PANEL`, and `PAPER_GROUND` with `TEXT`;
+        // `PAPER_BORDER` and `PAPER_SEAM` with `SILVER_TYPE`. Where two roles
+        // once wanted different fallbacks, the dark-theme role wins.
         token::BG | token::PANEL | token::DIFF_ADD_BG | token::DIFF_DEL_BG => Color::Black,
         token::HL | token::BORDER | token::RULE => Color::DarkGray,
         token::GOLD | token::GOLD_BRIGHT => Color::LightYellow,

@@ -145,7 +145,7 @@ Your operators decide what each agent is responsible for, what it may do, and wh
 Held with the dod lines, for bounded tasks only:
 
 - **Pre-committed, not post-hoc.** The dod is locked before the agent moves, and its position in the run's chain shows it.
-- **Two halves, on purpose.** The dod is visible to the agent, so drift is caught where it happens. The witness is hidden from the agent, so gaming is caught where it hides.
+- **Visible and hidden, on purpose.** The dod is visible to the agent, so drift is caught where it happens. The witness is hidden from the agent, so gaming is caught where it hides.
 - **No model in the verdict.** `decide()` is a pure function of the run's frames.
 - **Another person can recompute the verdict.** `oxagen dod verify` runs with no account and no network. It shows whether the recorded verdict matches, not that every requirement was captured.
 - **The meter follows the proof.** Charge for proven runs. Report runs and governed actions as secondary meters.

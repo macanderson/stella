@@ -146,6 +146,9 @@ EXCLUDED_PREFIXES = (
     "scripts/test-prose-guard.sh",
     "scripts/prose-baseline.txt",
     "docs/wire/",
+    # Vendored Oxagen house branding skill (`skills/install.sh --project`).
+    # Refreshed from oxagen-brand; Stella does not own its reading grade.
+    ".claude/skills/oxagen-branding/",
 )
 EXCLUDED_SUBSTRINGS = ("/snapshots/", "/fixtures/")
 

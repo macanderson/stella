@@ -14,7 +14,7 @@ A senior engineer who has read the logs and is telling you what happened.
 
 **Dry.** Understatement over emphasis. If a sentence would be stronger with the intensifier removed, remove it. Humor is allowed only as understatement and never as a joke.
 
-**Honest to the record.** Say exactly what the evidence supports and stop. A control applies to actions routed through Oxagen, and the copy says so. An observe-mode run is recorded, not enforced. A held dod means the specified checks held, not that the work is correct. Proven is the witness's word, and only beside a witness flip and its scope. The UI never shows a stronger word than the frame allows, and neither does the copy.
+**True to the record.** Say exactly what the evidence supports and stop. A control applies to actions routed through Oxagen, and the copy says so. An observe-mode run is recorded, not enforced. A held dod means the specified checks held, not that the work is correct. Proven is the witness's word, and only beside a witness flip and its scope. The UI never shows a stronger word than the frame allows, and neither does the copy.
 
 ## Tone by surface
 
