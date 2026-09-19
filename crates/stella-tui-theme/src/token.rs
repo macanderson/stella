@@ -106,68 +106,55 @@ pub const GOLD_SHADE_HUE_TOLERANCE_DEG: f64 = 4.0;
 /// The name, in [`ALL`], of the token a shade is anchored to.
 pub const GOLD_SHADE_ANCHOR: &str = "gold";
 
-/// The green floor every neutral must clear, as a percentage of red.
+/// The widest spread of channels a neutral may have: max - min.
 ///
-/// One neutral clamp for the whole system, in place of v5.0's `neutral-gray`,
-/// `cool-silver` and `warm-paper`. Three clamps answered to three neutral
-/// families: a blue-tipped dark ramp, two silvers sitting off neutral in the
-/// same direction, and a warm paper ramp. The house system has ONE -- every
-/// neutral, from #0A0A09 to #FBFAF6, is warm or exactly neutral, never blue --
-/// and three predicates over one family is three places for it to drift.
+/// One neutral clamp for the whole system, ink to paper. The house system's
+/// zinc ramp leans a few units blue (its 500 step has b - r = 9).
 ///
-/// `r >= g >= b` is the direction: warm or neutral, never cool. The floors stop
-/// it turning tan or sepia. That is the way a black-and-gold scheme fails:
-/// the greys creep warm one reasonable step at a time
-/// until the gold stops reading as a separate colour. 94 and 82 are the tightest
-/// integer floors the house ramp clears, measured against its two extremes: the
-/// hairline on ink (#292722, g/r 0.951) and the hairline on paper (#D8CDBD, b/r
-/// 0.875).
-///
-/// Equality is admitted on both sides because the darkest stops are neutral to
-/// the byte -- #10100F is r == g -- and rounding at that lightness has nowhere
-/// else to land.
-pub const NEUTRAL_GREEN_PCT: u32 = 94;
-
-/// The blue floor every neutral must clear, as a percentage of red.
-pub const NEUTRAL_BLUE_PCT: u32 = 82;
+/// A black-and-gold scheme must not let a grey carry a hue: a tan grey competes
+/// with the gold, a blue one fights it. A bound on the spread of the channels
+/// says exactly that, in both directions. 12 is the tightest bound the zinc
+/// ramp clears with room (its widest stop spreads 9) and the loosest that still
+/// rejects a sepia grey spreading 13.
+pub const NEUTRAL_SPREAD: u8 = 12;
 
 // ── Tokens ─────────────────────────────────────────────────────────
 
-/// Canvas. `#10100F`
-pub const BG: Color = Color::Rgb(0x10, 0x10, 0x0F);
+/// Canvas. `#09090B`
+pub const BG: Color = Color::Rgb(0x09, 0x09, 0x0B);
 
-/// Panels, cards, code blocks. `#181715`
-pub const PANEL: Color = Color::Rgb(0x18, 0x17, 0x15);
+/// Panels, cards, code blocks. `#18181B`
+pub const PANEL: Color = Color::Rgb(0x18, 0x18, 0x1B);
 
-/// Selected and hover rows. `#201F1C`
-pub const HL: Color = Color::Rgb(0x20, 0x1F, 0x1C);
+/// Selected and hover rows. `#1F1F23`
+pub const HL: Color = Color::Rgb(0x1F, 0x1F, 0x23);
 
-/// Hairlines, dividers, unfilled meter track. `#292722`
-pub const BORDER: Color = Color::Rgb(0x29, 0x27, 0x22);
+/// Hairlines, dividers, unfilled meter track. `#27272A`
+pub const BORDER: Color = Color::Rgb(0x27, 0x27, 0x2A);
 
-/// Section rules, turn boundaries. `#34322D`
-pub const RULE: Color = Color::Rgb(0x34, 0x32, 0x2D);
+/// Section rules, turn boundaries. `#3F3F46`
+pub const RULE: Color = Color::Rgb(0x3F, 0x3F, 0x46);
 
-/// The brand metal: actions, active states, money, the mark. `#D6962C`
-pub const GOLD: Color = Color::Rgb(0xD6, 0x96, 0x2C);
+/// The brand metal: actions, active states, money, the mark. `#D4AF37`
+pub const GOLD: Color = Color::Rgb(0xD4, 0xAF, 0x37);
 
-/// Tiny live indicators only: spinner, hot marker, drift glyph. `#F1C364`
-pub const GOLD_BRIGHT: Color = Color::Rgb(0xF1, 0xC3, 0x64);
+/// Tiny live indicators only: spinner, hot marker, drift glyph. `#F1CE65`
+pub const GOLD_BRIGHT: Color = Color::Rgb(0xF1, 0xCE, 0x65);
 
-/// Secondary emphasis, incoming context, syntax strings. `#9B958A`
-pub const SILVER: Color = Color::Rgb(0x9B, 0x95, 0x8A);
+/// Secondary emphasis, incoming context, syntax strings. `#A1A1AA`
+pub const SILVER: Color = Color::Rgb(0xA1, 0xA1, 0xAA);
 
-/// Syntax types, tertiary labels. `#DDD8CD`
-pub const SILVER_TYPE: Color = Color::Rgb(0xDD, 0xD8, 0xCD);
+/// Syntax types, tertiary labels. `#E4E4E7`
+pub const SILVER_TYPE: Color = Color::Rgb(0xE4, 0xE4, 0xE7);
 
-/// Primary text on the dark canvas, in the deck and off it. `#F2EEE5`
-pub const TEXT: Color = Color::Rgb(0xF2, 0xEE, 0xE5);
+/// Primary text on the dark canvas, in the deck and off it. `#FFFFFF`
+pub const TEXT: Color = Color::Rgb(0xFF, 0xFF, 0xFF);
 
-/// Secondary text. `#8C877C`
-pub const MUTED: Color = Color::Rgb(0x8C, 0x87, 0x7C);
+/// Secondary text. `#8A8A93`
+pub const MUTED: Color = Color::Rgb(0x8A, 0x8A, 0x93);
 
-/// Hints, captions, line numbers. `#6E6A62`
-pub const DIM: Color = Color::Rgb(0x6E, 0x6A, 0x62);
+/// Hints, captions, line numbers. `#71717A`
+pub const DIM: Color = Color::Rgb(0x71, 0x71, 0x7A);
 
 /// Pass, additive diff sign. `#74C991`
 pub const GREEN: Color = Color::Rgb(0x74, 0xC9, 0x91);
@@ -181,32 +168,32 @@ pub const DIFF_ADD_BG: Color = Color::Rgb(0x10, 0x20, 0x1A);
 /// Removed diff row background. `#241019`
 pub const DIFF_DEL_BG: Color = Color::Rgb(0x24, 0x10, 0x19);
 
-/// Primary text on light surfaces (web light mode only). `#10100F`
-pub const INK: Color = Color::Rgb(0x10, 0x10, 0x0F);
+/// Primary text on light surfaces (web light mode only). `#09090B`
+pub const INK: Color = Color::Rgb(0x09, 0x09, 0x0B);
 
-/// The warm light canvas. `#FBFAF6`
-pub const PAPER: Color = Color::Rgb(0xFB, 0xFA, 0xF6);
+/// The warm light canvas. `#FFFFFF`
+pub const PAPER: Color = Color::Rgb(0xFF, 0xFF, 0xFF);
 
-/// Light panel. `#F5F2EA`
-pub const PAPER_PANEL: Color = Color::Rgb(0xF5, 0xF2, 0xEA);
+/// Light panel. `#FFFFFF`
+pub const PAPER_PANEL: Color = Color::Rgb(0xFF, 0xFF, 0xFF);
 
-/// Light border. `#DED5C7`
-pub const PAPER_BORDER: Color = Color::Rgb(0xDE, 0xD5, 0xC7);
+/// Light border. `#E4E4E7`
+pub const PAPER_BORDER: Color = Color::Rgb(0xE4, 0xE4, 0xE7);
 
-/// The warm paper page ground, one step under the panel. `#F2EEE5`
-pub const PAPER_GROUND: Color = Color::Rgb(0xF2, 0xEE, 0xE5);
+/// The warm paper page ground, one step under the panel. `#FFFFFF`
+pub const PAPER_GROUND: Color = Color::Rgb(0xFF, 0xFF, 0xFF);
 
-/// Light surface raised above the page ground. `#F8F5EE`
-pub const PAPER_RAISED: Color = Color::Rgb(0xF8, 0xF5, 0xEE);
+/// Light surface raised above the page ground. `#FFFFFF`
+pub const PAPER_RAISED: Color = Color::Rgb(0xFF, 0xFF, 0xFF);
 
-/// Light hover and selected rows. `#E5DED1`
-pub const PAPER_ROW: Color = Color::Rgb(0xE5, 0xDE, 0xD1);
+/// Light hover and selected rows. `#F4F4F5`
+pub const PAPER_ROW: Color = Color::Rgb(0xF4, 0xF4, 0xF5);
 
-/// Light seam: the hairline under a border. `#D8CDBD`
-pub const PAPER_SEAM: Color = Color::Rgb(0xD8, 0xCD, 0xBD);
+/// Light seam: the hairline under a border. `#E4E4E7`
+pub const PAPER_SEAM: Color = Color::Rgb(0xE4, 0xE4, 0xE7);
 
-/// Secondary text on light surfaces. `#6B665C`
-pub const INK_MUTED: Color = Color::Rgb(0x6B, 0x66, 0x5C);
+/// Secondary text on light surfaces. `#71717A`
+pub const INK_MUTED: Color = Color::Rgb(0x71, 0x71, 0x7A);
 
 /// Warning: the one status the core palette does not name. `#EB8960`
 pub const WARNING: Color = Color::Rgb(0xEB, 0x89, 0x60);
@@ -230,10 +217,9 @@ pub enum Clamp {
     /// [`Clamp::GoldLift`], and what frees the green ratio from policing
     /// a value that darkening moves off it.
     GoldShade,
-    /// `r >= g >= b`, `100 g >= NEUTRAL_GREEN_PCT r`,
-    /// `100 b >= NEUTRAL_BLUE_PCT r` -- every neutral in the system, ink to
-    /// paper. Warm or exactly neutral, never cool.
-    WarmNeutral,
+    /// `max(r, g, b) - min(r, g, b) <= NEUTRAL_SPREAD` -- every neutral in
+    /// the system, ink to paper. A grey carries no hue, in either direction.
+    Neutral,
     /// Pass and fail. Neither metal nor gray; no channel predicate.
     Verdict,
     /// A tint carrying a sign column, not a hue in a role; no channel predicate.
@@ -242,31 +228,31 @@ pub enum Clamp {
 
 /// Every token, paired with its name and the clamp it must satisfy.
 pub const ALL: &[(&str, Color, Clamp)] = &[
-    ("bg", BG, Clamp::WarmNeutral),
-    ("panel", PANEL, Clamp::WarmNeutral),
-    ("hl", HL, Clamp::WarmNeutral),
-    ("border", BORDER, Clamp::WarmNeutral),
-    ("rule", RULE, Clamp::WarmNeutral),
+    ("bg", BG, Clamp::Neutral),
+    ("panel", PANEL, Clamp::Neutral),
+    ("hl", HL, Clamp::Neutral),
+    ("border", BORDER, Clamp::Neutral),
+    ("rule", RULE, Clamp::Neutral),
     ("gold", GOLD, Clamp::RestingGold),
     ("gold-bright", GOLD_BRIGHT, Clamp::GoldLift),
-    ("silver", SILVER, Clamp::WarmNeutral),
-    ("silver-type", SILVER_TYPE, Clamp::WarmNeutral),
-    ("text", TEXT, Clamp::WarmNeutral),
-    ("muted", MUTED, Clamp::WarmNeutral),
-    ("dim", DIM, Clamp::WarmNeutral),
+    ("silver", SILVER, Clamp::Neutral),
+    ("silver-type", SILVER_TYPE, Clamp::Neutral),
+    ("text", TEXT, Clamp::Neutral),
+    ("muted", MUTED, Clamp::Neutral),
+    ("dim", DIM, Clamp::Neutral),
     ("green", GREEN, Clamp::Verdict),
     ("red", RED, Clamp::Verdict),
     ("diff-add-bg", DIFF_ADD_BG, Clamp::Surface),
     ("diff-del-bg", DIFF_DEL_BG, Clamp::Surface),
-    ("ink", INK, Clamp::WarmNeutral),
-    ("paper", PAPER, Clamp::WarmNeutral),
-    ("paper-panel", PAPER_PANEL, Clamp::WarmNeutral),
-    ("paper-border", PAPER_BORDER, Clamp::WarmNeutral),
-    ("paper-ground", PAPER_GROUND, Clamp::WarmNeutral),
-    ("paper-raised", PAPER_RAISED, Clamp::WarmNeutral),
-    ("paper-row", PAPER_ROW, Clamp::WarmNeutral),
-    ("paper-seam", PAPER_SEAM, Clamp::WarmNeutral),
-    ("ink-muted", INK_MUTED, Clamp::WarmNeutral),
+    ("ink", INK, Clamp::Neutral),
+    ("paper", PAPER, Clamp::Neutral),
+    ("paper-panel", PAPER_PANEL, Clamp::Neutral),
+    ("paper-border", PAPER_BORDER, Clamp::Neutral),
+    ("paper-ground", PAPER_GROUND, Clamp::Neutral),
+    ("paper-raised", PAPER_RAISED, Clamp::Neutral),
+    ("paper-row", PAPER_ROW, Clamp::Neutral),
+    ("paper-seam", PAPER_SEAM, Clamp::Neutral),
+    ("ink-muted", INK_MUTED, Clamp::Neutral),
     ("amber", WARNING, Clamp::Verdict),
 ];
 

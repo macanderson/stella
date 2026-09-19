@@ -3,7 +3,7 @@
 
 `design/tokens/stella-tokens.json` states the light ground's law:
 
-    "warm-neutral": {
+    "neutral": {
       "predicate": "r >= g >= b AND 100*g >= 97*r AND 100*b >= 93*r",
       "why": "The light ground's clamp: warm or neutral, never blue."
     }
@@ -19,7 +19,7 @@ So this guard reads **surfaces**. Every light-scheme declaration on the five
 web surfaces and the command deck's paper ramp is classified and judged:
 
   1. A value that IS a kit token is held to **that token's own declared
-     clamp**. `--text: #10100F` on a light page is the dark canvas token being
+     clamp**. `--text: #09090B` on a light page is the dark canvas token being
      reused; whether that is the right value is #4072's question, and it is
      not this guard's. Whether it satisfies the clamp it declares is.
   2. A value that is NOT a token is held to the clamp of the **family its
@@ -32,7 +32,7 @@ web surfaces and the command deck's paper ramp is classified and judged:
 
 The predicates themselves are **not written here**. `gen-tokens.py`'s
 `check_clamp` is imported and called, so there is one Python implementation of
-`warm-neutral` in the repository rather than two. A predicate written twice is
+`neutral` in the repository rather than two. A predicate written twice is
 the drift this repository keeps paying for -- `clamp.rs` is the second
 implementation and `check-tokens.py` is what holds it to the first.
 
@@ -136,17 +136,17 @@ SURFACES = (
         "notation": CSS,
         "gate": (':root[data-theme="light"]{', "\n}"),
         "families": {
-            "--ground": "warm-neutral",
-            "--surface": "warm-neutral",
-            "--raised": "warm-neutral",
-            "--hairline": "warm-neutral",
-            "--hairline-strong": "warm-neutral",
-            "--sunken": "warm-neutral",
-            "--text-emph": "warm-neutral",
-            "--ink": "warm-neutral",
-            "--identity-ink": "warm-neutral",
+            "--ground": "neutral",
+            "--surface": "neutral",
+            "--raised": "neutral",
+            "--hairline": "neutral",
+            "--hairline-strong": "neutral",
+            "--sunken": "neutral",
+            "--text-emph": "neutral",
+            "--ink": "neutral",
+            "--identity-ink": "neutral",
             # The wordmark's darkest stop on paper. An ink like any other.
-            "--mark-bright": "warm-neutral",
+            "--mark-bright": "neutral",
         },
     },
     {
@@ -154,14 +154,14 @@ SURFACES = (
         "notation": CSS,
         "gate": (':root[data-theme="light"] {{', "\n  }}"),
         "families": {
-            "--ground": "warm-neutral",
-            "--surface": "warm-neutral",
-            "--raised": "warm-neutral",
-            "--hairline": "warm-neutral",
-            "--hairline-strong": "warm-neutral",
-            "--sunken": "warm-neutral",
-            "--ink": "warm-neutral",
-            "--identity-ink": "warm-neutral",
+            "--ground": "neutral",
+            "--surface": "neutral",
+            "--raised": "neutral",
+            "--hairline": "neutral",
+            "--hairline-strong": "neutral",
+            "--sunken": "neutral",
+            "--ink": "neutral",
+            "--identity-ink": "neutral",
         },
     },
     {
@@ -169,19 +169,19 @@ SURFACES = (
         "notation": CSS,
         "gate": ("@media (prefers-color-scheme: light) {", "\n  }"),
         "families": {
-            "--bg": "warm-neutral",
-            "--panel": "warm-neutral",
-            "--raised": "warm-neutral",
-            "--line": "warm-neutral",
-            "--line2": "warm-neutral",
-            "--sunken": "warm-neutral",
-            "--sunken-2": "warm-neutral",
-            "--hover": "warm-neutral",
-            "--hover-raised": "warm-neutral",
-            "--selected": "warm-neutral",
-            "--hairline-soft": "warm-neutral",
-            "--code": "warm-neutral",
-            "--hunk-bg": "warm-neutral",
+            "--bg": "neutral",
+            "--panel": "neutral",
+            "--raised": "neutral",
+            "--line": "neutral",
+            "--line2": "neutral",
+            "--sunken": "neutral",
+            "--sunken-2": "neutral",
+            "--hover": "neutral",
+            "--hover-raised": "neutral",
+            "--selected": "neutral",
+            "--hairline-soft": "neutral",
+            "--code": "neutral",
+            "--hunk-bg": "neutral",
             # The three categorical inks. A category that changed colour with
             # the ambient theme would stop being one, which the file's own
             # header says; they identify a diff hunk, a prompt-quote and the
@@ -196,11 +196,11 @@ SURFACES = (
         "notation": CSS,
         "gate": (':root[data-theme="light"]{', "}"),
         "families": {
-            "--bg": "warm-neutral",
-            "--sub": "warm-neutral",
-            "--panel": "warm-neutral",
-            "--rule": "warm-neutral",
-            "--rule-2": "warm-neutral",
+            "--bg": "neutral",
+            "--sub": "neutral",
+            "--panel": "neutral",
+            "--rule": "neutral",
+            "--rule-2": "neutral",
         },
     },
     {
@@ -208,12 +208,12 @@ SURFACES = (
         "notation": CSS,
         "gate": (':root[data-theme="light"]{', "}"),
         "families": {
-            "--bg": "warm-neutral",
-            "--sub": "warm-neutral",
-            "--panel": "warm-neutral",
-            "--rule": "warm-neutral",
-            "--rule-2": "warm-neutral",
-            "--code": "warm-neutral",
+            "--bg": "neutral",
+            "--sub": "neutral",
+            "--panel": "neutral",
+            "--rule": "neutral",
+            "--rule-2": "neutral",
+            "--code": "neutral",
             # The verdict washes: a green and a red at paper lightness. They
             # are a verdict's ground, not the page's, and the kit's `verdict`
             # clamp is what governs a verdict's hue.
@@ -228,13 +228,13 @@ SURFACES = (
         "notation": RUST,
         "gate": ("/// Light background", "// -- Data marks"),
         "families": {
-            "PAPER": "warm-neutral",
-            "SNOW": "warm-neutral",
-            "PAPER_RAISED": "warm-neutral",
-            "PAPER_HAIRLINE": "warm-neutral",
-            "INK_MUTED": "warm-neutral",
-            "INK_DIM": "warm-neutral",
-            "INK_EMPHASIS": "warm-neutral",
+            "PAPER": "neutral",
+            "SNOW": "neutral",
+            "PAPER_RAISED": "neutral",
+            "PAPER_HAIRLINE": "neutral",
+            "INK_MUTED": "neutral",
+            "INK_DIM": "neutral",
+            "INK_EMPHASIS": "neutral",
         },
     },
 )

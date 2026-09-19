@@ -14,8 +14,8 @@
  * them rather than living only in the surrounding prose.
  *
  * The palette is not a coincidence: every hex in these files is a live token
- * from `design/tokens/stella-tokens.json` (`#10100f` canvas, `#181715` panel,
- * `#292722` border, `#d6962c` gold), so `scripts/check-tokens.py` sweeps them
+ * from `design/tokens/stella-tokens.json` (`#09090b` canvas, `#18181B` panel,
+ * `#27272A` border, `#d4af37` gold), so `scripts/check-tokens.py` sweeps them
  * with everything else and a retired value cannot hide in one.
  *
  * This module is pure and `.ts`-only, like `diagram-descriptions.ts`, because

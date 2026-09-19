@@ -14,7 +14,7 @@
  */
 
 /** The kit's gold, pinned. Identity only — never a surface, never a state. */
-export const BRAND_GOLD = "#D6962C";
+export const BRAND_GOLD = "#D4AF37";
 
 /** The kit's own viewBox for the wordmark. Never re-fit it. */
 export const WORDMARK_VIEW_BOX = "0 0 405.544 94.003";
@@ -70,5 +70,5 @@ export const SWEEP = {
   /** Percent of the period at which the travel is finished and it rests. */
   holdPct: 55,
   /** The colour the shimmer passes through. */
-  highlight: "#F1C364",
+  highlight: "#F1CE65",
 } as const;

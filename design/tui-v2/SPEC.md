@@ -32,7 +32,7 @@ Every screen exists to make these four claims visible without saying them:
 
 ### 3.1 Palette (black and gold)
 
-All values are `Color::Rgb`. Grays are neutral or one to two points blue above red. This is what keeps the scheme from reading warm or brown on cheap panels.
+All values are `Color::Rgb`. The palette is the Oxagen house system, v7.0: obsidian and white, one gold, and neutral zinc grays between. A gray carries no hue, which is what keeps the gold the only warm thing on the screen and keeps the scheme from reading brown on cheap panels.
 
 The table is every token `design/tokens/stella-tokens.json` declares on the `tui` surface — the deck's own ramp. The palette is wider than this: the JSON carries a light ground, the three ink-on-paper status colors and the site's below-canvas backdrop as well, and those are not the terminal's, so they are not here. `crates/stella-tui/tests/spec_palette.rs` holds both directions of that claim — every hex below is the value the token holds, and every `tui` token has a row.
 
@@ -40,18 +40,18 @@ The table is every token `design/tokens/stella-tokens.json` declares on the `tui
 
 | Token | Hex | Role |
 |---|---|---|
-| `bg` | `#10100F` | canvas |
-| `panel` | `#181715` | code blocks, panels, tables |
-| `hl` | `#201F1C` | selected and highlighted rows |
-| `border` | `#292722` | panel borders, dividers |
-| `rule` | `#34322D` | turn boundary rules |
-| `gold` | `#D6962C` | stella acting: edit, write, gate, brand, money, active tab |
-| `gold_bright` | `#F1C364` | tiny live indicators only: spinner, hot marker, drift glyph |
-| `silver` | `#9B958A` | world coming in: read, skill, memory, secondary emphasis |
-| `silver_type` | `#DDD8CD` | syntax types |
-| `text` | `#F2EEE5` | primary text |
-| `muted` | `#8C877C` | secondary text |
-| `dim` | `#6E6A62` | hints, keybinding rows, line numbers |
+| `bg` | `#09090B` | canvas |
+| `panel` | `#18181B` | code blocks, panels, tables |
+| `hl` | `#1F1F23` | selected and highlighted rows |
+| `border` | `#27272A` | panel borders, dividers |
+| `rule` | `#3F3F46` | turn boundary rules |
+| `gold` | `#D4AF37` | stella acting: edit, write, gate, brand, money, active tab |
+| `gold_bright` | `#F1CE65` | tiny live indicators only: spinner, hot marker, drift glyph |
+| `silver` | `#A1A1AA` | world coming in: read, skill, memory, secondary emphasis |
+| `silver_type` | `#E4E4E7` | syntax types |
+| `text` | `#FFFFFF` | primary text |
+| `muted` | `#8A8A93` | secondary text |
+| `dim` | `#71717A` | hints, keybinding rows, line numbers |
 | `green` | `#74C991` | pass, `+` diff sign |
 | `red` | `#E0687D` | fail, `-` diff sign, delete events, destructive |
 | `diff_add_bg` | `#10201A` | added diff row background |
@@ -68,7 +68,7 @@ The **resting** gold must additionally satisfy `b <= 0.35 * r`. This clause is s
 
 A **lift** (today, `gold_bright` alone) is instead anchored to the resting gold: the same hue within 3°, strictly lighter. An anchor is the stronger constraint — a ceiling admits every color beneath it and keeps passing after the gold it was cut for is gone, where an anchor admits only the authored gold, brighter. The palette therefore has exactly one authored gold and one proven consequence of it.
 
-Every gray token must satisfy `r == g` and `b >= g` (neutral or blue-tipped). The two silvers are the second metal rather than the neutral ramp and sit one to two points off neutral by design; they carry the weaker predicate that still forbids the failure mode — `b > r` and `g >= r`.
+Every gray token, the silvers included, must satisfy `max(r, g, b) - min(r, g, b) <= 12`: a gray carries no hue in either direction. The zinc ramp spreads 9 at most; a sepia or a slate spreads more and fails.
 
 Ship all of the above as unit tests on the shipped palette so it cannot drift.
 
@@ -112,9 +112,9 @@ The stand-in for every token, by the ANSI name rather than by ratatui's spelling
 | `paper_raised` | bright white |
 | `paper_panel` | bright white |
 | `paper_row` | white |
-| `paper_border` | white |
-| `paper_seam` | white |
-| `ink_muted` | black |
+| `paper_border` | bright white |
+| `paper_seam` | bright white |
+| `ink_muted` | bright black |
 | `amber` | yellow |
 
 <!-- END degradation -->
@@ -296,10 +296,10 @@ Rail metals: read silver-dim, edit gold, write gold, delete red, run gold, skill
 
   | role | `stella_tui::theme` | value |
   |---|---|---|
-  | keyword, and a JSON object key | `SYNTAX_KEYWORD` | `#DDD8CD` |
+  | keyword, and a JSON object key | `SYNTAX_KEYWORD` | `#E4E4E7` |
   | string / char literal | `SYNTAX_STRING` | `#93D896` |
   | numeric literal | `SYNTAX_NUMBER` | `#8F70E8` |
-  | comment | `SYNTAX_COMMENT` | `#8C877C` |
+  | comment | `SYNTAX_COMMENT` | `#8A8A93` |
   | type position | `SYNTAX_TYPE` | `#2FD3C6` |
   | function or method name | `SYNTAX_FUNCTION` | `#E4408F` |
 
@@ -314,7 +314,7 @@ Rail metals: read silver-dim, edit gold, write gold, delete red, run gold, skill
   Stated as a constraint because the obvious mechanism violates it. `Line.style` is the one-call way to tint a row and is correct only where the row is *nothing but* diff; on any row carrying a margin it paints the whole row's area, so a green band swallows the rail whose metal says which event the diff belongs to (SPEC 6.2) — the two layers then disagree about what the row is. In the transcript every diff row carries that rail, so the tint rides a per-span `bg` on the code plus one trailing padded span to the pane edge. A surface with no margin may use `Line.style`; a surface with one must not. The reference implementation is `push_diff_line` in `crates/stella-tui/src/render/row.rs`, and `a_rust_diff_renders_add_and_remove_rows_per_spec_64` asserts both halves — the band reaches the pane edge, and the rail span's `bg` stays `None`.
 - Line number gutter in `silver`. Sign column (`+`/`-`) is mandatory and colored; color is never the only diff signal.
 
-  This line read `dim`, and the gutter has never been dim: `crates/stella-tui/src/diff.rs`'s `gutter` paints `theme::text_secondary()`, which is `token::SILVER` `#9B958A` — not `token::MUTED` `#8C877C` and not `dim` `#6E6A62` (#4946). The line is corrected to what ships rather than the gutter recoloured to what it said, because two tiers of difference in a margin is a design call. The call site used to read `theme::muted()`, spelling a tier it did not paint; #4966 removed that name, and `every_text_tier_resolves_to_the_token_it_names` now holds each rung of the ladder to the token it is.
+  This line read `dim`, and the gutter has never been dim: `crates/stella-tui/src/diff.rs`'s `gutter` paints `theme::text_secondary()`, which is `token::SILVER` `#A1A1AA` — not `token::MUTED` `#A1A1AA` and not `dim` `#71717A` (#4946). The line is corrected to what ships rather than the gutter recoloured to what it said, because two tiers of difference in a margin is a design call. The call site used to read `theme::muted()`, spelling a tier it did not paint; #4966 removed that name, and `every_text_tier_resolves_to_the_token_it_names` now holds each rung of the ladder to the token it is.
 
 ## 7. Plan and task contracts
 

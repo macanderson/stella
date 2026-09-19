@@ -6,12 +6,12 @@
 //! SPEC 3.2 originally asked for one rule over "every color in the gold role":
 //! `r > g > b`, `g >= 0.78 r`, `b <= 0.35 r`. That rule is not satisfiable by a
 //! palette that also wants a *lift* — a brighter stop of the same gold for
-//! single-cell live indicators — and the spec's own `gold_bright` `#F1C364`
+//! single-cell live indicators — and the spec's own `gold_bright` `#F1CE65`
 //! was the proof, measuring `b/r = 0.433`.
 //!
 //! It is not a bad colour. It is a geometry problem. Lightening a hue moves
 //! every channel toward white, and the channel furthest from it — blue, in a
-//! gold — moves proportionally the most. Take `GOLD` `#D6962C` and lift it to
+//! gold — moves proportionally the most. Take `GOLD` `#D4AF37` and lift it to
 //! `gold_bright`'s lightness holding hue and saturation exactly: you land on
 //! `#F3D36F`, `b/r = 0.46`. **No** hue-preserving lift to that lightness
 //! satisfies a `0.35` blue ceiling. A single blue bound over both a resting
@@ -74,9 +74,9 @@ pub const GOLD_BLUE_PCT: u32 = token::GOLD_BLUE_PCT;
 /// to sit strictly inside that: anything at or beyond 4° is a colour a reader
 /// could not tell from gold anyway, which is the wrong end of the argument.
 ///
-/// It discriminates in practice. `GOLD_BRIGHT` sits 1.46° from `GOLD` and
-/// passes; the v1 gold `#FFB81A` sits 4.3° away and fails; the orange
-/// `#EF8A1F` sits 14.8° away and fails.
+/// It discriminates in practice. `GOLD_BRIGHT` sits 0.86° from `GOLD` and
+/// passes; the v1 gold `#FFB81A` sits 4.46° away and fails; the orange
+/// `#EF8A1F` sits 14.99° away and fails.
 pub const LIFT_HUE_TOLERANCE_DEG: f64 = token::GOLD_LIFT_HUE_TOLERANCE_DEG;
 
 /// How far a shade's hue may sit from the gold it darkens, in degrees.
@@ -85,11 +85,8 @@ pub const LIFT_HUE_TOLERANCE_DEG: f64 = token::GOLD_LIFT_HUE_TOLERANCE_DEG;
 /// be the *same* gold, and "same" does not change direction with lightness.
 pub const SHADE_HUE_TOLERANCE_DEG: f64 = token::GOLD_SHADE_HUE_TOLERANCE_DEG;
 
-/// The green floor every neutral must clear, as a percentage of red.
-pub const NEUTRAL_GREEN_PCT: u32 = token::NEUTRAL_GREEN_PCT;
-
-/// The blue floor every neutral must clear, as a percentage of red.
-pub const NEUTRAL_BLUE_PCT: u32 = token::NEUTRAL_BLUE_PCT;
+/// The widest spread of channels a neutral may have: `max - min`.
+pub const NEUTRAL_SPREAD: u8 = token::NEUTRAL_SPREAD;
 
 /// Does `color` satisfy the clamp its row in [`token::ALL`] declares?
 ///
@@ -117,7 +114,7 @@ pub fn satisfies(color: Color, clamp: token::Clamp) -> bool {
             Some(anchor) => is_shade_of((r, g, b), anchor),
             None => false,
         },
-        token::Clamp::WarmNeutral => is_warm_neutral(r, g, b),
+        token::Clamp::Neutral => is_neutral(r, g, b),
         token::Clamp::Verdict | token::Clamp::Surface => true,
     }
 }
@@ -246,32 +243,30 @@ pub fn is_shade_of(shade: (u8, u8, u8), base: (u8, u8, u8)) -> bool {
     hue_distance(sh, bh) <= SHADE_HUE_TOLERANCE_DEG && lightness(sr, sg, sb) < lightness(br, bg, bb)
 }
 
-/// Is this colour a house neutral — warm or exactly neutral, never cool?
+/// Is this colour a house neutral — a grey that carries no hue?
 ///
-/// `r >= g >= b`, with `g >= 0.94 r` and `b >= 0.82 r`. One predicate for every
+/// `max(r, g, b) - min(r, g, b) <= NEUTRAL_SPREAD`. One predicate for every
 /// neutral in the system, ink to paper.
 ///
-/// It replaces three. v5.0 had a blue-tipped dark ramp (`r == g`, `b >= g`),
-/// two silvers that sat off neutral in the same direction, and a warm paper
-/// ramp — three neutral families, so three clamps. The house system has one:
-/// every neutral from `VOID` to `PAPER` is warm or exactly neutral. Three
-/// predicates over one family is three places for it to drift, and the two
-/// dark ones now disagree with the palette they were written for.
-///
-/// The floors are what keeps a warm ramp from becoming sepia, which is the
-/// failure mode a black-and-gold scheme actually has — the greys creeping warm
-/// one reasonable step at a time until the gold stops reading as a separate
-/// colour. They are the tightest integer floors the house ramp clears, measured
-/// against its two extremes: the hairline on ink (`#292722`, `g/r` 0.951) and
-/// the hairline on paper (`#D8CDBD`, `b/r` 0.875).
-///
-/// Equality is admitted on both sides because the darkest stops are neutral to
-/// the byte — `#10100F` is `r == g` — and rounding at that lightness has
-/// nowhere else to land.
+/// The house system uses obsidian and white with a zinc ramp that leans a few
+/// units blue (its 500 step has `b - r = 9`). A grey must not carry a hue: tan
+/// competes with the gold, blue fights it. A bound on the channel spread says
+/// that in both directions, and rejects a sepia grey that spreads 13.
 #[must_use]
-pub const fn is_warm_neutral(r: u8, g: u8, b: u8) -> bool {
-    r >= g
-        && g >= b
-        && (g as u32) * 100 >= (r as u32) * NEUTRAL_GREEN_PCT
-        && (b as u32) * 100 >= (r as u32) * NEUTRAL_BLUE_PCT
+pub const fn is_neutral(r: u8, g: u8, b: u8) -> bool {
+    let hi = if r > g {
+        if r > b { r } else { b }
+    } else if g > b {
+        g
+    } else {
+        b
+    };
+    let lo = if r < g {
+        if r < b { r } else { b }
+    } else if g < b {
+        g
+    } else {
+        b
+    };
+    hi - lo <= NEUTRAL_SPREAD
 }

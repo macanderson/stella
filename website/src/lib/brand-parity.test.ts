@@ -15,8 +15,8 @@ import { inflateSync } from "node:zlib";
  *
  * `src/app/tokens.css` carried the sentence "every value below is copied from
  * it verbatim — do not tune a hex here, change the kit and mirror it" while
- * sitting a whole brand version behind: the kit moved to Bronze Gold #D6962C
- * on Ink #10100F in the 2026-08-11 rebrand and this site stayed on v1.0's
+ * sitting a whole brand version behind: the kit moved to Bronze Gold #D4AF37
+ * on Ink #09090B in the 2026-08-11 rebrand and this site stayed on v1.0's
  * Phosphor Gold #FFB000 on Ink #0B0B0C. All thirteen SVGs under
  * `public/brand/` were stale with it, as were seven of the eight PWA icons,
  * `src/app/icon.svg`, the favicon and the OG card's literals — so the site
@@ -32,7 +32,7 @@ import { inflateSync } from "node:zlib";
  *    a while the tree shipped two identities and a reader crossing from here
  *    to the Observatory watched the brand change hue (#3968).
  *  - **`src/app/favicon.ico` was never recoloured at all.** It sat on v2.0's
- *    bronze-on-warm-ink art (ground #10100F) straight through v3.0, because
+ *    bronze-on-warm-ink art (ground #09090B) straight through v3.0, because
  *    the test below asserted only its PNG *colour type* and never its pixels,
  *    and the retired-value sweep cannot read a binary. A guard that checks an
  *    encoding while the art rots is worse than none: it reports green. It now
@@ -69,7 +69,7 @@ import { inflateSync } from "node:zlib";
  * about a copy rather than about a design.
  *
  * The comparison is textual and case-insensitive because the kit writes
- * `#D6962C` and CSS convention here writes `#d6962c`. That is the one
+ * `#D4AF37` and CSS convention here writes `#d4af37`. That is the one
  * difference allowed between the two files.
  */
 
@@ -249,7 +249,7 @@ const MIRRORED_CORE = [
  * One level of `var(--x)` indirection, resolved against the file's own map.
  *
  * The site writes `--stella-brand: var(--st-gold)` where the kit writes
- * `#D6962C`, and that difference is not drift — it is the site declining to
+ * `#D4AF37`, and that difference is not drift — it is the site declining to
  * repeat a value the generated ramp above it already carries. Comparing the
  * raw declarations would fail on it, and "fixing" that by pasting the hex back
  * into the site is precisely the duplication `design/tokens/` exists to end.
@@ -337,7 +337,7 @@ test("no retired brand value survives anywhere in the site", () => {
   //
   // A value leaves this list only when a later version makes it **live
   // again**, which is not hypothetical: v4.0 took the brand hue back to v2.0's
-  // the gold ramp value-for-value, so #d6962c and its stops moved from this
+  // the gold ramp value-for-value, so #d4af37 and its stops moved from this
   // list into `tokens.css`. What v4.0 did *not* take back is the warm neutral
   // page those stops used to sit on — v3.0's cool graphite ramp and Obsidian
   // ground are kept — so the warm values stay retired and are what this block
@@ -346,14 +346,14 @@ test("no retired brand value survives anywhere in the site", () => {
   const RETIRED = [
     // v1.0 — phosphor gold on ink
     //
-    // These two were swept into `#d6962c`/`#10100f` — the *live* v5.0 gold and
+    // These two were swept into `#d4af37`/`#09090b` — the *live* v5.0 gold and
     // canvas — by the v5.0 hex migration (#4066), which turned this block into
     // a ban on the current brand and made every correct surface an offender.
     // `scripts/check-tokens.py` now lists this file as a ban site so a sweep
     // skips it; the values below are the v1.0 ones they were before.
     "#ffb000",
     "#0b0b0c",
-    // #f2eee5 — v1.0's warm Paper — is **live again** as v5.1's `text`,
+    // #ffffff — v1.0's warm Paper — is **live again** as v5.1's `text`,
     // the white every surface off the deck draws on dark. It leaves this list
     // on the rule stated above. The gold and the ground beside it do not: v1.0's
     // phosphor gold fails the resting-gold clamp and its ink is superseded, so
@@ -364,7 +364,7 @@ test("no retired brand value survives anywhere in the site", () => {
     // modern CSS `rgb(r g b / a)`; the comma form is what an `rgba()` literal
     // and Satori (which has no cascade, so the OG card writes its washes out
     // by hand) actually use. Only the first was listed, and the OG card's CTA
-    // shipped an `rgba(214,150,44,0.12)` wash straight through the v3.0
+    // shipped an `rgba(212,175,55,0.12)` wash straight through the v3.0
     // recolour because a hex sweep cannot see a channel triple and this guard
     // was not looking for one.
     "255 176 0",
@@ -373,7 +373,7 @@ test("no retired brand value survives anywhere in the site", () => {
     // v2.0 — the WARM page the bronze gold used to sit on.
     //
     // Two of its values LEFT this list at v6.0, on the rule stated at the top:
-    // #10100f and #f2eee5 are the house system's ink and its off-white, so
+    // #09090b and #ffffff are the house system's ink and its off-white, so
     // they are live again on every surface. That is the second time this has
     // happened to them and it is the same mechanism both times — a warm kit
     // returning — which is why the rule is a rule rather than a one-off.
@@ -437,7 +437,7 @@ test("no retired brand value survives anywhere in the site", () => {
       // inline favicons. Normalising rather than listing every encoded twin
       // keeps one entry per retired value: `vision.html` sat on v1.0's
       // `%23FFB000` on `%230B0B0C` through three rebrands because a sweep for
-      // `#d6962c` cannot see it, the same blind spot the channel-triple
+      // `#d4af37` cannot see it, the same blind spot the channel-triple
       // entries above exist for.
       const text = read(path).toLowerCase().replaceAll("%23", "#");
       for (const value of RETIRED) {
@@ -567,7 +567,7 @@ test("favicon.ico carries the kit's art in an RGBA encoding", () => {
   // silent: a silent one gets "fixed" by re-copying, and that broke the build.
   //
   // Checking only the encoding is what let this file rot. It sat on v2.0's
-  // bronze-on-warm-ink art (ground #10100F) through the whole v3.0 ion
+  // bronze-on-warm-ink art (ground #09090B) through the whole v3.0 ion
   // recolour and into v4.0, green the entire time, because "is it RGBA?" is
   // not a question about the art. Both halves are asserted now: the encoding
   // Next requires, AND that the pixels are the kit's.

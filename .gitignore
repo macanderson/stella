@@ -104,6 +104,10 @@ Thumbs.db
 .claude/*
 !.claude/settings.json
 !.claude/hooks/
+# The Oxagen branding skill, vendored from oxagen-brand with skills/install.sh --project.
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/oxagen-branding/
 .claude/settings.local.json
 .agents/
 .agents.d/

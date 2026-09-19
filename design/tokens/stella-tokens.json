@@ -48,43 +48,25 @@
     "they are `painted` now: the fix the posture asked for, rather than a posture",
     "written to match the code."
   ],
-  "version": "6.0.0",
+  "version": "7.0.0",
   "name": "oxagen house system",
   "supersedes": {
-    "kit": "stella brand v5.0 (\"black and gold\")",
-    "brand_hex": "#EFC53F",
-    "ground_hex": "#0A0A0C",
+    "kit": "house system v6.0 (\"warm ink and paper\")",
+    "brand_hex": "#D6962C",
+    "ground_hex": "#10100F",
     "reason": [
-      "Stella and Oxagen shipped two palettes, and a reader crossing between the",
-      "two sites watched the brand change hue. v6.0 ends that: the palette is now",
-      "the Oxagen house system (macanderson/oxagen-house-brand,",
-      "tokens/house-tokens.css), which is generated for BOTH brands from one",
-      "source and which cuts both wordmarks out of one typeface. This file is that",
-      "table, expressed in this repository's token schema.",
+      "The house system moved to obsidian and white (macanderson/oxagen-brand#5,",
+      "September 2026), and this file follows it so the two brands stay one palette.",
+      "The ground is obsidian #09090B, the light ground is white #FFFFFF, and every",
+      "grey between them is neutral zinc. The gold is #D4AF37, with its bright and",
+      "deep neighbours derived from it on its own OKLCH hue (oxagen-brand#7).",
       "",
-      "v5.0 is superseded rather than tuned because the difference is structural,",
-      "not a shift of two anchors. v5.0 was cool-dark and warm-light: its ground",
-      "sat on a blue-tipped neutral (r == g, b >= g) while its paper sat warm, and",
-      "the two silvers needed a third clamp of their own. The house system is warm",
-      "on ONE axis end to end, which is what lets a single gold read as metal",
-      "against both the ink and the paper. Three neutral clamps collapse into one",
-      "as a result -- see `warm-neutral`.",
-      "",
-      "The gold moves from #EFC53F to #D6962C. v5.0's own note says Bronze Gold",
-      "#C58A32 was rejected for sitting in the orange band; the house gold is that",
-      "same bronze lifted in OKLCH (lighter, richer, a few degrees toward yellow)",
-      "specifically so it reads as gold rather than copper, and it clears the",
-      "resting-gold ceiling comfortably. What it does not clear is the OLD green",
-      "ratio of 78: at r=214 g=150 it sits at 0.701. See `resting-gold` for why",
-      "that number moved, and `gold-shade` for what replaced the part of its job",
-      "it was doing badly.",
-      "",
-      "The consequence the hue law then forced: the identity moved 16 deg toward",
-      "the warning, so the WARNING moved away from it. amber, amber-ink and",
-      "red-ink are re-cut at the hues that keep every chromatic role 30 deg from",
-      "every other one. That is the law working, not an exception to it -- a state",
-      "colour exists to be unlike the identity, so when the identity moves the",
-      "state colour is what gives way."
+      "v6.0 is superseded rather than tuned because its neutral law was warm by",
+      "construction: `warm-neutral` required r >= g >= b, and the zinc ramp leans a",
+      "few units blue. The law that replaces it is `neutral`, a bound on the spread",
+      "of the channels, which holds a grey to grey in either direction. With every",
+      "grey neutral, the gold is the only warm value on a screen, which is what lets",
+      "it read as metal against both grounds."
     ]
   },
   "clamps": {
@@ -163,31 +145,6 @@
         "Recolour `gold` and `gold-ink` fails by name. A ratio cannot do that."
       ]
     },
-    "warm-neutral": {
-      "predicate": "r >= g >= b AND 100*g >= 94*r AND 100*b >= 82*r",
-      "green_pct": 94,
-      "blue_pct": 82,
-      "why": [
-        "One neutral clamp for the whole system, in place of v5.0's `neutral-gray`,",
-        "`cool-silver` and `warm-paper`. Three clamps answered to three neutral",
-        "families: a blue-tipped dark ramp, two silvers sitting off neutral in the",
-        "same direction, and a warm paper ramp. The house system has ONE -- every",
-        "neutral, from #0A0A09 to #FBFAF6, is warm or exactly neutral, never blue --",
-        "and three predicates over one family is three places for it to drift.",
-        "",
-        "`r >= g >= b` is the direction: warm or neutral, never cool. The floors stop",
-        "it turning tan or sepia. That is the way a black-and-gold scheme fails:",
-        "the greys creep warm one reasonable step at a time",
-        "until the gold stops reading as a separate colour. 94 and 82 are the tightest",
-        "integer floors the house ramp clears, measured against its two extremes: the",
-        "hairline on ink (#292722, g/r 0.951) and the hairline on paper (#D8CDBD, b/r",
-        "0.875).",
-        "",
-        "Equality is admitted on both sides because the darkest stops are neutral to",
-        "the byte -- #10100F is r == g -- and rounding at that lightness has nowhere",
-        "else to land."
-      ]
-    },
     "verdict": {
       "predicate": "none",
       "why": [
@@ -203,13 +160,27 @@
     "surface": {
       "predicate": "none",
       "why": "Diff row backgrounds are tints carrying a sign column, not hues in a role. They are held by the diff renderer's contract (the + and - signs are mandatory), not by a channel test."
+    },
+    "neutral": {
+      "predicate": "max(r,g,b) - min(r,g,b) <= 12",
+      "spread": 12,
+      "why": [
+        "One neutral clamp for the whole system, ink to paper. The house system's",
+        "zinc ramp leans a few units blue (its 500 step has b - r = 9).",
+        "",
+        "A black-and-gold scheme must not let a grey carry a hue: a tan grey competes",
+        "with the gold, a blue one fights it. A bound on the spread of the channels",
+        "says exactly that, in both directions. 12 is the tightest bound the zinc",
+        "ramp clears with room (its widest stop spreads 9) and the loosest that still",
+        "rejects a sepia grey spreading 13."
+      ]
     }
   },
   "tokens": [
     {
       "name": "bg",
-      "hex": "#10100F",
-      "clamp": "warm-neutral",
+      "hex": "#09090B",
+      "clamp": "neutral",
       "css": "--st-bg",
       "rust": "BG",
       "role": "canvas",
@@ -221,8 +192,8 @@
     },
     {
       "name": "panel",
-      "hex": "#181715",
-      "clamp": "warm-neutral",
+      "hex": "#18181B",
+      "clamp": "neutral",
       "css": "--st-panel",
       "rust": "PANEL",
       "role": "panels, cards, code blocks",
@@ -234,8 +205,8 @@
     },
     {
       "name": "hl",
-      "hex": "#201F1C",
-      "clamp": "warm-neutral",
+      "hex": "#1F1F23",
+      "clamp": "neutral",
       "css": "--st-hl",
       "rust": "HL",
       "role": "selected and hover rows",
@@ -247,8 +218,8 @@
     },
     {
       "name": "border",
-      "hex": "#292722",
-      "clamp": "warm-neutral",
+      "hex": "#27272A",
+      "clamp": "neutral",
       "css": "--st-border",
       "rust": "BORDER",
       "role": "hairlines, dividers, unfilled meter track",
@@ -260,8 +231,8 @@
     },
     {
       "name": "rule",
-      "hex": "#34322D",
-      "clamp": "warm-neutral",
+      "hex": "#3F3F46",
+      "clamp": "neutral",
       "css": "--st-rule",
       "rust": "RULE",
       "role": "section rules, turn boundaries",
@@ -273,7 +244,7 @@
     },
     {
       "name": "gold",
-      "hex": "#D6962C",
+      "hex": "#D4AF37",
       "clamp": "resting-gold",
       "css": "--st-gold",
       "rust": "GOLD",
@@ -288,7 +259,7 @@
     },
     {
       "name": "gold-bright",
-      "hex": "#F1C364",
+      "hex": "#F1CE65",
       "clamp": "gold-lift",
       "css": "--st-gold-bright",
       "rust": "GOLD_BRIGHT",
@@ -301,8 +272,8 @@
     },
     {
       "name": "silver",
-      "hex": "#9B958A",
-      "clamp": "warm-neutral",
+      "hex": "#A1A1AA",
+      "clamp": "neutral",
       "css": "--st-silver",
       "rust": "SILVER",
       "role": "secondary emphasis, incoming context, syntax strings",
@@ -314,8 +285,8 @@
     },
     {
       "name": "silver-type",
-      "hex": "#DDD8CD",
-      "clamp": "warm-neutral",
+      "hex": "#E4E4E7",
+      "clamp": "neutral",
       "css": "--st-silver-type",
       "rust": "SILVER_TYPE",
       "role": "syntax types, tertiary labels",
@@ -327,8 +298,8 @@
     },
     {
       "name": "text",
-      "hex": "#F2EEE5",
-      "clamp": "warm-neutral",
+      "hex": "#FFFFFF",
+      "clamp": "neutral",
       "css": "--st-text",
       "rust": "TEXT",
       "role": "primary text on the dark canvas, in the deck and off it",
@@ -341,8 +312,8 @@
     },
     {
       "name": "muted",
-      "hex": "#8C877C",
-      "clamp": "warm-neutral",
+      "hex": "#8A8A93",
+      "clamp": "neutral",
       "css": "--st-muted",
       "rust": "MUTED",
       "role": "secondary text",
@@ -354,8 +325,8 @@
     },
     {
       "name": "dim",
-      "hex": "#6E6A62",
-      "clamp": "warm-neutral",
+      "hex": "#71717A",
+      "clamp": "neutral",
       "css": "--st-dim",
       "rust": "DIM",
       "role": "hints, captions, line numbers",
@@ -421,8 +392,8 @@
     },
     {
       "name": "ink",
-      "hex": "#10100F",
-      "clamp": "warm-neutral",
+      "hex": "#09090B",
+      "clamp": "neutral",
       "css": "--st-ink",
       "rust": "INK",
       "role": "primary text on light surfaces (web light mode only)",
@@ -435,8 +406,8 @@
     },
     {
       "name": "paper",
-      "hex": "#FBFAF6",
-      "clamp": "warm-neutral",
+      "hex": "#FFFFFF",
+      "clamp": "neutral",
       "css": "--st-paper",
       "rust": "PAPER",
       "role": "the warm light canvas",
@@ -444,12 +415,13 @@
         "web-light",
         "asset"
       ],
-      "paint": "painted"
+      "paint": "painted",
+      "shares_value_with": "text"
     },
     {
       "name": "paper-panel",
-      "hex": "#F5F2EA",
-      "clamp": "warm-neutral",
+      "hex": "#FFFFFF",
+      "clamp": "neutral",
       "css": "--st-paper-panel",
       "rust": "PAPER_PANEL",
       "role": "light panel",
@@ -458,12 +430,13 @@
       ],
       "paint": {
         "gap": "#4058"
-      }
+      },
+      "shares_value_with": "text"
     },
     {
       "name": "paper-border",
-      "hex": "#DED5C7",
-      "clamp": "warm-neutral",
+      "hex": "#E4E4E7",
+      "clamp": "neutral",
       "css": "--st-paper-border",
       "rust": "PAPER_BORDER",
       "role": "light border",
@@ -472,7 +445,8 @@
       ],
       "paint": {
         "gap": "#4058"
-      }
+      },
+      "shares_value_with": "silver-type"
     },
     {
       "$comment": [
@@ -494,8 +468,8 @@
         "already ships, moved under the system rather than re-cut."
       ],
       "name": "void",
-      "hex": "#0A0A09",
-      "clamp": "warm-neutral",
+      "hex": "#000000",
+      "clamp": "neutral",
       "css": "--st-void",
       "role": "below the canvas: full-bleed backdrops",
       "surfaces": [
@@ -505,7 +479,7 @@
     },
     {
       "name": "gold-ink",
-      "hex": "#8B5E1A",
+      "hex": "#8A7223",
       "clamp": "gold-shade",
       "css": "--st-gold-ink",
       "role": "gold as TEXT on the light ground, where the metal cannot clear AA",
@@ -516,8 +490,8 @@
     },
     {
       "name": "paper-ground",
-      "hex": "#F2EEE5",
-      "clamp": "warm-neutral",
+      "hex": "#FFFFFF",
+      "clamp": "neutral",
       "css": "--st-paper-ground",
       "role": "the warm paper page ground, one step under the panel",
       "surfaces": [
@@ -529,20 +503,21 @@
     },
     {
       "name": "paper-raised",
-      "hex": "#F8F5EE",
-      "clamp": "warm-neutral",
+      "hex": "#FFFFFF",
+      "clamp": "neutral",
       "css": "--st-paper-raised",
       "role": "light surface raised above the page ground",
       "surfaces": [
         "web-light"
       ],
       "paint": "painted",
-      "rust": "PAPER_RAISED"
+      "rust": "PAPER_RAISED",
+      "shares_value_with": "text"
     },
     {
       "name": "paper-row",
-      "hex": "#E5DED1",
-      "clamp": "warm-neutral",
+      "hex": "#F4F4F5",
+      "clamp": "neutral",
       "css": "--st-paper-row",
       "role": "light hover and selected rows",
       "surfaces": [
@@ -553,27 +528,29 @@
     },
     {
       "name": "paper-seam",
-      "hex": "#D8CDBD",
-      "clamp": "warm-neutral",
+      "hex": "#E4E4E7",
+      "clamp": "neutral",
       "css": "--st-paper-seam",
       "role": "light seam: the hairline under a border",
       "surfaces": [
         "web-light"
       ],
       "paint": "painted",
-      "rust": "PAPER_SEAM"
+      "rust": "PAPER_SEAM",
+      "shares_value_with": "silver-type"
     },
     {
       "name": "ink-muted",
-      "hex": "#6B665C",
-      "clamp": "warm-neutral",
+      "hex": "#71717A",
+      "clamp": "neutral",
       "css": "--st-ink-muted",
       "role": "secondary text on light surfaces",
       "surfaces": [
         "web-light"
       ],
       "paint": "painted",
-      "rust": "INK_MUTED"
+      "rust": "INK_MUTED",
+      "shares_value_with": "dim"
     },
     {
       "name": "green-ink",
@@ -745,11 +722,11 @@
       },
       {
         "hex": "#EFC53F",
-        "was": "brand v5.0 gold \u2014 superseded by the house gold #D6962C, which is the same bronze lifted in OKLCH; v5.0 shipped a gold Oxagen never used"
+        "was": "brand v5.0 gold — superseded by the house gold #D6962C, which is the same bronze lifted in OKLCH; v5.0 shipped a gold Oxagen never used"
       },
       {
         "hex": "#0A0A0C",
-        "was": "brand v5.0 ground \u2014 a blue-tipped near-black; the house system is warm on one axis end to end"
+        "was": "brand v5.0 ground — a blue-tipped near-black; the house system is warm on one axis end to end"
       },
       {
         "hex": "#F7D96B",
@@ -758,6 +735,14 @@
       {
         "hex": "#725A00",
         "was": "brand v5.0 gold ink"
+      },
+      {
+        "hex": "#D6962C",
+        "was": "house system v6.0 gold (warm ink and paper)"
+      },
+      {
+        "hex": "#10100F",
+        "was": "house system v6.0 ground (warm ink and paper)"
       }
     ]
   }

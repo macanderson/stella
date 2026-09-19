@@ -28,8 +28,8 @@ import {
  * illustration, no gradient mesh.
  *
  * Colours are literals or imported constants rather than CSS vars because
- * Satori resolves no cascade: the canvas #10100f, text #f2eee5, gold #d6962c
- * (7.5:1 on ink), muted #8c877c (5.0:1 on ink). Keep the markup inside Satori's
+ * Satori resolves no cascade: the canvas #09090b, text #ffffff, gold #d4af37
+ * (7.5:1 on ink), muted #a1a1aa (5.0:1 on ink). Keep the markup inside Satori's
  * supported subset — plain <path>/<rect> fills only, no gradients, masks, or
  * filters — and every element with children carries an explicit `display`.
  * `MARK_PATH_FLAT` exists for that subset: it is the asterisk with its placing
@@ -47,12 +47,12 @@ export const alt =
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
-const INK = "#10100f";
-const PAPER = "#f2eee5";
-const MUTED = "#8c877c";
-const SURFACE = "#181715";
-const SURFACE_TOP = "#201f1c";
-const BORDER = "#292722";
+const INK = "#09090b";
+const PAPER = "#ffffff";
+const MUTED = "#a1a1aa";
+const SURFACE = "#18181B";
+const SURFACE_TOP = "#27272a";
+const BORDER = "#27272A";
 
 /** The repo this card advertises, and the one command that installs it. */
 const REPO_SLUG = "macanderson/stella";
@@ -169,7 +169,7 @@ export default function OpengraphImage() {
             }}
           >
             {/* One dot gold: gold is the signal, so exactly one thing gets it. */}
-            {[BRAND_GOLD, "#504c44", "#34322d"].map((c, i) => (
+            {[BRAND_GOLD, "#52525b", "#3f3f46"].map((c, i) => (
               <div
                 key={c}
                 style={{
@@ -247,7 +247,7 @@ export default function OpengraphImage() {
               // The one thing on the card a reader is meant to act on. The
               // wash is the accent at 12%, written out because Satori has no
               // cascade and cannot resolve a custom property.
-              background: "rgba(214,150,44,0.12)",
+              background: "rgba(212,175,55,0.12)",
               color: BRAND_GOLD,
             }}
           >

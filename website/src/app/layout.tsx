@@ -8,40 +8,37 @@ import { SpeedInsights } from "@vercel/speed-insights/next";
 import { SITE_NAME, SITE_URL } from "@/lib/site";
 
 /**
- * Two faces, each doing the job it exists for.
+ * Three faces, each doing the job it exists for, vendored from the Oxagen house
+ * kit by `scripts/sync-brand-assets.mjs`.
  *
- * SPACE GROTESK is the brand face — the Oxagen house typeface, vendored from
- * the kit by `scripts/sync-brand-assets.mjs`. It is not a preference: the
- * `stella*` wordmark is this font's own outlines at weight 600, so setting the
- * site in anything else would put the name in the nav and the name in a
- * sentence in two unrelated designs. 700 display, 600 headings, 500 UI,
- * 400 body.
+ * SPACE GROTESK is the display face: h1 to h3 and the `stella*` wordmark, which
+ * is this font's own outlines at weight 600. Never below 20px.
  *
- * JETBRAINS MONO covers code and terminal transcripts only. The house rule is
- * "Space Grotesk is not a code face", and this site is largely a picture of a
- * terminal, where a transcript needs its columns to line up. Its scope narrowed
- * with the house system: one family covered the whole site on the argument that
- * a product living in a terminal should speak in monospace end to end, and the
- * house system settles that the other way. The two families split where the kit
- * puts the line.
+ * GEIST is the text face: body, h4 to h6, UI, navigation.
+ *
+ * MONASPACE NEON is the code face: code and terminal transcripts, where column
+ * alignment is required, with texture healing on.
  */
-const sans = localFont({
+const display = localFont({
   src: [
-    { path: "../fonts/space-grotesk-latin-400.woff2", weight: "400", style: "normal" },
     { path: "../fonts/space-grotesk-latin-500.woff2", weight: "500", style: "normal" },
     { path: "../fonts/space-grotesk-latin-600.woff2", weight: "600", style: "normal" },
     { path: "../fonts/space-grotesk-latin-700.woff2", weight: "700", style: "normal" },
   ],
+  variable: "--font-stella-display",
+  display: "swap",
+});
+
+const sans = localFont({
+  src: "../fonts/geist-latin-wght.woff2",
+  weight: "100 900",
   variable: "--font-stella-sans",
   display: "swap",
 });
 
 const mono = localFont({
-  src: [
-    { path: "../fonts/jetbrains-mono-latin-400-normal.woff2", weight: "400", style: "normal" },
-    { path: "../fonts/jetbrains-mono-latin-500-normal.woff2", weight: "500", style: "normal" },
-    { path: "../fonts/jetbrains-mono-latin-700-normal.woff2", weight: "700", style: "normal" },
-  ],
+  src: "../fonts/monaspace-neon-latin-wght.woff2",
+  weight: "200 800",
   variable: "--font-stella-mono",
   display: "swap",
 });
@@ -84,14 +81,14 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#10100f" }, // --st-bg
-    { media: "(prefers-color-scheme: light)", color: "#f2eee5" }, // --st-paper-ground
+    { media: "(prefers-color-scheme: dark)", color: "#09090b" }, // --st-bg
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" }, // --st-paper-ground
   ],
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning className={`${sans.variable} ${mono.variable}`}>
+    <html lang="en" suppressHydrationWarning className={`${display.variable} ${sans.variable} ${mono.variable}`}>
       <body className="flex min-h-screen flex-col">
         {/* First focusable node in the document, ahead of the Fumadocs header
          * and (on /docs) a ~90-link sidebar. Both route groups expose a

@@ -408,15 +408,18 @@ function site() {
   }
 }
 
-/** The face. Space Grotesk, the typeface the wordmark is cut from. */
+/**
+ * The three house faces: Space Grotesk (display, and the wordmark is cut from
+ * it), Geist (text) and Monaspace Neon (code), each with its licence.
+ */
 function fonts() {
   for (const f of readdirSync(join(BRAND, "fonts"))) {
-    if (f.endsWith(".woff2") && f.startsWith("space-grotesk")) {
+    if (f.endsWith(".woff2")) {
       copy(`fonts/${f}`, `${WEB}/src/fonts/${f}`);
       copy(`fonts/${f}`, `${KIT}/fonts/${f}`);
     }
+    if (f.startsWith("LICENSE")) copy(`fonts/${f}`, `${WEB}/src/fonts/${f}`);
   }
-  copy("fonts/LICENSE-OFL.txt", `${WEB}/src/fonts/LICENSE-OFL.txt`);
 }
 
 /**

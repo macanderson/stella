@@ -68,7 +68,7 @@ brand-guidelines.html
   surface and it never encodes a state — that is what `--st-green`, `--st-amber`
   and `--st-red` are for, and `scripts/check-hue-separation.py` keeps them 30°
   clear of it.
-- **Gold as text on warm paper becomes `#8B5E1A`.** The mark keeps the metal;
+- **Gold as text on warm paper becomes `#8A7223`.** The mark keeps the metal;
   words do not.
 - **Nothing sits to the left of `stella*`.** The asterisk is the only mark.
 - **Minimum 88 px** for the wordmark, **24 px** for the icon. Below that, use
