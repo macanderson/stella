@@ -74,9 +74,9 @@ pub const GOLD_BLUE_PCT: u32 = token::GOLD_BLUE_PCT;
 /// to sit strictly inside that: anything at or beyond 4° is a colour a reader
 /// could not tell from gold anyway, which is the wrong end of the argument.
 ///
-/// It discriminates in practice. `GOLD_BRIGHT` sits 1.46° from `GOLD` and
-/// passes; the v1 gold `#FFB81A` sits 4.3° away and fails; the orange
-/// `#EF8A1F` sits 14.8° away and fails.
+/// It discriminates in practice. `GOLD_BRIGHT` sits 0.86° from `GOLD` and
+/// passes; the v1 gold `#FFB81A` sits 4.46° away and fails; the orange
+/// `#EF8A1F` sits 14.99° away and fails.
 pub const LIFT_HUE_TOLERANCE_DEG: f64 = token::GOLD_LIFT_HUE_TOLERANCE_DEG;
 
 /// How far a shade's hue may sit from the gold it darkens, in degrees.
