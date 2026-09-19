@@ -146,17 +146,11 @@ EXCLUDED_PREFIXES = (
     "scripts/test-prose-guard.sh",
     "scripts/prose-baseline.txt",
     "docs/wire/",
-    # Vendored Oxagen house branding skill (`skills/install.sh --project`).
-    # Refreshed from oxagen-brand; Stella does not own its reading grade.
-    ".claude/skills/oxagen-branding/",
+    ".claude/skills/oxagen-branding/",  # vendored; Stella does not own its grade
 )
 EXCLUDED_SUBSTRINGS = ("/snapshots/", "/fixtures/")
 
-# Each entry is (name, compiled regex, what to write instead).
-#
-# Every pattern is deletion-safe by construction: the offending clause can be
-# cut without rewriting the sentence around it. That is why the remedy column
-# says "delete" more often than it says "rephrase".
+# (name, regex, remedy). Deletion-safe: cut the clause; the sentence still holds.
 PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
     (
         "enumerative-announcement",
