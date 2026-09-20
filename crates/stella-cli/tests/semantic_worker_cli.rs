@@ -54,6 +54,17 @@ async fn worker_embeds_the_shared_index_with_pipe_only_credentials() {
         .env_remove("STELLA_CREDENTIAL_HANDOFF_FD")
         .env_remove("STELLA_CREDENTIAL_HANDOFF_TARGET")
         .env_remove("STELLA_SUPERVISED")
+        // The fixture is on loopback. A proxy exported by the host is inherited
+        // by this child and the embedding request goes there instead, which the
+        // proxy answers 403 -- so the witness fails over an ambient variable
+        // rather than over the worker. Both spellings, because curl-style
+        // lowercase and uppercase are each read by some clients.
+        .env_remove("HTTP_PROXY")
+        .env_remove("HTTPS_PROXY")
+        .env_remove("ALL_PROXY")
+        .env_remove("http_proxy")
+        .env_remove("https_proxy")
+        .env_remove("all_proxy")
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
