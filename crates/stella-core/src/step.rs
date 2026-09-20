@@ -1435,7 +1435,7 @@ impl Drop for SpeculationDropGuard {
     }
 }
 
-mod degenerate;
+pub(crate) mod degenerate;
 
 #[cfg(test)]
 mod tests;
