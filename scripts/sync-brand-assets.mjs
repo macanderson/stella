@@ -418,7 +418,10 @@ function fonts() {
       copy(`fonts/${f}`, `${WEB}/src/fonts/${f}`);
       copy(`fonts/${f}`, `${KIT}/fonts/${f}`);
     }
-    if (f.startsWith("LICENSE")) copy(`fonts/${f}`, `${WEB}/src/fonts/${f}`);
+    if (f.startsWith("LICENSE")) {
+      copy(`fonts/${f}`, `${WEB}/src/fonts/${f}`);
+      copy(`fonts/${f}`, `${KIT}/fonts/${f}`);
+    }
   }
 }
 
