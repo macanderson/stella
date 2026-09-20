@@ -15,6 +15,7 @@
   <a href="#license"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-10100F?style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/badge/rust-1.90%2B-10100F?style=flat-square&logo=rust&logoColor=D6962C" alt="Rust 1.90+">
   <img src="https://img.shields.io/badge/providers-9%20%2B%20local-10100F?style=flat-square" alt="9 providers + local">
+  <a href="https://github.com/macanderson/context-graph-protocol"><img src="https://raw.githubusercontent.com/macanderson/context-graph-protocol/main/assets/badges/conformant.svg" alt="CGP conformant"></a>
 </p>
 
 <p align="center">
