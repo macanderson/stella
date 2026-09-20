@@ -260,3 +260,7 @@ arenabench-cloud/
 *.pfx
 id_rsa
 id_ed25519
+
+# Oxagen: this machine's link to a workspace; never committed.
+.oxagen/workspace.json
+.stella/private/
