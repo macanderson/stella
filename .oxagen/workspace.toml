@@ -1,0 +1,11 @@
+# Which Oxagen workspace this repository belongs to. Committed and
+# reviewed; .oxagen/workspace.json is one machine's link and is gitignored.
+[workspace]
+organization = "oxagen"
+slug = "product"
+name = "Product"
+
+[repository]
+name = "macanderson/stella"
+role = "linked"
+production_branch = "main"
