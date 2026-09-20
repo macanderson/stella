@@ -167,7 +167,7 @@ async fn drive_index_blocking<F: FnMut(InitLine) + ?Sized>(
 /// Nothing embeds on the query path any more (#4043): a search ranks over
 /// what the index holds and never fills it. The two passes that do fill it
 /// are this one and the background pass at session start
-/// ([`crate::search_cmd::backfill`]), and this is the one that runs where the
+/// ([`crate::semantic_worker`]), and this is the one that runs where the
 /// user asked for it — `stella init` is the command whose whole job is to
 /// make the workspace ready, so its work is free from every later session's
 /// perspective.
