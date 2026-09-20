@@ -50,7 +50,6 @@ Thumbs.db
 
 # Stella-specific
 .stella/
-.oxagen/
 .memories/
 
 # The root .stella/ is per-workspace scratch and stays ignored, with the one
@@ -260,3 +259,13 @@ arenabench-cloud/
 *.pfx
 id_rsa
 id_ed25519
+
+# Oxagen: `.oxagen/` is reviewed content and travels with the repository --
+# the workspace this repository belongs to, its governance mode, and its
+# rules, proposals and agents. A blanket `.oxagen/` rule sat in the
+# Stella-specific block above from before this repository was enrolled; it
+# left every tracked file under that tree ignored, which check-no-scratch
+# rejects. `workspace.json` is one machine's link to a workspace, so it is
+# the only entry here.
+.oxagen/workspace.json
+.stella/private/
