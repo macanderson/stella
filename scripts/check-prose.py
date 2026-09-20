@@ -146,14 +146,11 @@ EXCLUDED_PREFIXES = (
     "scripts/test-prose-guard.sh",
     "scripts/prose-baseline.txt",
     "docs/wire/",
+    ".claude/skills/oxagen-branding/",  # vendored; Stella does not own its grade
 )
 EXCLUDED_SUBSTRINGS = ("/snapshots/", "/fixtures/")
 
-# Each entry is (name, compiled regex, what to write instead).
-#
-# Every pattern is deletion-safe by construction: the offending clause can be
-# cut without rewriting the sentence around it. That is why the remedy column
-# says "delete" more often than it says "rephrase".
+# (name, regex, remedy). Deletion-safe: cut the clause; the sentence still holds.
 PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
     (
         "enumerative-announcement",
@@ -238,7 +235,7 @@ PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
         # An issue number in prose sends the reader to a tracker to find out
         # what the sentence means. The sentence must say it instead. Tracking
         # markers (TODO and friends) keep theirs: a gate requires them there.
-        # Two more are not prose. A CSS hex reads as one -- `#10100F` as issue
+        # Two more are not prose. A CSS hex reads as one -- `#09090B` as issue
         # 10100 -- so the six- and eight-digit forms are exempt. And an
         # `issue:` field is a value a type requires, with no sentence in it.
         re.compile(r"^(?!.*(?:TODO|FIXME|XXX|HACK|Closes #|Refs #|issue: \"#)).*?"

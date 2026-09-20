@@ -8,11 +8,11 @@ Built with [Next.js](https://nextjs.org) (App Router) + [Fumadocs](https://fumad
 
 ## Brand
 
-Brand kit v5.0, **"the comet"**: a four-point star moving fast enough to leave
-a trail. One shape, one color — Gold `#D6962C` on `#10100F`, Paper for the
-light ground, JetBrains Mono as the only face. Quick rules: lowercase always;
-the comet flies left→right; gold is the signal, never the surface; brand text
-on light grounds is ink `#10100F`, because gold on paper measures 1.65:1.
+House system v7.0 (`design/tokens/stella-tokens.json`): obsidian `#09090B`,
+white, neutral greys, one gold `#D4AF37` (`#8A7223` on white). Faces: Space
+Grotesk for h1–h3 and the `stella*` wordmark, Geist for body and UI, Monaspace
+Neon for code. Rules: lowercase always; gold is the signal, never the surface;
+gold on white uses the deep shade (metal on white is 2.1:1).
 
 **`docs/brand/` is normative** (start with its `brand-guidelines.html`). Three
 layers, in order:

@@ -28,41 +28,41 @@
 
 :root {
   /* ---- brand core ------------------------------------------------------ */
-  --stella-brand: #D6962C;       /* gold — the brand metal */
-  --stella-brand-deep: #10100F;  /* ink — brand *text* on light is never gold */
-  --stella-ink: #10100F;         /* bg — the canvas */
-  --stella-paper: #F2EEE5;       /* text — primary text on dark */
-  --stella-paper-bg: #FBFAF6;    /* paper — light-mode surface */
+  --stella-brand: #D4AF37;       /* gold — the brand metal */
+  --stella-brand-deep: #09090B;  /* ink — brand *text* on light is never gold */
+  --stella-ink: #09090B;         /* bg — the canvas */
+  --stella-paper: #FFFFFF;       /* text — primary text on dark */
+  --stella-paper-bg: #FFFFFF;    /* paper — light-mode surface */
 
   /* ---- brand ramp ------------------------------------------------------ */
-  --st-bg: #10100F;
-  --st-panel: #181715;
-  --st-hl: #201F1C;
-  --st-border: #292722;
-  --st-rule: #34322D;
-  --st-gold: #D6962C;
-  --st-gold-bright: #F1C364;
-  --st-silver: #9B958A;
-  --st-silver-type: #DDD8CD;
-  --st-text: #F2EEE5;
-  --st-muted: #8C877C;
-  --st-dim: #6E6A62;
+  --st-bg: #09090B;
+  --st-panel: #18181B;
+  --st-hl: #1F1F23;
+  --st-border: #27272A;
+  --st-rule: #3F3F46;
+  --st-gold: #D4AF37;
+  --st-gold-bright: #F1CE65;
+  --st-silver: #A1A1AA;
+  --st-silver-type: #E4E4E7;
+  --st-text: #FFFFFF;
+  --st-muted: #8A8A93;
+  --st-dim: #71717A;
   --st-green: #74C991;
   --st-red: #E0687D;
   --st-diff-add: #10201A;
   --st-diff-del: #241019;
-  --st-ink: #10100F;
-  --st-paper: #FBFAF6;
-  --st-text: #F2EEE5;
-  --st-paper-panel: #F5F2EA;
-  --st-paper-border: #DED5C7;
-  --st-void: #0A0A09;
-  --st-gold-ink: #8B5E1A;
-  --st-paper-ground: #F2EEE5;
-  --st-paper-raised: #F8F5EE;
-  --st-paper-row: #E5DED1;
-  --st-paper-seam: #D8CDBD;
-  --st-ink-muted: #6B665C;
+  --st-ink: #09090B;
+  --st-paper: #FFFFFF;
+  --st-text: #FFFFFF;
+  --st-paper-panel: #FFFFFF;
+  --st-paper-border: #E4E4E7;
+  --st-void: #000000;
+  --st-gold-ink: #8A7223;
+  --st-paper-ground: #FFFFFF;
+  --st-paper-raised: #FFFFFF;
+  --st-paper-row: #F4F4F5;
+  --st-paper-seam: #E4E4E7;
+  --st-ink-muted: #71717A;
   --st-green-ink: #006933;
   --st-amber: #EB8960;
   --st-amber-ink: #8D3B19;
@@ -117,8 +117,8 @@
   --stella-grain-opacity: 0.045;     /* film grain overlay */
 
   /* ---- elevation / glow ------------------------------------------------ */
-  --stella-glow-brand: 0 0 24px rgb(214 150 44 / 0.28),
-      0 0 96px rgb(214 150 44 / 0.12);
+  --stella-glow-brand: 0 0 24px rgb(212 175 55 / 0.28),
+      0 0 96px rgb(212 175 55 / 0.12);
   --stella-shadow-card: 0 1px 2px rgb(0 0 0 / 0.25),
       0 8px 28px rgb(0 0 0 / 0.35);
 }
@@ -127,9 +127,9 @@
 :root {
   --stella-bg: var(--stella-paper-bg);
   --stella-fg: var(--stella-ink);
-  --stella-surface: #F5F2EA;
-  --stella-border: #DED5C7;
-  --stella-muted-fg: #6E6A62;
+  --stella-surface: #FFFFFF;
+  --stella-border: #E4E4E7;
+  --stella-muted-fg: #71717A;
   --stella-accent: var(--stella-brand);
   --stella-accent-text: var(--stella-brand-deep); /* gold that passes on light */
   /* The mark itself — shapes, not text. v5.0 retires the darker light cut:
@@ -150,9 +150,9 @@
 .dark, [data-theme="dark"] {
   --stella-bg: var(--stella-ink);
   --stella-fg: var(--stella-paper);
-  --stella-surface: #181715;
-  --stella-border: #292722;
-  --stella-muted-fg: #8C877C;
+  --stella-surface: #18181B;
+  --stella-border: #27272A;
+  --stella-muted-fg: #A1A1AA;
   --stella-accent: var(--stella-brand);
   --stella-accent-text: var(--stella-brand);
   --stella-mark-shape: var(--stella-brand);
@@ -161,9 +161,9 @@
   :root:not([data-theme="light"]) {
     --stella-bg: var(--stella-ink);
     --stella-fg: var(--stella-paper);
-    --stella-surface: #181715;
-    --stella-border: #292722;
-    --stella-muted-fg: #8C877C;
+    --stella-surface: #18181B;
+    --stella-border: #27272A;
+    --stella-muted-fg: #A1A1AA;
     --stella-accent: var(--stella-brand);
     --stella-accent-text: var(--stella-brand);
     --stella-mark-shape: var(--stella-brand);

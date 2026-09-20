@@ -18,7 +18,7 @@
  * shared cell. The generator and the guard can.
  *
  * WHAT CHANGED IN v5.0, and why it is a supersession rather than a tune. The
- * brand hue moves to #d6962c and the ground to #10100f because v4.0's own
+ * brand hue moves to #d4af37 and the ground to #09090b because v4.0's own
  * anchors fall outside the system's hue clamp. Bronze Gold measured
  * r=197 g=138 b=50, and a gold must satisfy g >= 0.78r — so g >= 154. At 138 it
  * missed by 16 points and sat in the orange band that reads brown on an
@@ -52,34 +52,34 @@
 
 :root {
   /* ── the system, generated ──────────────────────────────────────────── */
-  --st-bg: #10100f; /* canvas */
-  --st-panel: #181715; /* panels, cards, code blocks */
-  --st-hl: #201f1c; /* selected and hover rows */
-  --st-border: #292722; /* hairlines, dividers, unfilled meter track */
-  --st-rule: #34322d; /* section rules, turn boundaries */
-  --st-gold: #d6962c; /* the brand metal: actions, active states, money, the mark */
-  --st-gold-bright: #f1c364; /* tiny live indicators only */
-  --st-silver: #9b958a; /* secondary emphasis, incoming context */
-  --st-silver-type: #ddd8cd; /* syntax types, tertiary labels */
-  --st-text: #f2eee5; /* primary text on dark, in the deck */
-  --st-muted: #8c877c; /* secondary text */
-  --st-dim: #6e6a62; /* hints, captions, line numbers */
+  --st-bg: #09090b; /* canvas */
+  --st-panel: #18181B; /* panels, cards, code blocks */
+  --st-hl: #1f1f23; /* selected and hover rows */
+  --st-border: #27272A; /* hairlines, dividers, unfilled meter track */
+  --st-rule: #3f3f46; /* section rules, turn boundaries */
+  --st-gold: #d4af37; /* the brand metal: actions, active states, money, the mark */
+  --st-gold-bright: #f1ce65; /* tiny live indicators only */
+  --st-silver: #a1a1aa; /* secondary emphasis, incoming context */
+  --st-silver-type: #e4e4e7; /* syntax types, tertiary labels */
+  --st-text: #ffffff; /* primary text on dark, in the deck */
+  --st-muted: #8a8a93; /* secondary text */
+  --st-dim: #71717a; /* hints, captions, line numbers */
   --st-green: #74c991; /* pass, additive diff sign */
   --st-red: #e0687d; /* fail, destructive, removal diff sign */
   --st-diff-add: #10201a; /* added diff row background */
   --st-diff-del: #241019; /* removed diff row background */
-  --st-ink: #10100F; /* primary text on light surfaces */
-  --st-paper: #fbfaf6; /* light canvas */
-  --st-text: #f2eee5; /* primary text on dark, off the deck */
-  --st-paper-panel: #f5f2ea; /* light panel */
-  --st-paper-border: #ded5c7; /* light border */
-  --st-void: #0A0A09; /* below the canvas: full-bleed backdrops */
-  --st-gold-ink: #8b5e1a; /* gold as TEXT on the light ground */
-  --st-paper-ground: #f2eee5; /* the warm paper page ground */
-  --st-paper-raised: #f8f5ee; /* light surface raised above the page ground */
-  --st-paper-row: #e5ded1; /* light hover and selected rows */
-  --st-paper-seam: #d8cdbd; /* light seam: the hairline under a border */
-  --st-ink-muted: #6b665c; /* secondary text on light surfaces */
+  --st-ink: #09090B; /* primary text on light surfaces */
+  --st-paper: #ffffff; /* light canvas */
+  --st-text: #ffffff; /* primary text on dark, off the deck */
+  --st-paper-panel: #ffffff; /* light panel */
+  --st-paper-border: #e4e4e7; /* light border */
+  --st-void: #000000; /* below the canvas: full-bleed backdrops */
+  --st-gold-ink: #8a7223; /* gold as TEXT on the light ground */
+  --st-paper-ground: #ffffff; /* the warm paper page ground */
+  --st-paper-raised: #ffffff; /* light surface raised above the page ground */
+  --st-paper-row: #f4f4f5; /* light hover and selected rows */
+  --st-paper-seam: #e4e4e7; /* light seam: the hairline under a border */
+  --st-ink-muted: #71717a; /* secondary text on light surfaces */
   --st-green-ink: #006933; /* pass, as text on the light ground */
   --st-amber: #eb8960; /* warning */
   --st-amber-ink: #8d3b19; /* warning, as text on the light ground */

@@ -35,7 +35,7 @@
    cyan case from the gold one and never could.
 
    The metric that does is OKLCH hue distance, and `--warn` is derived on it
-   rather than picked — 31.8° off the identity under the current palette (see
+   rather than picked — 48.0° off the identity under the current palette (see
    the palette block), where the amber it replaced was 10.7°. So the
    carve-out stands on both its own reasoning AND a measured separation:
    three jobs, three channels, no overlap. `--identity` says whose instrument
@@ -67,29 +67,29 @@
      0.004–0.011), which is what keeps a large field of near-black from
      reading warm on a cheap panel — and matters doubly here because the
      identity is a yellow, so a warm ground would sit in the identity's own
-     family. The surfaces step #10100F → #181715 → #201F1C so a card reads as
+     family. The surfaces step #09090B → #18181B → #27272A so a card reads as
      raised by a value step rather than by a shadow. Shared with the terminal
      (crates/stella-tui/src/palette.rs), which carries the full derivation for
      each value. Do not prune this block to the tokens currently referenced;
      it carries the full set. */
-  --void:#0A0A09; --ground:#10100F; --surface:#181715; --raised:#201F1C;
-  --hairline:#292722; --hairline-strong:#35353D;
+  --void:#000000; --ground:#09090B; --surface:#18181B; --raised:#27272A;
+  --hairline:#27272A; --hairline-strong:#35353D;
   /* The accent ramp is the text ramp: "active" is an inversion, not a hue.
      These were `--mark*` until the v3.0 recolour, which is the naming bug the
      brand kit warns about — a hue in a token name, on tokens that had not
      been a hue for two releases. */
-  --mark:#F2EEE5; --mark-bright:#FFFFFF; --mark-deep:#9B958A;
+  --mark:#FFFFFF; --mark-bright:#FFFFFF; --mark-deep:#A1A1AA;
   /* The text ramp, and the one caveat worth stating rather than rounding
      away: --text-3 measures 4.79:1 on --ground, clearing the 4.5:1 AA body
      floor, and 4.33:1 on --raised, just under it. It is still the
      caption/label/UI tier — anything a reader must actually read at 13px on
      a raised row takes --text-2 (8.58:1). */
-  --text:#F2EEE5; --text-2:#9B958A; --text-3:#8C877C;
+  --text:#FFFFFF; --text-2:#A1A1AA; --text-3:#A1A1AA;
   /* The one neutral above --text-2, and it has exactly one job: the token
      classes in a code body (see highlightCode() below). The palette names it
      for syntax types, and putting code tokens on a neutral rather than a hue
      is the same rule this page already applies to its chart series. */
-  --text-emph:#DDD8CD;
+  --text-emph:#E4E4E7;
   /* Identity. The one hue outside --ok/--warn/--bad, and the header comment's
      carve-out: wordmark, favicon mark, one primary action. Never a state.
      Both values come from the product palette (crates/stella-tui's `brand`
@@ -102,7 +102,7 @@
      ground. The dark value measures 11.99:1 on --ground and 11.60:1 on
      --surface; the light one 6.61:1 on white, 6.18:1 on --surface, and
      6.61:1 as the fill pair against --identity-ink. */
-  --identity:#D6962C; --identity-ink:#10100F;
+  --identity:#D4AF37; --identity-ink:#09090B;
   /* The three semantic colours, and the only colour anywhere besides the
      identity. Held in the reference's own register so they read as marks on
      an instrument rather than as UI chrome — but lifted with the rest of the
@@ -116,14 +116,13 @@
      metric: WCAG contrast is a LUMINANCE ratio and cannot answer "can a
      reader tell these apart" at all — every chromatic pair of similar
      lightness scores near 1:1 no matter how different they look. OKLCH hue
-     distance can. --bad sits at 11.2° and the identity at 74.8°, and 43.0°
-     is the point that maximises the SMALLER of the two gaps; the shipped
-     value lands 31.8° from the identity and 31.8° from --bad, and clears AA
-     on all three dark grounds (7.51 / 7.06 / 6.50 on ground / surface /
-     raised). The house gold sits 16° nearer --bad than the gold before it,
-     so that arc is 63.7° wide and holds about two degrees of room for a
-     warning 30° from both ends. --ok and --bad come straight from the
-     palette: 9.52:1 and 5.84:1 on ground, 79.0° and 63.7° from the identity.
+     distance can. --bad sits at 11.2° and the identity at 91.1°. The
+     shipped value lands 48.0° from the identity and 31.8° from --bad, and
+     clears AA on all three dark grounds (7.84 / 6.99 / 5.87 on ground /
+     surface / raised). The v7.0 gold sits 16° further from --bad than the
+     gold before it, so that arc is 79.9° wide, and a warning 30° from both
+     ends has room to spare. --ok and --bad come straight from the
+     palette: 9.95:1 and 6.11:1 on ground, 62.8° and 79.9° from the identity.
      Both are pulled cool so they sit inside the scheme rather than fighting
      it. */
   --ok:#74C991; --warn:#EB8960; --bad:#E0687D;
@@ -131,8 +130,8 @@
      separated by lightness alone, which is the one channel that survives
      greyscale printing, colour-vision deficiency, and a projector. Ordered
      light → dark so --c1 is the most prominent series. */
-  --c1:#F2EEE5; --c2:#9B958A; --c3:#8C877C; --c4:#6E6A62;
-  --neutral-mark:#6E6A62;          /* the "everything else" mark — recedes */
+  --c1:#FFFFFF; --c2:#A1A1AA; --c3:#A1A1AA; --c4:#71717A;
+  --neutral-mark:#71717A;          /* the "everything else" mark — recedes */
   /* END palette */
 
   /* Semantic alias. One alias, for accent/active/focus. The accent is the
@@ -143,17 +142,17 @@
      stays a token of its own rather than reusing --ground: a selector that
      paints text in the page-background token is the coupling
      tests/light_mode.rs exists to forbid. */
-  --ink:#10100F;
+  --ink:#09090B;
   --accent:var(--mark);
-  --accent-wash:rgba(242,238,229,.08); /* text @8%  — hover / selected fill   */
-  --accent-edge:rgba(242,238,229,.38); /* text @38% — chip + badge edges      */
+  --accent-wash:rgba(255,255,255,.08); /* text @8%  — hover / selected fill   */
+  --accent-edge:rgba(255,255,255,.38); /* text @38% — chip + badge edges      */
   /* Inset wells return to the canvas rather than taking a step of their own.
      The palette ships four blacks and names the second one "code blocks",
      which is --surface here — the card a code block sits in — so a well
      *inside* that card has to recede below it, not above. Every consumer
      (pre.cfg, #gwrap, .jrnl-body, .dx) carries a --hairline border, so the
      well is delimited by its edge even where it sits directly on --ground. */
-  --sunken:#10100F;
+  --sunken:#09090B;
   /* Control outlines. WCAG 1.4.11 wants 3:1 for the boundary that identifies
      an interactive component; no token in the ground ramp reaches it —
      --hairline-strong measures 1.48:1 on --surface. --text-3 does, so every
@@ -249,7 +248,7 @@
    --hairline #E7EBF0, a gold --identity) against the attribute gate's
    product neutrals, seventeen roles apart, the worst of them an *absence*:
    nothing re-pointed --text-emph, so an OS-light reader got the ink page's
-   #DDD8CD on paper at 1.68:1, which is not a contrast failure so much as
+   #E4E4E7 on paper at 1.68:1, which is not a contrast failure so much as
    invisible ink. tests/light_mode.rs's `the_two_light_gates_declare_one_scheme`
    is what holds them together now; edit one block and it names the other.
 
@@ -278,9 +277,9 @@
 
      --text 19.78 / 18.50   --text-2  6.30 /  5.89   --text-3 4.13 / 3.86
      --ok    6.84 /  6.40   --warn    7.52 /  7.04   --bad    8.14 / 7.61
-     --identity 6.61 / 6.18 (#8B5E1A)   --text-emph 10.90 / 10.19
+     --identity 6.61 / 6.18 (#8A7223)   --text-emph 10.90 / 10.19
 
-   and on the dark side against --raised (#201F1C):
+   and on the dark side against --raised (#27272A):
 
      --text 14.63   --text-2 7.75   --text-3 4.33   --text-emph 9.97
      --ok    8.94   --warn   7.10   --bad    5.47   --identity 10.83
@@ -305,35 +304,35 @@
 @media (prefers-color-scheme:light){
   :root:not([data-theme="dark"]){
     color-scheme:light;
-    --void:#F2EEE5; --ground:#FFFFFF; --surface:#F7F7FA; --raised:#FFFFFF;
+    --void:#FFFFFF; --ground:#FFFFFF; --surface:#F7F7FA; --raised:#FFFFFF;
     --hairline:#E9E9EE; --hairline-strong:#D0D0D8;
-    --mark:#10100F; --mark-bright:#000000; --mark-deep:#6E6A62;
-    --identity:#8B5E1A; --identity-ink:#FFFFFF;
-    --text:#10100F; --text-2:#6E6A62; --text-3:#8C877C;
+    --mark:#09090B; --mark-bright:#000000; --mark-deep:#71717A;
+    --identity:#8A7223; --identity-ink:#FFFFFF;
+    --text:#09090B; --text-2:#71717A; --text-3:#A1A1AA;
     --text-emph:#3C3C46;
     --ok:#006933; --warn:#8D3B19; --bad:#952141;
-    --c1:#10100F; --c2:#6E6A62; --c3:#8C877C; --c4:#9B958A;
-    --neutral-mark:#9B958A;
+    --c1:#09090B; --c2:#71717A; --c3:#A1A1AA; --c4:#A1A1AA;
+    --neutral-mark:#A1A1AA;
     --ink:#FFFFFF;
-    --accent-wash:rgba(16,16,15,.06);
-    --accent-edge:rgba(16,16,15,.28);
+    --accent-wash:rgba(9,9,11,.06);
+    --accent-edge:rgba(9,9,11,.28);
     --sunken:#F7F7FA;
   }
 }
 :root[data-theme="light"]{
   color-scheme:light;
-  --void:#F2EEE5; --ground:#FFFFFF; --surface:#F7F7FA; --raised:#FFFFFF;
+  --void:#FFFFFF; --ground:#FFFFFF; --surface:#F7F7FA; --raised:#FFFFFF;
   --hairline:#E9E9EE; --hairline-strong:#D0D0D8;
-  --mark:#10100F; --mark-bright:#000000; --mark-deep:#6E6A62;
-  --identity:#8B5E1A; --identity-ink:#FFFFFF;
-  --text:#10100F; --text-2:#6E6A62; --text-3:#8C877C;
+  --mark:#09090B; --mark-bright:#000000; --mark-deep:#71717A;
+  --identity:#8A7223; --identity-ink:#FFFFFF;
+  --text:#09090B; --text-2:#71717A; --text-3:#A1A1AA;
   --text-emph:#3C3C46;
   --ok:#006933; --warn:#8D3B19; --bad:#952141;
-  --c1:#10100F; --c2:#6E6A62; --c3:#8C877C; --c4:#9B958A;
-  --neutral-mark:#9B958A;
+  --c1:#09090B; --c2:#71717A; --c3:#A1A1AA; --c4:#A1A1AA;
+  --neutral-mark:#A1A1AA;
   --ink:#FFFFFF;
-  --accent-wash:rgba(16,16,15,.06);
-  --accent-edge:rgba(16,16,15,.28);
+  --accent-wash:rgba(9,9,11,.06);
+  --accent-edge:rgba(9,9,11,.28);
   --sunken:#F7F7FA;
 }
 
@@ -392,11 +391,11 @@ header .bword{height:45px;width:auto;display:block;align-self:center}
    docs/brand/logo/svg/wordmark-color-{dark,light}.svg, served at
    /assets/wordmark{,-light}.svg (src/lib.rs). They were byte copies until
    the 2026-08-11 rebrand; the v3.0 ion recolour brought them back into step,
-   so both halves of each cut carry the current kit values (Obsidian #10100F,
-   Paper #F2EEE5) rather than only the brand hue (#2921).
+   so both halves of each cut carry the current kit values (Obsidian #09090B,
+   Paper #FFFFFF) rather than only the brand hue (#2921).
 
-   These are the *color* cuts. The comet star is the gold `brand-500` #D6962C
-   on the dark cut and `brand-700` #10100F on the light one. The two-stop rule
+   These are the *color* cuts. The comet star is the gold `brand-500` #D4AF37
+   on the dark cut and `brand-700` #09090B on the light one. The two-stop rule
    arrived with v3.0 — the rule before it was "shapes and marks stay full
    brand on both grounds" — and v4.0's return to gold keeps it rather than
    reverting it, because the rule was never really about ion: brand-500 holds

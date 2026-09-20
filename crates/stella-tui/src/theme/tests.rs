@@ -521,26 +521,26 @@ fn every_stated_hue_angle_matches_the_computation() {
     let hue = hue_deg;
 
     for (phrase, computed) in [
-        ("OKLCH hue 74.8", hue(BRAND)),
-        ("8.8 deg from [`BRAND`] in hue", sep(BRAND_LIVE, BRAND)),
-        ("(2.3 deg from [`BRAND`])", sep(BRAND_INK, BRAND)),
+        ("OKLCH hue 91.1", hue(BRAND)),
+        ("0.0 deg from [`BRAND`] in hue", sep(BRAND_LIVE, BRAND)),
+        ("(0.5 deg from [`BRAND`])", sep(BRAND_INK, BRAND)),
         ("OKLCH hue 153.9", hue(SUCCESS)),
-        ("(79.0 deg from", sep(SUCCESS, BRAND)),
+        ("(62.8 deg from", sep(SUCCESS, BRAND)),
         ("OKLCH hue 43.0", hue(WARNING)),
-        ("lands 31.8 deg from gold", sep(WARNING, BRAND)),
+        ("lands 48.0 deg from gold", sep(WARNING, BRAND)),
         ("and 31.8 deg from danger", sep(WARNING, DANGER)),
         ("OKLCH hue 11.2", hue(DANGER)),
-        ("(63.7 deg from", sep(DANGER, BRAND)),
+        ("(79.9 deg from", sep(DANGER, BRAND)),
         ("OKLCH hue 292.6", hue(DATA_1)),
-        ("(142.3 deg from gold)", sep(DATA_1, BRAND)),
+        ("(158.5 deg from gold)", sep(DATA_1, BRAND)),
         ("hue 355.6", hue(DATA_2)),
-        ("(79.3 deg from gold)", sep(DATA_2, BRAND)),
+        ("(95.5 deg from gold)", sep(DATA_2, BRAND)),
         ("hue 186.6", hue(DATA_3)),
-        ("(111.8 deg from gold)", sep(DATA_3, BRAND)),
+        ("(95.6 deg from gold)", sep(DATA_3, BRAND)),
         ("hue 126.2", hue(DATA_4)),
-        ("(51.3 deg from gold", sep(DATA_4, BRAND)),
+        ("(35.1 deg from gold", sep(DATA_4, BRAND)),
         ("hue 324.4", hue(DATA_5)),
-        ("110.4 deg from", sep(DATA_5, BRAND)),
+        ("126.6 deg from", sep(DATA_5, BRAND)),
         ("31.8 deg from the violet", sep(DATA_5, DATA_1)),
         ("31.1 deg from the rose", sep(DATA_5, DATA_2)),
     ] {
@@ -593,7 +593,7 @@ fn every_stated_hue_angle_matches_the_computation() {
 /// longer required for telling a warning from the mark.
 ///
 /// What must hold now:
-///   1. The accent is `#D6962C`, exactly; the canvas is `#10100F`, exactly.
+///   1. The accent is `#D4AF37`, exactly; the canvas is `#09090B`, exactly.
 ///      Brand and gold are one family (the collapse IS the identity).
 ///   2. Every retired hue is gone — the electric-blue family, every gold
 ///      this palette replaced, and the whole warm neutral ramp with them.
@@ -671,16 +671,16 @@ fn palette_law_gold_is_the_brand() {
 
     // 1. The accent is the gold and the ground is the canvas — pinned by
     //    hex so the identity cannot silently drift. This is the one clause
-    //    that names numbers: `#D6962C` on `#10100F`.
+    //    that names numbers: `#D4AF37` on `#09090B`.
     assert_eq!(
         ACCENT,
-        Color::Rgb(0xD6, 0x96, 0x2C),
-        "the accent must be gold #D6962C, exactly"
+        Color::Rgb(0xD4, 0xAF, 0x37),
+        "the accent must be gold #D4AF37, exactly"
     );
     assert_eq!(
         GROUND,
-        Color::Rgb(0x10, 0x10, 0x0F),
-        "the ground must be the canvas #10100F, exactly"
+        Color::Rgb(0x09, 0x09, 0x0B),
+        "the ground must be the canvas #09090B, exactly"
     );
     assert_eq!(ACCENT, palette::BRAND, "the accent comes from the palette");
     assert_eq!(GOLD, ACCENT, "brand and gold are one value");
@@ -773,8 +773,8 @@ fn palette_law_gold_is_the_brand() {
     // arithmetic rather than taste: warmth lives in the blue channel, so a warm
     // neutral spends more of its span than a cool one at the same lightness.
     // The widest in each is TEXT_SECONDARY at 17 and the paper seam at 27.
-    const DARK_TEXT_SPAN: u8 = 17;
-    const PAPER_SPAN: u8 = 27;
+    const DARK_TEXT_SPAN: u8 = 12;
+    const PAPER_SPAN: u8 = 12;
 
     // 3. Every neutral — ground ramp and text ramp alike — is WARM: red at
     //    or above blue, never below it, and never by enough to read as a
@@ -804,15 +804,11 @@ fn palette_law_gold_is_the_brand() {
         let Color::Rgb(r, g, b) = ground else {
             panic!("{name} must be a truecolor token");
         };
-        assert!(
-            r >= b,
-            "{name} ({ground:?}) must not be cool — red sits above blue on \
-             every ground in this palette"
-        );
         let (max, min) = (r.max(g).max(b), r.min(g).min(b));
         assert!(
             max - min <= 8,
-            "{name} ({ground:?}) must be a near-neutral, not a sepia cast"
+            "{name} ({ground:?}) must be a near-neutral, carrying no cast in \
+             either direction"
         );
         assert_ne!(ground, Color::Rgb(0, 0, 0), "{name} must not be true black");
     }
@@ -826,18 +822,13 @@ fn palette_law_gold_is_the_brand() {
         let Color::Rgb(r, g, b) = text else {
             panic!("{name} must be a truecolor token");
         };
-        assert!(
-            r >= g && g >= b,
-            "{name} ({text:?}) must be a warm neutral (r ≥ g ≥ b) — cool \
-             grays are banned on the dark side"
-        );
         let (max, min) = (r.max(g).max(b), r.min(g).min(b));
         assert!(
             max - min <= DARK_TEXT_SPAN,
-            "{name} ({text:?}) must be a near-neutral, not a sepia cast"
+            "{name} ({text:?}) must be a near-neutral, carrying no cast"
         );
     }
-    // The paper ramp is warmed to match, so a theme switch changes the
+    // The paper ramp is neutral to match, so a theme switch changes the
     // lightness and not the temperature.
     for (paper, name) in [
         (palette::PAPER, "PAPER"),
@@ -849,17 +840,13 @@ fn palette_law_gold_is_the_brand() {
         (palette::INK_DIM, "INK_DIM"),
         (palette::INK_EMPHASIS, "INK_EMPHASIS"),
     ] {
-        let Color::Rgb(r, _, b) = paper else {
-            panic!("{name} must be a truecolor token");
-        };
-        assert!(r >= b, "{name} ({paper:?}) must not be cool");
         let Color::Rgb(r, g, b) = paper else {
-            unreachable!()
+            panic!("{name} must be a truecolor token");
         };
         let (max, min) = (r.max(g).max(b), r.min(g).min(b));
         assert!(
             max - min <= PAPER_SPAN,
-            "{name} ({paper:?}) must be a near-neutral, not a sepia cast"
+            "{name} ({paper:?}) must be a near-neutral, carrying no cast"
         );
     }
 

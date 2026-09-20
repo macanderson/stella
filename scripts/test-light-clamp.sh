@@ -126,30 +126,33 @@ entry_is() {
 
 BENCH="docs/benchmarks/index.html"
 
-# ── C: a cool light neutral is caught ────────────────────────────────────────
+TRANSCRIPT="crates/stella-transcript/src/html/transcript.css"
+
+# ── C: a hued light neutral is caught ────────────────────────────────────────
 # `--panel` on the benchmark index is #FFFFFF today — achromatic, so it clears
-# warm-paper and carries no ratchet entry. Cooling it is a first-time violation
-# rather than a regression against a recorded value.
-r="$(new_root cool_neutral)"
-repaint "$r" "$BENCH" "#FFFFFF" "#F4F6FB"
-want "C1 a cool light neutral in a shipped surface is flagged" \
+# the neutral clamp and carries no ratchet entry. Tinting it blue past the
+# spread bound is a first-time violation rather than a regression.
+r="$(new_root hued_neutral)"
+repaint "$r" "$BENCH" "#FFFFFF" "#EDF2FB"
+want "C1 a hued light neutral in a shipped surface is flagged" \
   expect-fail "$r" "no baseline entry"
-want "C2 the failure names the role and the conjunct it broke" \
-  expect-fail "$r" "needs r >= g >= b"
+want "C2 the failure names the role and the spread it broke" \
+  expect-fail "$r" "its channels spread 14, over 12"
 want "C3 --update refuses to grandfather it" \
   expect-fail "$r" "refusing to grandfather" "--update"
 entry_is "C4 the refused --update wrote no entry" "$r" "$BENCH" --panel absent
 
-# ── W: the same surface with a warm value passes ─────────────────────────────
+# ── W: the same surface with a true grey passes ──────────────────────────────
 # Without this the suite is satisfiable by a guard that fails on everything.
-# `--rule` is #E9E9EE and baselined; the kit's own `paper-seam` is warm and
-# passes, so the entry must LEAVE the ratchet rather than stay as a licence.
-r="$(new_root warm_neutral)"
-repaint "$r" "$BENCH" "#E9E9EE" "#D8CDBD"
-want "W1 a warm replacement is reported as clearing, not passed silently" \
+# The transcript's `--hunk-bg` is #EEF3FB and baselined; the kit's own
+# `paper-row` is a true grey and passes, so the entry must LEAVE the ratchet
+# rather than stay as a licence.
+r="$(new_root true_grey)"
+repaint "$r" "$TRANSCRIPT" "#EEF3FB" "#F4F4F5"
+want "W1 a grey replacement is reported as clearing, not passed silently" \
   expect-fail "$r" "satisfies its clamp now"
-want "W2 --update drops the cleared entry" expect-pass "$r" "retightened to 26" "--update"
-entry_is "W3 the cleared entry is gone" "$r" "$BENCH" --rule absent
+want "W2 --update drops the cleared entry" expect-pass "$r" "retightened to 2" "--update"
+entry_is "W3 the cleared entry is gone" "$r" "$TRANSCRIPT" --hunk-bg absent
 
 # ── U: a role that names no family at all ────────────────────────────────────
 # The one outcome that must never be silent. A guard that skipped what it could
@@ -188,20 +191,20 @@ fi
 
 # ── M: a baselined role repainted to a DIFFERENT off-clamp value ─────────────
 # The ratchet records a measured value, not a name. Sliding a licensed role to
-# another cool hex is a new decision and gets asked about.
+# another hued value is a new decision and gets asked about.
 r="$(new_root moved)"
-repaint "$r" "$BENCH" "#D0D0D8" "#CED4DE"
+repaint "$r" "$TRANSCRIPT" "#DFE6EE" "#D8E0EA"
 want "M1 a repaint to another off-clamp value is flagged with both hexes" \
-  expect-fail "$r" "was #D0D0D8 and is now #CED4DE"
+  expect-fail "$r" "was #DFE6EE and is now #D8E0EA"
 want "M2 --update refuses to move the entry" \
   expect-fail "$r" "refusing to move an entry" "--update"
-entry_is "M3 the refused --update left the old value" "$r" "$BENCH" --rule-2 "#D0D0D8"
+entry_is "M3 the refused --update left the old value" "$r" "$TRANSCRIPT" --selected "#DFE6EE"
 
 # ── B: bootstrap runs once ───────────────────────────────────────────────────
 r="$(new_root bootstrap_guard)"
 want "B1 --bootstrap refuses when the ratchet already exists" \
   expect-fail "$r" "refusing to bootstrap" "--bootstrap"
-entry_is "B2 the refused --bootstrap left the ratchet intact" "$r" "$BENCH" --rule "#E9E9EE"
+entry_is "B2 the refused --bootstrap left the ratchet intact" "$r" "$TRANSCRIPT" --code "#2B323A"
 
 # ── N: the negative direction ────────────────────────────────────────────────
 r="$(new_root unchanged)"
