@@ -168,7 +168,7 @@ impl SpeculationGate {
 
 impl ToolCallObserver for SpeculationGate {
     fn text_delta(&self, delta: &str) {
-        self.progress.record();
+        self.progress.record_text(delta);
         if delta.is_empty() {
             return;
         }
@@ -180,7 +180,7 @@ impl ToolCallObserver for SpeculationGate {
     }
 
     fn reasoning_delta(&self, delta: &str) {
-        self.progress.record();
+        self.progress.record_text(delta);
         if delta.is_empty() {
             return;
         }

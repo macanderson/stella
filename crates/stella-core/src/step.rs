@@ -1138,16 +1138,46 @@ pub(crate) struct CompactionPass {
 /// `count` is `pub(crate)` for exactly that second reader. `Relaxed` because
 /// the only question asked of it is "did this change since I last looked",
 /// which no ordering with other memory affects.
+/// `fragments` answers the idle bound's question. `watch` answers the one it
+/// cannot (see [`degenerate`]). The two ride together. The same observer
+/// calls feed both, on the same fragment. Splitting them would thread two
+/// handles down every delta path to ask two halves of one question.
+#[derive(Debug, Default)]
+struct ProgressState {
+    fragments: AtomicU64,
+    watch: degenerate::DegenerateWatch,
+}
+
 #[derive(Clone, Debug, Default)]
-pub(crate) struct StreamProgress(Arc<AtomicU64>);
+pub(crate) struct StreamProgress(Arc<ProgressState>);
 
 impl StreamProgress {
+    /// Record a fragment with no text to read. That means a tool call, or
+    /// one piece of a tool call's part-built JSON. It marks life, no more.
     pub(crate) fn record(&self) {
-        self.0.fetch_add(1, Ordering::Relaxed);
+        self.0.fragments.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record a fragment of streamed text: an answer, or thinking.
+    ///
+    /// It marks life just as [`Self::record`] does. It also feeds the text to
+    /// the watch. This is its own method for a reason. The other callers have
+    /// no text to give. Tool arguments are part-built JSON, and the observer
+    /// port does not carry those bytes. Making up a `&str` for them would put
+    /// raw JSON in front of a check tuned on plain text.
+    pub(crate) fn record_text(&self, delta: &str) {
+        self.record();
+        self.0.watch.feed(delta);
     }
 
     pub(crate) fn count(&self) -> u64 {
-        self.0.load(Ordering::Relaxed)
+        self.0.fragments.load(Ordering::Relaxed)
+    }
+
+    /// Waits for the watch to mark this stream broken. Returns at once if it
+    /// already has.
+    pub(crate) async fn degenerated(&self) {
+        self.0.watch.tripped().await;
     }
 }
 
@@ -1167,6 +1197,11 @@ impl StreamProgress {
 /// A provider that streams nothing at all is bounded exactly as before, since
 /// with no fragments the idle clock and the wall clock are the same clock.
 ///
+/// The guard in [`degenerate`] rides along with it. That guard closes the
+/// mirror of this blind spot. A stream stuck on one character never goes
+/// idle. It meets this deadline in every window. Nothing else would stop it
+/// short of a person.
+///
 /// The trip is [`ProviderError::Terminal`] on purpose. `Transport` is
 /// retryable, so classifying it that way would hand a provider that is simply
 /// not answering the same unbounded wait again once per attempt — multiplying
@@ -1178,6 +1213,33 @@ impl StreamProgress {
 /// it, and a slow-but-progressing provider is never cut off by time another
 /// attempt already spent.
 pub(crate) async fn bounded_generation<F>(
+    sleeper: &dyn crate::retry::Sleeper,
+    limit: Option<Duration>,
+    progress: &StreamProgress,
+    call: F,
+) -> Result<CompletionResult, ProviderError>
+where
+    F: Future<Output = Result<CompletionResult, ProviderError>>,
+{
+    let idle = std::pin::pin!(idle_bounded_generation(sleeper, limit, progress, call));
+    let degenerate = std::pin::pin!(progress.degenerated());
+    match futures_util::future::select(idle, degenerate).await {
+        futures_util::future::Either::Left((result, _)) => result,
+        futures_util::future::Either::Right(((), _)) => Err(ProviderError::Terminal(format!(
+            "generation degenerated: the stream repeated one character {} times and said \
+             nothing else. This is a fault in the serving host, not a refusal by the \
+             model. On a gateway, set `upstream_pin` in `[providers.<id>]` to keep this \
+             session off the endpoint that produced it",
+            degenerate::RUN_LIMIT
+        ))),
+    }
+}
+
+/// The idle half of [`bounded_generation`], split out for one reason. The
+/// race against the watch then sits in one `select` over the whole call, not
+/// inside the loop that re-arms the clock. Inside that loop, a window still
+/// running would hold the trip back until it ended.
+async fn idle_bounded_generation<F>(
     sleeper: &dyn crate::retry::Sleeper,
     limit: Option<Duration>,
     progress: &StreamProgress,
@@ -1372,6 +1434,8 @@ impl Drop for SpeculationDropGuard {
         }
     }
 }
+
+mod degenerate;
 
 #[cfg(test)]
 mod tests;

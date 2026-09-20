@@ -431,7 +431,11 @@ fn emit_incomplete(
 /// at every call site — triage, verifier, plan, guidance, the overflow
 /// summarizer), so there is no speculative execution to gate and no preview
 /// event to forward. Every method exists only to record that *something*
-/// arrived.
+/// arrived — and, for the two that carry content, to let
+/// [`crate::step::degenerate`] decide whether that something was anything at
+/// all. These callers need that guard as much as the engine does: a triage
+/// or verifier call routed to the same broken upstream degenerates the same
+/// way, with no operator watching a deck to press Esc.
 struct IdleObserver(StreamProgress);
 
 impl ToolCallObserver for IdleObserver {
@@ -439,12 +443,12 @@ impl ToolCallObserver for IdleObserver {
         self.0.record();
     }
 
-    fn text_delta(&self, _delta: &str) {
-        self.0.record();
+    fn text_delta(&self, delta: &str) {
+        self.0.record_text(delta);
     }
 
-    fn reasoning_delta(&self, _delta: &str) {
-        self.0.record();
+    fn reasoning_delta(&self, delta: &str) {
+        self.0.record_text(delta);
     }
 
     fn tool_input_delta(&self) {

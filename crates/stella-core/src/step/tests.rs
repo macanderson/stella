@@ -552,3 +552,89 @@ async fn no_armed_deadline_leaves_the_idle_bound_as_the_only_cut() {
         }
     }
 }
+
+/// The fault seen in the wild, end to end. The stream keeps arriving and
+/// keeps saying nothing. `moonshotai/kimi-k3` on OpenRouter, served by
+/// Fireworks, wrote `The` and then one `!` past 16KB. It held the turn for
+/// 272s at output token rates, until a person pressed Esc.
+///
+/// This is the witness. Both older bounds are set as the real session set
+/// them. No idle limit can fire on a stream that never goes idle, and a live
+/// session sets no task deadline. So on the base commit nothing here returns
+/// and the call runs on. The outer timeout turns that into a failure instead
+/// of a hung suite.
+#[tokio::test]
+async fn a_stream_repeating_one_character_is_cut_with_no_other_bound_armed() {
+    let progress = StreamProgress::default();
+    let degenerate = async {
+        loop {
+            progress.record_text(&"!".repeat(512));
+            tokio::task::yield_now().await;
+        }
+        #[allow(unreachable_code)]
+        Ok(stub_completion_result())
+    };
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        deadline_bounded_generation(&RealTime, None, None, &progress, degenerate),
+    )
+    .await
+    .expect("a degenerate stream must be cut, not waited on");
+    match result {
+        Err(ProviderError::Terminal(message)) => {
+            assert!(
+                message.contains("degenerated") && message.contains("upstream_pin"),
+                "the trip should name the fault and the remedy, got {message:?}"
+            );
+        }
+        other => panic!("a degenerate stream must be cut, got {other:?}"),
+    }
+}
+
+/// The control the guard lives or dies by. A good answer streams text the
+/// whole time under both bounds. It has to reach its own end untouched. That
+/// includes the long runs real output does hold: a rule, a table edge, deep
+/// indents. The limit is set high enough to clear all three.
+#[tokio::test]
+async fn a_healthy_stream_is_never_cut_by_the_degeneracy_guard() {
+    let progress = StreamProgress::default();
+    let healthy = async {
+        for _ in 0..64 {
+            progress.record_text("Reading the file to see what the test asserts.\n");
+            progress.record_text(&format!("{}\n", "-".repeat(80)));
+            progress.record_text(&format!("{}fn main() {{}}\n", " ".repeat(16)));
+            tokio::task::yield_now().await;
+        }
+        Ok(stub_completion_result())
+    };
+    let result = deadline_bounded_generation(
+        &RealTime,
+        Some(Duration::from_secs(10)),
+        Some(std::time::Instant::now() + Duration::from_secs(10)),
+        &progress,
+        healthy,
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "ordinary streamed content must not read as degenerate, got {result:?}"
+    );
+}
+
+/// Tool call arguments are part-built JSON. The observer port does not carry
+/// them, so they mark life and nothing else. Say a whole answer is one big
+/// tool call, a full file sent in a single `content` argument. Such a file
+/// may well hold a long run of one character. The guard cannot touch it. The
+/// shape of the port says so, not the size of the limit.
+#[tokio::test]
+async fn payload_free_liveness_fragments_can_never_trip_the_guard() {
+    let progress = StreamProgress::default();
+    for _ in 0..64 {
+        progress.record();
+    }
+    let result = tokio::time::timeout(Duration::from_millis(50), progress.degenerated()).await;
+    assert!(
+        result.is_err(),
+        "fragments carrying no text must not be able to mark a stream degenerate"
+    );
+}
