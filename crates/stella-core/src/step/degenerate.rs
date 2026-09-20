@@ -33,6 +33,7 @@
 use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use stella_protocol::ProviderError;
 use tokio::sync::Notify;
 
 /// How many of one character in a row mark a stream as broken.
@@ -43,6 +44,24 @@ use tokio::sync::Notify;
 /// still trips in well under a second. Lowering it buys no accuracy. It only
 /// buys false alarms.
 pub(crate) const RUN_LIMIT: u32 = 1024;
+
+/// The error a tripped stream ends on.
+///
+/// It is [`ProviderError::Terminal`] on purpose. `Transport` is retryable, so
+/// that spelling would hand a broken host the same unbounded wait again, once
+/// per attempt.
+///
+/// This lives here, not at a call site, because two paths end a stream this
+/// way: the engine's own bound, and the plain calls in
+/// [`crate::accounted_call`]. Two copies of one sentence drift apart.
+pub(crate) fn terminal_error() -> ProviderError {
+    ProviderError::Terminal(format!(
+        "generation degenerated: the stream repeated one character {RUN_LIMIT} times and said \
+         nothing else. This is a fault in the serving host, not a refusal by the model. On a \
+         gateway, set `upstream_pin` in `[providers.<id>]` to keep this session off the \
+         endpoint that produced it"
+    ))
+}
 
 /// Counts one character repeating across a call's stream fragments. It
 /// latches once the count reaches [`RUN_LIMIT`].
@@ -117,6 +136,20 @@ impl DegenerateWatch {
             return true;
         }
         false
+    }
+
+    /// Clear the count and the mark, for the start of a new attempt.
+    ///
+    /// A run belongs to one stream. A retry opens a new one, often on a
+    /// different host. The count from the last attempt must not be charged
+    /// against it: a call that ends on 1000 dashes and a retry that opens on
+    /// 30 more would add up to a trip neither stream earned.
+    ///
+    /// Clearing the mark is safe because the waiter is built inside the
+    /// attempt and dies with it. No waiter outlives the stream it watches.
+    pub(crate) fn reset(&self) {
+        self.run.store(0, Ordering::Relaxed);
+        self.tripped.store(false, Ordering::Relaxed);
     }
 
     /// Whether this stream has been marked broken.
@@ -205,6 +238,27 @@ mod tests {
         let watch = DegenerateWatch::default();
         assert!(!watch.feed(&"の".repeat(RUN_LIMIT as usize - 1)));
         assert!(watch.feed("の"));
+    }
+
+    #[test]
+    fn a_reset_drops_the_run_carried_from_the_last_attempt() {
+        // The retry control. One attempt ends deep into a run of dashes. The
+        // next opens on more of them. Without the reset the two add up and
+        // the fresh stream is cut for what the last one wrote.
+        let watch = DegenerateWatch::default();
+        assert!(!watch.feed(&"-".repeat(RUN_LIMIT as usize - 1)));
+        watch.reset();
+        assert!(!watch.feed(&"-".repeat(RUN_LIMIT as usize - 1)));
+        assert!(!watch.is_tripped());
+    }
+
+    #[test]
+    fn a_reset_clears_the_mark() {
+        let watch = DegenerateWatch::default();
+        assert!(watch.feed(&"!".repeat(RUN_LIMIT as usize)));
+        watch.reset();
+        assert!(!watch.is_tripped());
+        assert!(watch.feed(&"!".repeat(RUN_LIMIT as usize)));
     }
 
     #[tokio::test]

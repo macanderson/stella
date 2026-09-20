@@ -1179,6 +1179,16 @@ impl StreamProgress {
     pub(crate) async fn degenerated(&self) {
         self.0.watch.tripped().await;
     }
+
+    /// Open a new stream on this clock: call it at the top of every attempt.
+    ///
+    /// The fragment count is left alone. It is shared across attempts on
+    /// purpose, so a fresh attempt is not charged for a sibling's silence.
+    /// The run of one character is the opposite. It belongs to one stream,
+    /// and a retry often opens on a different host, so it starts at zero.
+    pub(crate) fn begin_stream(&self) {
+        self.0.watch.reset();
+    }
 }
 
 /// Bound one provider dispatch by [`EngineConfig::model_timeout`], measured as
@@ -1225,13 +1235,7 @@ where
     let degenerate = std::pin::pin!(progress.degenerated());
     match futures_util::future::select(idle, degenerate).await {
         futures_util::future::Either::Left((result, _)) => result,
-        futures_util::future::Either::Right(((), _)) => Err(ProviderError::Terminal(format!(
-            "generation degenerated: the stream repeated one character {} times and said \
-             nothing else. This is a fault in the serving host, not a refusal by the \
-             model. On a gateway, set `upstream_pin` in `[providers.<id>]` to keep this \
-             session off the endpoint that produced it",
-            degenerate::RUN_LIMIT
-        ))),
+        futures_util::future::Either::Right(((), _)) => Err(degenerate::terminal_error()),
     }
 }
 
