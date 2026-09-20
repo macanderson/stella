@@ -1,65 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The pass that fills the semantic index — and, since #4043, the only one
-//! that does.
+//! Fill file vectors, then chunk vectors, under one renewable workspace lease.
 //!
-//! # Why this exists at all
-//!
-//! Embedding used to happen in three places: eagerly in `stella init`, in a
-//! bounded top-up at session start, and — the expensive one — lazily inside
-//! [`super::engine::dispatch`], on the query path, where a search paid for
-//! whatever the index was missing before it was allowed to answer. That last
-//! one is what #4035 measured at 46.9 seconds a call, and what #4041 cut to
-//! roughly a sixth by batching. A sixth of a latency that large is still on a
-//! latency-sensitive read, and it still could not converge: the per-query pass
-//! was capped, so a workspace further behind than the cap paid *something*
-//! forever and never caught up.
-//!
-//! #4043 decided the trade the two issues left open, in favour of the option
-//! the maintainer named: **the backfill moves off the query path entirely.**
-//! One pass, in the background, at session start, running to exhaustion rather
-//! than to a cap. A search then ranks over whatever the index holds and
-//! reports its coverage, which it already did.
-//!
-//! # What is given up, stated plainly
-//!
-//! Self-healing by query is gone. Before this, a workspace whose index was
-//! behind repaired itself a little on every search, so a user who never ran
-//! `stella init` and never started an interactive session still converged
-//! eventually. Now nothing converges unless a session start (or `stella init`)
-//! runs this pass — a one-shot `stella search` in a cold checkout ranks over
-//! an empty index and says so, where it used to embed 200 files first.
-//!
-//! That is the intended trade, and two things pay for it. The pass here is
-//! unbounded where the lazy one was capped, so the first session in a
-//! workspace finishes the job the lazy path could only nibble at. And
-//! [`super::readiness`] holds the first prompt while it runs, so "the index is
-//! not ready yet" is a sentence the user reads rather than a silently thin
-//! answer they act on.
-//!
-//! # Ordering
-//!
-//! Whole-file vectors first, then chunks. Both rungs are merged into one
-//! ranking (`engine::semantic_hits`), but file vectors give coarse
-//! coverage of the *whole* tree for the cost of one row a file, so a pass
-//! interrupted halfway leaves an index that can answer roughly about
-//! everything rather than precisely about a tenth of it.
-//!
-//! # Where it runs
-//!
-//! On a thread of its own, under a runtime of its own ([`spawn_on_own_thread`],
-//! built on [`super::own_thread`]). The pass mixes SQLite, file reads and
-//! hashing with the embedder's HTTP awaits, across three modules. Run as a
-//! task on the session's runtime, it held a worker for every synchronous
-//! step. On 2026-09-05 one of those steps, a coverage count over the graph,
-//! took eleven seconds after every batch. The deck's keyboard was dead for six
-//! minutes. The count is fast now and the deck runs on its own thread, so that
-//! freeze cannot recur. The pass holding a worker was still the defect
-//! AGENTS.md architecture rule 2 names. A thread takes every synchronous call
-//! in the pass off the runtime at once, the next one somebody adds included.
-//! `spawn_blocking` around each call would have to be added by hand every
-//! time, and forgotten once.
+//! Queries read stored vectors and disclose incomplete coverage. Session hosts
+//! run this pass in a detached worker process, so indexing survives a session
+//! closing and never holds a prompt. [`spawn_on_own_thread`] remains available
+//! to hosts that need a thread with a separate runtime.
 
 use std::path::{Path, PathBuf};
 
@@ -175,10 +122,7 @@ pub async fn backfill_opened<P: FnMut(IndexReadiness) + ?Sized>(
         return BackfillOutcome::Busy;
     };
 
-    // Reported before a single vector is written, so a surface gating on
-    // readiness learns the workspace is behind at the start of the pass
-    // rather than one round trip into it — on a cold checkout that first
-    // batch is exactly when the user is typing.
+    // Report coverage before the first batch, including a pass that fails immediately.
     progress(measure(graph, &fingerprint, false));
 
     // One file, one row: the file count is exactly how many files a pass can
@@ -621,7 +565,7 @@ pub(super) mod tests {
     /// scanning for the next, so exactly one request was ever in flight for
     /// the whole rung — 54 sequential round trips on this repository, paid at
     /// session start and in `stella init`, and paid *before* the chunk rung
-    /// starts, so the first prompt waits on all of them.
+    /// starts. Prompts now run independently of this pass.
     ///
     /// Sixty-four one-symbol files are two full requests. Overlapped, both
     /// are in flight; serial, the peak is one.

@@ -10,3 +10,6 @@
 # A slug listed here that is not a real subcommand fails the guard, so this
 # list cannot rot into a blanket exemption for a name some future command
 # reuses.
+
+# Hidden subprocess protocol. Users start it through an agent session.
+index-worker

@@ -523,6 +523,10 @@ pub(crate) enum Command {
         output_format: OutputFormat,
     },
 
+    /// Internal semantic-index worker; configuration arrives on stdin.
+    #[command(hide = true)]
+    IndexWorker,
+
     /// Find code — semantic and structural search over the workspace
     ///
     /// Describe what you are looking for — a question, a behaviour, or a

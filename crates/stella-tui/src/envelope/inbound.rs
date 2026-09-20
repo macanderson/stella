@@ -101,9 +101,7 @@ pub enum Inbound {
     /// as its background embedding pass fills it and once more when that pass
     /// stops. Out-of-band view state like
     /// [`Inbound::GraphSnapshot`]: applied straight to
-    /// `DeckUi::index_readiness`, ignored by the model fold. It gates one
-    /// thing — a first prompt submitted while a cold workspace is still
-    /// indexing (`deck_ui::gates::index_hold`).
+    /// `DeckUi::index_readiness`, ignored by the model fold. Coverage never gates prompts.
     IndexReadiness(IndexReadiness),
     /// A refreshed slash-command vocabulary for the `/` popup. Out-of-band
     /// view state exactly like [`Inbound::GraphSnapshot`]: applied straight

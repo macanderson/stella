@@ -261,7 +261,7 @@ fn pair_targets_with_values(
 /// disables core dumps containing the key. It does not affect ordinary
 /// signals, stdout, or mounted-log writes used by Harbor.
 #[cfg(target_os = "linux")]
-fn harden_process_memory() -> Result<(), String> {
+pub(crate) fn harden_process_memory() -> Result<(), String> {
     // SAFETY: `prctl` is called at single-threaded startup with the documented
     // PR_SET_DUMPABLE integer arguments and no pointer parameters.
     let result = unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) };
@@ -276,7 +276,7 @@ fn harden_process_memory() -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn harden_process_memory() -> Result<(), String> {
+pub(crate) fn harden_process_memory() -> Result<(), String> {
     Ok(())
 }
 

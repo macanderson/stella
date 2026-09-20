@@ -49,30 +49,23 @@ fn indexing(behind: usize) -> crate::envelope::Inbound {
     })
 }
 
-/// **The witness for #4043's prompt gate.** A first prompt typed while a cold
-/// workspace is still being indexed is not sent — and the typed text is still
-/// in the composer afterwards, which is the difference between holding a
-/// prompt and eating one.
+/// Even a nearly empty index must let the agent start gathering context.
 #[test]
-fn a_prompt_is_held_while_the_workspace_is_still_indexing() {
-    let mut model = model_with(&["lead"]);
-    let mut ui = ready_ui();
-    ingest_inbound(&indexing(447), &mut model, &mut ui);
-
-    type_str("explain the retry policy", &model, &mut ui);
-    assert_eq!(
-        handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
-        DeckAction::Handled,
-        "the submission must not leave the deck while the index is filling"
-    );
-    assert_eq!(
-        ui.composer.buffer(),
-        "explain the retry policy",
-        "a held prompt keeps the user's text"
-    );
-    let notice = ui.notice.entries().last().expect("the user is told why");
-    assert!(notice.contains("NOT sent"), "{notice}");
-    assert!(notice.contains("one-time"), "{notice}");
+fn a_prompt_runs_while_the_workspace_is_still_indexing() {
+    for pending in [1_000, 999, 501, 500, 447, 0] {
+        let mut model = model_with(&["lead"]);
+        let mut ui = ready_ui();
+        ingest_inbound(&indexing(pending), &mut model, &mut ui);
+        type_str("explain the retry policy", &model, &mut ui);
+        assert_eq!(
+            handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
+            DeckAction::Send(WorkspaceInput::Enqueue {
+                text: "explain the retry policy".into()
+            }),
+            "pending files: {pending}"
+        );
+        assert!(ui.composer.buffer().is_empty());
+    }
 }
 
 /// The release. Once the pass settles the same keystroke sends, however far

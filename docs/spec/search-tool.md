@@ -27,6 +27,14 @@ job. It must never pick a different job. `search(query, mode="regex")` would
 put the same six-way choice back behind one schema. `search` picks its own
 method. The caller never does.
 
+Index coverage never blocks a prompt. Session startup fills vectors in a
+separate worker process that can outlive the session. Below 50% embedding
+coverage, search reports `DEGRADED SEARCH` and still returns useful results.
+At half coverage or above, an incomplete index still reports `PARTIAL INDEX`.
+The worker keeps filling it to completion. A miss in a partial index proves
+nothing; the agent can use `bash` and `read_file` for more context. See
+[the background indexing decision](../adr/0043-background-indexing-never-gates-prompts.md).
+
 ## 2. The four rungs
 
 `crates/stella-tools/src/search/engine.rs` holds a function called

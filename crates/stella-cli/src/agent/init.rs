@@ -368,7 +368,7 @@ pub(crate) fn deck_notice_narrator(
 
 /// The deck's index-readiness reporter: every coverage measurement the
 /// background embedding pass takes, forwarded as out-of-band view state so the
-/// deck can hold a first prompt while a cold workspace fills (#4043).
+/// deck can show coverage while prompts continue to run.
 ///
 /// A function here rather than a closure written at the call site because
 /// `command_deck.rs` is a god file closed to growth (AGENTS.md), and this is

@@ -19,8 +19,7 @@ screen asks as often as the executor does.
   group. A group beats `*`.
 - `subprocess_env` — the names a child process must never inherit. Keys and
   tokens. The ambient rights of a git checkout, too.
-- `readiness` — how far behind the search index is, and whether to hold a
-  prompt for it.
+- `readiness` — search index coverage and whether it is below 50%.
 
 No registry. No dispatch. No MCP client. No network. No code graph. Those
 live in [`stella-tools`](../stella-tools) and stay there.

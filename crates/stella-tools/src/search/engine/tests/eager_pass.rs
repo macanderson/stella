@@ -205,6 +205,8 @@ async fn a_workspace_with_work_left_still_says_it_is_partial() {
 
     let note = note.expect("an unembedded workspace must disclose that it is partial");
     assert!(note.contains("PARTIAL INDEX"), "{note}");
+    assert!(note.contains("DEGRADED SEARCH"), "{note}");
+    assert!(note.contains("bash or read_file"), "{note}");
 }
 
 /// The eager whole-file pass embeds the corpus and is idempotent — a second
@@ -329,4 +331,51 @@ async fn a_broken_backend_makes_the_eager_pass_a_named_failure() {
     };
     assert_eq!(embedded, 0);
     assert!(reason.contains("upstream is down"), "{reason}");
+}
+
+/// File vectors already rank the whole tree while the chunk pass adds detail.
+#[tokio::test]
+async fn pending_chunks_do_not_hide_whole_file_coverage() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let root = write_fixture_at_the_real_workspace_path(workspace.path());
+    let opened = codegraph::open_or_build(&root).expect("index");
+    let fingerprint = ConceptEmbedder.fingerprint().id();
+    let outcome = warm_file_vectors(&root, &ConceptEmbedder, NO_FILE_CEILING).await;
+    assert!(matches!(outcome, WarmOutcome::Warmed { remaining: 0, .. }));
+    assert!(opened.graph.pending_chunk_file_count(&fingerprint).unwrap() > 0);
+    let coverage = crate::search::readiness::measure(&opened.graph, &fingerprint, false);
+    assert_eq!(coverage.indexed_files(), coverage.total_files);
+    assert!(!coverage.is_degraded());
+    let note = coverage_note(&opened.graph, &fingerprint).expect("chunks remain pending");
+    assert!(note.contains("PARTIAL INDEX"), "{note}");
+    assert!(!note.contains("DEGRADED SEARCH"), "{note}");
+    opened.graph.shutdown();
+}
+
+/// A thin index still returns its ranked hits and names the missing coverage.
+#[tokio::test]
+async fn search_returns_semantic_hits_below_half_coverage() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let root = write_fixture_at_the_real_workspace_path(workspace.path());
+    let opened = codegraph::open_or_build(&root).expect("index");
+    let outcome = warm_file_vectors(&root, &ConceptEmbedder, 1).await;
+    assert!(matches!(
+        outcome,
+        WarmOutcome::Warmed {
+            embedded: 1,
+            remaining: 3,
+            ..
+        }
+    ));
+    let answer = dispatch(
+        Some(&opened.graph),
+        &root,
+        "secret log http matrix",
+        Some(&ConceptEmbedder),
+    )
+    .await;
+    assert_eq!(answer.hits.len(), 1, "the stored vector remains searchable");
+    assert!(answer.strategies.contains(&Strategy::Semantic));
+    assert!(answer.note.unwrap().contains("DEGRADED SEARCH"));
+    opened.graph.shutdown();
 }
