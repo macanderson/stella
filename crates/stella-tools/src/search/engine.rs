@@ -781,14 +781,24 @@ fn coverage_note(graph: &CodeGraph, fingerprint: &str) -> Option<String> {
     if chunks_pending == 0 && files >= total_files {
         return None;
     }
+    let coverage = super::readiness::IndexReadiness {
+        total_files,
+        unindexed_files: total_files.saturating_sub(files),
+        settled: false,
+    };
+    let degraded = if coverage.is_degraded() {
+        "DEGRADED SEARCH — less than 50% of files embedded. "
+    } else {
+        ""
+    };
     Some(format!(
-        "PARTIAL INDEX — this ranking saw {files} of {total_files} files, and {chunks_pending} \
+        "{degraded}PARTIAL INDEX — this ranking saw {files} of {total_files} files, and {chunks_pending} \
          indexed file(s) still have symbols with no vector. Embedding fills most recently \
          changed first, so the remainder is NOT a random sample: it is the code that has sat \
          unmodified longest. Recent work is covered; a long-stable subsystem may not be. This \
          search did not wait to fill it — a background pass does that — so trying again in a \
-         moment costs nothing and may see more. Treat a miss here as inconclusive: grep \
-         directly for anything exact."
+         moment may see more. Treat a miss as inconclusive; use bash or read_file \
+         to gather context directly."
     ))
 }
 

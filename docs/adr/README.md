@@ -109,6 +109,7 @@ open; nothing before Phase 3 forces it.
 | [0040](0040-host-does-not-pick-the-tests.md) | The Host Does Not Pick the Tests | Accepted |
 | [0041](0041-the-turn-clock-reaches-dispatch-by-value.md) | The Turn Clock Reaches Dispatch by Value | Accepted |
 | [0042](0042-the-engine-reads-time-through-the-sleeper-port.md) | The Engine Reads Time Through the Sleeper Port | Accepted |
+| [0043](0043-background-indexing-never-gates-prompts.md) | Background indexing never gates prompts | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible

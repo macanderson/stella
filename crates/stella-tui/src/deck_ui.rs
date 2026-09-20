@@ -527,7 +527,7 @@ pub struct DeckUi {
     /// as its background pass fills it ([`Inbound::IndexReadiness`]).
     ///
     /// Out-of-band view state, never folded: it is a fact about the machine,
-    /// not about the session. It gates one thing — see `gates::index_hold`.
+    /// not about the session. It never gates submission.
     pub index_readiness: IndexReadiness,
     /// Plan revisions a failing gate has put up and nobody has answered, by
     /// lane ([`Inbound::RevisionProposed`], SPEC 8.1 item 3).
@@ -3440,16 +3440,7 @@ fn handle_session_key(
 /// turn), and any other prompt ALWAYS enqueues — never blocks on a busy agent,
 /// though a held dispatch (see [`submit_prompt`]) jumps it to the front.
 fn dispatch_submission(ui: &mut DeckUi, model: &WorkspaceModel) -> DeckAction {
-    // Before anything is taken out of the composer: a workspace whose index
-    // is still being built for the first time holds the prompt and says so
-    // (#4043). Checked here rather than inside `submit_prompt` precisely so
-    // the text is still in the composer when the hold fires.
-    if let Some(held) = gates::index_hold(ui) {
-        return held;
-    }
-    // And a lane with a plan revision standing runs nothing at all until it is
-    // answered (SPEC 8.1 item 3). Same placement, same reason: the composer
-    // still holds the text when the hold fires.
+    // A pending plan revision owns the submission before the composer is consumed.
     if let Some(held) = gates::revision_hold(ui) {
         return held;
     }

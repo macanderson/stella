@@ -123,6 +123,7 @@ mod reward;
 mod rules;
 mod runtime;
 mod search_cmd;
+mod semantic_worker;
 mod session_persist;
 mod settings;
 mod settings_check;
@@ -386,6 +387,11 @@ fn main() -> ExitCode {
         Ok(cli) => cli,
         Err(err) => err.exit(),
     };
+
+    if matches!(cli.command, Some(Command::IndexWorker)) {
+        startup.close();
+        return semantic_worker::run();
+    }
 
     // A machine-readable run has nobody to answer a masked password prompt,
     // and its caller is blocked reading stdout for an object that would never
@@ -1370,6 +1376,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         | Command::Daemon { .. }
         | Command::Tools { .. }
         | Command::Search { .. }
+        | Command::IndexWorker
         | Command::Storage { .. }
         | Command::Commands { .. }
         | Command::Plugin { .. }

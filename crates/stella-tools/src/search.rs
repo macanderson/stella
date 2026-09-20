@@ -19,9 +19,9 @@
 //! Since #4043 a search performs exactly one embedder round trip — the
 //! query's — and never writes a vector. The index is filled by
 //! [`backfill`]'s background pass at session start and by `stella init`'s
-//! eager one; [`engine::dispatch`] carries the decision and what it gives up,
-//! and [`readiness`] is the policy that holds the first interactive prompt
-//! while that pass is still running.
+//! eager one. The CLI runs the session pass in a separate process.
+//! [`readiness`] reports degraded coverage below 50%; no coverage level
+//! prevents a prompt or search from running.
 //!
 //! # The ladder degrades, it never fails
 //!

@@ -547,36 +547,6 @@ impl Drop for SessionGraph {
     }
 }
 
-/// Ensure the workspace code-graph index exists and stays fresh for the life of
-/// a session — WITHOUT blocking startup and WITHOUT re-running the full,
-/// LLM-driven [`init_workspace`]. This is the *data* side of init only:
-///
-/// 1. If there is no index yet it is built in the background
-///    ([`index_workspace_graph_blocking`], the same index step `stella init`
-///    runs); if one already exists it is a cheap incremental catch-up
-///    (byte-identical files are skipped, L-C2). The finished index is what
-///    `stella search` ranks over and the deck's Graph tab renders.
-/// 2. The live `notify` watcher is then armed via
-///    [`stella_graph::CodeGraph::mount`] so subsequent edits incrementally
-///    re-index. mount's own catch-up sha-skips everything just indexed in
-///    step 1 — the watcher is the point of the second open.
-///
-/// Non-blocking: returns immediately with a [`SessionGraph`] the caller keeps
-/// alive for the session (dropping it stops the watcher) and the setup task's
-/// `JoinHandle`, which completes once the index build has settled — a
-/// deterministic "index ready" signal for tests. `status` receives the same
-/// `◈ indexing code graph…` / `✓ …` lines `stella init` prints (route it to
-/// stderr or the deck transcript, never to a machine-readable stdout);
-/// `on_ready` fires once after the build (the deck refreshes its Graph tab
-/// there; other callers pass a no-op).
-///
-/// `readiness` receives the semantic index's coverage as the background
-/// embedding pass fills it, and once more marked settled when that pass
-/// stops. It exists for the interactive prompt gate (#4043), so **only the
-/// deck passes a real one**: the headless doors (`stella run`, `stella
-/// resume`, the plain REPL) take a goal that is already typed, and holding it
-/// would turn a script into a hang. Their answer is the same one a partial
-/// index has always given — rank what is there, say how much that was.
 /// Report — or, with `prune`, reclaim — semantic vectors left behind by an
 /// embedding model this workspace no longer uses (#3652).
 ///
@@ -646,148 +616,10 @@ pub(super) fn report_retired_vectors(
     graph.shutdown();
 }
 
-/// Fill the semantic index in the background, for the whole session's
-/// benefit and off every query's critical path (#4043, replacing #3649's
-/// bounded top-up).
-///
-/// # Why it runs unasked, and every launch
-///
-/// Its predecessor skipped a workspace with no vectors at all, on the
-/// argument that embedding a tree the user never asked for spends their
-/// money. That argument held while a search would eventually fill the index
-/// itself; with the lazy per-query pass deleted, "skip it" now means "this
-/// workspace has no semantic search, ever, and nothing will tell you why". So
-/// the opt-in signal is now the embedder being configured at all — a key the
-/// user set, for a capability whose entire purpose is this index. An
-/// unconfigured host still does nothing and says nothing.
-///
-/// Every launch, because the pass is *cheap when there is nothing to do*: it
-/// asks the graph what is pending and finds nothing. The first launch in a
-/// workspace is the expensive one, which is exactly the one
-/// [`crate::search_cmd::readiness`] holds the first prompt for.
-///
-/// # Narration
-///
-/// Deliberately quieter than `stella init`'s pass. Init is where a workspace
-/// is *configured*, so naming an absent embedder there is help; naming it on
-/// every session start is nagging about a capability the user has already
-/// chosen not to use. Only a pass that embedded something — or failed while
-/// trying — is worth a line.
-///
-/// Both callbacks keep their `Send` bound deliberately: this runs inside the
-/// `tokio::spawn`ed session task, and a bare `&mut dyn FnMut(_)` would make
-/// the whole future non-`Send` — the same trap `drive_index_blocking`
-/// documents above.
-///
-/// The pass itself runs on a thread of its own
-/// (`backfill::spawn_on_own_thread`): it is SQLite, file reads and HTTP
-/// interleaved, and as a task here it would hold this runtime's worker for
-/// every synchronous step. This task only relays what the thread reports.
-async fn backfill_vectors_quietly(
-    root: &std::path::Path,
-    status: &mut (dyn FnMut(InitLine) + Send),
-    readiness: &mut (dyn FnMut(IndexReadiness) + Send),
-) {
-    use crate::search_cmd::backfill::{BackfillOutcome, spawn_on_own_thread};
-    use crate::search_cmd::semantic::WarmOutcome;
-
-    let stella_embed::Resolution::Configured(embedder) =
-        stella_embed::resolve(&crate::credential_handoff::embedder_env())
-    else {
-        return;
-    };
-
-    // Read before the embedder crosses to its thread: the settled report at
-    // the end asks the store about this fingerprint.
-    let fingerprint = stella_embed::Embedder::fingerprint(embedder.as_ref()).id();
-    let mut ticker = ProgressTicker::new(INDEX_PROGRESS_INTERVAL);
-    // Every tick is the pass saying "still filling"; the settled report is
-    // this function's last act, below, and belongs to nobody else — a pass
-    // that declared itself settled from the inside would release the prompt
-    // gate one batch before it was true.
-    let outcome = match spawn_on_own_thread(root.to_path_buf(), embedder) {
-        Ok(mut pass) => {
-            while let Some(measured) = pass.progress().await {
-                readiness(measured);
-                if ticker.ready(Instant::now()) {
-                    status(InitLine::Progress(format!(
-                        "· semantic index: {} of {} files embedded…",
-                        measured.indexed_files(),
-                        measured.total_files
-                    )));
-                }
-            }
-            pass.join().await.unwrap_or_else(|failure| {
-                BackfillOutcome::Unavailable(format!("the embedding pass {failure}"))
-            })
-        }
-        Err(error) => BackfillOutcome::Unavailable(format!(
-            "cannot start the embedding pass's thread: {error}"
-        )),
-    };
-
-    match &outcome {
-        BackfillOutcome::Ran {
-            files: WarmOutcome::Warmed { embedded, .. },
-            ..
-        } if *embedded > 0 => {
-            status(InitLine::Step(format!(
-                "✓ semantic index: {embedded} file(s) embedded — search ranks the whole \
-                 workspace by meaning"
-            )));
-        }
-        BackfillOutcome::Ran {
-            files: WarmOutcome::Failed { reason, .. },
-            ..
-        } => {
-            status(InitLine::Step(format!(
-                "! semantic index: the background pass stopped — {reason} (search still ranks \
-                 over the vectors already stored, and says how many that is)"
-            )));
-        }
-        BackfillOutcome::Unavailable(reason) => {
-            status(InitLine::Step(format!(
-                "! semantic index: not filled — {reason}"
-            )));
-        }
-        // Nothing was pending, or another session holds the lease and is
-        // doing this work. Neither is news.
-        BackfillOutcome::Ran { .. } | BackfillOutcome::Busy => {}
-    }
-
-    // Settled, whatever happened — including a failure. A gate that outlives
-    // the pass behind it is a wedge: a workspace whose embedder is down must
-    // still take prompts (`search_cmd::readiness`). The report opens the
-    // graph store. That is SQLite, so it runs on the blocking pool and not
-    // on this task's worker. A report that could not run settles as unknown,
-    // and unknown holds nothing. That is how `measure` fails too.
-    let report_root = root.to_path_buf();
-    let measured =
-        tokio::task::spawn_blocking(move || settled_readiness(&report_root, &fingerprint))
-            .await
-            .unwrap_or_else(|_| IndexReadiness::unknown());
-    readiness(measured);
-}
-
-/// The workspace's index coverage, marked settled — what the prompt gate
-/// reads once the background pass has stopped.
-///
-/// Opens its own connection rather than borrowing the pass's: the pass may
-/// have failed before it opened one at all, and this report is owed either
-/// way. An unopenable graph reports [`IndexReadiness::unknown`], which holds
-/// nothing — the direction `readiness::measure` argues for.
-fn settled_readiness(root: &std::path::Path, fingerprint: &str) -> IndexReadiness {
-    let Ok(db_path) = stella_store::workspace_private_sqlite_path(root, "codegraph.db") else {
-        return IndexReadiness::unknown();
-    };
-    let Ok(graph) = stella_graph::CodeGraph::open(root, &db_path) else {
-        return IndexReadiness::unknown();
-    };
-    let measured = crate::search_cmd::readiness::measure(&graph, fingerprint, true);
-    graph.shutdown();
-    measured
-}
-
+/// Build the graph off the startup path, then watch it for file changes.
+/// The returned handle covers setup and the child embedding pass. Dropping
+/// `SessionGraph` stops the watcher; the child can outlive the session.
+/// Status and coverage go to the caller, and `on_ready` refreshes the graph view.
 pub(crate) fn spawn_session_graph(
     workspace_root: &std::path::Path,
     mut status: Box<dyn FnMut(InitLine) + Send>,
@@ -862,13 +694,13 @@ pub(crate) fn spawn_session_graph(
         //    tail. Nothing else fills the index any more — the per-query
         //    catch-up inside `search` is deleted — so this runs to exhaustion
         //    rather than to a cap, and reports its coverage as it goes so the
-        //    prompt gate can hold the first turn while a cold workspace fills.
+        //    deck can report coverage while prompts continue to run.
         //
         //    Last on purpose: everything above it is what makes the session
         //    usable, and this is the part that can take minutes. It is
         //    single-flight across processes (the embed lease), and a host with
         //    no embedder configured does nothing at all.
-        backfill_vectors_quietly(&root, &mut status, &mut readiness).await;
+        crate::semantic_worker::monitor(&root, &mut status, &mut readiness).await;
     });
     (SessionGraph { graph: slot }, handle)
 }

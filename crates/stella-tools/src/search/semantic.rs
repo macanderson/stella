@@ -31,8 +31,7 @@ pub const EMBED_BATCH: usize = 32;
 /// awaited, then the next scan. On this repository 1716 files at
 /// [`EMBED_BATCH`] is 54 round trips end to end, paid at session start and in
 /// `stella init` while nothing overlaps — and this rung runs *before* the
-/// chunk rung, so its latency is additive to the pass the first prompt waits
-/// on (#4190).
+/// chunk rung, so its latency is additive to the background embedding pass.
 ///
 /// The same number as the chunk rung's `CHUNK_EMBED_CONCURRENCY`
 /// (`super::engine`) and for the same reason: it bounds how much of a

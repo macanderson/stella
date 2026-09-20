@@ -215,6 +215,11 @@
       "status": "implemented",
       "title": "ADR 0042: The engine reads time through the Sleeper port"
     },
+    "adr/0043-background-indexing-never-gates-prompts": {
+      "path": "docs/adr/0043-background-indexing-never-gates-prompts.md",
+      "status": "implemented",
+      "title": "ADR 0043: Background indexing never gates prompts"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",
