@@ -1180,6 +1180,16 @@ impl StreamProgress {
         self.0.watch.tripped().await;
     }
 
+    /// Whether the watch has already marked this stream broken.
+    ///
+    /// The [`Self::degenerated`] future cannot answer for a trip that landed
+    /// in the same poll the call completed in, because a `select` polls the
+    /// call first and returns its result without polling this side again.
+    /// This asks after the fact, so the race has a second reading to check.
+    pub(crate) fn degenerated_now(&self) -> bool {
+        self.0.watch.is_tripped()
+    }
+
     /// Open a new stream on this clock: call it at the top of every attempt.
     ///
     /// The fragment count is left alone. It is shared across attempts on
@@ -1234,7 +1244,22 @@ where
     let idle = std::pin::pin!(idle_bounded_generation(sleeper, limit, progress, call));
     let degenerate = std::pin::pin!(progress.degenerated());
     match futures_util::future::select(idle, degenerate).await {
-        futures_util::future::Either::Left((result, _)) => result,
+        // `select` polls the call first, so a stream whose last fragment
+        // crosses the limit and then completes in the same poll arrives here
+        // with the trip already latched and this side never polled again. A
+        // whole-answer observer path has exactly that shape: one
+        // `record_text` carrying the entire answer, then `Ready`. Reading the
+        // latch here is what covers it. A provider error is replaced too: a
+        // degenerate stream is a fault in the host, and `Terminal` is what
+        // stops a retryable spelling buying the same call against the same
+        // endpoint again.
+        futures_util::future::Either::Left((result, _)) => {
+            if progress.degenerated_now() {
+                Err(degenerate::terminal_error())
+            } else {
+                result
+            }
+        }
         futures_util::future::Either::Right(((), _)) => Err(degenerate::terminal_error()),
     }
 }

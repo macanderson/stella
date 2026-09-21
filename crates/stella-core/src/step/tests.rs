@@ -591,6 +591,35 @@ async fn a_stream_repeating_one_character_is_cut_with_no_other_bound_armed() {
     }
 }
 
+/// The shape the race cannot see on its own. `futures_util::future::select`
+/// polls the call first, so a call that crosses the limit and then returns in
+/// the same poll never lets the watch's side run. A whole-answer observer path
+/// is exactly that: one `record_text` carrying the entire answer, then
+/// `Ready`. Nothing here awaits, so the whole call completes in the first
+/// poll.
+///
+/// This is the witness. With the latch read removed from
+/// `bounded_generation`'s completion arm, the degenerate answer is accepted as
+/// a success and this fails.
+#[tokio::test]
+async fn a_degenerate_answer_that_completes_in_one_poll_is_still_cut() {
+    let progress = StreamProgress::default();
+    let whole_answer = async {
+        progress.record_text(&"!".repeat(degenerate::RUN_LIMIT as usize));
+        Ok(stub_completion_result())
+    };
+    let result = deadline_bounded_generation(&RealTime, None, None, &progress, whole_answer).await;
+    match result {
+        Err(ProviderError::Terminal(message)) => {
+            assert!(
+                message.contains("degenerated") && message.contains("upstream_pin"),
+                "the trip should name the fault and the remedy, got {message:?}"
+            );
+        }
+        other => panic!("a degenerate whole answer must be cut, got {other:?}"),
+    }
+}
+
 /// The control the guard lives or dies by. A good answer streams text the
 /// whole time under both bounds. It has to reach its own end untouched. That
 /// includes the long runs real output does hold: a rule, a table edge, deep

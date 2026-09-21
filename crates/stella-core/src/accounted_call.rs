@@ -228,7 +228,16 @@ pub async fn run_accounted_call(
                 let dispatch = std::pin::pin!(provider.complete_observed_ref(request, &observer));
                 let degenerate = std::pin::pin!(watch_progress.degenerated());
                 let result = match futures_util::future::select(dispatch, degenerate).await {
-                    futures_util::future::Either::Left((result, _)) => result,
+                    // The same same-poll reading `step::bounded_generation`
+                    // takes: a call that trips on its last fragment and then
+                    // returns in one poll never lets the right arm run.
+                    futures_util::future::Either::Left((result, _)) => {
+                        if watch_progress.degenerated_now() {
+                            Err(crate::step::degenerate::terminal_error())
+                        } else {
+                            result
+                        }
+                    }
                     futures_util::future::Either::Right(((), _)) => {
                         Err(crate::step::degenerate::terminal_error())
                     }

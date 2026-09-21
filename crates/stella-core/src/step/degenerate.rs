@@ -147,9 +147,19 @@ impl DegenerateWatch {
     ///
     /// Clearing the mark is safe because the waiter is built inside the
     /// attempt and dies with it. No waiter outlives the stream it watches.
+    ///
+    /// The saved wake has to go with it. `notify_one` stores a permit when no
+    /// waiter has arrived, and that permit outlives the attempt that earned
+    /// it: a trip the last attempt's waiter never took would fire this
+    /// attempt's waiter at once and cut a healthy retry. `enable` registers
+    /// the future and takes the permit if one is stored, and the future is
+    /// dropped here rather than awaited, so the permit is discarded instead
+    /// of passed on.
     pub(crate) fn reset(&self) {
         self.run.store(0, Ordering::Relaxed);
         self.tripped.store(false, Ordering::Relaxed);
+        let notified = self.trip.notified();
+        std::pin::pin!(notified).as_mut().enable();
     }
 
     /// Whether this stream has been marked broken.
@@ -259,6 +269,23 @@ mod tests {
         watch.reset();
         assert!(!watch.is_tripped());
         assert!(watch.feed(&"!".repeat(RUN_LIMIT as usize)));
+    }
+
+    #[tokio::test]
+    async fn a_reset_drops_a_wake_the_last_attempt_never_consumed() {
+        // The retry control for the wake, beside the one for the count. A
+        // trip with no waiter present saves a permit. If `reset` left it
+        // there, the next attempt's waiter would take it and end a stream
+        // that had written nothing wrong.
+        use futures_util::FutureExt;
+
+        let watch = DegenerateWatch::default();
+        assert!(watch.feed(&"!".repeat(RUN_LIMIT as usize)));
+        watch.reset();
+        assert!(
+            watch.tripped().now_or_never().is_none(),
+            "a fresh attempt's waiter must not be woken by the last attempt's trip"
+        );
     }
 
     #[tokio::test]
