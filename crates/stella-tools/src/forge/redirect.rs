@@ -138,13 +138,23 @@ pub fn forge_redirect(command: &str, slots: &ForgeSlots) -> Option<String> {
 
 /// Does this command run `gh <group> <verb>` anywhere in it?
 ///
+/// A newline is a command separator, so each line is scanned on its own.
+/// Reading the whole text at once let the last word of one line stand as the
+/// word before `gh` on the next, and a two-line script is what a model writes
+/// when it pushes a branch and then opens the pull request for it.
+fn mentions(command: &str, verb: (&str, &str)) -> bool {
+    command.lines().any(|line| mentions_in_line(line, verb))
+}
+
+/// [`mentions`] within one line, where the first word is a command word.
+///
 /// It matches whole words rather than a substring. A path, a branch name or a
 /// commit message that holds the words does not trip it. The `gh` token has to
-/// be the command word: the start of the text, or straight after a separator.
+/// be the command word: the start of the line, or straight after a separator.
 /// `echo gh pr create` names the command and does not run it, and an agent
 /// telling the driver what it plans must not be refused for saying the name
 /// out loud.
-fn mentions(command: &str, verb: (&str, &str)) -> bool {
+fn mentions_in_line(command: &str, verb: (&str, &str)) -> bool {
     let tokens: Vec<&str> = command.split_whitespace().collect();
     for (index, token) in tokens.iter().enumerate() {
         if *token != "gh" {
@@ -426,5 +436,33 @@ mod tests {
     fn a_command_after_a_separator_is_still_checked() {
         let slots = attached();
         assert!(forge_redirect("git push && gh pr create --fill", &slots).is_some());
+    }
+
+    /// A newline separates two commands, and the second one is checked.
+    ///
+    /// Scanning the whole text at once read `HEAD` as the word before `gh`,
+    /// found it was not a separator, and let the call through. Two lines is
+    /// how a model writes "push the branch, then open the pull request", so
+    /// this was the common case rather than an exotic one.
+    #[test]
+    fn a_command_on_the_next_line_is_still_checked() {
+        let slots = attached();
+        assert!(
+            forge_redirect("git push -u origin HEAD\ngh pr create --fill", &slots).is_some(),
+            "a covered verb on the second line must still be refused"
+        );
+    }
+
+    /// The line scan does not make a named command look like a run one.
+    ///
+    /// Each line is scanned from its own start, so the guard against
+    /// `echo gh pr create` has to hold on every line, not only the first.
+    #[test]
+    fn naming_the_command_on_a_later_line_is_still_not_running_it() {
+        let slots = attached();
+        assert_eq!(
+            forge_redirect("set -e\necho gh pr create > /dev/null", &slots),
+            None
+        );
     }
 }

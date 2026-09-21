@@ -24,6 +24,15 @@
 //! `gh` on `PATH`, because `gh` is what both adapters shell out to. A provider
 //! that cannot spawn its own command is not a provider.
 //!
+//! **Which of their actions run.** Each forge tool carries several actions,
+//! and the session's gate above the tool stack answers for a whole tool. So
+//! the session's own [`stella_tools::policy::ToolPolicy`] is handed to the
+//! tools as well, and they ask it the narrower question:
+//! `"pull_request.merge": "off"` withholds that action and leaves `comment`
+//! working. It is the same policy object the gate reads, so the two cannot
+//! disagree about what is switched off. ADR 0044 decides which tools may
+//! group verbs this way.
+//!
 //! **What the footer says.** [`stella_autonomy::Attribution`] comes from
 //! `[self_driving.attribution]` in `stella.toml`. It governs every session.
 //! The self-driving loop is one of them and gets no special footer. So what an
@@ -41,15 +50,22 @@ use std::path::Path;
 use std::sync::Arc;
 
 use stella_tools::ToolRegistry;
+use stella_tools::policy::ToolPolicy;
 
-/// Attach the workspace's forge, tracker and attribution to `registry`.
-pub(crate) fn attach(root: &Path, registry: &ToolRegistry) {
+/// Attach the workspace's forge, tracker, attribution and switches to
+/// `registry`.
+///
+/// `policy` is the session's resolved [`crate::config::Config::tool_policy`].
+/// It is the scope chain with the org-managed ceiling already folded in. It is
+/// passed in rather than loaded here. Reading the settings a second time is
+/// how the gate and the tools come to disagree.
+pub(crate) fn attach(root: &Path, registry: &ToolRegistry, policy: ToolPolicy) {
     let attribution = crate::self_driving_cmd::config::load(root).attribution;
     if !gh_on_path() {
         // Attribution still lands. It costs nothing, and it means a host that
         // later attaches providers by another route inherits the configured
         // footer rather than the default one.
-        registry.attach_forge(None, None, attribution);
+        registry.attach_forge(None, None, attribution, policy);
         return;
     }
     registry.attach_forge(
@@ -58,6 +74,7 @@ pub(crate) fn attach(root: &Path, registry: &ToolRegistry) {
         )),
         Some(Arc::new(crate::pull_request_provider::GhPullRequests::new())),
         attribution,
+        policy,
     );
 }
 
@@ -94,7 +111,7 @@ mod tests {
     fn an_unconfigured_workspace_signs_with_the_default() {
         let dir = tempfile::tempdir().expect("tempdir");
         let registry = ToolRegistry::new(dir.path().to_path_buf());
-        attach(dir.path(), &registry);
+        attach(dir.path(), &registry, ToolPolicy::allow_all());
         assert_eq!(
             registry.forge_attribution(),
             stella_autonomy::Attribution::default()
@@ -112,7 +129,7 @@ mod tests {
         .expect("write stella.toml");
 
         let registry = ToolRegistry::new(dir.path().to_path_buf());
-        attach(dir.path(), &registry);
+        attach(dir.path(), &registry, ToolPolicy::allow_all());
         assert_eq!(
             registry.forge_attribution().issue,
             "Filed by the night shift."

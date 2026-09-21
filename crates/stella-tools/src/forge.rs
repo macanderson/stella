@@ -66,6 +66,18 @@ pub type IssueSlot = Arc<RwLock<Option<Arc<dyn IssueProvider>>>>;
 /// its issues in Linear. One slot would force them to be one system.
 pub type PullRequestSlot = Arc<RwLock<Option<Arc<dyn PullRequestProvider>>>>;
 
+/// The operator's tool switches, filled beside the providers.
+///
+/// A forge tool groups several verbs over one object, so the registry's own
+/// gate — which answers for a whole tool — cannot withhold `merge` and keep
+/// `comment`. The tools read this slot to answer that narrower question.
+/// `AGENTS.md invariant 9`'s second reason asks for it, and ADR 0044 is
+/// where the grouping is decided.
+///
+/// An empty slot allows every action, which is the shipped posture: a host
+/// that attaches no policy loses a switch, never a refusal it expected.
+pub type PolicySlot = Arc<RwLock<crate::policy::ToolPolicy>>;
+
 /// What the footer says on each surface, filled beside the providers.
 ///
 /// It sits in a slot rather than being fixed when the tools are built. The text
@@ -88,9 +100,41 @@ pub struct ForgeSlots {
     pub pull_requests: PullRequestSlot,
     /// What every body written through these tools is signed with.
     pub attribution: AttributionSlot,
+    /// Which of these tools' actions the operator has switched off.
+    pub policy: PolicySlot,
 }
 
 impl ForgeSlots {
+    /// Refuse `action` on `tool` when the operator has switched it off.
+    ///
+    /// The registry's gate answers for a whole tool, and these tools carry
+    /// several verbs, so this is where `"pull_request.merge": "off"` takes
+    /// effect. The refusal names the key that did it: a model told only
+    /// "refused" will try a different spelling of the same action, and a
+    /// model told which settings entry refused it reports that to the driver
+    /// and moves on.
+    ///
+    /// `ErrorClass::RefusedByPolicy` rather than `Environment`: nothing is missing,
+    /// somebody decided this.
+    pub(crate) fn permits(&self, tool: &str, action: &str) -> Result<(), ToolOutput> {
+        let allowed = self
+            .policy
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .allows_action(tool, action);
+        if allowed {
+            return Ok(());
+        }
+        Err(ToolOutput::classified_error(
+            ErrorClass::RefusedByPolicy,
+            format!(
+                "`{action}` is switched off for `{tool}` by \"tools\": \
+                 {{\"{tool}.{action}\": \"off\"}} in settings. The tool's other actions still \
+                 run. Ask whoever is driving to change the setting, or do this step by hand."
+            ),
+        ))
+    }
+
     /// The footer to sign with right now.
     ///
     /// Cloned rather than borrowed. The lock must not be held across the

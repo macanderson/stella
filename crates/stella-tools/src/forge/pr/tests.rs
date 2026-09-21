@@ -129,9 +129,15 @@ impl PullRequestProvider for Recorder {
 
 /// A tool over a forge that writes down each call, plus the log to read after.
 fn tool() -> (PullRequestTool, Arc<Recorder>) {
+    tool_under(crate::policy::ToolPolicy::allow_all())
+}
+
+/// The same, with the operator's switches set.
+fn tool_under(policy: crate::policy::ToolPolicy) -> (PullRequestTool, Arc<Recorder>) {
     let recorder = Arc::new(Recorder::default());
     let slots = ForgeSlots::default();
     *slots.pull_requests.write().unwrap() = Some(recorder.clone() as Arc<dyn PullRequestProvider>);
+    *slots.policy.write().unwrap() = policy;
     (PullRequestTool::new(slots), recorder)
 }
 
@@ -267,4 +273,42 @@ async fn closing_does_not_merge() {
     let written = recorder.written();
     assert_eq!(written.closed, vec!["31".to_owned()]);
     assert!(written.merged.is_empty());
+}
+
+/// An operator can withhold `merge` and keep the rest of the tool.
+///
+/// This is what `AGENTS.md invariant 9`'s second reason requires of a tool that
+/// carries several verbs, and what the session's own gate cannot do: it
+/// answers for a whole tool, so withholding `merge` there would take
+/// `comment` with it. The refusal reaches the forge as nothing at all, which
+/// is the half worth asserting — a refusal the provider still sees is not a
+/// refusal.
+#[tokio::test]
+async fn a_switched_off_merge_refuses_while_comment_still_runs() {
+    let (tool, recorder) = tool_under(crate::policy::ToolPolicy::from_switches([(
+        "pull_request.merge".into(),
+        false,
+    )]));
+
+    let refused = call(&tool, json!({"action": "merge", "key": "31"})).await;
+    let ToolOutput::Error { message, class, .. } = &refused else {
+        panic!("a withheld action must be an error, got {refused:?}");
+    };
+    assert_eq!(*class, Some(ErrorClass::RefusedByPolicy));
+    assert!(
+        message.contains("pull_request.merge"),
+        "the refusal names the key that did it: {message}"
+    );
+    assert!(
+        recorder.written().merged.is_empty(),
+        "a refused merge must not reach the forge"
+    );
+
+    let allowed = call(
+        &tool,
+        json!({"action": "comment", "key": "31", "body": "rebased onto main"}),
+    )
+    .await;
+    assert!(!allowed.is_error(), "{allowed:?}");
+    assert_eq!(recorder.written().comments.len(), 1);
 }

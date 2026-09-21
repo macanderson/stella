@@ -482,6 +482,13 @@ impl ToolRegistry {
     /// calling this at all signs with [`stella_autonomy::Attribution::default`]
     /// rather than with nothing: the failure mode of an unconfigured workspace
     /// is the default footer, never a missing one.
+    ///
+    /// `policy` is the operator's tool switches, which these tools read for
+    /// themselves because each of them carries several actions and this
+    /// registry's own gate answers only for a whole tool. It is the same
+    /// policy the gate consults; handing it over here is what lets
+    /// `"pull_request.merge": "off"` withhold one action and leave the rest
+    /// working. ADR 0044 decides which tools may group verbs this way.
     pub fn attach_forge(
         &self,
         issues: Option<std::sync::Arc<dyn stella_protocol::issue::IssueProvider>>,
@@ -489,6 +496,7 @@ impl ToolRegistry {
             std::sync::Arc<dyn stella_protocol::pull_request::PullRequestProvider>,
         >,
         attribution: stella_autonomy::Attribution,
+        policy: crate::policy::ToolPolicy,
     ) {
         *self.forge.issues.write().unwrap_or_else(|p| p.into_inner()) = issues;
         *self
@@ -501,6 +509,7 @@ impl ToolRegistry {
             .attribution
             .write()
             .unwrap_or_else(|p| p.into_inner()) = attribution;
+        *self.forge.policy.write().unwrap_or_else(|p| p.into_inner()) = policy;
     }
 
     /// What the forge tools sign with, for a host that needs to read it back.

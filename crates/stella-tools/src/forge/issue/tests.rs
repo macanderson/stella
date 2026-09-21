@@ -124,9 +124,15 @@ impl IssueProvider for Recorder {
 
 /// A tool over a tracker that writes down each call, plus the log to read after.
 fn tool() -> (IssueTool, Arc<Recorder>) {
+    tool_under(crate::policy::ToolPolicy::allow_all())
+}
+
+/// The same, with the operator's switches set.
+fn tool_under(policy: crate::policy::ToolPolicy) -> (IssueTool, Arc<Recorder>) {
     let recorder = Arc::new(Recorder::default());
     let slots = ForgeSlots::default();
     *slots.issues.write().unwrap() = Some(recorder.clone() as Arc<dyn IssueProvider>);
+    *slots.policy.write().unwrap() = policy;
     (IssueTool::new(slots), recorder)
 }
 
@@ -251,6 +257,37 @@ async fn a_close_with_no_receipt_stays_silent() {
     let (tool, recorder) = tool();
     call(&tool, json!({"action": "close", "key": "412"})).await;
     assert_eq!(recorder.written().closed[0].1, "");
+}
+
+/// The switches reach this tool too, not only `pull_request`.
+///
+/// One gate serves both tools, so this asks the narrower question: that the
+/// issue tool calls it. A call site can be dropped from one tool while the
+/// other keeps its own.
+#[tokio::test]
+async fn a_switched_off_close_refuses_while_comment_still_runs() {
+    let (tool, recorder) = tool_under(crate::policy::ToolPolicy::from_switches([(
+        "issue.close".into(),
+        false,
+    )]));
+
+    let refused = call(&tool, json!({"action": "close", "key": "412"})).await;
+    let ToolOutput::Error { message, class, .. } = &refused else {
+        panic!("a withheld action must be an error, got {refused:?}");
+    };
+    assert_eq!(*class, Some(ErrorClass::RefusedByPolicy));
+    assert!(message.contains("issue.close"), "{message}");
+    assert!(
+        recorder.written().closed.is_empty(),
+        "a refused close must not reach the tracker"
+    );
+
+    let allowed = call(
+        &tool,
+        json!({"action": "comment", "key": "412", "body": "still looking at this"}),
+    )
+    .await;
+    assert!(!allowed.is_error(), "{allowed:?}");
 }
 
 /// An action this tool does not have is named, with the ones it does.

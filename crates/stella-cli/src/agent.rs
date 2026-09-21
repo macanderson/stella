@@ -1025,7 +1025,20 @@ pub fn run_tools_listing() -> Result<(), String> {
     native.sort();
     for name in &native {
         if policy.allows(name) {
-            println!("    {} {}", "·".dimmed(), name);
+            // A tool whose actions are individually switched off is still on,
+            // and would print as plainly on. An operator who cannot see the
+            // switch they set has no way to find the refusal the session hits.
+            let withheld = policy.denied_actions(name);
+            if withheld.is_empty() {
+                println!("    {} {}", "·".dimmed(), name);
+            } else {
+                println!(
+                    "    {} {} {}",
+                    "·".dimmed(),
+                    name,
+                    format!("— {} off", withheld.join(", ")).dimmed()
+                );
+            }
         } else {
             println!(
                 "    {} {}",

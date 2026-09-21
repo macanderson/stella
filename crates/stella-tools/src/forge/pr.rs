@@ -131,6 +131,10 @@ impl PullRequestTool {
     /// the dispatch thread for one `gh` round trip.
     fn run(&self, input: &Value) -> Result<ToolOutput, ToolOutput> {
         let action = required(input, "action")?;
+        // Before the forge is even looked up: a switched-off action is a
+        // decision somebody made, and it is the same answer whether or not
+        // this workspace has a forge attached.
+        self.slots.permits("pull_request", action)?;
         let forge = self.slots.forge()?;
         let attribution = self.slots.attribution();
 

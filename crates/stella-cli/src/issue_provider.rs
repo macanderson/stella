@@ -354,16 +354,8 @@ impl IssueProvider for GhIssueProvider {
         comment: &CommentId,
         body: &str,
     ) -> Result<(), IssueError> {
-        let path = format!("repos/{{owner}}/{{repo}}/issues/comments/{comment}");
-        gh_json(&[
-            "api",
-            "--method",
-            "PATCH",
-            &path,
-            "--field",
-            &format!("body={body}"),
-        ])
-        .map(|_| ())
+        let args = comment_patch_args(comment, body);
+        gh_json(&args.iter().map(String::as_str).collect::<Vec<_>>()).map(|_| ())
     }
 
     async fn relabel(
@@ -605,6 +597,25 @@ fn comment_id_from_url(url: &str) -> Result<CommentId, IssueError> {
         })
 }
 
+/// The argv that rewrites a comment body, with the body sent as a literal.
+///
+/// `--field` gives a value magic type conversion, and a value beginning with
+/// `@` is read as a filename: an ordinary comment opening with an @-mention
+/// would make `gh` look for a local file, and `@/some/path` would post that
+/// file's contents to GitHub. `--raw-field` sends the string as written, which
+/// is what a comment body is. The argv is built here rather than inline so a
+/// test can read it.
+fn comment_patch_args(comment: &CommentId, body: &str) -> Vec<String> {
+    vec![
+        "api".into(),
+        "--method".into(),
+        "PATCH".into(),
+        format!("repos/{{owner}}/{{repo}}/issues/comments/{comment}"),
+        "--raw-field".into(),
+        format!("body={body}"),
+    ]
+}
+
 /// Run a `gh` subcommand whose stdout is parsed, with colour forced off.
 ///
 /// The colour handling is not cosmetic and is inherited from the shell driver:
@@ -833,6 +844,34 @@ mod tests {
             issues[1].class,
             IssueClass::Other,
             "the compiled label must not survive a manifest that replaced it"
+        );
+    }
+
+    /// A comment body beginning with `@` is sent as text, not as a filename.
+    ///
+    /// `gh api --field` reads a value starting with `@` as a path to read, so
+    /// a comment that opens by naming somebody would have made `gh` hunt for a
+    /// local file, and `@/some/path` would have posted that file to GitHub.
+    /// `--raw-field` is the flag that takes the string as written.
+    #[test]
+    fn a_comment_body_starting_with_an_at_sign_is_sent_literally() {
+        let args = comment_patch_args(&CommentId::from("991"), "@macanderson take a look");
+
+        assert!(
+            args.contains(&"--raw-field".to_string()),
+            "the body must go through --raw-field: {args:?}"
+        );
+        assert!(
+            !args.iter().any(|arg| arg == "--field"),
+            "--field would read the body as a filename: {args:?}"
+        );
+        assert_eq!(
+            args.last().map(String::as_str),
+            Some("body=@macanderson take a look")
+        );
+        assert_eq!(
+            args[3], "repos/{owner}/{repo}/issues/comments/991",
+            "the comment id addresses the API path"
         );
     }
 }

@@ -115,6 +115,10 @@ impl IssueTool {
     /// line here rather than a nest.
     async fn run(&self, input: &Value) -> Result<ToolOutput, ToolOutput> {
         let action = required(input, "action")?;
+        // Asked before the tracker is looked up, so a switched-off action
+        // reads the same on a workspace that has no tracker as on one that
+        // does.
+        self.slots.permits("issue", action)?;
         let tracker = self.slots.tracker()?;
         let attribution = self.slots.attribution();
 

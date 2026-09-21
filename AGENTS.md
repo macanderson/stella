@@ -1117,6 +1117,21 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
    corrupts the engine's concurrency contract. The scratch state plane
    (`save_state` / `get_state` / `list_state` / `delete_state`) is the
    reference shape.
+
+   **The forge tools are the bounded exception, and `doc:adr/0044-a-forge-tool-groups-verbs-over-one-object`
+   is what bounds them.** `pull_request` and `issue` each carry several
+   verbs under one `action`, because a schema rides the byte-stable prefix
+   (`invariant 7`) on every call of every session and eleven of them is a
+   standing cost. The record states the four conditions that let a tool
+   group this way: one object named by one key, no read-only action so
+   `read_only: false` describes every arm, one `ACTIONS` list that the
+   schema enum and the unknown-action error both read, and a policy asked
+   per action. That last one is how the second reason above is met rather
+   than waived: `ToolPolicy::allows_action` takes a `"<tool>.<action>"` key,
+   so `"pull_request.merge": "off"` withholds one verb and leaves the other
+   five running. It can only narrow, because it asks `allows` first. Nothing
+   else in the tree groups verbs, and a candidate whose actions take
+   different objects is two tools.
 10. **Every emitted signal names its consumer.** An `AgentEvent` variant that
    nothing reads is allowed, but only as a **declared, issue-cited gap** —
    never as a silence nobody noticed. The ledger is
