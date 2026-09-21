@@ -414,3 +414,26 @@ If some clause in the CLA is a blocker for you, say so in the PR or email
 ```text
    ·  .  ✦   ·        see you in the diff.        ·   ✦  .  ·
 ```
+
+## Shared workflow updates
+
+Dependabot checks GitHub Actions weekly. What it skips is the Oxagen reusable
+workflows that the callers in `.github/workflows/` reference, excluded by the
+`macanderson/oxagen/.github/workflows/*` ignore pattern. That pattern names a
+remote dependency, so the caller files themselves are not exempt: every other
+action they pin is still updated automatically. The Oxagen pins are the
+exception because they are maintained together across Stella, ArenaBench,
+cgp-website, and context-graph-protocol. When a shared workflow changes, open
+the caller updates together and verify Oxagen's `scr-corpus-check` after they
+merge.
+
+The parity check is `check-dod-stub-parity.mjs`, a second step in that same
+job rather than a workflow of its own. It compares the workflow files each
+caller's pin resolves to, so two different pins that resolve to identical
+files pass.
+
+The pin is a commit SHA rather than `@main` so that no repository can change
+a required check in another without a commit to review there. The cost is a
+re-pin in every caller, and the failure mode is paying it in three of four.
+[Oxagen ADR-045](https://github.com/macanderson/oxagen/blob/main/docs/adr/ADR-045-pin-cross-repo-reusable-workflows.md)
+records that decision.
