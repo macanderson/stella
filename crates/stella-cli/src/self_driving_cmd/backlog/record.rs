@@ -122,12 +122,16 @@ mod tests {
             Ok(())
         }
 
-        async fn comment(&self, _key: &IssueKey, body: &str) -> Result<(), IssueError> {
+        async fn comment(
+            &self,
+            _key: &IssueKey,
+            body: &str,
+        ) -> Result<stella_protocol::issue::CommentId, IssueError> {
             self.comments
                 .lock()
                 .expect("fixture lock")
                 .push(body.to_owned());
-            Ok(())
+            Ok(stella_protocol::issue::CommentId::from("1"))
         }
 
         async fn relabel(
@@ -212,8 +216,12 @@ mod tests {
             Ok(())
         }
 
-        async fn comment(&self, _key: &IssueKey, _body: &str) -> Result<(), IssueError> {
-            Ok(())
+        async fn comment(
+            &self,
+            _key: &IssueKey,
+            _body: &str,
+        ) -> Result<stella_protocol::issue::CommentId, IssueError> {
+            Ok(stella_protocol::issue::CommentId::from("1"))
         }
 
         async fn relabel(
@@ -275,7 +283,7 @@ mod tests {
                 &IssueKey::from("17"),
                 "the turn exited 1 — byte-identical output every time",
                 &stella_autonomy::escalation::EscalationPolicy::default(),
-                "created by stella*",
+                stella_autonomy::SIGNATURE,
             ))
             .expect("the tracker accepts writes");
 
@@ -372,7 +380,7 @@ mod tests {
                 "the turn exited 1 — the same `bash` call with identical \
                  arguments produced byte-identical output every time",
                 &policy,
-                "created by stella*",
+                stella_autonomy::SIGNATURE,
             ))
             .expect("the tracker accepts writes");
 
@@ -391,7 +399,7 @@ mod tests {
                 &key,
                 "the turn ran and could not work out what the issue asks for",
                 &policy,
-                "created by stella*",
+                stella_autonomy::SIGNATURE,
             ))
             .expect("the tracker accepts writes");
         assert_eq!(

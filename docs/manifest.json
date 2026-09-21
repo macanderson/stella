@@ -220,6 +220,11 @@
       "status": "implemented",
       "title": "ADR 0043: Background indexing never gates prompts"
     },
+    "adr/0044-a-forge-tool-groups-verbs-over-one-object": {
+      "path": "docs/adr/0044-a-forge-tool-groups-verbs-over-one-object.md",
+      "status": "implemented",
+      "title": "ADR 0044: A forge tool groups verbs over one object"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",

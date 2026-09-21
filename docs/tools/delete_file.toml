@@ -1,13 +1,15 @@
 # delete_file — GENERATED FILE, DO NOT EDIT.
 #
-# Regenerate:   make tool-docs-update
-# Guarded by:   make tool-docs (a `make gate` step)
+# Regenerate it with `make tool-docs-update`.
+# The `make tool-docs` gate step fails when a page drifts.
 #
-# Where each field comes from:
-#   name / description / input_schema      the tool's own ToolSchema
-#   read_only / available_for_speculation / category / availability
-#   risk_level                             crates/stella-tool-facts/src/catalog.rs
-#   output_schema                          stella_protocol::ToolOutput
+# Each field has one source.
+# The tool's own `ToolSchema` gives `name`, `description` and
+# `input_schema`.
+# `crates/stella-tool-facts/src/catalog.rs` gives `read_only`,
+# `available_for_speculation`, `category`, `availability` and
+# `risk_level`.
+# `stella_protocol::ToolOutput` gives `output_schema`.
 
 name = "delete_file"
 category = "file"
@@ -15,15 +17,19 @@ availability = "always"
 read_only = false
 available_for_speculation = false
 
-# risk_level: how bad one honest call is — a reviewed judgement, declared in
-# crates/stella-tool-facts/src/catalog.rs beside the flags above and graded against
-# the rubric on `ToolEntry::risk` (#2716, #3060). A DIFFERENT axis from
-# `read_only`: `delegate` mutates no file and spends real money, while
-# `task_create` mutates a board that dies with the session. It is not derived
-# from the two booleans above. That would only relabel them.
+# `risk_level` grades how bad one call is when it does just what it says.
+# It is a reviewed judgement, not a value read off the flags above.
+# `crates/stella-tool-facts/src/catalog.rs` declares it.
+# The rubric on `ToolEntry::risk` is what it is graded against.
 #
-# A policy grant is a ceiling over this grade. Every tool that is not a
-# built-in (MCP, a custom manifest) is graded `high` for being unreviewed.
+# It is a different axis from `read_only`.
+# `delegate` changes no file, and it spends real money.
+# `task_create` writes to a board that dies with the session.
+# A grade derived from the two flags above would just relabel them.
+#
+# A policy grant is a ceiling over this grade.
+# A tool that is not built in (MCP, a custom manifest) is graded `high`,
+# because nobody has reviewed it.
 risk_level = "destructive"
 
 description = '''
@@ -64,9 +70,9 @@ input_schema = '''
 }
 '''
 
-# The envelope every tool answers in, optional members included.
-# Declared; what rides inside `ok.content` and `ok.data` is a per-tool
-# convention with no schema behind it.
+# The shape every tool answers in, with the optional parts included.
+# Only this outer shape is declared. What rides inside `ok.content`
+# and `ok.data` is a per-tool habit with no schema behind it.
 output_schema = '''
 {
   "$comment": "stella_protocol::ToolOutput — the envelope every tool answers in. The envelope is declared; the payload inside is not.",
@@ -126,9 +132,8 @@ output_schema = '''
 # ── example ───────────────────────────────────────────────────────────────
 # OBSERVED EXAMPLE: none.
 # `delete_file` has 24 calls in the wider census, but none in the 2829-row
-# capture the examples are drawn from. No payload is shown, because an
-# invented one would teach the reader what the author imagined this tool is
-# for.
+# capture the examples are drawn from. No payload is shown here. A made-up one
+# would teach the reader what the author guessed this tool is for.
 
 # ── usage ─────────────────────────────────────────────────────────────────
 # Measured 2026-08-11 across 408 trials / 15304 model calls:

@@ -374,9 +374,10 @@ A key can be one of these, and the most specific one wins:
 1. an exact **tool name**, like `task_assign`, `delegate`, `mcp__github__create_issue`,
    or your own `deploy_to_staging`;
 2. a **group**, one of the families in [Built-in tools](/docs/agent-tools): `shell`,
-   `file`, `search`, `task`, `scratch`, `environment`, plus
+   `file`, `search`, `task`, `scratch`, `environment`, `forge`, plus
    `mcp` and `custom` for anything the built-in catalog doesn't recognize;
-3. `"*"`, meaning every tool.
+3. `"*"`, meaning every tool;
+4. a **tool and one of its actions**, written `"<tool>.<action>"`.
 
 Anything unmentioned is on. So `{"*": "off", "task_list": "on"}` is an agent that can
 read the board and nothing else, and `{"task": "off", "task_list": "on"}` keeps exactly
@@ -385,6 +386,35 @@ the read-only member of the task family.
 No group shares a name with a tool, so a key is never ambiguous: `task` is the family
 name (the six board tools plus `delegate`), and `delegate` alone is the sub-agent spawn
 tool. That is why `{"delegate": "off"}` stops sub-agents without touching the board.
+
+### Switching off one action
+
+Two tools carry several verbs under one `action` parameter: `pull_request` and `issue`.
+An action key withholds one of those verbs and leaves the rest running.
+
+```json title="settings.json"
+{
+  "tools": {
+    "pull_request.merge": "off",
+    "issue.close": "off"
+  }
+}
+```
+
+That agent opens pull requests and comments on them, but never merges one. It files
+issues and comments on them, but never closes one. The refusal names the key, so the
+model reads why it was stopped instead of retrying.
+
+An action key can only narrow. `{"pull_request": "off"}` takes every action with it,
+whatever an action key says, and so does `{"forge": "off"}` or `{"*": "off"}`. There is
+no spelling that switches an action back on under a tool that is off.
+
+`stella tools` prints a tool that is on with an action withheld as on, and names the
+withheld actions beside it. Without that line the switch would be invisible until a
+session hit the refusal.
+
+[ADR 0044](https://github.com/macanderson/stella/blob/main/docs/adr/0044-a-forge-tool-groups-verbs-over-one-object.md)
+states the four conditions that let a tool group verbs this way. No other tool does.
 
 A switched-off tool is left out of the schema list, and refused if it is called
 anyway — the refusal looks just like the unknown-tool error, so a disabled tool is

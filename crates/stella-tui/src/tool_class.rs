@@ -152,6 +152,18 @@ pub fn classify(name: &str) -> ToolClass {
         // engaged, which is what `Delegate` says on every other row that
         // carries it.
         "question" => ToolClass::Delegate,
+        // The forge splits, like `file` and `scratch`. `watch_ci` reads what
+        // CI reported. The other two publish to a record other people read.
+        // Painting a comment the colour of a read is the mistake this split
+        // prevents. A reader scanning for what left the workspace is scanning
+        // for those rows.
+        "forge" => {
+            if read_only {
+                ToolClass::Inspect
+            } else {
+                ToolClass::Mutate
+            }
+        }
         // `mcp`, `custom`, and any group added to the catalog without a class
         // here. A read stays a read; everything else promises the least.
         _ if read_only => ToolClass::Inspect,
@@ -219,7 +231,14 @@ mod tests {
                 .unwrap_or_else(|| panic!("group `{group}` is empty"));
             let explicit = matches!(
                 group,
-                "scratch" | "environment" | "task" | "file" | "shell" | "search" | "question"
+                "scratch"
+                    | "environment"
+                    | "task"
+                    | "file"
+                    | "shell"
+                    | "search"
+                    | "question"
+                    | "forge"
             );
             assert!(
                 explicit,

@@ -24,8 +24,9 @@
 use std::process::Command;
 
 use stella_protocol::pull_request::{
-    Check, CheckOutcome, MergeStatus, PullRequest, PullRequestDraft, PullRequestError,
-    PullRequestKey, PullRequestProvider, PullRequestState, PullRequestSummary, ReviewDecision,
+    Check, CheckOutcome, CommentId, MergeStatus, PullRequest, PullRequestDraft, PullRequestError,
+    PullRequestKey, PullRequestPatch, PullRequestProvider, PullRequestState, PullRequestSummary,
+    ReviewDecision,
 };
 
 /// The provider id this adapter answers to, and the one an error names.
@@ -579,6 +580,125 @@ impl PullRequestProvider for GhPullRequests {
         }
         Ok(())
     }
+
+    fn comment(&self, key: &PullRequestKey, body: &str) -> Result<CommentId, PullRequestError> {
+        let url = gh(&["pr", "comment", key.as_str(), "--body", body])?;
+        comment_id_from_url(&url)
+    }
+
+    fn edit_comment(
+        &self,
+        _key: &PullRequestKey,
+        comment: &CommentId,
+        body: &str,
+    ) -> Result<(), PullRequestError> {
+        // A pull request comment is an issue comment: GitHub stores both in
+        // the same table, and the REST path says `issues` for either. So the
+        // pull request number is not part of the address, and editing one
+        // needs only the comment's own id.
+        //
+        // `gh pr comment --edit-last` would avoid the API call, but it can
+        // only reach the most recent comment. An agent that commented, waited
+        // for CI, and then wants to correct what it said two comments ago
+        // cannot use it.
+        let args = comment_patch_args(comment, body);
+        gh(&args.iter().map(String::as_str).collect::<Vec<_>>()).map(|_| ())
+    }
+
+    fn update(
+        &self,
+        key: &PullRequestKey,
+        patch: &PullRequestPatch,
+    ) -> Result<(), PullRequestError> {
+        // Draft status is not an `edit` field, so a patch carrying both is two
+        // calls and cannot be atomic. The order is the whole decision, and it
+        // is the text first.
+        //
+        // `gh pr ready` is the announcing step: it puts the pull request in
+        // front of reviewers and sends them the notification. Flipping first
+        // and then failing to write the description shows them the old text,
+        // over a mark that says it is ready to read. Writing first and then
+        // failing to flip leaves a correct description on a pull request that
+        // stayed a draft, which is the harmless half of the same partial
+        // application. Neither is atomic; only one of them can publish the
+        // wrong thing.
+        let mut args = vec!["pr", "edit", key.as_str()];
+        if let Some(title) = &patch.title {
+            args.extend(["--title", title]);
+        }
+        if let Some(body) = &patch.body {
+            args.extend(["--body", body]);
+        }
+        // Length 3 means nothing but the subcommand and the key: the draft
+        // flip below is the whole patch, and `gh pr edit` with no field is an
+        // error rather than a no-op.
+        let edited = args.len() > 3;
+        if edited {
+            gh(&args)?;
+        }
+        let Some(draft) = patch.draft else {
+            return Ok(());
+        };
+        let mut args = vec!["pr", "ready", key.as_str()];
+        if draft {
+            args.push("--undo");
+        }
+        gh(&args).map(|_| ()).map_err(|error| {
+            if !edited {
+                return error;
+            }
+            // The caller is about to report a failed update. Half of it
+            // landed, and it cannot tell from the error which half.
+            PullRequestError::Failed {
+                provider: GITHUB.into(),
+                reason: format!(
+                    "the title and body were written, and the draft status was not: {error}"
+                ),
+            }
+        })
+    }
+
+    fn close(&self, key: &PullRequestKey) -> Result<(), PullRequestError> {
+        // No `--delete-branch`, for the reason [`Self::merge`] gives: it
+        // deletes the local branch too, and this runs inside worktrees that
+        // hold those branches.
+        gh(&["pr", "close", key.as_str()]).map(|_| ())
+    }
+}
+
+/// The comment id inside the URL `gh pr comment` prints.
+///
+/// It prints the comment's web address, which ends `#issuecomment-<id>`. The
+/// id is what the edit path needs, and reading it back out here is the only
+/// way to get it without a second round trip.
+fn comment_id_from_url(url: &str) -> Result<CommentId, PullRequestError> {
+    url.rsplit_once("#issuecomment-")
+        .map(|(_, id)| id)
+        .filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()))
+        .map(CommentId::from)
+        .ok_or_else(|| PullRequestError::Malformed {
+            provider: GITHUB.into(),
+            reason: format!("`gh pr comment` printed no comment id: {url:?}"),
+        })
+}
+
+/// The argv that rewrites a comment body, with the body sent as a literal.
+///
+/// `--field` gives a value magic type conversion, and a value beginning with
+/// `@` is read as a filename: an ordinary comment opening with an @-mention
+/// would make `gh` look for a local file, and `@/some/path` would post that
+/// file's contents to GitHub. `--raw-field` sends the string as written, which
+/// is what a comment body is. The argv is built here rather than inline so a
+/// test can read it.
+fn comment_patch_args(comment: &CommentId, body: &str) -> Vec<String> {
+    vec![
+        "api".into(),
+        "--method".into(),
+        "PATCH".into(),
+        format!("repos/{{owner}}/{{repo}}/issues/comments/{comment}"),
+        "--raw-field".into(),
+        format!("body={body}"),
+    ]
 }
 
 #[cfg(test)]
@@ -776,5 +896,33 @@ mod tests {
         assert_eq!(merge_status_from("CONFLICTING"), MergeStatus::Conflicted);
         assert_eq!(merge_status_from("UNKNOWN"), MergeStatus::Unknown);
         assert_eq!(merge_status_from(""), MergeStatus::Unknown);
+    }
+
+    /// A comment body beginning with `@` is sent as text, not as a filename.
+    ///
+    /// `gh api --field` reads a value starting with `@` as a path to read, so
+    /// a review reply that opens by naming somebody would have made `gh` hunt
+    /// for a local file, and `@/some/path` would have posted that file to
+    /// GitHub. `--raw-field` is the flag that takes the string as written.
+    #[test]
+    fn a_comment_body_starting_with_an_at_sign_is_sent_literally() {
+        let args = comment_patch_args(&CommentId::from("774"), "@macanderson rebased, take two");
+
+        assert!(
+            args.contains(&"--raw-field".to_string()),
+            "the body must go through --raw-field: {args:?}"
+        );
+        assert!(
+            !args.iter().any(|arg| arg == "--field"),
+            "--field would read the body as a filename: {args:?}"
+        );
+        assert_eq!(
+            args.last().map(String::as_str),
+            Some("body=@macanderson rebased, take two")
+        );
+        assert_eq!(
+            args[3], "repos/{owner}/{repo}/issues/comments/774",
+            "the comment id addresses the API path"
+        );
     }
 }

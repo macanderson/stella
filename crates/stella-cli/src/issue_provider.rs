@@ -43,8 +43,8 @@ use std::process::Command;
 
 use async_trait::async_trait;
 use stella_protocol::issue::{
-    Issue, IssueClass, IssueClosure, IssueDraft, IssueError, IssueKey, IssueLabel, IssueProvider,
-    IssueState, RESOLUTION_COMPLETED, RESOLUTION_DUPLICATE, RESOLUTION_NOT_PLANNED,
+    CommentId, Issue, IssueClass, IssueClosure, IssueDraft, IssueError, IssueKey, IssueLabel,
+    IssueProvider, IssueState, RESOLUTION_COMPLETED, RESOLUTION_DUPLICATE, RESOLUTION_NOT_PLANNED,
 };
 
 pub(crate) use manifest::{ClassMap, ProviderManifest};
@@ -338,8 +338,24 @@ impl IssueProvider for GhIssueProvider {
         gh_json(&args).map(|_| ())
     }
 
-    async fn comment(&self, key: &IssueKey, body: &str) -> Result<(), IssueError> {
-        gh_json(&["issue", "comment", key.as_str(), "--body", body]).map(|_| ())
+    async fn comment(&self, key: &IssueKey, body: &str) -> Result<CommentId, IssueError> {
+        let raw = gh_json(&["issue", "comment", key.as_str(), "--body", body])?;
+        comment_id_from_url(raw.trim())
+    }
+
+    /// `gh api --method PATCH` — GitHub has no `gh issue comment --edit <id>`.
+    ///
+    /// `--edit-last` exists and is not it: it addresses the comment by
+    /// position, which is the race [`IssueProvider::edit_comment`] returns an
+    /// id to avoid.
+    async fn edit_comment(
+        &self,
+        _key: &IssueKey,
+        comment: &CommentId,
+        body: &str,
+    ) -> Result<(), IssueError> {
+        let args = comment_patch_args(comment, body);
+        gh_json(&args.iter().map(String::as_str).collect::<Vec<_>>()).map(|_| ())
     }
 
     async fn relabel(
@@ -558,6 +574,46 @@ fn gh_close_reason(canonical: &str) -> &'static str {
         "not_planned" | "duplicate" => "not planned",
         _ => "completed",
     }
+}
+
+/// Read a comment id out of the URL `gh issue comment` prints.
+///
+/// GitHub answers with the browser link, not JSON:
+/// `https://github.com/o/r/issues/12#issuecomment-2345`. The id is the tail of
+/// the fragment.
+///
+/// Parsed rather than assumed, on [`IssueProvider::file`]'s argument one plane
+/// down: a comment whose id this cannot recover can never be edited, so a `gh`
+/// that printed something else fails here instead of returning a name that
+/// addresses nothing.
+fn comment_id_from_url(url: &str) -> Result<CommentId, IssueError> {
+    url.rsplit_once("#issuecomment-")
+        .map(|(_, id)| id)
+        .filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()))
+        .map(CommentId::from)
+        .ok_or_else(|| IssueError::Malformed {
+            provider: GITHUB.into(),
+            reason: format!("`gh issue comment` printed no comment id: {url:?}"),
+        })
+}
+
+/// The argv that rewrites a comment body, with the body sent as a literal.
+///
+/// `--field` gives a value magic type conversion, and a value beginning with
+/// `@` is read as a filename: an ordinary comment opening with an @-mention
+/// would make `gh` look for a local file, and `@/some/path` would post that
+/// file's contents to GitHub. `--raw-field` sends the string as written, which
+/// is what a comment body is. The argv is built here rather than inline so a
+/// test can read it.
+fn comment_patch_args(comment: &CommentId, body: &str) -> Vec<String> {
+    vec![
+        "api".into(),
+        "--method".into(),
+        "PATCH".into(),
+        format!("repos/{{owner}}/{{repo}}/issues/comments/{comment}"),
+        "--raw-field".into(),
+        format!("body={body}"),
+    ]
 }
 
 /// Run a `gh` subcommand whose stdout is parsed, with colour forced off.
@@ -788,6 +844,34 @@ mod tests {
             issues[1].class,
             IssueClass::Other,
             "the compiled label must not survive a manifest that replaced it"
+        );
+    }
+
+    /// A comment body beginning with `@` is sent as text, not as a filename.
+    ///
+    /// `gh api --field` reads a value starting with `@` as a path to read, so
+    /// a comment that opens by naming somebody would have made `gh` hunt for a
+    /// local file, and `@/some/path` would have posted that file to GitHub.
+    /// `--raw-field` is the flag that takes the string as written.
+    #[test]
+    fn a_comment_body_starting_with_an_at_sign_is_sent_literally() {
+        let args = comment_patch_args(&CommentId::from("991"), "@macanderson take a look");
+
+        assert!(
+            args.contains(&"--raw-field".to_string()),
+            "the body must go through --raw-field: {args:?}"
+        );
+        assert!(
+            !args.iter().any(|arg| arg == "--field"),
+            "--field would read the body as a filename: {args:?}"
+        );
+        assert_eq!(
+            args.last().map(String::as_str),
+            Some("body=@macanderson take a look")
+        );
+        assert_eq!(
+            args[3], "repos/{owner}/{repo}/issues/comments/991",
+            "the comment id addresses the API path"
         );
     }
 }

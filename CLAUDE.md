@@ -224,8 +224,10 @@
   file CRUD quartet (`read_file` / `write_file` / `edit_file` /
   `delete_file`), and one unified `search`; the coordination half is
   sub-agent delegation, the task board, the scratch state plane, the
-  environment probe, and one question back to whoever is driving
-  (`ask_question`, #4212). Declared once in
+  environment probe, one question back to whoever is driving
+  (`ask_question`, #4212), and the forge (`pull_request` / `issue` /
+  `watch_ci`), which exists as tools rather than as `gh` in `bash` because
+  attribution has to be appended in Rust to be deterministic. Declared once in
   `crates/stella-tool-facts/src/catalog.rs` — that table is the count, and the
   number is deliberately not written here, because the last three times it
   was, it drifted the moment a tool landed.

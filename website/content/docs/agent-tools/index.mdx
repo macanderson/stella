@@ -1,9 +1,9 @@
 ---
 title: Built-in Tools
-description: Every tool the stella agent can call in every session. Covers the shell, file create/read/update/delete, code search, sub-agent delegation, the task board, scratch state, and the environment probe, and notes which ones are read-only.
+description: Every tool the stella agent can call in every session. Covers the shell, file create/read/update/delete, code search, sub-agent delegation, the task board, scratch state, the environment probe, and the forge, and notes which ones are read-only.
 ---
 
-stella ships a small built-in surface: **18 tools**. They cover the shell, file create/read/update/delete, code search, sub-agent delegation, the session task board, scratch session state, and the session environment. The surface stays small on purpose. It's the set of actions the agent needs to do work in a repository, and nothing more. Everything else the agent can do comes from [custom script tools](/docs/agent-tools/custom-tools) you define, and from tools merged in from [MCP servers](/docs/agent-tools/mcp). Every tool, built-in or merged, follows a [per-tool permission model](/docs/agent-tools/permissions).
+stella ships a small built-in surface: **21 tools**. They cover the shell, file create/read/update/delete, code search, sub-agent delegation, the session task board, scratch session state, the session environment, and the forge. The surface stays small on purpose. It's the set of actions the agent needs to do work in a repository, and nothing more. Everything else the agent can do comes from [custom script tools](/docs/agent-tools/custom-tools) you define, and from tools merged in from [MCP servers](/docs/agent-tools/mcp). Every tool, built-in or merged, follows a [per-tool permission model](/docs/agent-tools/permissions).
 
 ## Listing tools
 
@@ -117,7 +117,29 @@ All 18 tools register in every session, with no setup and no prerequisites. Here
   </ToolCard>
 </CardGrid>
 
-The read-only tools are exactly: `read_file`, `search`, `task_list`, `get_state`, `list_state`, and `get_environment`. The other twelve are mutating.
+### Forge
+
+Three tools, not eleven. Every schema rides the cached prompt prefix on every call in the session. That cost is paid whether or not the session ever opens a pull request.
+
+<CardGrid size="md">
+  <ToolCard name="pull_request" access="mutating">
+    Open, update, close, merge and comment on a pull request, and edit a comment it left. A merge takes `confirm: true`, because it writes to a shared branch.
+  </ToolCard>
+  <ToolCard name="issue" access="mutating">
+    File, update, close and comment on an issue, and edit a comment it left, against whatever tracker the workspace configures.
+  </ToolCard>
+  <ToolCard name="watch_ci" access="read">
+    Read the checks on one branch and return the verdict. It does not block waiting for a run to finish, so call it again to see movement.
+  </ToolCard>
+</CardGrid>
+
+Every description, body and comment these tools write is signed on the way out. The signing happens in Rust, after the model has stopped having a say. That is why they are tools at all. A prompt can ask a model to end a body with a footer. A model that forgets, or that reworks the words, leaves an unsigned record, and nothing downstream can spot it. What the footer says is [`[self_driving.attribution]`](/docs/configuration/stella-toml#self_drivingattribution).
+
+The footer is the point, so a `bash` command that reaches the same verb through `gh` is refused. The refusal names the tool and the action to use instead. Only the verbs these tools cover are refused, and only when a forge is attached. `gh pr view`, `gh issue list`, `gh run watch`, every other `gh` subcommand, and all of `git` stay open. Pushing, branching and committing are still `git` through `bash`.
+
+A workspace with no `gh` on `PATH` has no forge attached. The three tools stay registered and answer by saying so, and nothing in `bash` is refused.
+
+The read-only tools are exactly: `read_file`, `search`, `task_list`, `get_state`, `list_state`, `get_environment`, and `watch_ci`. The other fourteen are mutating.
 
 ## Switching tools off
 

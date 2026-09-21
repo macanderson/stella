@@ -70,15 +70,19 @@ const DOCS_DIR: &str = "docs/tools";
 /// reviewed judgements against a stated rubric, which is exactly why they are
 /// declared.
 const RISK_NOTE: &str = "\
-# risk_level: how bad one honest call is — a reviewed judgement, declared in
-# crates/stella-tool-facts/src/catalog.rs beside the flags above and graded against
-# the rubric on `ToolEntry::risk` (#2716, #3060). A DIFFERENT axis from
-# `read_only`: `delegate` mutates no file and spends real money, while
-# `task_create` mutates a board that dies with the session. It is not derived
-# from the two booleans above. That would only relabel them.
+# `risk_level` grades how bad one call is when it does just what it says.
+# It is a reviewed judgement, not a value read off the flags above.
+# `crates/stella-tool-facts/src/catalog.rs` declares it.
+# The rubric on `ToolEntry::risk` is what it is graded against.
 #
-# A policy grant is a ceiling over this grade. Every tool that is not a
-# built-in (MCP, a custom manifest) is graded `high` for being unreviewed.";
+# It is a different axis from `read_only`.
+# `delegate` changes no file, and it spends real money.
+# `task_create` writes to a board that dies with the session.
+# A grade derived from the two flags above would just relabel them.
+#
+# A policy grant is a ceiling over this grade.
+# A tool that is not built in (MCP, a custom manifest) is graded `high`,
+# because nobody has reviewed it.";
 
 // ── the committed example fixture ───────────────────────────────────────────
 
@@ -564,9 +568,9 @@ fn usage_comment(name: &str, fixture: &Fixture) -> String {
                 ("", "this tool was not")
             };
             return format!(
-                "No usage measurement. `{name}` carries no row in the {captured} census, \
-                 which scanned {trials} trials{also} — the census enumerates the schemas \
-                 those runs advertised, and {subject} among them.",
+                "No usage measurement. `{name}` has no row in the {captured} census{also}. \
+                 That census scanned {trials} trials. It lists the schemas those runs \
+                 offered, and {subject} among them.",
                 captured = p.captured,
                 trials = p.census_trials_scanned,
             );
@@ -724,8 +728,8 @@ fn example_comment(name: &str, fixture: &Fixture) -> String {
         return wrap(
             &format!(
                 "OBSERVED EXAMPLE: none.\n\
-                 `{name}` has {why}. No payload is shown, because an invented one \
-                 would teach the reader what the author imagined this tool is for."
+                 `{name}` has {why}. No payload is shown here. A made-up one would \
+                 teach the reader what the author guessed this tool is for."
             ),
             76,
         );
@@ -770,14 +774,16 @@ fn render_tool(entry: &ToolEntry, schema: &ToolSchema, fixture: &Fixture) -> Str
     let header = format!(
         "# {name} — GENERATED FILE, DO NOT EDIT.\n\
          #\n\
-         # Regenerate:   make tool-docs-update\n\
-         # Guarded by:   make tool-docs (a `make gate` step)\n\
+         # Regenerate it with `make tool-docs-update`.\n\
+         # The `make tool-docs` gate step fails when a page drifts.\n\
          #\n\
-         # Where each field comes from:\n\
-         #   name / description / input_schema      the tool's own ToolSchema\n\
-         #   read_only / available_for_speculation / category / availability\n\
-         #   risk_level                             crates/stella-tool-facts/src/catalog.rs\n\
-         #   output_schema                          stella_protocol::ToolOutput",
+         # Each field has one source.\n\
+         # The tool's own `ToolSchema` gives `name`, `description` and\n\
+         # `input_schema`.\n\
+         # `crates/stella-tool-facts/src/catalog.rs` gives `read_only`,\n\
+         # `available_for_speculation`, `category`, `availability` and\n\
+         # `risk_level`.\n\
+         # `stella_protocol::ToolOutput` gives `output_schema`.",
         name = entry.name,
     );
 
@@ -803,9 +809,9 @@ fn render_tool(entry: &ToolEntry, schema: &ToolSchema, fixture: &Fixture) -> Str
          # The JSON Schema the model is handed for this tool's arguments, verbatim.\n\
          input_schema = {input_schema}\n\
          \n\
-         # The envelope every tool answers in, optional members included.\n\
-         # Declared; what rides inside `ok.content` and `ok.data` is a per-tool\n\
-         # convention with no schema behind it.\n\
+         # The shape every tool answers in, with the optional parts included.\n\
+         # Only this outer shape is declared. What rides inside `ok.content`\n\
+         # and `ok.data` is a per-tool habit with no schema behind it.\n\
          output_schema = {output_schema}\n\
          \n\
          {example_rule}\n\

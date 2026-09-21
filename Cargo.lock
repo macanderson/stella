@@ -3721,6 +3721,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "stella-autonomy",
  "stella-core",
  "stella-diff",
  "stella-embed",

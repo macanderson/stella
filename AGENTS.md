@@ -1117,6 +1117,21 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
    corrupts the engine's concurrency contract. The scratch state plane
    (`save_state` / `get_state` / `list_state` / `delete_state`) is the
    reference shape.
+
+   **The forge tools are the bounded exception, and `doc:adr/0044-a-forge-tool-groups-verbs-over-one-object`
+   is what bounds them.** `pull_request` and `issue` each carry several
+   verbs under one `action`, because a schema rides the byte-stable prefix
+   (`invariant 7`) on every call of every session and eleven of them is a
+   standing cost. The record states the four conditions that let a tool
+   group this way: one object named by one key, no read-only action so
+   `read_only: false` describes every arm, one `ACTIONS` list that the
+   schema enum and the unknown-action error both read, and a policy asked
+   per action. That last one is how the second reason above is met rather
+   than waived: `ToolPolicy::allows_action` takes a `"<tool>.<action>"` key,
+   so `"pull_request.merge": "off"` withholds one verb and leaves the other
+   five running. It can only narrow, because it asks `allows` first. Nothing
+   else in the tree groups verbs, and a candidate whose actions take
+   different objects is two tools.
 10. **Every emitted signal names its consumer.** An `AgentEvent` variant that
    nothing reads is allowed, but only as a **declared, issue-cited gap** —
    never as a silence nobody noticed. The ledger is
@@ -1355,7 +1370,7 @@ the files you must plan around (see below).
 |---|---|---|
 | Change the agent loop (plan / retry / compact / budget / loop-detect / hooks) | [`stella-core`](crates/stella-core/README.md) | **No I/O allowed.** Decision logic only. Skills and rules live in `stella-learn`. |
 | Add/fix a model provider (SSE, tool-call dialect, pricing) | [`stella-model`](crates/stella-model/README.md) | One file per adapter (`anthropic.rs`, `openai.rs`, `gemini.rs`, `vertex.rs`, `bedrock.rs`, `zai.rs`). Copy an existing adapter's shape. |
-| Add/fix a built-in tool (`bash`, `read_file`, `edit_file`, `search`, `task_create`, `save_state`, `get_environment`, …) | [`stella-tools`](crates/stella-tools/README.md) | Implement the `Tool` trait, register in `ToolRegistry`, declare one line in `stella-tool-facts`'s `catalog.rs`. |
+| Add/fix a built-in tool (`bash`, `read_file`, `edit_file`, `search`, `task_create`, `save_state`, `get_environment`, `pull_request`, …) | [`stella-tools`](crates/stella-tools/README.md) | Implement the `Tool` trait, register in `ToolRegistry`, declare one line in `stella-tool-facts`'s `catalog.rs`. The forge tools (`src/forge/`) reach a provider through a host-filled slot, because their adapters live a crate above in `stella-cli`. |
 | Change the tool table, an operator's tool switches, the environment a child process must never inherit, or the index-readiness policy | [`stella-tool-facts`](crates/stella-tool-facts/README.md) | **Near-leaf: `stella-protocol` is its only workspace dependency.** Data and pure predicates about the tool surface, with no executor behind them — which is what lets [`stella-tui`](crates/stella-tui/README.md) draw a tool row, an approval card and an index hold without linking the code-graph index. `stella-tools` re-exports every item at its former path. |
 | Change CLI commands, flags, or agent wiring | [`stella-cli`](crates/stella-cli/README.md) | This is the shipping binary. |
 | Change REPL rendering / panels / keybindings | [`stella-tui`](crates/stella-tui/README.md) | Pure-fold ratatui REPL — the Command Deck, the default interactive shell on a TTY. The v2 redesign (`design/tui-v2/SPEC.md`) landed **in place**: its surfaces are `src/views/`, its palette is the `stella-tui-theme` crate, and `src/palette.rs` re-points the v1 names at v2 tokens. There is no `src/v2/` directory — an earlier plan for one was dissolved. |

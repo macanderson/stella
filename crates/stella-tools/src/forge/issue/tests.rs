@@ -1,0 +1,397 @@
+//! Witnesses for the tracker tool.
+//!
+//! One point, made from several angles: the footer is not the model's to
+//! supply. Every body that reaches a tracker through this tool carries one.
+//! That holds whatever the model sent. No way of phrasing the call turns it
+//! off.
+
+use std::sync::{Arc, Mutex};
+
+use async_trait::async_trait;
+use serde_json::json;
+use stella_protocol::issue::{
+    CommentId, Issue, IssueDraft, IssueError, IssueKey, IssueProvider, IssueState,
+};
+
+use super::*;
+use crate::forge::ForgeSlots;
+
+/// Every write this tracker was asked to make, in order.
+#[derive(Default)]
+struct Written {
+    filed: Vec<IssueDraft>,
+    comments: Vec<(String, String)>,
+    edits: Vec<(String, Option<String>, Option<String>)>,
+    edited_comments: Vec<(String, String, String)>,
+    closed: Vec<(String, String, String)>,
+}
+
+/// A tracker that writes down each call instead of reaching anything.
+#[derive(Default)]
+struct Recorder {
+    written: Mutex<Written>,
+}
+
+impl Recorder {
+    fn written(&self) -> std::sync::MutexGuard<'_, Written> {
+        self.written.lock().expect("fixture lock")
+    }
+}
+
+#[async_trait]
+impl IssueProvider for Recorder {
+    fn id(&self) -> &str {
+        "recorder"
+    }
+
+    async fn list_open(&self, _limit: usize) -> Result<Vec<Issue>, IssueError> {
+        Ok(Vec::new())
+    }
+
+    async fn file(&self, draft: &IssueDraft) -> Result<IssueKey, IssueError> {
+        self.written().filed.push(draft.clone());
+        Ok(IssueKey::from("77"))
+    }
+
+    async fn close(&self, key: &IssueKey, receipt: &str, state: &str) -> Result<(), IssueError> {
+        self.written().closed.push((
+            key.as_str().to_owned(),
+            receipt.to_owned(),
+            state.to_owned(),
+        ));
+        Ok(())
+    }
+
+    async fn comment(&self, key: &IssueKey, body: &str) -> Result<CommentId, IssueError> {
+        self.written()
+            .comments
+            .push((key.as_str().to_owned(), body.to_owned()));
+        Ok(CommentId::from("9001"))
+    }
+
+    async fn edit_comment(
+        &self,
+        key: &IssueKey,
+        comment: &CommentId,
+        body: &str,
+    ) -> Result<(), IssueError> {
+        self.written().edited_comments.push((
+            key.as_str().to_owned(),
+            comment.as_str().to_owned(),
+            body.to_owned(),
+        ));
+        Ok(())
+    }
+
+    async fn relabel(
+        &self,
+        _key: &IssueKey,
+        _add: &[String],
+        _remove: &[String],
+    ) -> Result<(), IssueError> {
+        Ok(())
+    }
+
+    async fn edit(
+        &self,
+        key: &IssueKey,
+        title: Option<&str>,
+        body: Option<&str>,
+    ) -> Result<(), IssueError> {
+        self.written().edits.push((
+            key.as_str().to_owned(),
+            title.map(str::to_owned),
+            body.map(str::to_owned),
+        ));
+        Ok(())
+    }
+
+    async fn get(&self, key: &IssueKey) -> Result<Issue, IssueError> {
+        Ok(Issue {
+            key: key.clone(),
+            title: String::new(),
+            body: String::new(),
+            state: IssueState::Open,
+            class: stella_protocol::issue::IssueClass::Other,
+            labels: Vec::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            url: String::new(),
+            parent: None,
+        })
+    }
+}
+
+/// A tool over a tracker that writes down each call, plus the log to read after.
+fn tool() -> (IssueTool, Arc<Recorder>) {
+    tool_under(crate::policy::ToolPolicy::allow_all())
+}
+
+/// The same, with the operator's switches set.
+fn tool_under(policy: crate::policy::ToolPolicy) -> (IssueTool, Arc<Recorder>) {
+    build(policy, stella_autonomy::Attribution::default())
+}
+
+/// The same, signing with the attribution given.
+fn tool_signing_as(attribution: stella_autonomy::Attribution) -> (IssueTool, Arc<Recorder>) {
+    build(crate::policy::ToolPolicy::allow_all(), attribution)
+}
+
+/// An attribution whose surfaces are five different strings.
+///
+/// [`stella_autonomy::Attribution::default`] gives all five the same text.
+/// Under it, a body signed with the wrong field reads like one signed with
+/// the right field. Every assertion still passes. These five differ, so a
+/// test can say which surface a footer came from.
+fn distinguishable() -> stella_autonomy::Attribution {
+    stella_autonomy::Attribution {
+        commit: "by-the-commit-field".into(),
+        pull_request: "by-the-pull-request-field".into(),
+        issue: "by-the-issue-field".into(),
+        issue_comment: "by-the-issue-comment-field".into(),
+        pull_request_comment: "by-the-pull-request-comment-field".into(),
+        ..stella_autonomy::Attribution::default()
+    }
+}
+
+fn build(
+    policy: crate::policy::ToolPolicy,
+    attribution: stella_autonomy::Attribution,
+) -> (IssueTool, Arc<Recorder>) {
+    let recorder = Arc::new(Recorder::default());
+    let slots = ForgeSlots::default();
+    *slots.issues.write().unwrap() = Some(recorder.clone() as Arc<dyn IssueProvider>);
+    *slots.policy.write().unwrap() = policy;
+    *slots.attribution.write().unwrap() = attribution;
+    (IssueTool::new(slots), recorder)
+}
+
+/// Run one call against a bare context.
+async fn call(tool: &IssueTool, input: serde_json::Value) -> ToolOutput {
+    tool.execute(
+        &input,
+        &crate::ctx::ToolCtx::bare(std::path::PathBuf::from(".")),
+    )
+    .await
+}
+
+/// A filed issue carries the footer, and the model never asked for it.
+///
+/// This is the defect the whole plane exists to close. Ask for the footer in
+/// prose (`self_driving_cmd::work::prompt_for`) and you get one only when the
+/// model plays along.
+#[tokio::test]
+async fn a_filed_issue_is_signed_without_the_model_asking() {
+    let (tool, recorder) = tool();
+    let output = call(
+        &tool,
+        json!({"action": "create", "title": "a title", "body": "what is wrong"}),
+    )
+    .await;
+    assert!(!output.is_error(), "{output:?}");
+
+    let written = recorder.written();
+    let filed = &written.filed[0];
+    assert_eq!(filed.title, "a title");
+    assert_eq!(
+        filed.body,
+        format!("what is wrong\n\n---\n{}", stella_autonomy::SIGNATURE)
+    );
+}
+
+/// A comment is signed too, and the id comes back so it can be edited.
+#[tokio::test]
+async fn a_comment_is_signed_and_names_itself() {
+    let (tool, recorder) = tool();
+    let output = call(
+        &tool,
+        json!({"action": "comment", "key": "#4", "body": "the run is green"}),
+    )
+    .await;
+    let ToolOutput::Ok { data, .. } = &output else {
+        panic!("expected a success, got {output:?}");
+    };
+    assert_eq!(data.as_ref().unwrap()["comment_id"], json!("9001"));
+
+    let written = recorder.written();
+    let (key, body) = &written.comments[0];
+    // The leading `#` a model writes is stripped. Trackers take the bare
+    // number, and the forge's error would not tell the model that.
+    assert_eq!(key, "4");
+    assert!(body.ends_with(stella_autonomy::SIGNATURE), "{body}");
+}
+
+/// Editing a body that is already signed leaves one footer, not two.
+///
+/// The failure looks like this. A model reads an issue, changes a sentence,
+/// and sends the whole body back with the footer still on it.
+#[tokio::test]
+async fn editing_a_signed_body_does_not_stack_footers() {
+    let (tool, recorder) = tool();
+    let already = stella_autonomy::sign("the original", stella_autonomy::SIGNATURE);
+    let output = call(
+        &tool,
+        json!({"action": "update", "key": "412", "body": already}),
+    )
+    .await;
+    assert!(!output.is_error(), "{output:?}");
+
+    let written = recorder.written();
+    let (_, _, body) = &written.edits[0];
+    let body = body.as_ref().expect("the update carried a body");
+    assert_eq!(body.matches("\n\n---\n").count(), 1, "{body}");
+}
+
+/// An update that changes nothing is refused rather than sent.
+///
+/// Hand a provider a patch of all `None` and it does nothing, then answers
+/// `Ok`. Without this check, the model is told its edit landed when no edit
+/// was made.
+#[tokio::test]
+async fn an_update_with_nothing_to_change_is_refused() {
+    let (tool, recorder) = tool();
+    let output = call(&tool, json!({"action": "update", "key": "412"})).await;
+    assert!(output.is_error(), "{output:?}");
+    assert!(recorder.written().edits.is_empty());
+}
+
+/// A closing receipt is signed like every other body.
+#[tokio::test]
+async fn a_closing_receipt_is_signed() {
+    let (tool, recorder) = tool();
+    let output = call(
+        &tool,
+        json!({
+            "action": "close",
+            "key": "412",
+            "resolution": "not_planned",
+            "receipt": "the reporter withdrew it"
+        }),
+    )
+    .await;
+    assert!(!output.is_error(), "{output:?}");
+
+    let written = recorder.written();
+    let (key, receipt, state) = &written.closed[0];
+    assert_eq!(key, "412");
+    assert_eq!(state, "not_planned");
+    assert!(receipt.ends_with(stella_autonomy::SIGNATURE), "{receipt}");
+}
+
+/// A close with no receipt attaches no comment, rather than an empty signed one.
+///
+/// The adapter reads an empty receipt as "attach nothing". Sign an absent
+/// receipt and you get a comment with nothing in it but a footer.
+#[tokio::test]
+async fn a_close_with_no_receipt_stays_silent() {
+    let (tool, recorder) = tool();
+    call(&tool, json!({"action": "close", "key": "412"})).await;
+    assert_eq!(recorder.written().closed[0].1, "");
+}
+
+/// The switches reach this tool too, not only `pull_request`.
+///
+/// One gate serves both tools, so this asks the narrower question: that the
+/// issue tool calls it. A call site can be dropped from one tool while the
+/// other keeps its own.
+#[tokio::test]
+async fn a_switched_off_close_refuses_while_comment_still_runs() {
+    let (tool, recorder) = tool_under(crate::policy::ToolPolicy::from_switches([(
+        "issue.close".into(),
+        false,
+    )]));
+
+    let refused = call(&tool, json!({"action": "close", "key": "412"})).await;
+    let ToolOutput::Error { message, class, .. } = &refused else {
+        panic!("a withheld action must be an error, got {refused:?}");
+    };
+    assert_eq!(*class, Some(ErrorClass::RefusedByPolicy));
+    assert!(message.contains("issue.close"), "{message}");
+    assert!(
+        recorder.written().closed.is_empty(),
+        "a refused close must not reach the tracker"
+    );
+
+    let allowed = call(
+        &tool,
+        json!({"action": "comment", "key": "412", "body": "still looking at this"}),
+    )
+    .await;
+    assert!(!allowed.is_error(), "{allowed:?}");
+}
+
+/// An action this tool does not have is named, with the ones it does.
+#[tokio::test]
+async fn an_unknown_action_lists_the_real_ones() {
+    let (tool, _) = tool();
+    let output = call(&tool, json!({"action": "merge", "key": "1"})).await;
+    let ToolOutput::Error { message, .. } = output else {
+        panic!("an unknown action is an error");
+    };
+    assert!(message.contains("edit_comment"), "{message}");
+}
+
+/// Each surface of this tool carries the footer configured for that surface.
+///
+/// The text is per surface because an operator will want different words on
+/// an issue and on a comment. Nothing held the routing before this. Under the
+/// default attribution all five fields read the same string. So an issue body
+/// signed with the comment field passed every other assertion in this file.
+///
+/// The closing receipt is worth reading twice. It is a comment the tracker
+/// posts as it closes, so it takes `issue_comment` and not `issue`. That is
+/// the site where a field swap is least visible.
+#[tokio::test]
+async fn each_issue_surface_carries_its_own_footer() {
+    let (tool, recorder) = tool_signing_as(distinguishable());
+
+    for input in [
+        json!({"action": "create", "title": "the thing is wrong", "body": "what and where"}),
+        json!({"action": "update", "key": "412", "body": "what and where, reworded"}),
+        json!({"action": "comment", "key": "412", "body": "still looking at this"}),
+        json!({
+            "action": "edit_comment",
+            "key": "412",
+            "comment_id": "9001",
+            "body": "still looking, with a link"
+        }),
+        json!({"action": "close", "key": "412", "receipt": "fixed on the branch"}),
+    ] {
+        let output = call(&tool, input.clone()).await;
+        assert!(!output.is_error(), "{input}: {output:?}");
+    }
+
+    let written = recorder.written();
+    assert!(
+        written.filed[0].body.ends_with("by-the-issue-field"),
+        "an issue body takes `issue`: {}",
+        written.filed[0].body
+    );
+    let edited = written.edits[0]
+        .2
+        .as_deref()
+        .expect("the update sent a body");
+    assert!(
+        edited.ends_with("by-the-issue-field"),
+        "an edited issue body takes `issue`: {edited}"
+    );
+    assert!(
+        written.comments[0]
+            .1
+            .ends_with("by-the-issue-comment-field"),
+        "a comment takes `issue_comment`: {}",
+        written.comments[0].1
+    );
+    assert!(
+        written.edited_comments[0]
+            .2
+            .ends_with("by-the-issue-comment-field"),
+        "an edited comment takes `issue_comment`: {}",
+        written.edited_comments[0].2
+    );
+    assert!(
+        written.closed[0].1.ends_with("by-the-issue-comment-field"),
+        "a closing receipt takes `issue_comment`: {}",
+        written.closed[0].1
+    );
+}

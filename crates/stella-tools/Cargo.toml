@@ -38,6 +38,10 @@ stella-embed = { path = "../stella-embed", features = ["http"], optional = true 
 # cannot see — a gitignored path, a workspace with no journal — still renders
 # its diff. A leaf with no dependencies, so linking it costs nothing (#1511).
 stella-diff = { path = "../stella-diff" }
+# `sign` and `Attribution` — the single choke point for every footer the forge
+# tools write. A leaf with no workspace dependencies, so this edge adds no
+# package to the graph and cannot cycle back into this crate (`crate::forge`).
+stella-autonomy = { path = "../stella-autonomy" }
 # `${plugin_dir}` — the one substitution a package's `tools/*.toml` shares with
 # a plugin's `[runtime].argv`. The convention is specified in `stella-plugin`
 # and carried out by whichever host knows where the package was installed, so

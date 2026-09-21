@@ -278,6 +278,25 @@ catalog! {
     // questions without withholding the coordination family: an unattended
     // fleet worker wants `"question": "off"` and its task board intact.
     "ask_question"        => (true, false, Low, Always, "question", "ask_question"),
+    // The forge: pull requests, issues, and one reading of CI.
+    //
+    // `High` for the two writers, on the rubric's own words — what they write
+    // leaves the workspace. A description is published the moment it is sent,
+    // and no later edit unpublishes what a reviewer already read. `merge` is
+    // the one verb here that is closer to `Destructive`, and it is guarded
+    // inside the tool by a `confirm` flag rather than by this column, because
+    // the column grades a whole tool and only one of six actions needs it.
+    //
+    // One group, because the switch that withholds one of these should
+    // withhold all three: an operator who does not want an agent writing to
+    // the forge does not want it polling the forge's rate limit either.
+    "pull_request"        => (false, false, High, Always, "forge", "pull_request"),
+    "issue"               => (false, false, High, Always, "forge", "issue"),
+    // Read-only, but not speculation-safe: it mutates nothing, and every call
+    // spends a request against a rate limit the driver shares with their own
+    // work, so a speculated call the step then discards costs quota for
+    // nothing.
+    "watch_ci"            => (true, false, Low, Always, "forge", "watch_ci"),
 }
 
 /// The tool name that means *this plan starts now*.

@@ -34,6 +34,14 @@
 //! `{"scratch": "off", "get_state": "on"}` keeps exactly one of the four
 //! scratch tools. Anything unmentioned is on.
 //!
+//! # One action of a tool
+//!
+//! A tool that groups several verbs over one object takes a fourth, narrower
+//! key: `"pull_request.merge": "off"` withholds that action and leaves the
+//! rest of the tool working. [`ToolPolicy::allows_action`] is what reads it,
+//! and it asks [`ToolPolicy::allows`] about the tool first, so an action key
+//! can only narrow. ADR 0044 decides which tools may group verbs this way.
+//!
 //! # Composing scopes
 //!
 //! [`ToolPolicy::deny_all_from`] folds one scope into another by **union of
@@ -124,6 +132,51 @@ impl ToolPolicy {
             return enabled;
         }
         self.switches.get(WILDCARD).copied().unwrap_or(true)
+    }
+
+    /// Whether `action` may run on `tool`, for a tool that takes several.
+    ///
+    /// One level more specific than [`allows`](Self::allows), and it reads the
+    /// same way: `"pull_request.merge": "off"` withholds that one action, and
+    /// anything the key does not name falls through to the tool's own answer.
+    /// So `{"pull_request.merge": "off"}` leaves `comment` and `update`
+    /// working, and `{"forge": "off"}` still takes the whole family.
+    ///
+    /// This is what `AGENTS.md invariant 9`'s second reason asks for — per-tool
+    /// policy must be able to withhold the destructive verb without
+    /// withholding the benign one — for the tools that group verbs by the
+    /// object they act on. ADR 0044 is where that grouping is decided and
+    /// bounded.
+    ///
+    /// A grant is never invented: a `"pull_request.merge": "on"` cannot
+    /// resurrect an action whose tool is off, because the tool's own answer is
+    /// consulted first and a denial there is final. That keeps
+    /// [`deny_all_from`](Self::deny_all_from)'s rule — a lower scope narrows
+    /// and never widens — true of actions as well as tools.
+    pub fn allows_action(&self, tool: &str, action: &str) -> bool {
+        if !self.allows(tool) {
+            return false;
+        }
+        self.switches
+            .get(&format!("{tool}.{action}"))
+            .copied()
+            .unwrap_or(true)
+    }
+
+    /// Which of `tool`'s actions this policy turns off, in key order.
+    ///
+    /// For the listing, not for enforcement: a tool that is on but has an
+    /// action withheld reads as plainly on everywhere else, and an operator
+    /// who cannot see the switch they set has no way to find the refusal their
+    /// session will hit. [`denied_builtins`](Self::denied_builtins) cannot
+    /// carry this, because an action key names no catalog row.
+    pub fn denied_actions(&self, tool: &str) -> Vec<&str> {
+        let prefix = format!("{tool}.");
+        self.switches
+            .iter()
+            .filter(|&(_, &enabled)| !enabled)
+            .filter_map(|(key, _)| key.strip_prefix(&prefix))
+            .collect()
     }
 
     /// Every tool this policy turns off, by name — used to explain a posture
@@ -553,6 +606,66 @@ mod tests {
         assert!(policy.allows("get_state"));
         // exact off → beats the group
         assert!(!policy.allows("delete_state"));
+    }
+
+    /// An action key withholds one verb and leaves the rest of the tool on.
+    ///
+    /// This is `invariant 9`'s second reason, which a tool grouping several
+    /// verbs over one object cannot meet through `allows` alone: the
+    /// destructive verb has to be withholdable without the benign one.
+    #[test]
+    fn an_action_key_withholds_one_verb_and_no_more() {
+        let policy = ToolPolicy::from_switches([("pull_request.merge".into(), false)]);
+
+        assert!(!policy.allows_action("pull_request", "merge"));
+        assert!(policy.allows_action("pull_request", "comment"));
+        assert!(policy.allows_action("pull_request", "create"));
+        // The tool itself is untouched: it registers and advertises as before.
+        assert!(policy.allows("pull_request"));
+        // And the key belongs to the tool it names, not to every tool.
+        assert!(policy.allows_action("issue", "merge"));
+    }
+
+    /// An action key narrows. It can never widen.
+    ///
+    /// `deny_all_from` holds this for tools: a lower scope may take away and
+    /// never give back. An action key that could resurrect a verb of a
+    /// switched-off tool would be a hole in exactly that rule, reachable by
+    /// anyone who can write a project-scope settings file.
+    #[test]
+    fn an_action_grant_cannot_resurrect_a_tool_that_is_off() {
+        let by_name = ToolPolicy::from_switches([
+            ("pull_request".into(), false),
+            ("pull_request.comment".into(), true),
+        ]);
+        assert!(!by_name.allows_action("pull_request", "comment"));
+
+        let by_group = ToolPolicy::from_switches([
+            ("forge".into(), false),
+            ("pull_request.comment".into(), true),
+        ]);
+        assert!(!by_group.allows_action("pull_request", "comment"));
+
+        let by_wildcard = ToolPolicy::from_switches([
+            (WILDCARD.into(), false),
+            ("pull_request.comment".into(), true),
+        ]);
+        assert!(!by_wildcard.allows_action("pull_request", "comment"));
+    }
+
+    /// The listing can name the withheld actions of a tool that is on.
+    #[test]
+    fn denied_actions_names_the_switches_the_tool_name_hides() {
+        let policy = ToolPolicy::from_switches([
+            ("pull_request.merge".into(), false),
+            ("pull_request.close".into(), false),
+            ("pull_request.comment".into(), true),
+            ("issue.close".into(), false),
+        ]);
+
+        assert_eq!(policy.denied_actions("pull_request"), ["close", "merge"]);
+        assert_eq!(policy.denied_actions("issue"), ["close"]);
+        assert!(policy.denied_actions("bash").is_empty());
     }
 
     #[test]
