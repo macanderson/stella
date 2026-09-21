@@ -121,11 +121,16 @@ async fn a_long_turn_ages_old_tool_results_far_below_the_compaction_budget() {
 /// A ~10 KB partial with distinguishable head, middle, and tail, so "the
 /// middle is gone" is testable (homogeneous filler would let tail bytes
 /// satisfy a middle assertion).
+///
+/// Each block alternates two characters rather than repeating one. A single
+/// character repeated 5_000 times is what `step::degenerate` exists to cut,
+/// so one-character filler ends the turn on `ProviderError::Degenerate`
+/// instead of the truncation this test is about.
 fn huge_partial() -> String {
     format!(
         "HEAD-MARK {}MIDDLE-MARK{} TAIL-MARK",
-        "a".repeat(5_000),
-        "b".repeat(5_000)
+        "ab".repeat(2_500),
+        "cd".repeat(2_500)
     )
 }
 

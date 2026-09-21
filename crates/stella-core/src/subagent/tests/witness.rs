@@ -181,7 +181,13 @@ async fn a_child_turn_never_writes_or_clears_the_parents_resume_point() {
 #[tokio::test(start_paused = true)]
 async fn the_report_is_clamped_to_the_spec_cap_and_says_so() {
     let parent_provider = ScriptedProvider::new(vec![]);
-    let child_provider = ScriptedProvider::new(vec![Ok(text_result(&"y".repeat(5_000), 0.001))]);
+    let child_provider = ScriptedProvider::new(vec![Ok(text_result(
+        // Two characters, not one: a 5_000-long single-character run is what
+        // `step::degenerate` cuts, and this test needs a long report rather
+        // than a degenerate one.
+        &"yz".repeat(2_500),
+        0.001,
+    ))]);
     let tools = MixedTools::default();
     let seams = TurnCapabilities::none();
     let parent = Engine::assemble(
