@@ -29,6 +29,15 @@
 //! dialect shares the observer port. One guard here covers Anthropic,
 //! OpenAI, Gemini, Bedrock, and every OpenAI-compatible gateway. Five
 //! per-adapter copies would drift apart.
+//!
+//! Not every answer arrives through that port, though. An adapter whose
+//! stream recovery has latched sends a plain unary request instead, and
+//! returns the whole answer without calling the observer once. Bedrock is
+//! unary by construction and calls the observer itself, but the fallback
+//! path in the streaming adapters does not. So the check runs a second time
+//! where a dispatch finishes, over an answer the watch never saw. See
+//! [`crate::step::StreamProgress::settle`], which is where both readings
+//! live.
 
 use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -165,6 +174,17 @@ impl DegenerateWatch {
     /// Whether this stream has been marked broken.
     pub(crate) fn is_tripped(&self) -> bool {
         self.tripped.load(Ordering::Relaxed)
+    }
+
+    /// Whether this stream has fed the watch any text at all.
+    ///
+    /// A run length of zero is the packed state [`DegenerateWatch::reset`]
+    /// leaves behind, and [`DegenerateWatch::feed`] sets a length of at least
+    /// one for any text it is given. So this answers for the current stream
+    /// rather than for the call, which is what the caller needs: it asks
+    /// whether there is an answer here the watch has never seen.
+    pub(crate) fn saw_nothing(&self) -> bool {
+        unpack(self.run.load(Ordering::Relaxed)).1 == 0
     }
 
     /// Waits for the stream to be marked broken. Returns at once if it

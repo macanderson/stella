@@ -228,15 +228,13 @@ pub async fn run_accounted_call(
                 let dispatch = std::pin::pin!(provider.complete_observed_ref(request, &observer));
                 let degenerate = std::pin::pin!(watch_progress.degenerated());
                 let result = match futures_util::future::select(dispatch, degenerate).await {
-                    // The same same-poll reading `step::bounded_generation`
-                    // takes: a call that trips on its last fragment and then
-                    // returns in one poll never lets the right arm run.
+                    // The same second look `step::bounded_generation` takes,
+                    // through the same code: a call that trips on its last
+                    // fragment and then returns in one poll never lets the
+                    // right arm run, and a unary fallback fed the watch
+                    // nothing at all.
                     futures_util::future::Either::Left((result, _)) => {
-                        if watch_progress.degenerated_now() {
-                            Err(crate::step::degenerate::terminal_error())
-                        } else {
-                            result
-                        }
+                        watch_progress.settle(result)
                     }
                     futures_util::future::Either::Right(((), _)) => {
                         Err(crate::step::degenerate::terminal_error())
@@ -575,11 +573,17 @@ mod tests {
         }
     }
 
-    /// Hands the whole answer over and returns without ever yielding, the
-    /// shape a unary adapter has. Bedrock is that adapter today. The race
-    /// around the dispatch gets no poll at all, so only a read of the mark
-    /// catches this one.
-    struct WholeAnswerAtOnce;
+    /// Returns a degenerate answer in one poll, without ever yielding. The
+    /// race around the dispatch gets no poll at all, so the reading taken
+    /// after it returns is the only thing that can catch either shape.
+    ///
+    /// `observed` picks which shape. `true` is a unary adapter that reports
+    /// what it returns, which Bedrock does today. `false` is the stream
+    /// recovery fallback in the streaming adapters, which sends a plain
+    /// request and returns the answer with the observer untouched.
+    struct WholeAnswerAtOnce {
+        observed: bool,
+    }
 
     #[async_trait]
     impl Provider for WholeAnswerAtOnce {
@@ -600,7 +604,9 @@ mod tests {
             observer: &dyn ToolCallObserver,
         ) -> Result<CompletionResult, ProviderError> {
             let answer = "!".repeat(crate::step::degenerate::RUN_LIMIT as usize);
-            observer.text_delta(&answer);
+            if self.observed {
+                observer.text_delta(&answer);
+            }
             Ok(CompletionResult {
                 upstream_provider: None,
                 text: answer,
@@ -1398,7 +1404,7 @@ mod tests {
         // that arms no idle bound at all. This provider never yields, so the
         // race around it gets no poll and the answer would be taken whole.
         // Only the read of the mark on the completion arm catches it.
-        let provider = WholeAnswerAtOnce;
+        let provider = WholeAnswerAtOnce { observed: true };
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
         let outcome = run_accounted_call(
@@ -1417,6 +1423,35 @@ mod tests {
                 );
             }
             other => panic!("a degenerate answer must not be accepted, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn an_answer_no_observer_ever_saw_is_still_cut() {
+        // The unary fallback's witness, on the path that arms no idle bound.
+        // An adapter whose stream recovery has latched sends a plain request
+        // and returns the answer with the observer untouched, so the mark is
+        // never set and the worst answer of all reads as clean. The text on
+        // the result is the only thing left to read.
+        let provider = WholeAnswerAtOnce { observed: false };
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let outcome = run_accounted_call(
+            degenerate_probe(&provider),
+            &mut budget,
+            &EventSender::new(tx),
+            &NoopSleeper,
+        )
+        .await;
+
+        match outcome {
+            Err(AccountedCallError::Provider(ProviderError::Terminal(message))) => {
+                assert!(
+                    message.contains("degenerated"),
+                    "the trip must name the fault: {message}"
+                );
+            }
+            other => panic!("an unobserved degenerate answer must be cut, got {other:?}"),
         }
     }
 }

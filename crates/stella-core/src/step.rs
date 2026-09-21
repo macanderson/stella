@@ -1180,14 +1180,42 @@ impl StreamProgress {
         self.0.watch.tripped().await;
     }
 
-    /// Whether the watch has already marked this stream broken.
+    /// Decide what a finished dispatch hands back.
     ///
-    /// The [`Self::degenerated`] future cannot answer for a trip that landed
-    /// in the same poll the call completed in, because a `select` polls the
-    /// call first and returns its result without polling this side again.
-    /// This asks after the fact, so the race has a second reading to check.
-    pub(crate) fn degenerated_now(&self) -> bool {
-        self.0.watch.is_tripped()
+    /// Two readings the race beside the dispatch cannot make, and one place
+    /// to make them, because [`bounded_generation`] and
+    /// [`crate::accounted_call::run_accounted_call`] both end a dispatch this
+    /// way and two copies of one rule drift apart.
+    ///
+    /// The first is a trip that landed in the same poll the call returned in.
+    /// `select` polls the call first and never polls the watch again, so
+    /// [`Self::degenerated`] is never given the chance to report it.
+    ///
+    /// The second is an answer the watch never saw. An adapter whose stream
+    /// recovery has latched sends a unary request and returns the whole
+    /// answer without calling the observer, so nothing was ever fed and the
+    /// worst answer of all reads as clean. Feeding the returned text here
+    /// closes that, and covers an adapter nobody has written yet.
+    ///
+    /// Only when the watch saw nothing. A streamed answer arrived fragment by
+    /// fragment already, and reading it a second time would count every run
+    /// twice.
+    ///
+    /// A failed dispatch beside a tripped watch is replaced too. A retryable
+    /// spelling would buy the broken host the same call again.
+    pub(crate) fn settle(
+        &self,
+        result: Result<CompletionResult, ProviderError>,
+    ) -> Result<CompletionResult, ProviderError> {
+        if let Ok(completed) = &result
+            && self.0.watch.saw_nothing()
+        {
+            self.0.watch.feed(&completed.text);
+        }
+        if self.0.watch.is_tripped() {
+            return Err(degenerate::terminal_error());
+        }
+        result
     }
 
     /// Open a new stream on this clock: call it at the top of every attempt.
@@ -1244,22 +1272,11 @@ where
     let idle = std::pin::pin!(idle_bounded_generation(sleeper, limit, progress, call));
     let degenerate = std::pin::pin!(progress.degenerated());
     match futures_util::future::select(idle, degenerate).await {
-        // `select` polls the call first, so a stream whose last fragment
-        // crosses the limit and then completes in the same poll arrives here
-        // with the trip already latched and this side never polled again. A
-        // whole-answer observer path has exactly that shape: one
-        // `record_text` carrying the entire answer, then `Ready`. Reading the
-        // latch here is what covers it. A provider error is replaced too: a
-        // degenerate stream is a fault in the host, and `Terminal` is what
-        // stops a retryable spelling buying the same call against the same
-        // endpoint again.
-        futures_util::future::Either::Left((result, _)) => {
-            if progress.degenerated_now() {
-                Err(degenerate::terminal_error())
-            } else {
-                result
-            }
-        }
+        // A dispatch that finished gets the second look `StreamProgress::settle`
+        // describes: the latch, for a trip that landed in the poll the call
+        // returned in, and the returned text itself, for an answer no
+        // observer ever saw.
+        futures_util::future::Either::Left((result, _)) => progress.settle(result),
         futures_util::future::Either::Right(((), _)) => Err(degenerate::terminal_error()),
     }
 }

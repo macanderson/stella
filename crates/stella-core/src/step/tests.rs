@@ -638,6 +638,56 @@ async fn an_ordinary_answer_that_completes_in_one_poll_is_accepted() {
     );
 }
 
+/// The unary fallback's witness. An adapter whose stream recovery has latched
+/// sends a plain request and returns the whole answer without calling the
+/// observer once. The watch is fed nothing, so the worst answer there is
+/// reads as clean and the guard covers the one path it was written for and
+/// not the one a broken host pushes a session onto. The returned text is the
+/// only thing left to read.
+#[tokio::test]
+async fn an_answer_no_observer_ever_saw_is_still_read() {
+    let progress = StreamProgress::default();
+    let unary = async {
+        Ok(CompletionResult {
+            text: "!".repeat(degenerate::RUN_LIMIT as usize),
+            ..stub_completion_result()
+        })
+    };
+    let result = deadline_bounded_generation(&RealTime, None, None, &progress, unary).await;
+    match result {
+        Err(ProviderError::Terminal(message)) => {
+            assert!(
+                message.contains("degenerated") && message.contains("upstream_pin"),
+                "the trip should name the fault and the remedy, got {message:?}"
+            );
+        }
+        other => panic!("an unobserved degenerate answer must be cut, got {other:?}"),
+    }
+}
+
+/// The control that second reading needs. A streamed answer was fed fragment
+/// by fragment on the way past, and the same text comes back on the result.
+/// Counting it twice would cut a stream for writing one long rule, which is
+/// the false alarm `a_different_character_resets_the_run` exists to prevent
+/// and this would reintroduce from the other end.
+#[tokio::test]
+async fn a_streamed_answer_is_not_read_a_second_time() {
+    let progress = StreamProgress::default();
+    let long_rule = "-".repeat(degenerate::RUN_LIMIT as usize - 1);
+    let streamed = async {
+        progress.record_text(&long_rule);
+        Ok(CompletionResult {
+            text: long_rule.clone(),
+            ..stub_completion_result()
+        })
+    };
+    let result = deadline_bounded_generation(&RealTime, None, None, &progress, streamed).await;
+    assert!(
+        result.is_ok(),
+        "a rule written once must not be counted twice, got {result:?}"
+    );
+}
+
 /// The control the guard lives or dies by. A good answer streams text the
 /// whole time under both bounds. It has to reach its own end untouched. That
 /// includes the long runs real output does hold: a rule, a table edge, deep
