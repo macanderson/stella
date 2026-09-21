@@ -620,6 +620,24 @@ async fn a_degenerate_answer_that_completes_in_one_poll_is_still_cut() {
     }
 }
 
+/// The control beside the witness above. An answer that also completes in one
+/// poll, and says something, has to be accepted. Without it the check on the
+/// completion arm could be failing every call that never yields and both
+/// tests would still read green.
+#[tokio::test]
+async fn an_ordinary_answer_that_completes_in_one_poll_is_accepted() {
+    let progress = StreamProgress::default();
+    let whole_answer = async {
+        progress.record_text("The user asks a simple question. Here is the answer.");
+        Ok(stub_completion_result())
+    };
+    let result = deadline_bounded_generation(&RealTime, None, None, &progress, whole_answer).await;
+    assert!(
+        result.is_ok(),
+        "an answer that says something must be accepted, got {result:?}"
+    );
+}
+
 /// The control the guard lives or dies by. A good answer streams text the
 /// whole time under both bounds. It has to reach its own end untouched. That
 /// includes the long runs real output does hold: a rule, a table edge, deep

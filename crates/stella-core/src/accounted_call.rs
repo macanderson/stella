@@ -575,6 +575,44 @@ mod tests {
         }
     }
 
+    /// Hands the whole answer over and returns without ever yielding, the
+    /// shape a unary adapter has. Bedrock is that adapter today. The race
+    /// around the dispatch gets no poll at all, so only a read of the mark
+    /// catches this one.
+    struct WholeAnswerAtOnce;
+
+    #[async_trait]
+    impl Provider for WholeAnswerAtOnce {
+        fn id(&self) -> &str {
+            "whole-answer-at-once"
+        }
+
+        async fn complete_ref(
+            &self,
+            _request: CompletionRequestRef<'_>,
+        ) -> Result<CompletionResult, ProviderError> {
+            unreachable!("this provider is only dispatched through the observed path")
+        }
+
+        async fn complete_observed_ref(
+            &self,
+            _req: CompletionRequestRef<'_>,
+            observer: &dyn ToolCallObserver,
+        ) -> Result<CompletionResult, ProviderError> {
+            let answer = "!".repeat(crate::step::degenerate::RUN_LIMIT as usize);
+            observer.text_delta(&answer);
+            Ok(CompletionResult {
+                upstream_provider: None,
+                text: answer,
+                tool_calls: Vec::new(),
+                usage: CompletionUsage::reported_zero(),
+                model: "scripted-model".into(),
+                cost_usd: 0.0,
+                finish_reason: None,
+            })
+        }
+    }
+
     fn degenerate_probe(provider: &dyn Provider) -> AccountedCall<'_> {
         AccountedCall {
             provider,
@@ -1352,5 +1390,33 @@ mod tests {
                 .any(|event| matches!(event, AgentEvent::UsageIncomplete { .. })),
             "no accounting should be abandoned when the call was actively answering: {events:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_degenerate_answer_returned_in_one_poll_is_still_cut() {
+        // The mirror of `crate::step::tests`'s same-poll witness, on the path
+        // that arms no idle bound at all. This provider never yields, so the
+        // race around it gets no poll and the answer would be taken whole.
+        // Only the read of the mark on the completion arm catches it.
+        let provider = WholeAnswerAtOnce;
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let outcome = run_accounted_call(
+            degenerate_probe(&provider),
+            &mut budget,
+            &EventSender::new(tx),
+            &NoopSleeper,
+        )
+        .await;
+
+        match outcome {
+            Err(AccountedCallError::Provider(ProviderError::Terminal(message))) => {
+                assert!(
+                    message.contains("degenerated"),
+                    "the trip must name the fault: {message}"
+                );
+            }
+            other => panic!("a degenerate answer must not be accepted, got {other:?}"),
+        }
     }
 }
