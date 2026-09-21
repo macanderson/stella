@@ -205,6 +205,7 @@ pub async fn run_accounted_call(
             let request = call.request.as_borrowed();
             let provider = call.provider;
             let attempt_progress = progress.clone();
+            let watch_progress = progress.clone();
             let in_flight = &attempt_in_flight;
             async move {
                 // Built *inside* the async block, not before it: the future
@@ -215,7 +216,30 @@ pub async fn run_accounted_call(
                 // the same reason).
                 let observer = IdleObserver(attempt_progress);
                 in_flight.store(true, Ordering::SeqCst);
-                let result = provider.complete_observed_ref(request, &observer).await;
+                // A new stream, so a new run count. See
+                // `StreamProgress::begin_stream`.
+                watch_progress.begin_stream();
+                // The same race `crate::step::bounded_generation` runs, for
+                // the same reason, on the path that needs it more. These
+                // callers pass `timeout: None`, so the idle bound below is
+                // not even armed: nothing but this would end a stream stuck
+                // on one character. And no operator is watching a deck to
+                // press Esc on a triage call.
+                let dispatch = std::pin::pin!(provider.complete_observed_ref(request, &observer));
+                let degenerate = std::pin::pin!(watch_progress.degenerated());
+                let result = match futures_util::future::select(dispatch, degenerate).await {
+                    // The same second look `step::bounded_generation` takes,
+                    // through the same code: a call that trips on its last
+                    // fragment and then returns in one poll never lets the
+                    // right arm run, and a unary fallback fed the watch
+                    // nothing at all.
+                    futures_util::future::Either::Left((result, _)) => {
+                        watch_progress.settle(result)
+                    }
+                    futures_util::future::Either::Right(((), _)) => {
+                        Err(crate::step::degenerate::degenerate_error(None))
+                    }
+                };
                 in_flight.store(false, Ordering::SeqCst);
                 result
             }
@@ -431,7 +455,11 @@ fn emit_incomplete(
 /// at every call site — triage, verifier, plan, guidance, the overflow
 /// summarizer), so there is no speculative execution to gate and no preview
 /// event to forward. Every method exists only to record that *something*
-/// arrived.
+/// arrived — and, for the two that carry content, to let
+/// [`crate::step::degenerate`] decide whether that something was anything at
+/// all. These callers need that guard as much as the engine does: a triage
+/// or verifier call routed to the same broken upstream degenerates the same
+/// way, with no operator watching a deck to press Esc.
 struct IdleObserver(StreamProgress);
 
 impl ToolCallObserver for IdleObserver {
@@ -439,12 +467,12 @@ impl ToolCallObserver for IdleObserver {
         self.0.record();
     }
 
-    fn text_delta(&self, _delta: &str) {
-        self.0.record();
+    fn text_delta(&self, delta: &str) {
+        self.0.record_text(delta);
     }
 
-    fn reasoning_delta(&self, _delta: &str) {
-        self.0.record();
+    fn reasoning_delta(&self, delta: &str) {
+        self.0.record_text(delta);
     }
 
     fn tool_input_delta(&self) {
@@ -462,6 +490,220 @@ mod tests {
     use super::*;
     use crate::tests::{NoopSleeper, PausedSleeper};
     use std::time::Instant;
+
+    /// Streams one character and never stops, the shape a broken serving
+    /// host produces. It never returns, so the only way out of a call on it
+    /// is a bound that cuts it.
+    struct EndlessOneCharacter;
+
+    #[async_trait]
+    impl Provider for EndlessOneCharacter {
+        fn id(&self) -> &str {
+            "endless"
+        }
+
+        async fn complete_ref(
+            &self,
+            _request: CompletionRequestRef<'_>,
+        ) -> Result<CompletionResult, ProviderError> {
+            unreachable!("this provider is only dispatched through the observed path")
+        }
+
+        async fn complete_observed_ref(
+            &self,
+            _req: CompletionRequestRef<'_>,
+            observer: &dyn ToolCallObserver,
+        ) -> Result<CompletionResult, ProviderError> {
+            let fragment = "!".repeat(512);
+            loop {
+                observer.reasoning_delta(&fragment);
+                tokio::task::yield_now().await;
+            }
+        }
+    }
+
+    /// Ends its first attempt deep into a run of one character, then fails.
+    /// Its second attempt opens on more of the same character and answers.
+    /// Neither stream reaches the limit. The two added together do.
+    struct RunAcrossAttempts {
+        attempts: Mutex<u32>,
+    }
+
+    #[async_trait]
+    impl Provider for RunAcrossAttempts {
+        fn id(&self) -> &str {
+            "run-across-attempts"
+        }
+
+        async fn complete_ref(
+            &self,
+            _request: CompletionRequestRef<'_>,
+        ) -> Result<CompletionResult, ProviderError> {
+            unreachable!("this provider is only dispatched through the observed path")
+        }
+
+        async fn complete_observed_ref(
+            &self,
+            _req: CompletionRequestRef<'_>,
+            observer: &dyn ToolCallObserver,
+        ) -> Result<CompletionResult, ProviderError> {
+            let attempt = {
+                let mut attempts = self.attempts.lock().expect("attempt lock");
+                *attempts += 1;
+                *attempts
+            };
+            let run = "-".repeat(crate::step::degenerate::RUN_LIMIT as usize - 1);
+            observer.text_delta(&run);
+            // Hand the runtime back, so the race around this dispatch gets a
+            // poll before the answer lands. Without it the answer wins every
+            // time and the test passes whether the reset is there or not.
+            tokio::task::yield_now().await;
+            if attempt == 1 {
+                return Err(ProviderError::transport("first attempt failed"));
+            }
+            Ok(CompletionResult {
+                upstream_provider: None,
+                text: run,
+                tool_calls: Vec::new(),
+                usage: CompletionUsage::reported_zero(),
+                model: "scripted-model".into(),
+                cost_usd: 0.0,
+                finish_reason: None,
+            })
+        }
+    }
+
+    /// Returns a degenerate answer in one poll, without ever yielding. The
+    /// race around the dispatch gets no poll at all, so the reading taken
+    /// after it returns is the only thing that can catch either shape.
+    ///
+    /// `observed` picks which shape. `true` is a unary adapter that reports
+    /// what it returns, which Bedrock does today. `false` is the stream
+    /// recovery fallback in the streaming adapters, which sends a plain
+    /// request and returns the answer with the observer untouched.
+    struct WholeAnswerAtOnce {
+        observed: bool,
+    }
+
+    #[async_trait]
+    impl Provider for WholeAnswerAtOnce {
+        fn id(&self) -> &str {
+            "whole-answer-at-once"
+        }
+
+        async fn complete_ref(
+            &self,
+            _request: CompletionRequestRef<'_>,
+        ) -> Result<CompletionResult, ProviderError> {
+            unreachable!("this provider is only dispatched through the observed path")
+        }
+
+        async fn complete_observed_ref(
+            &self,
+            _req: CompletionRequestRef<'_>,
+            observer: &dyn ToolCallObserver,
+        ) -> Result<CompletionResult, ProviderError> {
+            let answer = "!".repeat(crate::step::degenerate::RUN_LIMIT as usize);
+            if self.observed {
+                observer.text_delta(&answer);
+            }
+            Ok(CompletionResult {
+                upstream_provider: None,
+                text: answer,
+                tool_calls: Vec::new(),
+                usage: CompletionUsage::reported_zero(),
+                model: "scripted-model".into(),
+                cost_usd: 0.0,
+                finish_reason: None,
+            })
+        }
+    }
+
+    fn degenerate_probe(provider: &dyn Provider) -> AccountedCall<'_> {
+        AccountedCall {
+            provider,
+            role: ModelCallRole::Summarization,
+            model_hint: "configured-model".into(),
+            request: CompletionRequest {
+                messages: vec![CompletionMessage::user("work")],
+                max_output_tokens: None,
+                temperature: None,
+                effort: None,
+                tools: Vec::new(),
+                reasoning: None,
+                params: None,
+            },
+            retry_policy: RetryPolicy::new(1, 0, 0),
+            // What every caller of this function passes today: triage, the
+            // verifier, plan, guidance, and the overflow summarizer. With no
+            // idle ceiling armed, nothing here bounds the call but the watch.
+            timeout: None,
+            estimated_input_tokens: 1,
+            receipt: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_degenerate_auxiliary_call_is_cut_with_no_timeout_armed() {
+        // The witness for the non-engine path. These callers reach the
+        // provider through `run_accounted_call`, not through the step loop,
+        // so the engine's own race never covers them. Without the race added
+        // beside the idle bound here, this call runs forever and the test
+        // ends at its timeout.
+        let provider = EndlessOneCharacter;
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(5),
+            run_accounted_call(
+                degenerate_probe(&provider),
+                &mut budget,
+                &EventSender::new(tx),
+                &NoopSleeper,
+            ),
+        )
+        .await
+        .expect("the watch has to cut this call; a timeout here means nothing did");
+
+        match outcome {
+            Err(AccountedCallError::Provider(ProviderError::Degenerate { message, .. })) => {
+                assert!(
+                    message.contains("fault in the serving host")
+                        && message.contains("upstream_pin"),
+                    "the error has to name the fault and the remedy: {message}"
+                );
+            }
+            other => panic!("expected a degeneracy error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_run_at_the_end_of_one_attempt_does_not_cut_the_retry() {
+        // The control for the retry boundary. One clock is shared across
+        // attempts, so a count carried over would cut a healthy stream on a
+        // different host for what the last one wrote.
+        let provider = RunAcrossAttempts {
+            attempts: Mutex::new(0),
+        };
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            run_accounted_call(
+                degenerate_probe(&provider),
+                &mut budget,
+                &EventSender::new(tx),
+                &NoopSleeper,
+            ),
+        )
+        .await
+        .expect("the retry should answer well inside this bound");
+
+        assert!(
+            result.is_ok(),
+            "a fresh attempt must open on a fresh run count: {result:?}"
+        );
+    }
 
     struct RetryThenSuccess {
         attempts: Mutex<u32>,
@@ -1155,5 +1397,62 @@ mod tests {
                 .any(|event| matches!(event, AgentEvent::UsageIncomplete { .. })),
             "no accounting should be abandoned when the call was actively answering: {events:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_degenerate_answer_returned_in_one_poll_is_still_cut() {
+        // The mirror of `crate::step::tests`'s same-poll witness, on the path
+        // that arms no idle bound at all. This provider never yields, so the
+        // race around it gets no poll and the answer would be taken whole.
+        // Only the read of the mark on the completion arm catches it.
+        let provider = WholeAnswerAtOnce { observed: true };
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let outcome = run_accounted_call(
+            degenerate_probe(&provider),
+            &mut budget,
+            &EventSender::new(tx),
+            &NoopSleeper,
+        )
+        .await;
+
+        match outcome {
+            Err(AccountedCallError::Provider(ProviderError::Degenerate { message, .. })) => {
+                assert!(
+                    message.contains("fault in the serving host"),
+                    "the trip must name the fault: {message}"
+                );
+            }
+            other => panic!("a degenerate answer must not be accepted, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn an_answer_no_observer_ever_saw_is_still_cut() {
+        // The unary fallback's witness, on the path that arms no idle bound.
+        // An adapter whose stream recovery has latched sends a plain request
+        // and returns the answer with the observer untouched, so the mark is
+        // never set and the worst answer of all reads as clean. The text on
+        // the result is the only thing left to read.
+        let provider = WholeAnswerAtOnce { observed: false };
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let outcome = run_accounted_call(
+            degenerate_probe(&provider),
+            &mut budget,
+            &EventSender::new(tx),
+            &NoopSleeper,
+        )
+        .await;
+
+        match outcome {
+            Err(AccountedCallError::Provider(ProviderError::Degenerate { message, .. })) => {
+                assert!(
+                    message.contains("fault in the serving host"),
+                    "the trip must name the fault: {message}"
+                );
+            }
+            other => panic!("an unobserved degenerate answer must be cut, got {other:?}"),
+        }
     }
 }

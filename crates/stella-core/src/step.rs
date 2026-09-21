@@ -42,15 +42,13 @@
 //! host then has to keep valid across versions. That trade is deliberate and
 //! is the reason `TurnMemos` is not `Serialize`.
 
-use std::future::Future;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 use stella_protocol::{
-    AgentEvent, BudgetMode, CompletionMessage, CompletionResult, CompletionUsage, MessageRole,
-    ProviderError, ToolCall, ToolOutput, ToolResult,
+    AgentEvent, BudgetMode, CompletionMessage, CompletionUsage, MessageRole, ToolCall, ToolOutput,
+    ToolResult,
 };
 
 use crate::budget::BudgetGuard;
@@ -1119,160 +1117,11 @@ pub(crate) struct CompactionPass {
 
 // ─────────────────────────── abandoned work stays accounted ───────────────────
 //
-// Three pieces of the machinery that decides what happens to a step's work
-// when nobody is going to wait for it: the generation deadline (the call is
-// taking longer than any answer is worth), and the two drop guards that fire
-// on the hard-drop path this module's docs argue against — one for a possibly
-// billed model call, one for speculative tool work that already ran real I/O.
-// Neither guard can prevent the loss; both make it visible.
-
-/// Monotonic count of stream fragments a provider dispatch has delivered.
-///
-/// The one signal that separates "wedged" from "working": a provider still
-/// emitting fragments is answering, however slowly. Cloned into the gate's
-/// delta path and read by [`bounded_generation`] — and, for the same reason,
-/// by [`crate::accounted_call::run_accounted_call`]'s per-call deadline,
-/// which needs the identical "is anything arriving" signal for the
-/// non-engine callers (pipeline triage/verifier/plan, the overflow
-/// summarizer) that dispatch through `AccountedCall` instead of a step.
-/// `count` is `pub(crate)` for exactly that second reader. `Relaxed` because
-/// the only question asked of it is "did this change since I last looked",
-/// which no ordering with other memory affects.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct StreamProgress(Arc<AtomicU64>);
-
-impl StreamProgress {
-    pub(crate) fn record(&self) {
-        self.0.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub(crate) fn count(&self) -> u64 {
-        self.0.load(Ordering::Relaxed)
-    }
-}
-
-/// Bound one provider dispatch by [`EngineConfig::model_timeout`], measured as
-/// **idle time** — time since the last streamed fragment — rather than total
-/// call duration.
-///
-/// The deadline exists to close an unbounded wait on a provider that is not
-/// answering. Total duration cannot express that: it also fires on a provider
-/// that is answering *the whole time*, just slowly. That distinction stopped
-/// being academic when reasoning models arrived — a single hard-task call at
-/// high effort can legitimately stream for well past ten minutes, and a
-/// wall-clock bound kills it mid-answer and reports it as a provider fault.
-/// Idle time asks the question the deadline actually means: has anything
-/// arrived recently?
-///
-/// A provider that streams nothing at all is bounded exactly as before, since
-/// with no fragments the idle clock and the wall clock are the same clock.
-///
-/// The trip is [`ProviderError::Terminal`] on purpose. `Transport` is
-/// retryable, so classifying it that way would hand a provider that is simply
-/// not answering the same unbounded wait again once per attempt — multiplying
-/// the very window the deadline exists to close. `stella-serve`'s reverse-RPC
-/// deadline made the same call for the same reason.
-///
-/// Wrapping the dispatch rather than the whole retry future means the bound is
-/// per *generation*: backoff sleeps between attempts are not charged against
-/// it, and a slow-but-progressing provider is never cut off by time another
-/// attempt already spent.
-pub(crate) async fn bounded_generation<F>(
-    sleeper: &dyn crate::retry::Sleeper,
-    limit: Option<Duration>,
-    progress: &StreamProgress,
-    call: F,
-) -> Result<CompletionResult, ProviderError>
-where
-    F: Future<Output = Result<CompletionResult, ProviderError>>,
-{
-    let Some(limit) = limit else {
-        return call.await;
-    };
-    let mut call = std::pin::pin!(call);
-    let mut seen = progress.count();
-    loop {
-        match crate::retry::bounded(sleeper, limit, &mut call).await {
-            Some(result) => return result,
-            None => {
-                // The window elapsed. Whether that is a fault depends on what
-                // arrived during it: any fragment at all means the provider is
-                // answering, so re-arm and keep waiting. Only a window that
-                // passed in complete silence is the wedge this bound is for.
-                let now = progress.count();
-                if now == seen {
-                    return Err(ProviderError::Terminal(format!(
-                        "generation stalled: no stream fragment for {}s (model deadline)",
-                        limit.as_secs()
-                    )));
-                }
-                seen = now;
-            }
-        }
-    }
-}
-
-/// Bound one provider dispatch by what remains of the TASK's own wall-clock
-/// deadline ([`BudgetGuard::task_deadline`]), composed around
-/// [`bounded_generation`]'s idle bound rather than replacing it.
-///
-/// This is **not** the flat, unconditional wall-clock ceiling #1467 removed
-/// from [`crate::accounted_call::run_accounted_call`]: that one fired the
-/// instant a *fixed* duration elapsed, even while the provider was actively
-/// streaming, which cut a live generation off for a ceiling sized to catch
-/// silence and lost OpenRouter's trailing usage/cost frame in the process.
-/// This bound fires only when the *task* is out of time. `task_deadline` is
-/// `None` whenever no task deadline is armed (interactive CLI, no bench
-/// harness), so nothing changes for that shape — and a call that is actively
-/// answering well within the task's remaining budget is never touched by it.
-///
-/// What it closes (#2021): the between-step deadline check
-/// (`driver::settlement::check_budget`) is anticipatory but reactive — it
-/// looks at the *last* step's pace before opening a *new* one, and has no way
-/// to see a call that is itself about to outrun the clock once dispatched. A
-/// TB2.1 `fix-git` trial recorded exactly that on 2026-08-09: a call
-/// dispatched with 120.19s of task deadline left ran 120.43s, produced
-/// nothing, and the run died 15.9s past the deadline with otherwise-complete
-/// work sitting uncommitted. The idle bound cannot see this either — the
-/// provider was never silent, it was a connection that never completed.
-///
-/// Derived from [`BudgetGuard::task_deadline`] rather than a
-/// standalone `EngineConfig` field: a static ceiling set independently of the
-/// task's own deadline is exactly the kind of number that can drift from it,
-/// which is the failure mode #2021's own "what to do" list warns against.
-/// Reading the same `Instant` the between-step check already reads makes the
-/// two structurally unable to disagree. Takes the absolute `Instant` — not a
-/// pre-subtracted `Duration` — and reads the clock itself, so a caller may
-/// capture it once outside a per-attempt retry closure and still have each
-/// attempt bounded by what actually remains at ITS OWN dispatch.
-///
-/// The trip is [`ProviderError::Terminal`], for the same reason
-/// [`bounded_generation`]'s is: the task is out of time, so retrying only
-/// spends more of a deadline that has already run out.
-pub(crate) async fn deadline_bounded_generation<F>(
-    sleeper: &dyn crate::retry::Sleeper,
-    idle_limit: Option<Duration>,
-    task_deadline: Option<std::time::Instant>,
-    progress: &StreamProgress,
-    call: F,
-) -> Result<CompletionResult, ProviderError>
-where
-    F: Future<Output = Result<CompletionResult, ProviderError>>,
-{
-    let generation = bounded_generation(sleeper, idle_limit, progress, call);
-    let Some(deadline) = task_deadline else {
-        return generation.await;
-    };
-    let remaining = deadline.saturating_duration_since(sleeper.now());
-    match crate::retry::bounded(sleeper, remaining, generation).await {
-        Some(result) => result,
-        None => Err(ProviderError::Terminal(format!(
-            "generation exceeded the task's remaining wall clock ({}ms): \
-             the task deadline ran out mid-call",
-            remaining.as_millis()
-        ))),
-    }
-}
+// The two drop guards that fire on the hard-drop path this module's docs
+// argue against: one for a possibly billed model call, one for speculative
+// tool work that already ran real I/O. Neither guard can prevent the loss;
+// both make it visible. The bounds that decide when to abandon a call in the
+// first place are in [`stream_bound`].
 
 /// Drop guard for the paid-call window ([`Engine`](crate::driver::Engine)'s `run_model_call`): armed
 /// before the retried provider dispatch, disarmed on both normal exits. It
@@ -1372,6 +1221,11 @@ impl Drop for SpeculationDropGuard {
         }
     }
 }
+
+pub(crate) mod degenerate;
+pub(crate) mod stream_bound;
+
+pub(crate) use stream_bound::{StreamProgress, deadline_bounded_generation};
 
 #[cfg(test)]
 mod tests;

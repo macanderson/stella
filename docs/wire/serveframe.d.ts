@@ -2222,6 +2222,15 @@ export type ProviderErrorWire = {
   kind: "output_budget_exceeded";
   message: string;
 } | {
+  kind: "degenerate";
+  message: string;
+  /**
+   * What the call cost. `Some` for an answer that completed and was
+   * rejected on reading, `None` for a stream cut in flight.
+   * `serde(default)` keeps hosts that predate the field valid.
+   */
+  partial?: PartialUsage | null;
+} | {
   kind: "terminal";
   message: string;
 };

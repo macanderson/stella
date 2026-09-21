@@ -1,5 +1,8 @@
+use std::time::Duration;
+
+use stella_protocol::{CompletionResult, ProviderError, ToolCall};
+
 use super::*;
-use stella_protocol::ToolCall;
 
 /// A [`crate::retry::Sleeper`] on real tokio time, for the bounds below: they
 /// race a trickling call against a sleep, and only a sleep that takes time
@@ -551,4 +554,224 @@ async fn no_armed_deadline_leaves_the_idle_bound_as_the_only_cut() {
             panic!("an unarmed deadline must still leave the idle bound active, got {other:?}")
         }
     }
+}
+
+/// The fault seen in the wild, end to end. The stream keeps arriving and
+/// keeps saying nothing. `moonshotai/kimi-k3` on OpenRouter, served by
+/// Fireworks, wrote `The` and then one `!` past 16KB. It held the turn for
+/// 272s at output token rates, until a person pressed Esc.
+///
+/// This is the witness. Both older bounds are set as the real session set
+/// them. No idle limit can fire on a stream that never goes idle, and a live
+/// session sets no task deadline. So on the base commit nothing here returns
+/// and the call runs on. The outer timeout turns that into a failure instead
+/// of a hung suite.
+#[tokio::test]
+async fn a_stream_repeating_one_character_is_cut_with_no_other_bound_armed() {
+    let progress = StreamProgress::default();
+    let degenerate = async {
+        loop {
+            progress.record_text(&"!".repeat(512));
+            tokio::task::yield_now().await;
+        }
+        #[allow(unreachable_code)]
+        Ok(stub_completion_result())
+    };
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        deadline_bounded_generation(&RealTime, None, None, &progress, degenerate),
+    )
+    .await
+    .expect("a degenerate stream must be cut, not waited on");
+    match result {
+        Err(ProviderError::Degenerate { message, .. }) => {
+            assert!(
+                message.contains("fault in the serving host") && message.contains("upstream_pin"),
+                "the trip should name the fault and the remedy, got {message:?}"
+            );
+        }
+        other => panic!("a degenerate stream must be cut, got {other:?}"),
+    }
+}
+
+/// The shape the race cannot see on its own. `futures_util::future::select`
+/// polls the call first, so a call that crosses the limit and then returns in
+/// the same poll never lets the watch's side run. A whole-answer observer path
+/// is exactly that: one `record_text` carrying the entire answer, then
+/// `Ready`. Nothing here awaits, so the whole call completes in the first
+/// poll.
+///
+/// This is the witness. With the latch read removed from
+/// `bounded_generation`'s completion arm, the degenerate answer is accepted as
+/// a success and this fails.
+#[tokio::test]
+async fn a_degenerate_answer_that_completes_in_one_poll_is_still_cut() {
+    let progress = StreamProgress::default();
+    let whole_answer = async {
+        progress.record_text(&"!".repeat(degenerate::RUN_LIMIT as usize));
+        Ok(stub_completion_result())
+    };
+    let result = deadline_bounded_generation(&RealTime, None, None, &progress, whole_answer).await;
+    match result {
+        Err(ProviderError::Degenerate { message, .. }) => {
+            assert!(
+                message.contains("fault in the serving host") && message.contains("upstream_pin"),
+                "the trip should name the fault and the remedy, got {message:?}"
+            );
+        }
+        other => panic!("a degenerate whole answer must be cut, got {other:?}"),
+    }
+}
+
+/// The control beside the witness above. An answer that also completes in one
+/// poll, and says something, has to be accepted. Without it the check on the
+/// completion arm could be failing every call that never yields and both
+/// tests would still read green.
+#[tokio::test]
+async fn an_ordinary_answer_that_completes_in_one_poll_is_accepted() {
+    let progress = StreamProgress::default();
+    let whole_answer = async {
+        progress.record_text("The user asks a simple question. Here is the answer.");
+        Ok(stub_completion_result())
+    };
+    let result = deadline_bounded_generation(&RealTime, None, None, &progress, whole_answer).await;
+    assert!(
+        result.is_ok(),
+        "an answer that says something must be accepted, got {result:?}"
+    );
+}
+
+/// The unary fallback's witness. An adapter whose stream recovery has latched
+/// sends a plain request and returns the whole answer without calling the
+/// observer once. The watch is fed nothing, so the worst answer there is
+/// reads as clean and the guard covers the one path it was written for and
+/// not the one a broken host pushes a session onto. The returned text is the
+/// only thing left to read.
+#[tokio::test]
+async fn an_answer_no_observer_ever_saw_is_still_read() {
+    let progress = StreamProgress::default();
+    let unary = async {
+        Ok(CompletionResult {
+            text: "!".repeat(degenerate::RUN_LIMIT as usize),
+            ..stub_completion_result()
+        })
+    };
+    let result = deadline_bounded_generation(&RealTime, None, None, &progress, unary).await;
+    match result {
+        Err(ProviderError::Degenerate { message, .. }) => {
+            assert!(
+                message.contains("fault in the serving host") && message.contains("upstream_pin"),
+                "the trip should name the fault and the remedy, got {message:?}"
+            );
+        }
+        other => panic!("an unobserved degenerate answer must be cut, got {other:?}"),
+    }
+}
+
+/// The charge survives the rejection. The host served this call and will bill
+/// it, so the tokens and the cost are real whatever the characters were, and
+/// the error is the only thing left to carry them: the result they were
+/// attached to is the thing being thrown away. Before
+/// [`ProviderError::Degenerate`] the trip was a `Terminal`, which has nowhere
+/// to put accounting, so every degenerate answer dropped its own cost.
+#[tokio::test]
+async fn a_rejected_answer_carries_its_charge_out_on_the_error() {
+    let progress = StreamProgress::default();
+    let unary = async {
+        Ok(CompletionResult {
+            text: "!".repeat(degenerate::RUN_LIMIT as usize),
+            usage: CompletionUsage {
+                input_tokens: 4_200,
+                output_tokens: 1_024,
+                ..CompletionUsage::reported_zero()
+            },
+            cost_usd: 0.019,
+            ..stub_completion_result()
+        })
+    };
+    let result = deadline_bounded_generation(&RealTime, None, None, &progress, unary).await;
+    let Err(failed) = result else {
+        panic!("a degenerate answer must be cut, got {result:?}");
+    };
+    let spent = failed
+        .partial_usage()
+        .expect("the charge for an answer the host served must ride out on the error");
+    assert_eq!(spent.usage.input_tokens, 4_200, "input tokens lost");
+    assert_eq!(spent.usage.output_tokens, 1_024, "output tokens lost");
+    assert_eq!(spent.cost_usd, 0.019, "cost lost");
+    assert!(
+        spent.input_reported,
+        "the provider's own attestation must survive, not be re-guessed"
+    );
+}
+
+/// The control that second reading needs. A streamed answer was fed fragment
+/// by fragment on the way past, and the same text comes back on the result.
+/// Counting it twice would cut a stream for writing one long rule, which is
+/// the false alarm `a_different_character_resets_the_run` exists to prevent
+/// and this would reintroduce from the other end.
+#[tokio::test]
+async fn a_streamed_answer_is_not_read_a_second_time() {
+    let progress = StreamProgress::default();
+    let long_rule = "-".repeat(degenerate::RUN_LIMIT as usize - 1);
+    let streamed = async {
+        progress.record_text(&long_rule);
+        Ok(CompletionResult {
+            text: long_rule.clone(),
+            ..stub_completion_result()
+        })
+    };
+    let result = deadline_bounded_generation(&RealTime, None, None, &progress, streamed).await;
+    assert!(
+        result.is_ok(),
+        "a rule written once must not be counted twice, got {result:?}"
+    );
+}
+
+/// The control the guard lives or dies by. A good answer streams text the
+/// whole time under both bounds. It has to reach its own end untouched. That
+/// includes the long runs real output does hold: a rule, a table edge, deep
+/// indents. The limit is set high enough to clear all three.
+#[tokio::test]
+async fn a_healthy_stream_is_never_cut_by_the_degeneracy_guard() {
+    let progress = StreamProgress::default();
+    let healthy = async {
+        for _ in 0..64 {
+            progress.record_text("Reading the file to see what the test asserts.\n");
+            progress.record_text(&format!("{}\n", "-".repeat(80)));
+            progress.record_text(&format!("{}fn main() {{}}\n", " ".repeat(16)));
+            tokio::task::yield_now().await;
+        }
+        Ok(stub_completion_result())
+    };
+    let result = deadline_bounded_generation(
+        &RealTime,
+        Some(Duration::from_secs(10)),
+        Some(std::time::Instant::now() + Duration::from_secs(10)),
+        &progress,
+        healthy,
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "ordinary streamed content must not read as degenerate, got {result:?}"
+    );
+}
+
+/// Tool call arguments are part-built JSON. The observer port does not carry
+/// them, so they mark life and nothing else. Say a whole answer is one big
+/// tool call, a full file sent in a single `content` argument. Such a file
+/// may well hold a long run of one character. The guard cannot touch it. The
+/// shape of the port says so, not the size of the limit.
+#[tokio::test]
+async fn payload_free_liveness_fragments_can_never_trip_the_guard() {
+    let progress = StreamProgress::default();
+    for _ in 0..64 {
+        progress.record();
+    }
+    let result = tokio::time::timeout(Duration::from_millis(50), progress.degenerated()).await;
+    assert!(
+        result.is_err(),
+        "fragments carrying no text must not be able to mark a stream degenerate"
+    );
 }

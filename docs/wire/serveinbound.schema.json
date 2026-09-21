@@ -639,6 +639,34 @@
           "type": "object"
         },
         {
+          "description": "The host's provider answered with one character repeated until a guard\ncut it. Carried as its own case rather than folded into `Terminal`\nbecause it is the one non-retryable class that owes the host a charge:\nthe provider served this call and will bill it. `Terminal` has nowhere\nto put that, so folding it here would lose a real cost on every remote\nrun.",
+          "properties": {
+            "kind": {
+              "const": "degenerate",
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "partial": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PartialUsage"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "What the call cost. `Some` for an answer that completed and was\nrejected on reading, `None` for a stream cut in flight.\n`serde(default)` keeps hosts that predate the field valid."
+            }
+          },
+          "required": [
+            "kind",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "kind": {
               "const": "terminal",

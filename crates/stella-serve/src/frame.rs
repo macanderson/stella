@@ -342,6 +342,20 @@ pub enum ProviderErrorWire {
         message: String,
         affordable_output_tokens: Option<u32>,
     },
+    /// The host's provider answered with one character repeated until a guard
+    /// cut it. Carried as its own case rather than folded into `Terminal`
+    /// because it is the one non-retryable class that owes the host a charge:
+    /// the provider served this call and will bill it. `Terminal` has nowhere
+    /// to put that, so folding it here would lose a real cost on every remote
+    /// run.
+    Degenerate {
+        message: String,
+        /// What the call cost. `Some` for an answer that completed and was
+        /// rejected on reading, `None` for a stream cut in flight.
+        /// `serde(default)` keeps hosts that predate the field valid.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        partial: Option<stella_protocol::PartialUsage>,
+    },
     Terminal {
         message: String,
     },
@@ -389,6 +403,9 @@ impl From<ProviderErrorWire> for ProviderError {
                 message,
                 affordable_output_tokens,
             },
+            ProviderErrorWire::Degenerate { message, partial } => {
+                ProviderError::Degenerate { message, partial }
+            }
             ProviderErrorWire::Terminal { message } => ProviderError::Terminal(message),
         }
     }
@@ -432,6 +449,10 @@ impl From<&ProviderError> for ProviderErrorWire {
             } => ProviderErrorWire::OutputBudgetExceeded {
                 message: message.clone(),
                 affordable_output_tokens: *affordable_output_tokens,
+            },
+            ProviderError::Degenerate { message, partial } => ProviderErrorWire::Degenerate {
+                message: message.clone(),
+                partial: *partial,
             },
             ProviderError::Terminal(m) => ProviderErrorWire::Terminal { message: m.clone() },
         }
@@ -669,6 +690,26 @@ mod tests {
             ProviderError::OutputBudgetExceeded {
                 message: "can only afford 47365".into(),
                 affordable_output_tokens: Some(47_365),
+            },
+            // The one non-retryable class that owes a charge. Both shapes:
+            // an answer that completed and was rejected on reading, and a
+            // stream cut in flight with nothing totalled.
+            ProviderError::Degenerate {
+                message: "repeated one character 1024 times".into(),
+                partial: Some(stella_protocol::PartialUsage {
+                    usage: stella_protocol::CompletionUsage {
+                        input_tokens: 4_200,
+                        output_tokens: 1_024,
+                        reported: true,
+                        ..Default::default()
+                    },
+                    cost_usd: 0.019,
+                    input_reported: true,
+                }),
+            },
+            ProviderError::Degenerate {
+                message: "repeated one character 1024 times".into(),
+                partial: None,
             },
             ProviderError::Terminal("refused".into()),
         ];

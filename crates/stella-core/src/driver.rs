@@ -1158,6 +1158,11 @@ impl<'a> Engine<'a> {
             let pump_tx = pump_events.clone();
             Box::pin(async move {
                 in_flight.store(true, std::sync::atomic::Ordering::SeqCst);
+                // A new stream, so a new run count for the degeneracy watch
+                // that rides this clock. The fragment count carries over on
+                // purpose; the run of one character does not
+                // (`StreamProgress::begin_stream`).
+                progress.begin_stream();
                 let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
                 let mut pump: SpeculationFuture<'_> = Box::pin(self.pump_speculations(rx, pump_tx));
                 let mut complete = Box::pin(async move {
