@@ -1916,3 +1916,10 @@ macanderson org repos.
   separation of duties:** Never apply a priority or size label —
   a dedicated triage agent owns sizing and priority; a guard workflow
   strips creator-applied priorities.
+- **[SCR-006](docs/scr/SCR-006-schema-changes-are-labelled.md) — Schema
+  changes and migrations:** A pull request that changes a schema carries
+  `migration-required`, and the migration reaches production before or with
+  the deploy of that change, never after. Say in the PR which store changed
+  and what must be applied. Where a repo has no automation to apply the label
+  from the diff, apply it by hand. Do not add an automatic apply to a deploy
+  pipeline under this record; that is a separate decision, made per repo.
