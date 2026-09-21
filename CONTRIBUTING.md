@@ -430,6 +430,10 @@ merge.
 The parity check is `check-dod-stub-parity.mjs`, a second step in that same
 job rather than a workflow of its own. It compares the workflow files each
 caller's pin resolves to, so two different pins that resolve to identical
-files pass. See
+files pass.
+
+The pin is a commit SHA rather than `@main` so that no repository can change
+a required check in another without a commit to review there. The cost is a
+re-pin in every caller, and the failure mode is paying it in three of four.
 [Oxagen ADR-045](https://github.com/macanderson/oxagen/blob/main/docs/adr/ADR-045-pin-cross-repo-reusable-workflows.md)
-and [issue #2989](https://github.com/macanderson/oxagen/issues/2989).
+records that decision.
