@@ -2,78 +2,135 @@
 id: scr/006-schema-changes-are-labelled
 title: A schema change is labelled, and its migration is applied before its deploy
 status: living
-origin: "four repeats of one production failure in oxagen (#1275, #2796, #3449, #3692): a schema change merged, deployed, and its migration never reached production"
+origin: "Oxagen hit this production failure four times. A schema change merged and deployed. Its migration never ran."
 trigger: opening or updating a pull request that changes a schema
 autonomy: L1
-enforcement: "oxagen: .github/workflows/migration-label.yml applies the label from the diff and re-applies it on removal; migration-gate in pipeline.yml blocks the deploy until production carries the schema. Other repos: the directive stands, the automation is per-repo."
+enforcement: "In oxagen, `migration-label.yml` adds the label from the diff. It puts the label back if someone removes it. `migration-gate` in `pipeline.yml` blocks the deploy until production has the schema. Other repos keep the rule. Each repo adds its own check."
 ---
 
 ## Directive
 
-A pull request that changes a schema carries the label
-`migration-required`, and the change is not considered deployed until the
-migration has been applied to production.
+A pull request that changes a schema gets the label
+`migration-required`.
 
-A schema change is any edit that makes production's stored shape differ from
-the shape the branch assumes: a migration file, a schema definition a
-migration is generated from, or a store's declared constraints and indexes.
-Adding the label is not the author's memory exercise — where a repo can read
-it from the diff, the repo applies it.
+The change is not deployed until the migration has run in production.
 
-Applying the migration stays a separate, deliberate act. This record does not
-authorise a deploy pipeline to apply migrations on its own.
+A schema change makes the stored shape differ from the shape the branch
+expects.
+
+That edit can be a migration file.
+
+It can be a schema file a migration is built from.
+
+It can be a store's rules or indexes.
+
+The repo adds the label when it can read the change from the diff.
+
+The author does not have to remember.
+
+Applying the migration is a separate act.
+
+This record does not allow a deploy pipeline to apply migrations on its own.
 
 ## Rationale
 
-Between 2026-08-25 and 2026-09-21, oxagen shipped the same production failure
-four times: #1275, #2796, #3449 and #3692. Each one was a schema change that
-merged green, deployed, and left its migration unapplied. Nothing went red,
-because nothing was asking.
+From 2026-08-25 to 2026-09-21, oxagen shipped this failure four times.
 
-The ordering is the whole problem. Code that reads a column and a database
-that lacks it fail only when a request arrives, so the deploy succeeds and the
-breakage surfaces later, to a user, as something that looks unrelated. By then
-the author has moved on and the merge that caused it is several merges back.
+Each time a schema change merged.
 
-A checklist had already been tried. The instruction to apply migrations before
-deploying was written down, and it was followed most of the time, which is the
-characteristic failure of instructions: they work until the one time attention
-is elsewhere, and that one time is indistinguishable from the others until
-production is down. Four occurrences is enough evidence that the control
-cannot be attention.
+The deploy went out.
 
-So the directive splits into two halves that fail in different ways. The label
-acts while the pull request is open and its author is still holding the
-context, which is the cheapest moment to sequence a migration. A deploy gate
-acts at rollout, when nobody is holding anything, and catches what the first
-half missed. Neither is sufficient: a label that only informs can be ignored,
-and a gate that only blocks arrives after the knowledge has evaporated.
+The migration did not run.
 
-The label is also what makes the failure countable. Four incidents took four
-separate investigations to connect, because no field recorded that a pull
-request had a migration in it. A label turns that into a query.
+Nothing went red.
+
+Nothing was checking.
+
+The order is the problem.
+
+Code that reads a new column fails only when a request comes in.
+
+The database does not have that column yet.
+
+The deploy still succeeds.
+
+The break shows up later.
+
+It looks like some other bug.
+
+By then the author has moved on.
+
+The merge that caused it is several merges back.
+
+A checklist was tried.
+
+The rule was written down.
+
+People followed it most of the time.
+
+A written rule fails when no one is looking.
+
+That time looks like every other time until production is down.
+
+Four times is enough.
+
+Attention cannot be the control.
+
+The rule has two parts.
+
+They fail in different ways.
+
+The label acts while the pull request is open.
+
+The author still has the context then.
+
+That is the cheap time to order a migration.
+
+A deploy gate acts at rollout.
+
+No one has the context then.
+
+It catches what the label missed.
+
+A label that only tells people can be ignored.
+
+A gate that only blocks comes too late.
+
+The facts are gone by then.
+
+The label also makes the failure easy to count.
+
+Four breaks took four separate hunts to connect.
+
+No field said the pull request had a migration.
+
+A label makes that a query.
 
 ## How an agent complies
 
-- Check whether your branch changes a schema before opening the pull request.
-  If it does, expect `migration-required`, and say in the description which
-  store and what has to be applied.
-- Do not remove the label to get a cleaner pull request. Where automation
-  applies it, removing it re-applies it; where no automation exists, removing
-  it is a false statement about the diff.
-- Sequence the apply against the merge. The migration reaches production
-  before, or together with, the code that assumes it — never after.
-- If the migration cannot be applied yet, say so in the pull request and why.
-  A blocked apply is a fact a reviewer needs, not a detail to resolve later.
-- Do not add an automatic apply to a deploy pipeline under this record. That
-  is a separate decision, made per repo, with its own record.
+- Check whether your branch changes a schema before you open the pull request.
+- If it does, expect the label `migration-required`.
+- Say which store changed.
+- Say what has to be applied.
+- Do not remove the label to make the pull request look cleaner.
+- Where a bot adds the label, taking it off puts the label back.
+- Where no bot exists, taking the label off states a false fact about the diff.
+- Run the migration in production before the code that needs it, or with that code.
+- Never after.
+- If you cannot apply the migration yet, say so in the pull request.
+- Say why.
+- A blocked apply is a fact a reviewer needs.
+- Do not add an automatic apply to a deploy pipeline under this record.
+- That choice is its own decision.
+- Make it per repo, in its own record.
 
 ## Exceptions
 
-- A change that touches a schema file without altering the stored shape — a
-  comment, a formatting pass, a rename with no generated migration — still
-  attracts the label where automation reads paths rather than semantics.
-  Remove it with a note in the pull request saying why the diff is inert.
-  This is the one legitimate removal.
-- A repo with no persistent store has nothing to label, and this record is
-  inert there rather than waived.
+- A change can touch a schema file and leave the stored shape the same.
+- A comment, a format pass, or a rename with no migration is that kind of change.
+- A bot that reads paths still adds the label.
+- You may remove the label only with a note.
+- The note says why the diff changes nothing that is stored.
+- That is the one removal this record allows.
+- A repo with no stored data has nothing to label.
+- This record does nothing there.
