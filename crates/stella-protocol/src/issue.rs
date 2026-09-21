@@ -71,6 +71,38 @@ use serde::{Deserialize, Serialize};
 #[serde(transparent)]
 pub struct IssueKey(pub String);
 
+/// A tracker-scoped identifier for one comment on an issue.
+///
+/// A string, and opaque, for [`IssueKey`]'s reasons: GitHub numbers comments,
+/// Linear gives them uuids, and nothing here parses either.
+///
+/// It exists because a comment that cannot be named again cannot be edited.
+/// That is the same argument [`IssueProvider::file`] already makes for
+/// returning a key rather than a unit, one plane down.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct CommentId(pub String);
+
+impl CommentId {
+    /// The id as the tracker spells it.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for CommentId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<&str> for CommentId {
+    fn from(value: &str) -> Self {
+        Self(value.to_owned())
+    }
+}
+
 impl IssueKey {
     /// The key as the tracker spells it.
     #[must_use]
@@ -415,7 +447,33 @@ pub trait IssueProvider: Send + Sync {
     async fn close(&self, key: &IssueKey, receipt: &str, state: &str) -> Result<(), IssueError>;
 
     /// Add a comment — the trail that binds an execution to an issue.
-    async fn comment(&self, key: &IssueKey, body: &str) -> Result<(), IssueError>;
+    ///
+    /// Returns the tracker's id for the comment, on
+    /// [`IssueProvider::file`]'s argument: a comment the caller cannot name
+    /// again can never be edited, and [`IssueProvider::edit_comment`] is the
+    /// method that needs the name.
+    async fn comment(&self, key: &IssueKey, body: &str) -> Result<CommentId, IssueError>;
+
+    /// Rewrite one comment's body.
+    ///
+    /// The comment is addressed by the id its own filing returned, never by
+    /// position: "the last comment on this issue" is a race with every other
+    /// writer on the tracker.
+    ///
+    /// Default is a typed refusal, matching [`IssueProvider::reopen`]: a
+    /// provider that predates the method, or a tracker with no edit
+    /// transition, fails loudly instead of silently doing nothing.
+    async fn edit_comment(
+        &self,
+        key: &IssueKey,
+        comment: &CommentId,
+        _body: &str,
+    ) -> Result<(), IssueError> {
+        Err(IssueError::Failed {
+            provider: self.id().to_owned(),
+            reason: format!("editing comments is not supported (tried `{comment}` on `{key}`)"),
+        })
+    }
 
     /// Add and remove labels.
     ///

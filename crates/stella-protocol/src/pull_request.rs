@@ -54,6 +54,67 @@ impl From<&str> for PullRequestKey {
     }
 }
 
+/// A forge's own identifier for one comment on a pull request.
+///
+/// Opaque, for [`PullRequestKey`]'s reasons. A sibling of
+/// [`issue::CommentId`](crate::issue::CommentId) rather than the same type:
+/// the two planes keep their own vocabulary, and a forge that has pull
+/// requests is not required to be the tracker that has issues.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct CommentId(pub String);
+
+impl CommentId {
+    /// The id as the forge spells it.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for CommentId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<&str> for CommentId {
+    fn from(raw: &str) -> Self {
+        Self(raw.to_owned())
+    }
+}
+
+/// What to change about an open pull request, and what to leave alone.
+///
+/// Every field optional, with `None` meaning "leave it". The alternative —
+/// a caller reconstructing the fields it did not want to touch — is how a
+/// description gets clobbered by a caller that only meant to retitle.
+/// [`IssueProvider::edit`](crate::issue::IssueProvider::edit) takes its
+/// `Option`s for the same reason.
+///
+/// An all-`None` patch is a no-op rather than an error: it asks for nothing,
+/// and nothing is a thing a provider can deliver.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PullRequestPatch {
+    /// The new title.
+    pub title: Option<String>,
+    /// The new description.
+    pub body: Option<String>,
+    /// `Some(false)` takes it out of draft, `Some(true)` puts it back.
+    ///
+    /// A forge may refuse the second direction. That is the forge's answer
+    /// and arrives as an error, not as a silent success.
+    pub draft: Option<bool>,
+}
+
+impl PullRequestPatch {
+    /// Whether this patch asks for nothing.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.title.is_none() && self.body.is_none() && self.draft.is_none()
+    }
+}
+
 /// What went wrong reaching a forge.
 ///
 /// The cases are [`IssueError`](crate::issue::IssueError)'s, chosen the same
@@ -337,6 +398,70 @@ pub trait PullRequestProvider: Send + Sync {
     /// nothing failing has nothing to re-run. That is an error, not a quiet
     /// success: a caller reached this because it saw red.
     fn rerun_failed_checks(&self, key: &PullRequestKey) -> Result<(), PullRequestError>;
+
+    /// Add a comment, and name it back.
+    ///
+    /// Returns the forge's id on
+    /// [`IssueProvider::comment`](crate::issue::IssueProvider::comment)'s
+    /// argument: a comment the caller cannot name again can never be edited.
+    ///
+    /// Default is a typed refusal, matching
+    /// [`IssueProvider::reopen`](crate::issue::IssueProvider::reopen). A
+    /// provider written before this method fails by name instead of appearing
+    /// to post.
+    fn comment(&self, key: &PullRequestKey, _body: &str) -> Result<CommentId, PullRequestError> {
+        Err(PullRequestError::Failed {
+            provider: self.id().to_owned(),
+            reason: format!("commenting is not supported (tried `{key}`)"),
+        })
+    }
+
+    /// Rewrite one comment's body.
+    ///
+    /// Addressed by the id its own posting returned, never by position:
+    /// "the last comment" is a race with every other writer on the forge.
+    fn edit_comment(
+        &self,
+        key: &PullRequestKey,
+        comment: &CommentId,
+        _body: &str,
+    ) -> Result<(), PullRequestError> {
+        Err(PullRequestError::Failed {
+            provider: self.id().to_owned(),
+            reason: format!("editing comments is not supported (tried `{comment}` on `{key}`)"),
+        })
+    }
+
+    /// Change title, description, draft status, or any combination.
+    ///
+    /// An empty patch is a no-op and answers `Ok`. See [`PullRequestPatch`]
+    /// for why every field is optional.
+    ///
+    /// [`Self::mark_ready`] stays: it is the one transition with its own forge
+    /// verb, and callers that only want it should not have to build a patch.
+    fn update(
+        &self,
+        key: &PullRequestKey,
+        _patch: &PullRequestPatch,
+    ) -> Result<(), PullRequestError> {
+        Err(PullRequestError::Failed {
+            provider: self.id().to_owned(),
+            reason: format!("editing is not supported (tried `{key}`)"),
+        })
+    }
+
+    /// Close it without merging.
+    ///
+    /// A pull request that is already closed answers `Ok`, on [`Self::merge`]'s
+    /// argument: this method's destination is where the thing already is.
+    /// Closing one that is **merged** is a different matter, and a provider
+    /// reports the forge's refusal rather than inventing a success.
+    fn close(&self, key: &PullRequestKey) -> Result<(), PullRequestError> {
+        Err(PullRequestError::Failed {
+            provider: self.id().to_owned(),
+            reason: format!("closing is not supported (tried `{key}`)"),
+        })
+    }
 }
 
 #[cfg(test)]

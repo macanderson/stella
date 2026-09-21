@@ -38,6 +38,9 @@ keep; the rest are coordination state that dies with the session:
 - **One question back to the driver** — `ask_question`
   ([`src/ask.rs`](src/ask.rs)), answered through the host-attached responder
   in [`src/registry/question.rs`](src/registry/question.rs).
+- **The forge** — `pull_request` / `issue` / `watch_ci`
+  ([`src/forge.rs`](src/forge.rs)), over host-attached provider ports. Eleven
+  verbs on three schemas, and every body signed in Rust on the way out.
 
 ## Direction — this surface is closed
 
@@ -204,6 +207,8 @@ old path still works.
 | [`src/tasks/board.rs`](src/tasks/board.rs) | `TaskBoard` — the transition rules those six tools enforce; records `SpawnRequest`s rather than spawning. It left `stella-core` because the engine names the board through a closure and never the type. |
 | [`src/scratch.rs`](src/scratch.rs) | The scratch state plane: `ScratchDir` and the four state tools. |
 | [`src/environment.rs`](src/environment.rs) | `get_environment` and the shared environment-identity probes the CLI prompt renders from (#2697). |
+| [`src/forge.rs`](src/forge.rs), [`src/forge/`](src/forge) | The three forge tools and the redirect that keeps `gh` from going around them. `pull_request` and `issue` carry the write verbs, `watch_ci` reads one branch's checks, and every body goes through `stella_autonomy::sign` after the model has stopped having a say — the reason these are tools rather than prompt instructions, since a hook may deny a `gh` call but may not rewrite it. |
+| [`src/forge/redirect.rs`](src/forge/redirect.rs) | Why `gh pr create` in `bash` is refused and `gh pr view` is not: a `bash` command is refused only where a forge tool covers the same verb *and* a provider is attached. The refusal names the tool and the action rather than saying no, because a bare denial teaches a model to reach for `gh api` instead. |
 | [`policy`](../stella-tool-facts/src/policy.rs) | `ToolPolicy` — the operator's `"tools"` switches, resolved exact-name-first, then group, then wildcard; scope composition by union of denials. |
 | [`src/skill_grant.rs`](src/skill_grant.rs) | A skill's `allowed-tools` grant as `ToolPolicy` algebra (#2682): the grant policy, per-name `operator ∧ grant` intersection, and resolution against an advertised surface. |
 | [`src/custom.rs`](src/custom.rs), [`src/validate.rs`](src/validate.rs) | Developer-defined TOML script tools — lenient discovery for a session, strict validation for `stella tools --validate` — and `CustomToolSet`, the decorator that layers them over an inner executor. |

@@ -154,6 +154,11 @@ pub struct ToolRegistry {
     /// Empty by default: a session confines to its own tree until an operator
     /// says otherwise.
     extra_write_dirs: std::sync::RwLock<Vec<PathBuf>>,
+    /// The tracker, the forge and the attribution the three forge tools write
+    /// through (`crate::forge`), filled by the host after assembly via
+    /// [`ToolRegistry::attach_forge`]. The adapters live in `stella-cli`, one
+    /// crate above this one, so they cannot be constructor arguments.
+    forge: crate::forge::ForgeSlots,
     /// The session scratch directory, when the scratch plane initialized —
     /// canonicalized once at construction so `write_scope` can name it as a
     /// writable root without a syscall per tool call.
@@ -186,9 +191,16 @@ impl ToolRegistry {
         // "you never read it" instead of reporting one needle-not-found for
         // both.
         let read_ledger: Arc<crate::read::ReadLedger> = Arc::default();
+        // Filled by `attach_forge` after assembly, on the same argument as the
+        // question slot above: the tools hold clones of the slots, so a host
+        // attaching providers later reaches the already-registered tools.
+        let forge = crate::forge::ForgeSlots::default();
 
         let mut entries: Vec<Arc<dyn Tool>> = vec![
-            Arc::new(crate::bash::Bash::new(scratch_path.clone())),
+            Arc::new(crate::bash::Bash::with_forge(
+                scratch_path.clone(),
+                forge.clone(),
+            )),
             Arc::new(crate::read::ReadFile::with_ledger(read_ledger.clone())),
             Arc::new(crate::write::WriteFile::with_ledger(read_ledger.clone())),
             Arc::new(crate::edit::EditFile::with_ledger(read_ledger)),
@@ -217,6 +229,14 @@ impl ToolRegistry {
             // rather than vanishing from a schema list the prompt describes
             // as complete.
             Arc::new(crate::ask::AskQuestion::new(question.clone())),
+            // Registered unconditionally, like the two slotted tools above. A
+            // forge tool with no provider attached says so and names what
+            // would attach one; withholding the schema instead would make the
+            // tool list depend on configuration, and the tool list rides the
+            // cached prompt prefix.
+            Arc::new(crate::forge::pr::PullRequestTool::new(forge.clone())),
+            Arc::new(crate::forge::issue::IssueTool::new(forge.clone())),
+            Arc::new(crate::forge::watch::WatchCi::new(forge.clone())),
         ];
         // Every rung of `search` reads the code-graph index. Build without
         // the `graph` feature and there is no search to register (`#6286`).
@@ -257,6 +277,7 @@ impl ToolRegistry {
             bus: std::sync::RwLock::new(None),
             approval: Default::default(),
             question,
+            forge,
             policy_bridge: std::sync::Mutex::new(None),
             events: std::sync::RwLock::new(None),
             call_measure: std::sync::Arc::default(),
@@ -444,6 +465,48 @@ impl ToolRegistry {
         // Dropping the subscription unsubscribes it, releasing the sender the
         // bridge closure captured.
         *self.policy_bridge.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    }
+
+    /// Let the three forge tools reach a tracker and a forge.
+    ///
+    /// Late attachment for the same reason as the dispatcher below: the
+    /// adapters live in `stella-cli`, one crate above this one, so this crate
+    /// cannot name their types. Until it is called, `pull_request`, `issue` and
+    /// `watch_ci` report the absence and name what would fix it.
+    ///
+    /// Either provider may be `None`. A workspace with a forge and no tracker
+    /// is an ordinary state, and the two tools fail independently.
+    ///
+    /// `attribution` is what every body these tools write is signed with,
+    /// which is where a workspace's `stella.toml` reaches the tool plane. Not
+    /// calling this at all signs with [`stella_autonomy::Attribution::default`]
+    /// rather than with nothing: the failure mode of an unconfigured workspace
+    /// is the default footer, never a missing one.
+    pub fn attach_forge(
+        &self,
+        issues: Option<std::sync::Arc<dyn stella_protocol::issue::IssueProvider>>,
+        pull_requests: Option<
+            std::sync::Arc<dyn stella_protocol::pull_request::PullRequestProvider>,
+        >,
+        attribution: stella_autonomy::Attribution,
+    ) {
+        *self.forge.issues.write().unwrap_or_else(|p| p.into_inner()) = issues;
+        *self
+            .forge
+            .pull_requests
+            .write()
+            .unwrap_or_else(|p| p.into_inner()) = pull_requests;
+        *self
+            .forge
+            .attribution
+            .write()
+            .unwrap_or_else(|p| p.into_inner()) = attribution;
+    }
+
+    /// What the forge tools sign with, for a host that needs to read it back.
+    #[must_use]
+    pub fn forge_attribution(&self) -> stella_autonomy::Attribution {
+        self.forge.attribution()
     }
 
     /// Let the `delegate` tool run sub-agents through `dispatcher` (#922).

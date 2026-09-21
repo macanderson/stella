@@ -409,6 +409,10 @@ pub struct Bash {
     /// `STELLA_SCRATCH` so a working file has somewhere to live that is
     /// neither the workspace diff nor `/tmp`.
     scratch: Option<std::path::PathBuf>,
+    /// The forge providers, read only to answer one question: is there a tool
+    /// behind the `gh` subcommand this command is about to run? See
+    /// [`crate::forge::redirect`].
+    forge: crate::forge::ForgeSlots,
 }
 
 impl Bash {
@@ -417,7 +421,23 @@ impl Bash {
     /// rather than set to an empty path).
     #[must_use]
     pub fn new(scratch: Option<std::path::PathBuf>) -> Self {
-        Self { scratch }
+        Self {
+            scratch,
+            forge: crate::forge::ForgeSlots::default(),
+        }
+    }
+
+    /// The same shell, watching the host's forge slots.
+    ///
+    /// A separate constructor rather than a parameter on [`Self::new`]: the
+    /// redirect is off unless a host opts in, so every other caller keeps the
+    /// shell it always had.
+    #[must_use]
+    pub fn with_forge(
+        scratch: Option<std::path::PathBuf>,
+        forge: crate::forge::ForgeSlots,
+    ) -> Self {
+        Self { scratch, forge }
     }
 }
 
@@ -499,6 +519,15 @@ impl Tool for Bash {
         // Read `shell_write_audit` on why this permits far more than it
         // refuses, and on why it is not a sandbox.
         if let Some(refusal) = shell_write_audit(command, ctx) {
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::RefusedByPolicy,
+                refusal,
+            );
+        }
+        // A `gh` subcommand a tool in this plane now covers. Refused here
+        // rather than in the policy chain because the redirect has to name
+        // the replacement, and only this crate knows what is attached.
+        if let Some(refusal) = crate::forge::redirect::forge_redirect(command, &self.forge) {
             return ToolOutput::classified_error(
                 stella_protocol::ErrorClass::RefusedByPolicy,
                 refusal,

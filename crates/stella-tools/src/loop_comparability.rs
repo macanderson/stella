@@ -170,7 +170,33 @@ pub const REGISTRY: &[(&str, LoopComparability)] = &[
                         the byte comparison.",
         },
     ),
+    (
+        "pull_request",
+        LoopComparability::ExemptWorldState {
+            rationale: FORGE_RATIONALE,
+        },
+    ),
+    (
+        "issue",
+        LoopComparability::ExemptWorldState {
+            rationale: FORGE_RATIONALE,
+        },
+    ),
+    (
+        "watch_ci",
+        LoopComparability::ExemptWorldState {
+            rationale: "the output is what CI has reported so far, and a run that is still going \
+                        reports something different every time it is read. That movement is the \
+                        whole reason to call it twice, so calling the second reading a loop \
+                        would flag the tool working correctly.",
+        },
+    ),
 ];
+
+/// Shared by the two forge writers: one sentence, one place to correct it.
+const FORGE_RATIONALE: &str = "the output names what the forge created — a pull request number, a comment id — and the \
+     forge allocates those. Two identical calls produce two different records, which is the \
+     tool doing its job rather than a loop, and no normalizer here owns the forge's counter.";
 
 /// Shared by the six board tools: one sentence, one place to correct it.
 const TASK_BOARD_RATIONALE: &str = "the output is the session task board, which is append-only within a session — a second \
