@@ -24,7 +24,7 @@ use stella_protocol::pull_request::{
 };
 use stella_protocol::tool::{ErrorClass, ToolOutput, ToolSchema};
 
-use super::{ForgeSlots, optional, required, unknown_action};
+use super::{ForgeSlots, known_action, optional, required, unknown_action};
 use crate::registry::Tool;
 
 /// The actions this tool takes, in the order the schema lists them.
@@ -131,6 +131,7 @@ impl PullRequestTool {
     /// the dispatch thread for one `gh` round trip.
     fn run(&self, input: &Value) -> Result<ToolOutput, ToolOutput> {
         let action = required(input, "action")?;
+        known_action(action, ACTIONS)?;
         // Before the forge is even looked up: a switched-off action is a
         // decision somebody made, and it is the same answer whether or not
         // this workspace has a forge attached.
@@ -158,7 +159,12 @@ impl PullRequestTool {
             "update" => {
                 let key = pr_key(input)?;
                 let patch = PullRequestPatch {
-                    title: optional(input, "title").map(str::to_owned),
+                    // Prefixed on the way through, for the reason the body
+                    // below is re-signed: an edit must not be able to strip
+                    // the mark off a pull request that carried one.
+                    // `Attribution::title` is idempotent, so a title that
+                    // already reads `stella self-driving: …` keeps one prefix.
+                    title: optional(input, "title").map(|title| attribution.title(title)),
                     // Re-signed on the way through, so an edit cannot strip
                     // the footer off a body that had one. `sign` is idempotent
                     // against its own output. A model that echoed the signed

@@ -82,7 +82,16 @@ pub const DEFAULT_TITLE_PREFIX: &str = "stella self-driving:";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Attribution {
-    /// Appended to every commit message the loop causes to be written.
+    /// What the loop asks a turn to end its commit message with.
+    ///
+    /// The weakest of the five, and the only one that depends on the model
+    /// cooperating. The other four are appended in Rust by the tool that
+    /// sends the body. A commit is authored by `git` inside the `bash` tool,
+    /// which nothing here rewrites, so `self_driving_cmd::work`'s `prompt_for`
+    /// puts this text into the turn's prompt instead. A model that paraphrases
+    /// it produces an unsigned commit and nothing catches that. Making it
+    /// deterministic means either a `prepare-commit-msg` hook or a commit
+    /// tool, and which one is the maintainer's call.
     pub commit: String,
     /// Appended to every pull request description it opens.
     pub pull_request: String,
@@ -207,6 +216,15 @@ pub fn sign(body: &str, signature: &str) -> String {
         // back from the forge, hands it to a model, and writes the model's
         // version. The body it read already carried the footer.
         // `a_signed_body_signed_again_is_unchanged` is the witness.
+        //
+        // The test is the tail, and that is the whole promise. A body whose
+        // footer sits in the middle — a model that quoted the old description
+        // above its new text — gets a second footer at the end, and the
+        // quoted one stays where the model put it. Reaching inside the body
+        // to find and move it would mean editing what the model wrote, which
+        // is the one thing this plane does not do. One footer at the end is
+        // what the record needs; a line that reads like a footer inside the
+        // text is the model's prose.
         return trimmed.to_owned();
     }
     if trimmed.is_empty() {

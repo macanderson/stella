@@ -146,6 +146,31 @@ impl ForgeSlots {
             .clone()
     }
 
+    /// Is a tracker attached?
+    ///
+    /// [`Self::tracker`] answers the same question and builds a refusal with
+    /// it. [`crate::forge::redirect`] has no refusal to build: it is deciding
+    /// whether a `gh` command has a tool to be pointed at, and a bare yes or
+    /// no is the whole answer. It asks through here rather than reading the
+    /// slot itself, so the poison rule below is stated once. Reading it in two
+    /// places is how one lock comes to have two policies: the first version of
+    /// the redirect used `.read().ok()?`, which turns a poisoned lock into
+    /// "nothing is attached" and lets every covered `gh` command through.
+    pub(crate) fn has_tracker(&self) -> bool {
+        self.issues
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_some()
+    }
+
+    /// Is a forge attached? See [`Self::has_tracker`].
+    pub(crate) fn has_forge(&self) -> bool {
+        self.pull_requests
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_some()
+    }
+
     /// The tracker, or the refusal that says how to get one.
     pub(crate) fn tracker(&self) -> Result<Arc<dyn IssueProvider>, ToolOutput> {
         self.issues
@@ -213,7 +238,23 @@ pub(crate) fn optional<'a>(input: &'a Value, field: &str) -> Option<&'a str> {
         .filter(|value| !value.is_empty())
 }
 
-/// The refusal for an `action` this tool does not have.
+/// Refuse an action the tool does not have, before anything is resolved.
+///
+/// The match at the end of each tool's `run` reports the same thing, and both
+/// are wanted. This one runs first, so a typo is answered as a typo rather
+/// than as whatever the next step happens to fail on: without it, a workspace
+/// with no `gh` answers `action: "frobnicate"` with "no forge is configured",
+/// which sends the reader after a missing binary instead of a misspelled
+/// word. The one at the end catches the other drift: an `ACTIONS` entry that
+/// nobody wrote a match arm for.
+pub(crate) fn known_action(action: &str, known: &[&str]) -> Result<(), ToolOutput> {
+    if known.contains(&action) {
+        return Ok(());
+    }
+    Err(unknown_action(action, known))
+}
+
+/// The refusal that lists what this tool does take.
 pub(crate) fn unknown_action(action: &str, known: &[&str]) -> ToolOutput {
     ToolOutput::classified_error(
         ErrorClass::InvalidInput,
@@ -255,5 +296,29 @@ mod tests {
     #[test]
     fn an_unattached_attribution_still_signs() {
         assert_eq!(ForgeSlots::default().attribution(), Attribution::default());
+    }
+
+    /// A misspelled action is answered as a misspelling, with no forge
+    /// attached.
+    ///
+    /// The tools resolved the provider before reading the action, so every
+    /// bad action on a workspace without `gh` came back as "no forge is
+    /// configured". That reading sends someone to install a binary over a
+    /// typo, and it hides the list of actions that would have fixed it.
+    #[test]
+    fn an_unknown_action_is_not_reported_as_a_missing_forge() {
+        let slots = ForgeSlots::default();
+        let known = ["create", "update"];
+        assert!(known_action("create", &known).is_ok());
+        let Err(ToolOutput::Error { message, .. }) = known_action("frobnicate", &known) else {
+            panic!("an action the tool does not have must be an error");
+        };
+        assert!(message.contains("frobnicate"), "{message}");
+        assert!(message.contains("create, update"), "{message}");
+        assert!(
+            !message.contains("gh auth status"),
+            "must not read as a setup problem: {message}"
+        );
+        assert!(slots.forge().is_err(), "the slot really is empty");
     }
 }

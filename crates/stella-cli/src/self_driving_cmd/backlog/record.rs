@@ -283,7 +283,7 @@ mod tests {
                 &IssueKey::from("17"),
                 "the turn exited 1 — byte-identical output every time",
                 &stella_autonomy::escalation::EscalationPolicy::default(),
-                "created by stella*",
+                stella_autonomy::SIGNATURE,
             ))
             .expect("the tracker accepts writes");
 
@@ -380,7 +380,7 @@ mod tests {
                 "the turn exited 1 — the same `bash` call with identical \
                  arguments produced byte-identical output every time",
                 &policy,
-                "created by stella*",
+                stella_autonomy::SIGNATURE,
             ))
             .expect("the tracker accepts writes");
 
@@ -399,7 +399,7 @@ mod tests {
                 &key,
                 "the turn ran and could not work out what the issue asks for",
                 &policy,
-                "created by stella*",
+                stella_autonomy::SIGNATURE,
             ))
             .expect("the tracker accepts writes");
         assert_eq!(

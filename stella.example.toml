@@ -693,10 +693,20 @@ rearm_commits = 50
 rearm_days = 30
 
 [self_driving.attribution]
-# What Stella appends to what it writes, on every surface: the commit the
-# `bash` tool makes, and every pull request, issue and comment the
-# `pull_request` and `issue` tools write. The footer is added in Rust after the
-# model has stopped having a say, so it cannot be forgotten or paraphrased.
+# What Stella appends to what it writes.
+#
+# Four of these five surfaces are signed in Rust, after the model has stopped
+# having a say, so the footer cannot be forgotten or paraphrased: every pull
+# request, issue and comment the `pull_request` and `issue` tools write.
+#
+# `commit` is the exception and is weaker. A commit is authored by `git` inside
+# the `bash` tool, which Stella does not rewrite, so the self-driving loop
+# reaches it by asking: the text below is put into the turn's prompt and the
+# model is told to end its commit message with it. A model that ignores the
+# instruction produces an unsigned commit, and nothing catches that today.
+# Outside the self-driving loop, an ordinary session's commits are not signed
+# at all. Making this deterministic means either a prepare-commit-msg hook or
+# a commit tool, and which one is undecided.
 #
 # Source-tracked so it travels with the repository, and rewritable by an
 # installed plugin — a downstream distribution signs in its own name, and that

@@ -8,11 +8,22 @@
 //! `stella-tools`. That crate has no provider factory and must not grow one.
 //! The adapters live here, so the wiring lives here too.
 //!
-//! [`crate::write_dirs::registry_rooted_at`] calls it. That is the one
-//! assembly point every session path already goes through. The write grant
-//! sits there on the same argument. Seven call sites would mean a new session
-//! path can forget one, and it would then get a forge tool that declines.
-//! Tracking that down means finding the path that did not call this.
+//! [`crate::write_dirs::registry_rooted_at`] calls it, and that is the one
+//! assembly point every registry this binary builds goes through. The write
+//! grant sits there on the same argument. Seven call sites would mean a new
+//! session path can forget one, and it would then get a forge tool that
+//! declines. Tracking that down means finding the path that did not call
+//! this. `every_production_registry_is_built_through_this_module` is what
+//! holds it, and it reads this crate's own `src/`, which is the scope of the
+//! claim.
+//!
+//! `stella-runtime` builds its own registry
+//! (`stella_runtime::session`) and is outside that scope by design. It may
+//! not depend on this crate, because the adapters live here — so a session
+//! driven through `stella-serve` gets forge tools with empty slots, and they
+//! decline. That is the right answer there rather than a gap: `stella-serve`
+//! holds no ambient authority, and a host that wants a forge remotes one in
+//! rather than having the engine find `gh` on its own `PATH`.
 //!
 //! # What this decides
 //!

@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use stella_protocol::issue::{CommentId, IssueDraft, IssueKey, IssueLabel};
 use stella_protocol::tool::{ErrorClass, ToolOutput, ToolSchema};
 
-use super::{ForgeSlots, optional, required, unknown_action};
+use super::{ForgeSlots, known_action, optional, required, unknown_action};
 use crate::registry::Tool;
 
 /// The actions this tool takes, in the order the schema lists them.
@@ -115,6 +115,7 @@ impl IssueTool {
     /// line here rather than a nest.
     async fn run(&self, input: &Value) -> Result<ToolOutput, ToolOutput> {
         let action = required(input, "action")?;
+        known_action(action, ACTIONS)?;
         // Asked before the tracker is looked up, so a switched-off action
         // reads the same on a workspace that has no tracker as on one that
         // does.

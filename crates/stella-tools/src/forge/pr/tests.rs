@@ -20,6 +20,7 @@ struct Written {
     opened: Vec<PullRequestDraft>,
     updated: Vec<(String, PullRequestPatch)>,
     comments: Vec<(String, String)>,
+    edited_comments: Vec<(String, String)>,
     merged: Vec<String>,
     closed: Vec<String>,
 }
@@ -104,9 +105,12 @@ impl PullRequestProvider for Recorder {
     fn edit_comment(
         &self,
         _key: &PullRequestKey,
-        _comment: &CommentId,
-        _body: &str,
+        comment: &CommentId,
+        body: &str,
     ) -> Result<(), PullRequestError> {
+        self.written()
+            .edited_comments
+            .push((comment.as_str().to_owned(), body.to_owned()));
         Ok(())
     }
 
@@ -134,10 +138,40 @@ fn tool() -> (PullRequestTool, Arc<Recorder>) {
 
 /// The same, with the operator's switches set.
 fn tool_under(policy: crate::policy::ToolPolicy) -> (PullRequestTool, Arc<Recorder>) {
+    build(policy, stella_autonomy::Attribution::default())
+}
+
+/// The same, signing with the attribution given.
+fn tool_signing_as(attribution: stella_autonomy::Attribution) -> (PullRequestTool, Arc<Recorder>) {
+    build(crate::policy::ToolPolicy::allow_all(), attribution)
+}
+
+/// An attribution whose surfaces are five different strings.
+///
+/// [`stella_autonomy::Attribution::default`] gives all five the same text.
+/// Under it, a body signed with the wrong field reads like one signed with
+/// the right field. Every assertion still passes. These five differ, so a
+/// test can say which surface a footer came from.
+fn distinguishable() -> stella_autonomy::Attribution {
+    stella_autonomy::Attribution {
+        commit: "by-the-commit-field".into(),
+        pull_request: "by-the-pull-request-field".into(),
+        issue: "by-the-issue-field".into(),
+        issue_comment: "by-the-issue-comment-field".into(),
+        pull_request_comment: "by-the-pull-request-comment-field".into(),
+        ..stella_autonomy::Attribution::default()
+    }
+}
+
+fn build(
+    policy: crate::policy::ToolPolicy,
+    attribution: stella_autonomy::Attribution,
+) -> (PullRequestTool, Arc<Recorder>) {
     let recorder = Arc::new(Recorder::default());
     let slots = ForgeSlots::default();
     *slots.pull_requests.write().unwrap() = Some(recorder.clone() as Arc<dyn PullRequestProvider>);
     *slots.policy.write().unwrap() = policy;
+    *slots.attribution.write().unwrap() = attribution;
     (PullRequestTool::new(slots), recorder)
 }
 
@@ -277,12 +311,12 @@ async fn closing_does_not_merge() {
 
 /// An operator can withhold `merge` and keep the rest of the tool.
 ///
-/// This is what `AGENTS.md invariant 9`'s second reason requires of a tool that
-/// carries several verbs, and what the session's own gate cannot do: it
-/// answers for a whole tool, so withholding `merge` there would take
-/// `comment` with it. The refusal reaches the forge as nothing at all, which
-/// is the half worth asserting — a refusal the provider still sees is not a
-/// refusal.
+/// `AGENTS.md invariant 9`'s second reason asks this of a tool that carries
+/// several verbs. The session's own gate cannot do it. That gate answers for
+/// a whole tool, so withholding `merge` there would take `comment` with it.
+///
+/// The refusal reaches the forge as nothing at all. That is the half worth
+/// asserting. A refusal the provider still sees is not a refusal.
 #[tokio::test]
 async fn a_switched_off_merge_refuses_while_comment_still_runs() {
     let (tool, recorder) = tool_under(crate::policy::ToolPolicy::from_switches([(
@@ -311,4 +345,118 @@ async fn a_switched_off_merge_refuses_while_comment_still_runs() {
     .await;
     assert!(!allowed.is_error(), "{allowed:?}");
     assert_eq!(recorder.written().comments.len(), 1);
+}
+
+/// A retitle keeps the prefix an open put there.
+///
+/// `create` prefixed the title and `update` did not. A model that opened a
+/// pull request and then corrected its title stripped the mark off it. That
+/// is the one surface a maintainer triages from. Nothing failed visibly: the
+/// pull request still carried its footer, and a footer is read only once you
+/// open it.
+#[tokio::test]
+async fn an_updated_title_keeps_the_prefix() {
+    let (tool, recorder) = tool();
+    let output = call(
+        &tool,
+        json!({"action": "update", "key": "31", "title": "fix(stella-cli): the other thing"}),
+    )
+    .await;
+    assert!(!output.is_error(), "{output:?}");
+
+    assert_eq!(
+        recorder.written().updated[0].1.title.as_deref(),
+        Some("stella self-driving: fix(stella-cli): the other thing")
+    );
+}
+
+/// A retitle that already carries the prefix keeps exactly one.
+///
+/// A model reading a pull request back and sending the title it saw is the
+/// ordinary case here, not a pathological one.
+#[tokio::test]
+async fn a_retitle_does_not_stack_prefixes() {
+    let (tool, recorder) = tool();
+    let output = call(
+        &tool,
+        json!({
+            "action": "update",
+            "key": "31",
+            "title": "stella self-driving: fix(stella-cli): the thing"
+        }),
+    )
+    .await;
+    assert!(!output.is_error(), "{output:?}");
+
+    assert_eq!(
+        recorder.written().updated[0].1.title.as_deref(),
+        Some("stella self-driving: fix(stella-cli): the thing")
+    );
+}
+
+/// Each surface of this tool carries the footer configured for that surface.
+///
+/// The text is per surface because an operator will want different words on a
+/// description and on a comment. Nothing held the routing before this. Under
+/// the default attribution all five fields read the same string. So a
+/// description signed with the comment field passed every other assertion in
+/// this file.
+///
+/// Each surface is read against a string only its own field holds. A swapped
+/// field names itself in the failure.
+#[tokio::test]
+async fn each_pull_request_surface_carries_its_own_footer() {
+    let (tool, recorder) = tool_signing_as(distinguishable());
+
+    for input in [
+        json!({
+            "action": "create",
+            "head": "fix/the-thing",
+            "title": "fix(stella-cli): the thing",
+            "body": "what changed and why"
+        }),
+        json!({"action": "update", "key": "31", "body": "what changed, reworded"}),
+        json!({"action": "comment", "key": "31", "body": "rebased onto main"}),
+        json!({
+            "action": "edit_comment",
+            "key": "31",
+            "comment_id": "5150",
+            "body": "rebased onto main, again"
+        }),
+    ] {
+        let output = call(&tool, input.clone()).await;
+        assert!(!output.is_error(), "{input}: {output:?}");
+    }
+
+    let written = recorder.written();
+    assert!(
+        written.opened[0]
+            .body
+            .ends_with("by-the-pull-request-field"),
+        "a description takes `pull_request`: {}",
+        written.opened[0].body
+    );
+    let updated = written.updated[0]
+        .1
+        .body
+        .as_deref()
+        .expect("the update sent a body");
+    assert!(
+        updated.ends_with("by-the-pull-request-field"),
+        "an edited description takes `pull_request`: {updated}"
+    );
+    assert!(
+        written.comments[0]
+            .1
+            .ends_with("by-the-pull-request-comment-field"),
+        "a comment takes `pull_request_comment`: {}",
+        written.comments[0].1
+    );
+    assert!(
+        written.edited_comments[0]
+            .1
+            .ends_with("by-the-pull-request-comment-field"),
+        "an edited comment takes `pull_request_comment`: {}",
+        written.edited_comments[0].1
+    );
 }

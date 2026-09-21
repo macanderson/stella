@@ -610,15 +610,18 @@ impl PullRequestProvider for GhPullRequests {
         key: &PullRequestKey,
         patch: &PullRequestPatch,
     ) -> Result<(), PullRequestError> {
-        // Draft status is not an `edit` field. `gh pr ready` moves it, in
-        // either direction, and is a separate call.
-        if let Some(draft) = patch.draft {
-            let mut args = vec!["pr", "ready", key.as_str()];
-            if draft {
-                args.push("--undo");
-            }
-            gh(&args)?;
-        }
+        // Draft status is not an `edit` field, so a patch carrying both is two
+        // calls and cannot be atomic. The order is the whole decision, and it
+        // is the text first.
+        //
+        // `gh pr ready` is the announcing step: it puts the pull request in
+        // front of reviewers and sends them the notification. Flipping first
+        // and then failing to write the description shows them the old text,
+        // over a mark that says it is ready to read. Writing first and then
+        // failing to flip leaves a correct description on a pull request that
+        // stayed a draft, which is the harmless half of the same partial
+        // application. Neither is atomic; only one of them can publish the
+        // wrong thing.
         let mut args = vec!["pr", "edit", key.as_str()];
         if let Some(title) = &patch.title {
             args.extend(["--title", title]);
@@ -627,12 +630,32 @@ impl PullRequestProvider for GhPullRequests {
             args.extend(["--body", body]);
         }
         // Length 3 means nothing but the subcommand and the key: the draft
-        // flip above was the whole patch, and `gh pr edit` with no field is an
+        // flip below is the whole patch, and `gh pr edit` with no field is an
         // error rather than a no-op.
-        if args.len() == 3 {
-            return Ok(());
+        let edited = args.len() > 3;
+        if edited {
+            gh(&args)?;
         }
-        gh(&args).map(|_| ())
+        let Some(draft) = patch.draft else {
+            return Ok(());
+        };
+        let mut args = vec!["pr", "ready", key.as_str()];
+        if draft {
+            args.push("--undo");
+        }
+        gh(&args).map(|_| ()).map_err(|error| {
+            if !edited {
+                return error;
+            }
+            // The caller is about to report a failed update. Half of it
+            // landed, and it cannot tell from the error which half.
+            PullRequestError::Failed {
+                provider: GITHUB.into(),
+                reason: format!(
+                    "the title and body were written, and the draft status was not: {error}"
+                ),
+            }
+        })
     }
 
     fn close(&self, key: &PullRequestKey) -> Result<(), PullRequestError> {

@@ -26,7 +26,9 @@
 //!
 //! This reads the command text. That is the same limit [`crate::bash`]'s own
 //! audit states about itself. So `eval "gh pr $verb"` walks straight past it,
-//! as does any alias or wrapper script. It is a fence against the thing that
+//! as does an alias, or a script of some other name that calls `gh` inside.
+//! The spellings that keep the word `gh` in the line are read, and
+//! `mentions_in_line` says which. It is a fence against the thing that
 //! really happens: a model reaching for the command it knows. It holds
 //! nothing in. What makes the footer sure is that the tools are the easier
 //! path, and that is what the refusal text is for.
@@ -114,8 +116,8 @@ const REDIRECTS: &[Redirect] = &[
 /// behind it, so the command is the only way in and stays open.
 #[must_use]
 pub fn forge_redirect(command: &str, slots: &ForgeSlots) -> Option<String> {
-    let pull_requests = slots.pull_requests.read().ok()?.is_some();
-    let issues = slots.issues.read().ok()?.is_some();
+    let pull_requests = slots.has_forge();
+    let issues = slots.has_tracker();
     if !pull_requests && !issues {
         return None;
     }
@@ -154,21 +156,23 @@ fn mentions(command: &str, verb: (&str, &str)) -> bool {
 /// `echo gh pr create` names the command and does not run it, and an agent
 /// telling the driver what it plans must not be refused for saying the name
 /// out loud.
+///
+/// Asking that of the literal token `gh` is what the first version did, and
+/// six spellings ran straight past it: `command gh`, `env gh`, `sudo gh`,
+/// `GH_TOKEN=x gh`, `/usr/bin/gh`, and `gh` opened inside `$(…)` or
+/// backticks. Each one is the same command, so each one has to reach the same
+/// answer — a redirect that a wrapper word walks around does not redirect
+/// anything. [`names_gh`] settles the path spellings, [`space_substitutions`]
+/// the substitutions, and [`is_command_position`] the wrappers and the
+/// assignments.
 fn mentions_in_line(command: &str, verb: (&str, &str)) -> bool {
-    let tokens: Vec<&str> = command.split_whitespace().collect();
+    let spaced = space_substitutions(command);
+    let tokens: Vec<&str> = spaced.split_whitespace().collect();
     for (index, token) in tokens.iter().enumerate() {
-        if *token != "gh" {
+        if !names_gh(bare(token)) {
             continue;
         }
-        let is_command_word = index == 0
-            || matches!(
-                tokens[index - 1],
-                "|" | "&&" | "||" | ";" | "(" | "{" | "!" | "then" | "else" | "do"
-            )
-            || tokens[index - 1].ends_with(';')
-            || tokens[index - 1].ends_with('|')
-            || tokens[index - 1].ends_with('&');
-        if !is_command_word {
+        if !is_command_position(&tokens[..index]) {
             continue;
         }
         // Flags may sit between `gh` and its subcommand (`gh --repo o/r pr
@@ -193,7 +197,8 @@ fn mentions_in_line(command: &str, verb: (&str, &str)) -> bool {
                 expecting_value = false;
                 continue;
             }
-            words.push(*token);
+            // A quoted subcommand is still the subcommand.
+            words.push(bare(token));
             if words.len() == 2 {
                 break;
             }
@@ -203,6 +208,127 @@ fn mentions_in_line(command: &str, verb: (&str, &str)) -> bool {
         }
     }
     false
+}
+
+/// Quoting that can be glued to a word without changing what it says.
+const QUOTES: &[char] = &['\'', '"'];
+
+/// The words that can precede a command without changing which one runs.
+///
+/// Each takes a command as its argument and runs it. `command` and `builtin`
+/// are the two a shell offers for reaching past a function or an alias, which
+/// is the form a model reaches for when it has been told not to call
+/// something.
+const WRAPPERS: &[&str] = &[
+    "command", "builtin", "exec", "env", "nohup", "nice", "time", "sudo", "doas",
+];
+
+/// Give each substitution character a word of its own.
+///
+/// `split_whitespace` hands back `url=$(gh` as a single word, so nothing that
+/// reads words could see the `gh` inside it. Spacing `(`, `)` and the backtick
+/// out turns the opener into a token, and [`is_command_position`] already
+/// treats an opener as the start of a command — which it is, since nothing can
+/// precede the first word of a substitution.
+///
+/// The other separators are left glued on. `;`, `|` and `&` are settled by
+/// [`is_separator`]'s trailing-character arm, which has to exist for the
+/// spaced spellings anyway.
+fn space_substitutions(line: &str) -> String {
+    let mut spaced = String::with_capacity(line.len() + 8);
+    for character in line.chars() {
+        if matches!(character, '(' | ')' | '`') {
+            spaced.push(' ');
+            spaced.push(character);
+            spaced.push(' ');
+        } else {
+            spaced.push(character);
+        }
+    }
+    spaced
+}
+
+/// Peel the quoting off a word.
+///
+/// Quoting changes how a shell reads a word and not what the word says, so
+/// `"gh" "pr" "create"` is the same command. It grants nothing on its own: a
+/// quoted `gh` is the command word only where a bare one would be.
+fn bare(token: &str) -> &str {
+    token.trim_matches(QUOTES)
+}
+
+/// Does this word run `gh`?
+///
+/// A path names the same binary. `/usr/bin/gh` and `./gh` skip `PATH` and run
+/// exactly what `gh` would.
+fn names_gh(word: &str) -> bool {
+    word.rsplit('/').next() == Some("gh")
+}
+
+/// Is the word after `prefix` the start of a command?
+///
+/// It walks backwards over what a shell allows in front of a command and what
+/// does not change which command runs: a wrapper from [`WRAPPERS`], a flag
+/// belonging to one, and a one-shot assignment such as `GH_TOKEN=x`.
+/// Everything else answers the original question, which is whether the word
+/// before is a separator or there is no word before at all.
+///
+/// The walk cannot turn a mention into a run. `echo command gh pr create`
+/// steps over `command` and reaches `echo`, which is neither a separator nor a
+/// wrapper, so it stays open — the same answer `echo gh pr create` gets.
+///
+/// A flag has to be claimed by a wrapper to count. `env -i gh` is one command
+/// and a bare `--fill gh` is an argument to whatever ran `--fill`, and the
+/// walk meets the flag first in both, so it carries the unclaimed flag along
+/// and refuses to call the position a command start unless a wrapper turns up
+/// to own it.
+fn is_command_position(prefix: &[&str]) -> bool {
+    let mut prefix = prefix;
+    let mut unclaimed_flag = false;
+    loop {
+        let Some((previous, rest)) = prefix.split_last() else {
+            return !unclaimed_flag;
+        };
+        if is_separator(previous) {
+            return !unclaimed_flag;
+        }
+        if WRAPPERS.contains(previous) {
+            unclaimed_flag = false;
+        } else if previous.starts_with('-') {
+            unclaimed_flag = true;
+        } else if !is_assignment(previous) {
+            return false;
+        }
+        prefix = rest;
+    }
+}
+
+/// Does this token end the command before it?
+///
+/// The trailing-character arm is what catches a separator written without a
+/// space, which is the common spelling: `git push;` and `git push &&`. It
+/// accepts a false positive in return — a word that genuinely ends in `;`,
+/// `|` or `&` reads as a separator, so `echo hi; gh pr create` and the
+/// unlikely `echo 'hi&' gh pr create` reach the same answer. Both directions
+/// were considered and this one is the safe one: the cost is a refusal with a
+/// tool named in it, and the other cost is a redirect walked around.
+fn is_separator(token: &str) -> bool {
+    matches!(
+        token,
+        "|" | "&&" | "||" | "&" | ";" | "(" | "`" | "{" | "!" | "then" | "else" | "do"
+    ) || token.ends_with([';', '|', '&'])
+}
+
+/// Is this `NAME=value`, the assignment a command may carry in front of it?
+fn is_assignment(token: &str) -> bool {
+    let Some((name, _)) = token.split_once('=') else {
+        return false;
+    };
+    let mut characters = name.chars();
+    characters
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && characters.all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
 #[cfg(test)]
@@ -464,5 +590,59 @@ mod tests {
             forge_redirect("set -e\necho gh pr create > /dev/null", &slots),
             None
         );
+    }
+
+    /// Every spelling of the same command reaches the same answer.
+    ///
+    /// Each line below runs `gh pr create`. Matching the literal token `gh`
+    /// at a command position caught the first one and none of the rest, so a
+    /// model that had been refused once could reach the surface by adding a
+    /// word. A redirect a wrapper word walks around redirects nothing.
+    #[test]
+    fn a_wrapped_or_pathed_command_is_still_the_command() {
+        let slots = attached();
+        for spelling in [
+            "gh pr create --fill",
+            "command gh pr create --fill",
+            "builtin gh pr create --fill",
+            "exec gh pr create --fill",
+            "env gh pr create --fill",
+            "env -i gh pr create --fill",
+            "nohup gh pr create --fill",
+            "sudo gh pr create --fill",
+            "GH_TOKEN=x gh pr create --fill",
+            "GH_TOKEN=x GH_HOST=github.com gh pr create --fill",
+            "env GH_TOKEN=x gh pr create --fill",
+            "/usr/bin/gh pr create --fill",
+            "./gh pr create --fill",
+            "command /usr/local/bin/gh pr create --fill",
+            "url=$(gh pr create --fill)",
+            "url=`gh pr create --fill`",
+            "echo hi && command gh pr create --fill",
+        ] {
+            assert!(
+                forge_redirect(spelling, &slots).is_some(),
+                "must be refused: {spelling}"
+            );
+        }
+    }
+
+    /// A wrapper word does not turn a mention into a run.
+    ///
+    /// The backwards walk steps over `command`, and what it steps onto has to
+    /// answer the original question. `echo` is not a separator, so every line
+    /// here stays open — the same answer `echo gh pr create` already got.
+    #[test]
+    fn a_wrapper_inside_an_argument_is_still_not_a_command() {
+        let slots = attached();
+        for open in [
+            "echo command gh pr create",
+            "echo env gh pr create",
+            "echo /usr/bin/gh pr create",
+            "git commit -m \"gh pr create\"",
+            "echo GH_TOKEN=x gh pr create",
+        ] {
+            assert_eq!(forge_redirect(open, &slots), None, "{open}");
+        }
     }
 }
