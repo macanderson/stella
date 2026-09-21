@@ -69,6 +69,7 @@ mod fleet_gc;
 mod fleet_spend;
 mod fleet_verbs;
 mod fleet_warmth;
+mod forge_install;
 mod ingest_cmd;
 mod inspect;
 mod interactive;

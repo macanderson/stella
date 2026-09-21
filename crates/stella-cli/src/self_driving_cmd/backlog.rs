@@ -637,6 +637,7 @@ pub(super) async fn comment(
     provider
         .comment(key, &stella_autonomy::sign(body, signature))
         .await
+        .map(|_| ())
 }
 
 /// Resolve one issue by key, through the port.
@@ -831,8 +832,12 @@ mod tests {
             Ok(())
         }
 
-        async fn comment(&self, _key: &IssueKey, _body: &str) -> Result<(), IssueError> {
-            Ok(())
+        async fn comment(
+            &self,
+            _key: &IssueKey,
+            _body: &str,
+        ) -> Result<stella_protocol::issue::CommentId, IssueError> {
+            Ok(stella_protocol::issue::CommentId::from("1"))
         }
 
         async fn relabel(
@@ -889,7 +894,11 @@ mod tests {
             Err(Self::gone())
         }
 
-        async fn comment(&self, _key: &IssueKey, _body: &str) -> Result<(), IssueError> {
+        async fn comment(
+            &self,
+            _key: &IssueKey,
+            _body: &str,
+        ) -> Result<stella_protocol::issue::CommentId, IssueError> {
             Err(Self::gone())
         }
 

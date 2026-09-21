@@ -86,8 +86,13 @@ pub(crate) fn registry_rooted_at(
     cfg: &crate::config::Config,
     root: PathBuf,
 ) -> stella_tools::ToolRegistry {
-    let registry = stella_tools::ToolRegistry::new(root);
+    let registry = stella_tools::ToolRegistry::new(root.clone());
     registry.allow_write_dirs(cfg.allowed_write_dirs.iter().cloned());
+    // The forge, the tracker and the attribution footer, on the same argument
+    // the grant above makes: one assembly point, so a new session path cannot
+    // forget it. Rooted where the work is, so a worktree with its own
+    // `stella.toml` signs the way that file says.
+    crate::forge_install::attach(&root, &registry);
     registry
 }
 

@@ -116,7 +116,7 @@ pub(super) fn issues_act<P: IssueProvider + ?Sized>(
     let done = |verb: &str| format!("{verb} #{key}");
     match action {
         IssueAction::Comment(body) => block_on(provider.comment(&key, body))?
-            .map(|()| done("comment added to"))
+            .map(|_| done("comment added to"))
             .map_err(|error| error.to_string()),
         IssueAction::Close => block_on(provider.close(&key, "", "completed"))?
             .map(|()| done("closed"))
@@ -743,8 +743,12 @@ mod tests {
             Ok(IssueKey::from("874"))
         }
 
-        async fn comment(&self, _key: &IssueKey, _body: &str) -> Result<(), IssueError> {
-            Ok(())
+        async fn comment(
+            &self,
+            _key: &IssueKey,
+            _body: &str,
+        ) -> Result<stella_protocol::issue::CommentId, IssueError> {
+            Ok(stella_protocol::issue::CommentId::from("1"))
         }
 
         async fn close(

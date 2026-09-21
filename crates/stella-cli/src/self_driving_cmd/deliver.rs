@@ -869,7 +869,10 @@ mod tests {
         // And the footer is a horizontal rule below the closing keyword, so
         // the `Closes` line is never swallowed into the signature.
         assert!(
-            body.ends_with("Closes #3939\n\n---\ncreated by stella*"),
+            body.ends_with(&format!(
+                "Closes #3939\n\n---\n{}",
+                stella_autonomy::SIGNATURE
+            )),
             "{body:?}"
         );
     }

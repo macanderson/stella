@@ -103,6 +103,7 @@ const SHARED_CONTRACTS: &[(&str, &str)] = &[
     ("hypothesis_falsification", hypothesis_falsification!()),
     ("action_care", action_care!()),
     ("injection_defense", injection_defense!()),
+    ("git_hygiene", git_hygiene!()),
 ];
 
 /// Every static prompt, paired with its assembled bytes. Same derivation

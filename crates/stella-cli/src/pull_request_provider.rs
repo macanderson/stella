@@ -24,8 +24,9 @@
 use std::process::Command;
 
 use stella_protocol::pull_request::{
-    Check, CheckOutcome, MergeStatus, PullRequest, PullRequestDraft, PullRequestError,
-    PullRequestKey, PullRequestProvider, PullRequestState, PullRequestSummary, ReviewDecision,
+    Check, CheckOutcome, CommentId, MergeStatus, PullRequest, PullRequestDraft, PullRequestError,
+    PullRequestKey, PullRequestPatch, PullRequestProvider, PullRequestState, PullRequestSummary,
+    ReviewDecision,
 };
 
 /// The provider id this adapter answers to, and the one an error names.
@@ -579,6 +580,91 @@ impl PullRequestProvider for GhPullRequests {
         }
         Ok(())
     }
+
+    fn comment(&self, key: &PullRequestKey, body: &str) -> Result<CommentId, PullRequestError> {
+        let url = gh(&["pr", "comment", key.as_str(), "--body", body])?;
+        comment_id_from_url(&url)
+    }
+
+    fn edit_comment(
+        &self,
+        _key: &PullRequestKey,
+        comment: &CommentId,
+        body: &str,
+    ) -> Result<(), PullRequestError> {
+        // A pull request comment is an issue comment: GitHub stores both in
+        // the same table, and the REST path says `issues` for either. So the
+        // pull request number is not part of the address, and editing one
+        // needs only the comment's own id.
+        //
+        // `gh pr comment --edit-last` would avoid the API call, but it can
+        // only reach the most recent comment. An agent that commented, waited
+        // for CI, and then wants to correct what it said two comments ago
+        // cannot use it.
+        let path = format!("repos/{{owner}}/{{repo}}/issues/comments/{comment}");
+        gh(&[
+            "api",
+            "--method",
+            "PATCH",
+            &path,
+            "--field",
+            &format!("body={body}"),
+        ])
+        .map(|_| ())
+    }
+
+    fn update(
+        &self,
+        key: &PullRequestKey,
+        patch: &PullRequestPatch,
+    ) -> Result<(), PullRequestError> {
+        // Draft status is not an `edit` field. `gh pr ready` moves it, in
+        // either direction, and is a separate call.
+        if let Some(draft) = patch.draft {
+            let mut args = vec!["pr", "ready", key.as_str()];
+            if draft {
+                args.push("--undo");
+            }
+            gh(&args)?;
+        }
+        let mut args = vec!["pr", "edit", key.as_str()];
+        if let Some(title) = &patch.title {
+            args.extend(["--title", title]);
+        }
+        if let Some(body) = &patch.body {
+            args.extend(["--body", body]);
+        }
+        // Length 3 means nothing but the subcommand and the key: the draft
+        // flip above was the whole patch, and `gh pr edit` with no field is an
+        // error rather than a no-op.
+        if args.len() == 3 {
+            return Ok(());
+        }
+        gh(&args).map(|_| ())
+    }
+
+    fn close(&self, key: &PullRequestKey) -> Result<(), PullRequestError> {
+        // No `--delete-branch`, for the reason [`Self::merge`] gives: it
+        // deletes the local branch too, and this runs inside worktrees that
+        // hold those branches.
+        gh(&["pr", "close", key.as_str()]).map(|_| ())
+    }
+}
+
+/// The comment id inside the URL `gh pr comment` prints.
+///
+/// It prints the comment's web address, which ends `#issuecomment-<id>`. The
+/// id is what the edit path needs, and reading it back out here is the only
+/// way to get it without a second round trip.
+fn comment_id_from_url(url: &str) -> Result<CommentId, PullRequestError> {
+    url.rsplit_once("#issuecomment-")
+        .map(|(_, id)| id)
+        .filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()))
+        .map(CommentId::from)
+        .ok_or_else(|| PullRequestError::Malformed {
+            provider: GITHUB.into(),
+            reason: format!("`gh pr comment` printed no comment id: {url:?}"),
+        })
 }
 
 #[cfg(test)]

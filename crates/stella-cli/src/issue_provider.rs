@@ -43,8 +43,8 @@ use std::process::Command;
 
 use async_trait::async_trait;
 use stella_protocol::issue::{
-    Issue, IssueClass, IssueClosure, IssueDraft, IssueError, IssueKey, IssueLabel, IssueProvider,
-    IssueState, RESOLUTION_COMPLETED, RESOLUTION_DUPLICATE, RESOLUTION_NOT_PLANNED,
+    CommentId, Issue, IssueClass, IssueClosure, IssueDraft, IssueError, IssueKey, IssueLabel,
+    IssueProvider, IssueState, RESOLUTION_COMPLETED, RESOLUTION_DUPLICATE, RESOLUTION_NOT_PLANNED,
 };
 
 pub(crate) use manifest::{ClassMap, ProviderManifest};
@@ -338,8 +338,32 @@ impl IssueProvider for GhIssueProvider {
         gh_json(&args).map(|_| ())
     }
 
-    async fn comment(&self, key: &IssueKey, body: &str) -> Result<(), IssueError> {
-        gh_json(&["issue", "comment", key.as_str(), "--body", body]).map(|_| ())
+    async fn comment(&self, key: &IssueKey, body: &str) -> Result<CommentId, IssueError> {
+        let raw = gh_json(&["issue", "comment", key.as_str(), "--body", body])?;
+        comment_id_from_url(raw.trim())
+    }
+
+    /// `gh api --method PATCH` — GitHub has no `gh issue comment --edit <id>`.
+    ///
+    /// `--edit-last` exists and is not it: it addresses the comment by
+    /// position, which is the race [`IssueProvider::edit_comment`] returns an
+    /// id to avoid.
+    async fn edit_comment(
+        &self,
+        _key: &IssueKey,
+        comment: &CommentId,
+        body: &str,
+    ) -> Result<(), IssueError> {
+        let path = format!("repos/{{owner}}/{{repo}}/issues/comments/{comment}");
+        gh_json(&[
+            "api",
+            "--method",
+            "PATCH",
+            &path,
+            "--field",
+            &format!("body={body}"),
+        ])
+        .map(|_| ())
     }
 
     async fn relabel(
@@ -558,6 +582,27 @@ fn gh_close_reason(canonical: &str) -> &'static str {
         "not_planned" | "duplicate" => "not planned",
         _ => "completed",
     }
+}
+
+/// Read a comment id out of the URL `gh issue comment` prints.
+///
+/// GitHub answers with the browser link, not JSON:
+/// `https://github.com/o/r/issues/12#issuecomment-2345`. The id is the tail of
+/// the fragment.
+///
+/// Parsed rather than assumed, on [`IssueProvider::file`]'s argument one plane
+/// down: a comment whose id this cannot recover can never be edited, so a `gh`
+/// that printed something else fails here instead of returning a name that
+/// addresses nothing.
+fn comment_id_from_url(url: &str) -> Result<CommentId, IssueError> {
+    url.rsplit_once("#issuecomment-")
+        .map(|(_, id)| id)
+        .filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()))
+        .map(CommentId::from)
+        .ok_or_else(|| IssueError::Malformed {
+            provider: GITHUB.into(),
+            reason: format!("`gh issue comment` printed no comment id: {url:?}"),
+        })
 }
 
 /// Run a `gh` subcommand whose stdout is parsed, with colour forced off.

@@ -175,12 +175,16 @@ mod tests {
             Ok(())
         }
 
-        async fn comment(&self, key: &IssueKey, body: &str) -> Result<(), IssueError> {
+        async fn comment(
+            &self,
+            key: &IssueKey,
+            body: &str,
+        ) -> Result<stella_protocol::issue::CommentId, IssueError> {
             self.posted
                 .lock()
                 .expect("fixture lock")
                 .push((key.as_str().to_owned(), body.to_owned()));
-            Ok(())
+            Ok(stella_protocol::issue::CommentId::from("1"))
         }
 
         async fn relabel(

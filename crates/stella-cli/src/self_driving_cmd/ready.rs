@@ -302,9 +302,13 @@ mod tests {
             Ok(())
         }
 
-        async fn comment(&self, _key: &IssueKey, _body: &str) -> Result<(), IssueError> {
+        async fn comment(
+            &self,
+            _key: &IssueKey,
+            _body: &str,
+        ) -> Result<stella_protocol::issue::CommentId, IssueError> {
             self.wrote();
-            Ok(())
+            Ok(stella_protocol::issue::CommentId::from("1"))
         }
 
         async fn relabel(
