@@ -237,7 +237,7 @@ pub async fn run_accounted_call(
                         watch_progress.settle(result)
                     }
                     futures_util::future::Either::Right(((), _)) => {
-                        Err(crate::step::degenerate::terminal_error())
+                        Err(crate::step::degenerate::degenerate_error(None))
                     }
                 };
                 in_flight.store(false, Ordering::SeqCst);
@@ -666,13 +666,14 @@ mod tests {
         .expect("the watch has to cut this call; a timeout here means nothing did");
 
         match outcome {
-            Err(AccountedCallError::Provider(ProviderError::Terminal(message))) => {
+            Err(AccountedCallError::Provider(ProviderError::Degenerate { message, .. })) => {
                 assert!(
-                    message.contains("degenerated") && message.contains("upstream_pin"),
+                    message.contains("fault in the serving host")
+                        && message.contains("upstream_pin"),
                     "the error has to name the fault and the remedy: {message}"
                 );
             }
-            other => panic!("expected a terminal degeneracy error, got {other:?}"),
+            other => panic!("expected a degeneracy error, got {other:?}"),
         }
     }
 
@@ -1416,9 +1417,9 @@ mod tests {
         .await;
 
         match outcome {
-            Err(AccountedCallError::Provider(ProviderError::Terminal(message))) => {
+            Err(AccountedCallError::Provider(ProviderError::Degenerate { message, .. })) => {
                 assert!(
-                    message.contains("degenerated"),
+                    message.contains("fault in the serving host"),
                     "the trip must name the fault: {message}"
                 );
             }
@@ -1445,9 +1446,9 @@ mod tests {
         .await;
 
         match outcome {
-            Err(AccountedCallError::Provider(ProviderError::Terminal(message))) => {
+            Err(AccountedCallError::Provider(ProviderError::Degenerate { message, .. })) => {
                 assert!(
-                    message.contains("degenerated"),
+                    message.contains("fault in the serving host"),
                     "the trip must name the fault: {message}"
                 );
             }

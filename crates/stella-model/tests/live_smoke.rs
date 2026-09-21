@@ -895,6 +895,13 @@ fn classify(error: &ProviderError) -> (&'static str, FailureCause) {
         // field and an out-of-credits 402 both arrive as this, so the class
         // alone cannot separate them — the status and body can, in `resolve`.
         ProviderError::Terminal(_) => ("ProviderError::Terminal", FailureCause::Undetermined),
+        // The host answered, and a guard in `stella-core` read the answer as
+        // one character repeated. The wire shape decoded cleanly, so this is
+        // evidence about the endpoint rather than about the dialect this
+        // suite watches.
+        ProviderError::Degenerate { .. } => {
+            ("ProviderError::Degenerate", FailureCause::Undetermined)
+        }
         ProviderError::ContextOverflow { .. } => {
             ("ProviderError::ContextOverflow", FailureCause::Undetermined)
         }

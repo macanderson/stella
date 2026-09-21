@@ -1,7 +1,8 @@
 //! Catches a stream that keeps arriving but has stopped saying anything.
 //!
-//! The idle bound in [`crate::step::bounded_generation`] asks one question:
-//! has anything arrived lately? A broken stream answers yes every time.
+//! The idle bound in [`crate::step::stream_bound::bounded_generation`] asks
+//! one question: has anything arrived lately? A broken stream answers yes
+//! every time.
 //! Fragments keep landing. The clock keeps resetting. The call runs until a
 //! person kills it.
 //!
@@ -42,7 +43,7 @@
 use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use stella_protocol::ProviderError;
+use stella_protocol::{PartialUsage, ProviderError};
 use tokio::sync::Notify;
 
 /// How many of one character in a row mark a stream as broken.
@@ -56,20 +57,29 @@ pub(crate) const RUN_LIMIT: u32 = 1024;
 
 /// The error a tripped stream ends on.
 ///
-/// It is [`ProviderError::Terminal`] on purpose. `Transport` is retryable, so
-/// that spelling would hand a broken host the same unbounded wait again, once
-/// per attempt.
+/// It is [`ProviderError::Degenerate`] on purpose, and not one of the two
+/// spellings either side of it. `Transport` is retryable, so it would hand a
+/// broken host the same unbounded wait again, once per attempt. `Terminal`
+/// carries no accounting, so it would drop the charge for an answer the host
+/// served and will bill.
+///
+/// `partial` is what the call cost, for a rejection that read a finished
+/// answer. A stream cut in flight passes `None`: the adapter never totalled
+/// anything, and inventing a figure is worse than reporting none.
 ///
 /// This lives here, not at a call site, because two paths end a stream this
 /// way: the engine's own bound, and the plain calls in
 /// [`crate::accounted_call`]. Two copies of one sentence drift apart.
-pub(crate) fn terminal_error() -> ProviderError {
-    ProviderError::Terminal(format!(
-        "generation degenerated: the stream repeated one character {RUN_LIMIT} times and said \
-         nothing else. This is a fault in the serving host, not a refusal by the model. On a \
-         gateway, set `upstream_pin` in `[providers.<id>]` to keep this session off the \
-         endpoint that produced it"
-    ))
+pub(crate) fn degenerate_error(partial: Option<PartialUsage>) -> ProviderError {
+    ProviderError::Degenerate {
+        message: format!(
+            "the stream repeated one character {RUN_LIMIT} times and said nothing else. This is \
+             a fault in the serving host, not a refusal by the model. On a gateway, set \
+             `upstream_pin` in `[providers.<id>]` to keep this session off the endpoint that \
+             produced it"
+        ),
+        partial,
+    }
 }
 
 /// Counts one character repeating across a call's stream fragments. It

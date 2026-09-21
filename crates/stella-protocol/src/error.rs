@@ -183,6 +183,32 @@ pub enum ProviderError {
         affordable_output_tokens: Option<u32>,
     },
 
+    /// The serving host answered, and the answer was one character repeated
+    /// until a guard cut it. Split from [`ProviderError::Terminal`] for the
+    /// reason [`ProviderError::ContextOverflow`] and
+    /// [`ProviderError::OutputBudgetExceeded`] were: the two demand opposite
+    /// handling. A terminal failure is a request the provider rejected, so
+    /// claiming spend for it would invent a charge. This one is a request the
+    /// provider served and will bill, so dropping the accounting loses a real
+    /// charge instead.
+    ///
+    /// Not retryable. The fault is in the host rather than in the request, so
+    /// re-sending buys the same wall of characters again, once per attempt.
+    ///
+    /// The guard is `stella-core::step::degenerate`, and it reads two places:
+    /// the stream, fragment by fragment, and the finished answer, for the
+    /// adapters whose unary fallback reports nothing as it goes.
+    #[error("generation degenerated: {message}")]
+    Degenerate {
+        /// What the guard saw, and the remedy, in the user's own terms.
+        message: String,
+        /// What the call cost, when the answer got far enough to have one.
+        /// `Some` for an answer that completed and was rejected on reading,
+        /// `None` for a stream cut in flight, where the adapter never
+        /// totalled anything.
+        partial: Option<PartialUsage>,
+    },
+
     /// A failure the adapter classified as terminal without it fitting a
     /// narrower case — a 4xx the dialect does not model, a refusal, a
     /// content-policy stop. The catch-all, so it fails closed to "do not
@@ -223,6 +249,11 @@ impl ProviderError {
     /// (a mid-stream `error` frame can be terminal), and a partial hung on a
     /// terminal failure would claim spend for a request the provider rejected
     /// outright.
+    ///
+    /// [`ProviderError::Degenerate`] carries accounting and is still not
+    /// decorated here. It is built by a guard in `stella-core`, downstream of
+    /// every adapter, with its accounting already in hand. An arm for it would
+    /// be a second way to set a field that nothing would reach.
     #[must_use]
     pub fn with_partial(self, partial: PartialUsage) -> Self {
         match self {
@@ -248,7 +279,8 @@ impl ProviderError {
     pub fn partial_usage(&self) -> Option<&PartialUsage> {
         match self {
             ProviderError::Transport { partial, .. }
-            | ProviderError::Overloaded { partial, .. } => partial.as_ref(),
+            | ProviderError::Overloaded { partial, .. }
+            | ProviderError::Degenerate { partial, .. } => partial.as_ref(),
             _ => None,
         }
     }

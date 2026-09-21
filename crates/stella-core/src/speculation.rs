@@ -134,7 +134,8 @@ pub(crate) struct SpeculationGate {
     /// no reset marker exists; consumers replace the preview when the
     /// authoritative `Text` lands.
     events: EventSender,
-    /// The attempt's idle clock ([`crate::step::bounded_generation`]).
+    /// The attempt's idle clock
+    /// ([`crate::step::stream_bound::bounded_generation`]).
     /// Ticked by EVERY observer method — text, reasoning, a whole streamed
     /// call, an argument fragment — because each is a fragment that arrived,
     /// and the deadline's question is only "is anything arriving". Ticked

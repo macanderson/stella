@@ -1,5 +1,8 @@
+use std::time::Duration;
+
+use stella_protocol::{CompletionResult, ProviderError, ToolCall};
+
 use super::*;
-use stella_protocol::ToolCall;
 
 /// A [`crate::retry::Sleeper`] on real tokio time, for the bounds below: they
 /// race a trickling call against a sleep, and only a sleep that takes time
@@ -581,9 +584,9 @@ async fn a_stream_repeating_one_character_is_cut_with_no_other_bound_armed() {
     .await
     .expect("a degenerate stream must be cut, not waited on");
     match result {
-        Err(ProviderError::Terminal(message)) => {
+        Err(ProviderError::Degenerate { message, .. }) => {
             assert!(
-                message.contains("degenerated") && message.contains("upstream_pin"),
+                message.contains("fault in the serving host") && message.contains("upstream_pin"),
                 "the trip should name the fault and the remedy, got {message:?}"
             );
         }
@@ -610,9 +613,9 @@ async fn a_degenerate_answer_that_completes_in_one_poll_is_still_cut() {
     };
     let result = deadline_bounded_generation(&RealTime, None, None, &progress, whole_answer).await;
     match result {
-        Err(ProviderError::Terminal(message)) => {
+        Err(ProviderError::Degenerate { message, .. }) => {
             assert!(
-                message.contains("degenerated") && message.contains("upstream_pin"),
+                message.contains("fault in the serving host") && message.contains("upstream_pin"),
                 "the trip should name the fault and the remedy, got {message:?}"
             );
         }
@@ -655,14 +658,51 @@ async fn an_answer_no_observer_ever_saw_is_still_read() {
     };
     let result = deadline_bounded_generation(&RealTime, None, None, &progress, unary).await;
     match result {
-        Err(ProviderError::Terminal(message)) => {
+        Err(ProviderError::Degenerate { message, .. }) => {
             assert!(
-                message.contains("degenerated") && message.contains("upstream_pin"),
+                message.contains("fault in the serving host") && message.contains("upstream_pin"),
                 "the trip should name the fault and the remedy, got {message:?}"
             );
         }
         other => panic!("an unobserved degenerate answer must be cut, got {other:?}"),
     }
+}
+
+/// The charge survives the rejection. The host served this call and will bill
+/// it, so the tokens and the cost are real whatever the characters were, and
+/// the error is the only thing left to carry them: the result they were
+/// attached to is the thing being thrown away. Before
+/// [`ProviderError::Degenerate`] the trip was a `Terminal`, which has nowhere
+/// to put accounting, so every degenerate answer dropped its own cost.
+#[tokio::test]
+async fn a_rejected_answer_carries_its_charge_out_on_the_error() {
+    let progress = StreamProgress::default();
+    let unary = async {
+        Ok(CompletionResult {
+            text: "!".repeat(degenerate::RUN_LIMIT as usize),
+            usage: CompletionUsage {
+                input_tokens: 4_200,
+                output_tokens: 1_024,
+                ..CompletionUsage::reported_zero()
+            },
+            cost_usd: 0.019,
+            ..stub_completion_result()
+        })
+    };
+    let result = deadline_bounded_generation(&RealTime, None, None, &progress, unary).await;
+    let Err(failed) = result else {
+        panic!("a degenerate answer must be cut, got {result:?}");
+    };
+    let spent = failed
+        .partial_usage()
+        .expect("the charge for an answer the host served must ride out on the error");
+    assert_eq!(spent.usage.input_tokens, 4_200, "input tokens lost");
+    assert_eq!(spent.usage.output_tokens, 1_024, "output tokens lost");
+    assert_eq!(spent.cost_usd, 0.019, "cost lost");
+    assert!(
+        spent.input_reported,
+        "the provider's own attestation must survive, not be re-guessed"
+    );
 }
 
 /// The control that second reading needs. A streamed answer was fed fragment
