@@ -44,10 +44,8 @@ struct Redirect {
     /// The words after "Call `{tool}`".
     ///
     /// A backticked action is one enum value that tool accepts. Other fields
-    /// sit outside that backtick. `gh pr ready` used to name the action
-    /// `update with draft`, which is not an enum value, and a model reads
-    /// the word draft there as `draft: true`. Ready is `draft: false`.
-    /// `gh pr checks` has no action: `watch_ci` takes `branch`.
+    /// sit outside that backtick. Ready is action `update` and
+    /// `draft: false`. `watch_ci` has no action; it takes `branch`.
     call: &'static str,
     /// The writing tools sign what they send. `watch_ci` only reads.
     signs: bool,
@@ -804,11 +802,8 @@ mod tests {
 
     /// Every refusal names an input the tool's schema accepts.
     ///
-    /// `gh pr ready` used to say action `update with draft`. That is not an
-    /// enum value, and the word draft there is `draft: true`, which keeps the
-    /// pull request a draft. Ready is `update` with `draft: false`. Merge's
-    /// confirm flag is a field, not part of the action. `watch_ci` has no
-    /// action; it takes `branch`.
+    /// Ready is action `update` with `draft: false`. Merge names `confirm`
+    /// as its own field. `watch_ci` has no action; it takes `branch`.
     #[test]
     fn every_redirect_names_a_real_tool_input() {
         let slots = attached();
