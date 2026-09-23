@@ -4,9 +4,9 @@
 #
 #   ./scripts/test-prose-guard.sh
 #
-# Run it after touching that script. Not part of `make gate`: it builds a
-# handful of throwaway git trees, the same posture as
-# `make typed-errors-test`.
+# Run it after touching that script or the `scripts/prose/` package it
+# imports. Not part of `make gate`: it builds a handful of throwaway git
+# trees, the same posture as `make typed-errors-test`.
 #
 # The guard's promise is one sentence: a (file, pattern) pair may shrink its
 # count, never grow it, and a pair absent from the baseline must be at zero. P2
@@ -1257,6 +1257,37 @@ if (cd "$r" && git ls-files --unmerged | grep -q .); then
 else
   no "U1 an unmerged index counts each path once" "the fixture merge did not conflict"
 fi
+
+# ── E1: the guard's own modules are not scanned ─────────────────────────────
+# The pattern table has to spell every construction it bans, and the helpers
+# beside it quote them in their docstrings. The guard skips its own source for
+# that reason, and the skip must cover the `scripts/prose/` package as well as
+# the entry point, or the guard fails on the text that defines it.
+r="$(new_root e1)"
+doc "$r" scripts/prose/patterns.py <<'EOF'
+# Two things follow from that, and the second is the hard one.
+EOF
+baseline "$r"
+expect_pass "E1 the guard's own package is not scanned" "$r"
+
+# ── E2: a split out of a file the guard skips carries nothing ────────────────
+# An excluded file was never held to the rule, so it has no allowance to hand
+# on. Its sentences are new prose the moment they land in a file the guard
+# reads, exactly as they are under `--absolute`.
+r="$(new_root e2)"
+hard_doc_varied "$r" docs/wire/big.md 60
+baseline "$r"
+commit_all "$r"
+split_tail "$r" docs/wire/big.md docs/tail.md 30
+PROSE_BASE_REF=HEAD expect_fail "E2 a split out of an excluded file is new prose" "$r"
+
+# ── E3: the same holds for a rename out of a file the guard skips ────────────
+r="$(new_root e3)"
+hard_doc_varied "$r" docs/wire/big.md 60
+baseline "$r"
+commit_all "$r"
+(cd "$r" && git mv docs/wire/big.md docs/big.md) >/dev/null 2>&1
+PROSE_BASE_REF=HEAD expect_fail "E3 a rename out of an excluded file is new prose" "$r"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -81,10 +81,10 @@ HEADER = """\
 def tracked_files(root: Path) -> list[str]:
     """Every scanned path, each named once.
 
-    Deduplicated for the reason `check-prose.py`'s twin gives: a conflicted
-    path is listed once per stage while a merge is unresolved in the index,
-    so a count over it triples and this ratchet reports a number nobody can
-    act on.
+    Deduplicated for the reason its twin in `scripts/prose/git_pairing.py`
+    gives: a conflicted path is listed once per stage while a merge is
+    unresolved in the index, so a count over it triples and this ratchet
+    reports a number nobody can act on.
     """
     out = subprocess.run(
         ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
