@@ -337,9 +337,9 @@ pub fn row(lane: BuiltinLane) -> Option<&'static LaneCapabilities> {
 /// test lowers this number in the same change. Raising it to turn a red gate
 /// green is the expedient CLAUDE.md forbids.
 ///
-/// All five are seams the forked child takes from its parent.
-/// Refs #6163
-pub const UNWITNESSED_SEAMS: usize = 5;
+/// It reached zero when the forked child's last five hand-offs got tests of
+/// their own, so a new bound seam now has to arrive with its test.
+pub const UNWITNESSED_SEAMS: usize = 0;
 
 /// The test that pins what each of the CLI's four lanes binds.
 const CLI_SEAMS: Witness = Witness::Test("each_lane_binds_what_its_call_site_bound_before");
@@ -459,8 +459,14 @@ lane_capabilities! {
             "hooks: self.hooks.map(HooksHandle::parts)",
             Witness::Test("subagent_start_and_stop_hooks_fire_around_a_child_turn"),
         ),
-        hook_approvals: SeamClaim::bound("hook_approvals: self.hook_approvals", Witness::Literal),
-        calibration: SeamClaim::bound("calibration: self.calibration", Witness::Literal),
+        hook_approvals: SeamClaim::bound(
+            "hook_approvals: self.hook_approvals",
+            Witness::Test("a_forked_child_parks_hook_approvals_on_the_parents_route"),
+        ),
+        calibration: SeamClaim::bound(
+            "calibration: self.calibration",
+            Witness::Test("a_forked_child_reads_and_feeds_the_parents_calibration_map"),
+        ),
         gate: SeamClaim::bound(
             "gate: self.gate",
             Witness::Test("a_child_polls_the_parents_pause_gate"),
@@ -473,13 +479,22 @@ lane_capabilities! {
             "the re-query plane belongs to the session's own turn. A parent-scoped plane would \
              inject the parent's context into a child's transcript",
         ),
-        bus: SeamClaim::bound("bus: self.bus", Witness::Literal),
-        outcomes: SeamClaim::bound("outcomes: self.outcomes", Witness::Literal),
+        bus: SeamClaim::bound(
+            "bus: self.bus",
+            Witness::Test("a_forked_child_emits_on_the_parents_bus"),
+        ),
+        outcomes: SeamClaim::bound(
+            "outcomes: self.outcomes",
+            Witness::Test("a_forked_child_reports_call_outcomes_to_the_parents_port"),
+        ),
         fallback: SeamClaim::declined(
             "the child's provider is the spec's own choice, so a mid-turn re-route is not this \
              fork's call to make",
         ),
-        call_role: SeamClaim::bound("call_role: spec.role", Witness::Literal),
+        call_role: SeamClaim::bound(
+            "call_role: spec.role",
+            Witness::Test("a_forked_child_bills_its_calls_to_the_role_its_spec_names"),
+        ),
         lane: SeamClaim::bound(
             "lane: Some(TurnLane::Builtin(BuiltinLane::SubagentFork))",
             Witness::Test("a_forked_child_stamps_the_subagent_fork_lane"),

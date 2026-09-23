@@ -1,5 +1,11 @@
 use super::*;
+use crate::estimator::CalibrationMap;
+use crate::hooks::decision::{
+    ApprovalRoute, ApprovalRouteRequest, ApprovalRouteResolution, ApprovalSubject,
+};
 use crate::hooks::{HookAction, HookExecError, HookExecResult, HookMatcher, HookRunner, Hooks};
+use crate::ports::ProviderOutcomes;
+use stella_protocol::ModelCallRole;
 
 // ---- seams: gate, steering, attribution -------------------------------
 
@@ -340,12 +346,13 @@ async fn the_child_claims_its_own_receipt_turn_slot() {
 
 // ---- SubagentStart / SubagentStop hooks --------------------------------
 
-/// A no-I/O [`HookRunner`] fake. It returns a fixed exit code and records
-/// the JSON payload of every call, so a test can check what fired and what
+/// A no-I/O [`HookRunner`] fake. It returns a fixed exit code and stdout, and
+/// records the JSON payload of every call, so a test can check what fired and what
 /// it carried, with no real shell. `driver::tests::user_hooks` has one like
 /// it; this one is local since that one lives in a sibling test module.
 struct RecordingHookRunner {
     exit_code: i32,
+    stdout: String,
     payloads: Mutex<Vec<String>>,
 }
 
@@ -360,7 +367,7 @@ impl HookRunner for RecordingHookRunner {
         self.payloads.lock().unwrap().push(payload_json.to_string());
         Ok(HookExecResult {
             exit_code: self.exit_code,
-            stdout: String::new(),
+            stdout: self.stdout.clone(),
             stderr: "a subagent hook opinion nobody asked for".into(),
         })
     }
@@ -377,6 +384,7 @@ async fn subagent_start_and_stop_hooks_fire_around_a_child_turn() {
     let tools = MixedTools::default();
     let runner = RecordingHookRunner {
         exit_code: 1,
+        stdout: String::new(),
         payloads: Mutex::new(Vec::new()),
     };
     let hooks = Hooks {
@@ -509,5 +517,337 @@ async fn a_forked_child_stamps_the_subagent_fork_lane() {
         lanes,
         vec![serde_json::json!({ "builtin": "subagent_fork" })],
         "the child's turn must name the lane that assembled it",
+    );
+}
+
+// ---- the seams a fork hands its child ---------------------------------
+//
+// One test per seam `run_child_turn` takes from the parent. Each test gives
+// the seam to the PARENT only. The parent runs no turn of its own, so all the
+// seam sees is the child's work. Set the seam to `None` in the fork and its
+// test fails.
+
+/// A child result that reports real input tokens. `CalibrationMap` skips a
+/// pair with a zero in it, so [`text_result`]'s empty usage would record
+/// nothing.
+fn text_result_with_input_tokens(text: &str, input_tokens: u64) -> CompletionResult {
+    let mut result = text_result(text, 0.01);
+    result.usage.input_tokens = input_tokens;
+    result
+}
+
+/// **The calibration witness.** The child reads the parent's drift map
+/// before its call, and writes what it saw back into it.
+///
+/// Without the map, the child's manifest shows a factor of 1.0. Its sample
+/// is also lost, so the next turn starts from an estimate known to be off.
+#[tokio::test(start_paused = true)]
+async fn a_forked_child_reads_and_feeds_the_parents_calibration_map() {
+    let calibration = CalibrationMap::new();
+    // The provider bills twice the estimate. Six samples is enough for the
+    // map to apply the fix, not just measure it.
+    calibration.seed("scripted", &[(1_000, 2_000); 6]);
+    let config = EngineConfig {
+        lifecycle_enabled: true,
+        ..EngineConfig::default()
+    };
+    let (_, seeded_factor) =
+        calibration.effective_budget(Some("scripted"), config.compaction_budget_tokens);
+    assert!(
+        seeded_factor > 1.0,
+        "the seed must move the factor, or a child reading 1.0 proves nothing: {seeded_factor}"
+    );
+
+    let parent_provider = ScriptedProvider::new(vec![]);
+    let child_provider =
+        ScriptedProvider::new(vec![Ok(text_result_with_input_tokens("done", 900))]);
+    let tools = MixedTools::default();
+    let seams = TurnCapabilities {
+        calibration: Some(&calibration),
+        ..TurnCapabilities::none()
+    };
+    let parent = Engine::assemble(&parent_provider, &tools, config, &PausedSleeper, seams);
+    let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    parent
+        .run_sub_agent(
+            SubAgentHost::new(&child_provider),
+            &SubAgentSpec::read_only("calibrated", "work"),
+            &mut budget,
+            &tx,
+        )
+        .await;
+
+    let factors: Vec<f64> = drain(&mut rx)
+        .into_iter()
+        .filter_map(|event| match event {
+            AgentEvent::StepManifest {
+                calibration_factor, ..
+            } => Some(calibration_factor),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        factors,
+        vec![seeded_factor],
+        "the child's one step must compact against the parent's factor"
+    );
+    let samples: Vec<(String, u32)> = calibration
+        .report()
+        .into_iter()
+        .map(|drift| (drift.model, drift.samples))
+        .collect();
+    assert_eq!(
+        samples,
+        vec![("scripted".to_string(), 7)],
+        "the child's call must land in the parent's map as one more sample"
+    );
+}
+
+/// An [`ApprovalRoute`] that approves everything and records what it was
+/// asked.
+#[derive(Default)]
+struct RecordingRoute {
+    seen: Mutex<Vec<ApprovalRouteRequest>>,
+}
+
+#[async_trait]
+impl ApprovalRoute for RecordingRoute {
+    async fn resolve(&self, request: &ApprovalRouteRequest) -> ApprovalRouteResolution {
+        self.seen.lock().unwrap().push(request.clone());
+        ApprovalRouteResolution::Approved
+    }
+}
+
+/// **The approval-route witness.** A `PreToolUse` hook asks for a human. The
+/// child's call waits on the parent's route, and runs once it is approved.
+///
+/// Without the route, the child refuses the call. The tool never runs, and
+/// the route hears nothing.
+#[tokio::test(start_paused = true)]
+async fn a_forked_child_parks_hook_approvals_on_the_parents_route() {
+    let parent_provider = ScriptedProvider::new(vec![]);
+    let child_provider = ScriptedProvider::new(vec![
+        Ok(tool_call_result("read_file", "c1", 0.01)),
+        Ok(text_result("done", 0.01)),
+    ]);
+    let tools = MixedTools::default();
+    let runner = RecordingHookRunner {
+        exit_code: 0,
+        stdout: r#"{"action":"require_approval","reason":"ask the human"}"#.into(),
+        payloads: Mutex::new(Vec::new()),
+    };
+    let hooks = Hooks {
+        pre_tool_use: Some(vec![HookMatcher {
+            matcher: None,
+            hooks: vec![HookAction::new("a fake command — never spawned")],
+        }]),
+        ..Hooks::default()
+    };
+    let route = RecordingRoute::default();
+    let seams = TurnCapabilities {
+        hooks: Some((&hooks, &runner)),
+        hook_approvals: Some(&route),
+        ..TurnCapabilities::none()
+    };
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &PausedSleeper,
+        seams,
+    );
+    let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
+    let (tx, _rx) = mpsc::unbounded_channel();
+
+    parent
+        .run_sub_agent(
+            SubAgentHost::new(&child_provider),
+            &SubAgentSpec::read_only("gated", "work"),
+            &mut budget,
+            &tx,
+        )
+        .await;
+
+    let seen = route.seen.lock().unwrap().clone();
+    assert_eq!(
+        seen,
+        vec![ApprovalRouteRequest {
+            subject: ApprovalSubject::Tool {
+                name: "read_file".into(),
+                read_only: true,
+            },
+            reason: "ask the human".into(),
+        }],
+        "the child's one call must be parked on the parent's route"
+    );
+    assert_eq!(
+        tools.reads.load(Ordering::SeqCst),
+        1,
+        "the route approved the call, so it ran"
+    );
+}
+
+/// **The bus witness.** The child's model calls show up on the parent's bus,
+/// under the child's id.
+///
+/// Without the bus, the child emits nothing. Its calls are still billed to
+/// the session, so an observer would see less work than the bill shows.
+#[tokio::test(start_paused = true)]
+async fn a_forked_child_emits_on_the_parents_bus() {
+    let bus = HookBus::new("fork-bus-test", crate::ports::FixedClock(0));
+    let seen: Arc<Mutex<Vec<Option<String>>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&seen);
+    bus.on(crate::bus::names::MODEL_REQUEST_STARTED, move |event| {
+        sink.lock().unwrap().push(event.agent_id.clone());
+        Ok(())
+    })
+    .detach();
+
+    let parent_provider = ScriptedProvider::new(vec![]);
+    let child_provider = ScriptedProvider::new(vec![
+        Ok(tool_call_result("read_file", "c1", 0.01)),
+        Ok(text_result("done", 0.01)),
+    ]);
+    let tools = MixedTools::default();
+    let seams = TurnCapabilities {
+        bus: Some(&bus),
+        ..TurnCapabilities::none()
+    };
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &PausedSleeper,
+        seams,
+    );
+    let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
+    let (tx, _rx) = mpsc::unbounded_channel();
+
+    parent
+        .run_sub_agent(
+            SubAgentHost::new(&child_provider).with_bus(&bus),
+            &SubAgentSpec::read_only("observed", "work"),
+            &mut budget,
+            &tx,
+        )
+        .await;
+
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec![Some("observed".to_string()); 2],
+        "each of the child's two model calls must reach the parent's bus, \
+         attributed to the child"
+    );
+}
+
+/// A [`ProviderOutcomes`] that records every report, in order.
+#[derive(Default)]
+struct RecordingOutcomes {
+    reports: Mutex<Vec<(&'static str, String)>>,
+}
+
+impl ProviderOutcomes for RecordingOutcomes {
+    fn record_success(&self, provider_id: &str) {
+        self.reports
+            .lock()
+            .unwrap()
+            .push(("success", provider_id.to_string()));
+    }
+    fn record_failure(&self, provider_id: &str) {
+        self.reports
+            .lock()
+            .unwrap()
+            .push(("failure", provider_id.to_string()));
+    }
+}
+
+/// **The outcomes witness.** Each call the child makes is reported to the
+/// parent's port, under the provider that served it.
+///
+/// The port feeds the router's circuit breaker. Without it, a provider that
+/// fails every child call would still look healthy.
+#[tokio::test(start_paused = true)]
+async fn a_forked_child_reports_call_outcomes_to_the_parents_port() {
+    let parent_provider = ScriptedProvider::new(vec![]);
+    let child_provider = ScriptedProvider::new(vec![
+        Ok(tool_call_result("read_file", "c1", 0.01)),
+        Ok(text_result("done", 0.01)),
+    ]);
+    let tools = MixedTools::default();
+    let outcomes = RecordingOutcomes::default();
+    let seams = TurnCapabilities {
+        outcomes: Some(&outcomes),
+        ..TurnCapabilities::none()
+    };
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &PausedSleeper,
+        seams,
+    );
+    let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
+    let (tx, _rx) = mpsc::unbounded_channel();
+
+    parent
+        .run_sub_agent(
+            SubAgentHost::new(&child_provider),
+            &SubAgentSpec::read_only("reporting", "work"),
+            &mut budget,
+            &tx,
+        )
+        .await;
+
+    assert_eq!(
+        *outcomes.reports.lock().unwrap(),
+        vec![("success", "scripted".to_string()); 2],
+        "each of the child's two committed calls must reach the parent's port"
+    );
+}
+
+/// **The call-role witness.** The child's calls are billed to the role its
+/// spec names.
+///
+/// The parent here is a worker, and the spec asks for another role. So a fork
+/// that takes the parent's role, or falls back to `Worker`, fails. The wrong
+/// role puts the child's spend in the wrong row of a cost report.
+#[tokio::test(start_paused = true)]
+async fn a_forked_child_bills_its_calls_to_the_role_its_spec_names() {
+    let parent_provider = ScriptedProvider::new(vec![]);
+    let child_provider = ScriptedProvider::new(vec![Ok(text_result("done", 0.01))]);
+    let tools = MixedTools::default();
+    let seams = TurnCapabilities::none();
+    assert_eq!(seams.call_role, ModelCallRole::Worker);
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig::default(),
+        &PausedSleeper,
+        seams,
+    );
+    let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let spec = SubAgentSpec {
+        role: ModelCallRole::Reflection,
+        ..SubAgentSpec::read_only("reflecting", "work")
+    };
+    parent
+        .run_sub_agent(SubAgentHost::new(&child_provider), &spec, &mut budget, &tx)
+        .await;
+
+    let roles: Vec<ModelCallRole> = drain(&mut rx)
+        .into_iter()
+        .filter_map(|event| match event {
+            AgentEvent::StepUsage { role, .. } => Some(role),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        roles,
+        vec![ModelCallRole::Reflection],
+        "the child's call must carry the role its spec asked for"
     );
 }
