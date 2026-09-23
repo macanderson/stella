@@ -5,7 +5,7 @@ status: living
 origin: "Oxagen hit this production failure four times. A schema change merged and deployed. Its migration never ran."
 trigger: opening or updating a pull request that changes a schema
 autonomy: L1
-enforcement: "In oxagen, `migration-label.yml` adds the label from the diff. It puts the label back if someone removes it. `migration-gate` in `pipeline.yml` blocks the deploy until production has the schema. Other repos keep the rule. Each repo adds its own check."
+enforcement: "In oxagen, `migration-label.yml` adds the label from the diff. It puts the label back if someone removes it. `migration-gate` in `pipeline.yml` blocks the deploy until production has the schema. Other repos keep the rule and apply the label by hand until they add a check."
 ---
 
 ## Directive
@@ -26,7 +26,7 @@ It can be a store's rules or indexes.
 
 The repo adds the label when it can read the change from the diff.
 
-The author does not have to remember.
+Where the repo cannot read it from the diff, the author adds the label by hand.
 
 Applying the migration is a separate act.
 
@@ -35,6 +35,11 @@ This record does not allow a deploy pipeline to apply migrations on its own.
 ## Rationale
 
 From 2026-08-25 to 2026-09-21, oxagen shipped this failure four times.
+
+- `https://github.com/macanderson/oxagen/issues/1275`
+- `https://github.com/macanderson/oxagen/issues/2796`
+- `https://github.com/macanderson/oxagen/issues/3449`
+- `https://github.com/macanderson/oxagen/issues/3692`
 
 Each time a schema change merged.
 
@@ -115,14 +120,10 @@ A label makes that a query.
 - Do not remove the label to make the pull request look cleaner.
 - Where a bot adds the label, taking it off puts the label back.
 - Where no bot exists, taking the label off states a false fact about the diff.
-- Run the migration in production before the code that needs it, or with that code.
-- Never after.
-- If you cannot apply the migration yet, say so in the pull request.
-- Say why.
+- Run the migration in production before the code that needs it, or with that code, and never after.
+- If you cannot apply the migration yet, say so in the pull request and say why.
 - A blocked apply is a fact a reviewer needs.
-- Do not add an automatic apply to a deploy pipeline under this record.
-- That choice is its own decision.
-- Make it per repo, in its own record.
+- Do not add an automatic apply to a deploy pipeline under this record; that is a separate decision, made per repo in its own record.
 
 ## Exceptions
 
