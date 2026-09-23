@@ -1289,5 +1289,36 @@ commit_all "$r"
 (cd "$r" && git mv docs/wire/big.md docs/big.md) >/dev/null 2>&1
 PROSE_BASE_REF=HEAD expect_fail "E3 a rename out of an excluded file is new prose" "$r"
 
+# ── M1: every failing ratchet is reported in one run ────────────────────────
+# A tree can fail more than one ratchet at once. The guard used to return on
+# the first failing one, so a banned phrase hid a grade failure and a longer
+# header behind it, and each fix then surfaced the next (#6230). One file per
+# ratchet, so each failure stands on its own.
+r="$(new_root m1)"
+baseline "$r"
+density_baseline "$r"
+doc "$r" docs/phrase.md <<'EOF'
+Two things follow from that, and the second is the hard one.
+EOF
+hard_doc "$r" docs/hard.md 8
+rs_with_header "$r" newcrate 30 lib
+out="$(python3 "$SCRIPT" "$r" 2>&1)"
+status=$?
+if [ "$status" -eq 0 ]; then
+  no "M1 a tree failing all three ratchets fails" "the guard exited 0"
+else
+  ok "M1 a tree failing all three ratchets fails"
+fi
+for heading in \
+  "content-free prose added" \
+  "prose got harder to read" \
+  "module headers got longer"; do
+  if printf '%s' "$out" | grep -qF "$heading"; then
+    ok "M1 the run reports \"$heading\""
+  else
+    no "M1 the run reports \"$heading\"" "the output has no such heading"
+  fi
+done
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

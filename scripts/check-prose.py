@@ -616,6 +616,9 @@ def main() -> int:
         for line in inherited:
             print(f"  {line}")
 
+    # Each ratchet reports before any of them decides the exit code. Returning
+    # on the first failure hid every later one, so a banned phrase kept five
+    # grade failures out of the post-merge canary's report (#6230).
     if failures:
         print("check-prose: FAIL -- content-free prose added.\n", file=sys.stderr)
         for (path, pattern), allowed, now in failures:
@@ -634,9 +637,10 @@ def main() -> int:
             "docs/prose-guidelines.md is the full rule.",
             file=sys.stderr,
         )
-        return 1
 
     if grade_failures:
+        if failures:
+            print(file=sys.stderr)
         print(
             "check-prose: FAIL -- prose got harder to read.\n",
             file=sys.stderr,
@@ -658,9 +662,10 @@ def main() -> int:
             f"Do not add a line to {GRADE_BASELINE}.",
             file=sys.stderr,
         )
-        return 1
 
     if over:
+        if failures or grade_failures:
+            print(file=sys.stderr)
         print(
             "check-prose: FAIL -- module headers got longer.\n",
             file=sys.stderr,
@@ -679,6 +684,8 @@ def main() -> int:
             f"{DENSITY_BASELINE}.",
             file=sys.stderr,
         )
+
+    if failures or grade_failures or over:
         return 1
 
     total = sum(per_pair.values())
