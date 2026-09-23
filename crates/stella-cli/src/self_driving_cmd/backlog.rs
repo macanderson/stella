@@ -181,13 +181,12 @@ pub(super) fn render_queue(
 /// Size the demand half of the governor from the same read.
 ///
 /// `Err` when the tracker could not be read, which is **not** a demand of
-/// zero. This used to return [`Demand::default`] for both, on the argument
-/// that a cycle sized as though the backlog were empty is survivable where a
-/// refusal to plan is not. That argument is right about `plan` and wrong about
-/// every other reader: `watch` printed `✓ defect queue empty` for an
-/// unreachable tracker and stood the loop down on it.
+/// zero. A cycle sized as though the backlog were empty is survivable for
+/// `plan`, where a refusal to plan is not. It is wrong for every other reader:
+/// `watch` would print `✓ defect queue empty` for an unreachable tracker and
+/// stand the loop down on it.
 ///
-/// So the degradation moves to the callers, where it can differ, and neither
+/// So the degradation sits in the callers, where it can differ, and neither
 /// of them takes it silently — `plan` still sizes against an empty backlog and
 /// says that is what it is doing, and `watch` treats the unread queue as a
 /// reason to wake.
@@ -1372,13 +1371,10 @@ mod tests {
 
     /// An unreachable tracker is not an empty backlog.
     ///
-    /// This used to assert the opposite — that the read's failure yields
-    /// `Demand::default()` — on the argument that a cycle sized as though the
-    /// backlog were empty is survivable where a refusal to plan is not. That
-    /// argument holds for `plan`, and it still degrades there, out loud. It
-    /// does not hold for `watch`, which read the same zero and printed
-    /// `✓ defect queue empty` about a queue it had never seen, then stood the
-    /// loop down.
+    /// A cycle sized as though the backlog were empty is survivable for
+    /// `plan`, which still degrades there, out loud. It is wrong for `watch`,
+    /// which would read a zero and print `✓ defect queue empty` about a queue
+    /// it had never seen, then stand the loop down.
     ///
     /// So the degradation belongs to the caller, and this reports what it
     /// read.

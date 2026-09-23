@@ -640,10 +640,6 @@ pub use entry::THINKING_ROWS;
 /// [`MAX_TRACKED_FILES`](crate::model::file_state::MAX_TRACKED_FILES). The
 /// first leaves the row its measured `+N −M`; the second leaves it naming its
 /// change (#4365).
-///
-/// This used to say the reference went stale the moment a later mutation
-/// bumped the counter, which described the behaviour before that history
-/// existed and read as though almost every diff were hidden.
 fn resolve_inline_diff<'a>(dref: &InlineDiffRef, files: &'a [FileState]) -> Option<&'a str> {
     files
         .iter()

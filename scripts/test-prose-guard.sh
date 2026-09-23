@@ -409,6 +409,44 @@ else
   no "P15 a gitignored file stays out of the scan" "the guard read an ignored file"
 fi
 
+# ── P16: history prose is caught whatever word comes before it ───────────────
+# The passive exception has to be a whole word. Matched as trailing letters,
+# it spared "This used to guess" because "This" ends in "is", and spared any
+# subject ending in "be", "are" or "een" the same way. One fixture per
+# sentence, so each one is judged alone.
+i=0
+for sentence in \
+  "This used to guess." \
+  "Her analysis used to say." \
+  "The wardrobe used to creak." \
+  "The software used to count." \
+  "The screen used to flicker." \
+  "It used to guess."; do
+  i=$((i + 1))
+  r="$(new_root "p16-$i")"
+  printf '%s\n' "$sentence" | doc "$r" docs/a.md
+  baseline "$r"
+  expect_fail "P16 history prose is caught: $sentence" "$r"
+done
+
+# ── P17: the passive "used to" is present tense and passes ──────────────────
+# "The flag is used to pick a dialect" describes what the code does today, so
+# the whole-word exception P16 relies on must still spare it.
+i=0
+for sentence in \
+  "The flag is used to pick a dialect." \
+  "It can be used to pick a dialect." \
+  "The flags are used to pick a dialect." \
+  "The flag was used to pick a dialect." \
+  "The flags were used to pick a dialect." \
+  "It has been used to pick a dialect."; do
+  i=$((i + 1))
+  r="$(new_root "p17-$i")"
+  printf '%s\n' "$sentence" | doc "$r" docs/a.md
+  baseline "$r"
+  expect_pass "P17 the passive form passes: $sentence" "$r"
+done
+
 # ── The density ratchet (#4760) ─────────────────────────────────────────────
 # A different question from every case above: not whether a sentence is
 # content-free, but whether there are too many of them. D1 is its witness --

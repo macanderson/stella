@@ -210,8 +210,8 @@ fn announce_completed_below(
     }
 }
 
-/// Everything one assembled SSE body yields. A named struct rather than the
-/// tuple this used to return: the fifth and sixth members are both optional
+/// Everything one assembled SSE body yields. A named struct rather than a
+/// tuple: the fifth and sixth members are both optional
 /// gateway-only metadata, and at that width a positional result invites the
 /// exact mix-up it cannot catch.
 pub(super) struct ZaiStreamOutcome {

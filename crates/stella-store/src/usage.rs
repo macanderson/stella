@@ -1710,7 +1710,7 @@ mod tests {
 
     #[test]
     fn usage_db_path_honors_the_data_dir_override() {
-        // Not "single-threaded" as this used to claim — see crate::test_env.
+        // Cargo runs tests on a thread pool; see crate::test_env.
         let _lock = crate::test_env::lock();
         let _restore = crate::test_env::EnvRestore::capture(&["STELLA_DATA_DIR"]);
         // SAFETY: lock held for the whole test; `_restore` undoes this on drop.

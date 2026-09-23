@@ -231,7 +231,7 @@ impl TokenStore {
         }
         // The workspace's one durable-write contract (#617): pid-tagged temp,
         // fsync, rename, fsync of the parent directory, temp removed on any
-        // failure. This used to be a sixth hand-rolled copy of it.
+        // failure. All writers share it.
         write_atomic(&self.path, json.as_bytes(), MODE_PRIVATE)
             .map_err(|e| McpError::Auth(e.to_string()))
     }

@@ -235,11 +235,8 @@ mod tests {
     /// A workspace with the user home pointed inside it, so the user scope is
     /// isolated from the machine's real `~/.stella`.
     ///
-    /// This used to bundle the binary-wide environment lock with a `HOME`
-    /// restore guard, in that drop order, so no other test could observe an
-    /// unrestored `HOME`. The redirect is per-thread now (#1139): nothing to
-    /// serialize, nothing to restore, and the returned guard only has to
-    /// outlive the caller's test.
+    /// `crate::paths::test_user_home` holds the environment lock and restores
+    /// `HOME` when its guard drops, so the guard has to outlive the test.
     fn scratch() -> (tempfile::TempDir, crate::paths::TestHomeGuard) {
         let td = tempfile::tempdir().unwrap();
         let home = td.path().join("home");

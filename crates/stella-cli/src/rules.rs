@@ -839,12 +839,9 @@ mod tests {
         // resolution — so an armed guard would answer with its own Blocked
         // error here. Unarmed, the write simply happens.
         //
-        // This used to assert `unknown tool`, which was a proxy: `write_file`
-        // was not a registered name at all, so the call could not have been
-        // blocked by anything. With the file tools back the assertion tests
-        // the thing it was always about — a project-authored guard on a path
-        // this write targets does not stop the write, because an untrusted
-        // project rule is not enforcement.
+        // The assertion is that a project-authored guard on a path this write
+        // targets does not stop the write, because an untrusted project rule
+        // is not enforcement.
         let result = registry
             .execute(
                 "write_file",

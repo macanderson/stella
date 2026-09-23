@@ -201,7 +201,7 @@ impl Store {
     ///
     /// Leaves the self-review columns exactly as it found them:
     /// [`Store::record_self_review`] has usually already written them by the
-    /// time this runs, and the whole-row replace this used to do erased them.
+    /// time this runs, and a whole-row replace would erase them.
     ///
     /// # Why a cancelled run still gets a row (#3808)
     ///

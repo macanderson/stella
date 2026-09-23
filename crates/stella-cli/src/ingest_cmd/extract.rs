@@ -652,7 +652,7 @@ fn build_defaults(
     }
 }
 
-/// The floor for the output budget: 16k, not the 4k this used to carry. A
+/// The floor for the output budget: 16k. A
 /// document filling a whole slice can atomize into dozens of
 /// records, each carrying every optional field in the schema — 4k truncated
 /// mid-object on real instruction files well before reaching the closing `]`,

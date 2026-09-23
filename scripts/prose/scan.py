@@ -157,11 +157,19 @@ PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
         # Prose about what the code did before. The reader has today's code;
         # yesterday's belongs in git history and the tracker, not in comments
         # they must read past.
+        #
+        # "is used to", "can be used to" and "has been used to" are present
+        # tense and pass. Each exception is anchored on a whole word, because
+        # a bare `is ` also matches the end of "This", and "This used to" is
+        # the commonest opening of the prose this bans. A lookbehind spans the
+        # whole word, so `\bbeen ` rather than `\been `, whose `\b` would sit
+        # inside "been" and never match.
         re.compile(
             r"\b[Nn]o longer\b|\b[Pp]reviously\b|\b[Hh]istorically\b"
             r"|\b[Ww]as once\b|\b[Bb]ack when\b"
             r"|\b[Tt]he old (?:behaviou?r|way|code|shape|design)\b"
-            r"|(?<!is )(?<!be )(?<!are )(?<!was )(?<!were )(?<!een )\b[Uu]sed to\b"
+            r"|(?<!\bis )(?<!\bbe )(?<!\bare )(?<!\bwas )(?<!\bwere )(?<!\bbeen )"
+            r"\b[Uu]sed to\b"
         ),
         "delete the history; describe what the code does now",
     ),

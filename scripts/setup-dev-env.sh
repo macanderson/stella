@@ -476,12 +476,11 @@ fi
 
 # ── The part that is easy to get wrong ───────────────────────────────────────
 hdr "make gate vs CI"
-# Derived, never transcribed. This used to be a hand-written nine-step list
-# against a real twenty-nine, and it omitted `shellcheck` — the very step whose
-# absence #3615 is about. check-gate-parity.sh holds AGENTS.md and
-# CONTRIBUTING.md to GATE_STEPS, but it never saw this third copy, so it rotted
-# unguarded in exactly the direction #1437 warns about: under-reporting, which
-# lets a reader run the short list, see green, and believe the gate is green.
+# Derived, never transcribed. check-gate-parity.sh holds AGENTS.md and
+# CONTRIBUTING.md to GATE_STEPS but never sees this third copy, so a
+# hand-written list here would rot unguarded in the direction #1437 warns
+# about: under-reporting, which lets a reader run the short list, see green,
+# and believe the gate is green.
 # `|| true` is required, not defensive noise: this script runs under
 # `set -euo pipefail`, where a command substitution that exits non-zero
 # aborts the assignment and therefore the whole run -- which would make the

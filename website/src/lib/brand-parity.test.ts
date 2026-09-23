@@ -300,14 +300,13 @@ test("the site's brand tokens are the kit's, value for value", () => {
 
   // And the other direction: every token the palette declares has a row here.
   //
-  // This used to be `ramp.length >= 20`, a floor on the count — which cannot
-  // see a token that was never mirrored in the first place, and twelve had not
-  // been. The sheet carried 20 of the palette's 32, and the missing twelve were
-  // the entire warm-paper half plus `void`: the two documents a designer reads
-  // to learn the palette did not contain the light scheme (#4978). A count
-  // could not have found that, and no other check over this file could either
-  // — `check-tokens.py` asks whether every hex here is a live token, never
-  // whether a live token is absent.
+  // A floor on the count, such as `ramp.length >= 20`, cannot see a token
+  // that was never mirrored in the first place: a sheet carrying 20 of the
+  // palette's 32 passes it while missing the whole warm-paper half plus
+  // `void`, which is the light scheme a designer reads to learn the palette
+  // (#4978). A count could not find that, and no other check over this file
+  // could either — `check-tokens.py` asks whether every hex here is a live
+  // token, never whether a live token is absent.
   //
   // Equality rather than a floor, because the kit is the kit. A published
   // *subset* is a defensible thing for the marketing site to be, and it is not

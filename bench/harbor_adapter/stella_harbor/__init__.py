@@ -1383,10 +1383,7 @@ class StellaAgent(BaseInstalledAgent):
     def _configured_budget(self) -> str | None:
         """Always ``None`` — a benchmark trial runs under no spend cap.
 
-        This used to resolve a cap, defaulting to ``5.0`` when nothing was
-        exported, with "no cap" reachable only by exporting an empty string.
-        The reasoning for allowing that state was already correct and is now
-        simply the whole rule: *a head-to-head against a comparator that has no
+        The rule: *a head-to-head against a comparator that has no
         spend ceiling has to say "no ceiling" on this side too, or the cap is a
         difference between the agents that is not the one being measured.*
 

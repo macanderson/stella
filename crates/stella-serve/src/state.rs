@@ -447,8 +447,8 @@ impl ServerState {
 /// and answering `429`. A reclaimed id answers an honest `404`.
 ///
 /// Every eviction is reported ([`ServeEvent::TurnReclaimed`]), with the count of
-/// frames nobody ever read. This used to be a silent `HashMap::remove`, which
-/// made a host that abandons turns indistinguishable from one that does not.
+/// frames nobody ever read. A silent `HashMap::remove` would make a host that
+/// abandons turns indistinguishable from one that does not.
 ///
 /// Lock order is registry → session, the same direction `handle_events` uses
 /// (its registry lookup releases the registry lock before it takes the session

@@ -505,11 +505,11 @@ pub(crate) fn rule_files(root: &Path, include_user: bool, include_project: bool)
 ///
 /// # One read per package, so the name survives the read
 ///
-/// This used to flatten every contributed directory into the `Vec<String>` a
-/// [`stella_learn::rules::RuleSource`] takes, which threw the
-/// plugin's name away at the boundary: downstream saw a path, and "which plugin
-/// gave me this?" was answerable only by matching that path against a package
-/// directory (#3567). Reading each package's directory on its own keeps the
+/// Flattening every contributed directory into the `Vec<String>` a
+/// [`stella_learn::rules::RuleSource`] takes would throw the
+/// plugin's name away at the boundary: downstream would see a path, and "which
+/// plugin gave me this?" would be answerable only by matching that path against
+/// a package directory (#3567). Reading each package's directory on its own keeps the
 /// answer as a field — [`RuleFile::contributed_by`] — stamped by the code that
 /// *chose* the directory, which is what makes it unforgeable in the same way
 /// `CustomTool::contributed_by` is.

@@ -629,9 +629,9 @@ pub fn select_skills_reporting(
             .collect();
 
         // Asymmetric: what fraction of THIS SKILL's vocabulary the prompt
-        // covers. The symmetric Jaccard this used to call divides by the
-        // union, so a long prompt was penalized for every term the skill's
-        // one-line description happens not to contain — which made lexical
+        // covers. A symmetric Jaccard divides by the union, so a long prompt
+        // would be penalized for every term the skill's one-line description
+        // happens not to contain — which would make lexical
         // selection fire only on prompts about as short as a description, and
         // effectively never on a real one (#3243 D2).
         let lexical = coverage(&prompt_terms, &skill_terms);
@@ -990,14 +990,12 @@ const SENTENCE_MIN_CHARS: usize = 24;
 /// [`select_skills_reporting`] weighs `name + description` far more than the
 /// body, so this string is still the stronger half of a learned skill's
 /// searchable vocabulary. The other half, [`candidate_id`], is a slug
-/// `slugify` truncates at 40 characters. This used to be `"Learned from N
-/// observations."`: two words that match no prompt anyone will ever write.
-/// Back then the body carried no weight at all, so those two words were the
-/// whole vocabulary. A skill was therefore findable only through whatever
-/// fragment of its lesson survived those 40 characters — the mechanism that
-/// mints skills and the mechanism that surfaces them tuned against each other
-/// (#5335). A mined candidate's body is the lesson itself (see
-/// [`SkillCandidate::body`]), so this same text now reaches a prompt two
+/// `slugify` truncates at 40 characters. A fixed string such as `"Learned
+/// from N observations."` would match no prompt anyone will ever write, and
+/// leave a skill findable only through whatever fragment of its lesson
+/// survived those 40 characters (#5335). A mined candidate's body is the
+/// lesson itself (see [`SkillCandidate::body`]), so this same text reaches a
+/// prompt two
 /// ways: a strong path and a weak one.
 ///
 /// So the lesson describes itself: its first sentence, whitespace collapsed

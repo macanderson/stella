@@ -293,10 +293,10 @@ runs with the privileges of the Stella process itself. A command the model
 was injected into writing can reach anything the operator's account can
 reach.
 
-This used to read "the sandbox wraps `bash` only": `STELLA_BASH_SANDBOX`
-(`workspace-write` / `restricted`, Seatbelt on macOS, `bwrap` on Linux) was an
-opt-in confinement on that one tool. It was removed (#1300). The removal did
-not widen the exposure — every path in the list above was already unconfined,
+No spawn path has an in-process sandbox, `bash` included. The opt-in
+`STELLA_BASH_SANDBOX` (`workspace-write` / `restricted`, Seatbelt on macOS,
+`bwrap` on Linux) confined that one tool and was removed (#1300). The removal
+did not widen the exposure — every path in the list above was already unconfined,
 and the setting was off by default — it removed a mitigation whose shape did
 not match the threat it named, and with it the impression that "sandbox: on"
 bounded a session.

@@ -4,11 +4,10 @@
 //!
 //! # Which way each probe degrades, and why it is not one rule
 //!
-//! This used to say every probe degrades to a *conservative* value. That is
-//! true of most and was never true of all, and `load1` was the one where the
-//! gap bit: it fell back to `0`, an idle box, which cannot trip the
-//! shed-to-Light branch and actively qualifies the escalate-to-Heavy one
-//! (#5359). The least information bought the most expensive decision.
+//! Most probes degrade to a *conservative* value, but not all. Take `load1`.
+//! A fallback of `0` reads as an idle box. That cannot trip the shed-to-Light
+//! branch, and it qualifies the escalate-to-Heavy one (#5359). The least
+//! information would buy the most expensive decision.
 //!
 //! - **Toward scarcity** — `cpu_total` (2), `mem_total_gb` (8),
 //!   `mem_free_gb` (2), `disk_free_gb` (0, which trips the disk floor). An

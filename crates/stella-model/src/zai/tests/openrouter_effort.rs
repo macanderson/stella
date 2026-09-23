@@ -6,9 +6,9 @@
 use super::*;
 use wiremock::MockServer;
 
-/// The top two effort tiers must reach the wire as themselves. This used to
-/// collapse to `high`, which made a pinned `xhigh` indistinguishable from
-/// asking for `high` — silently, with nothing anywhere saying so. OpenRouter
+/// The top two effort tiers must reach the wire as themselves. If `xhigh`
+/// fell to `high`, a pin would look just like asking for `high`, and nothing
+/// would say so. OpenRouter
 /// documents the full ladder and normalizes each tier onto the routed model,
 /// so the distinction is real and must survive the mapping.
 #[test]
