@@ -10,8 +10,9 @@
 //! sent through `gh pr create` carries whatever footer the model chose to
 //! type. This plane exists to take that choice away.
 //!
-//! So the refusal is a redirect. It names the tool, and the action on it, and
-//! the call works on the retry. That shape counts for more than the ban does.
+//! So the refusal is a redirect. It names the tool and the input to call it
+//! with, and the call works on the retry. That shape counts for more than the
+//! ban does.
 //! A bare "not permitted" teaches a model that the tool is gone. What it does
 //! next is climb the fence: `gh api` by hand, or a `curl`.
 //!
@@ -39,10 +40,16 @@ use super::ForgeSlots;
 struct Redirect {
     /// The `gh` subcommand, as its two words: `("pr", "create")`.
     verb: (&'static str, &'static str),
-    /// The tool that does this now, and the action on it.
+    /// The tool that does this now.
     tool: &'static str,
-    /// What to call it with, in the words the tool takes.
-    action: &'static str,
+    /// The words after "Call `{tool}`".
+    ///
+    /// A backticked action is one enum value that tool accepts. Other fields
+    /// sit outside that backtick. Ready is action `update` and
+    /// `draft: false`. `watch_ci` has no action; it takes `branch`.
+    call: &'static str,
+    /// The writing tools sign what they send. `watch_ci` only reads.
+    signs: bool,
 }
 
 /// Every `gh` subcommand a tool in this module covers.
@@ -56,57 +63,68 @@ const REDIRECTS: &[Redirect] = &[
     Redirect {
         verb: ("pr", "create"),
         tool: "pull_request",
-        action: "create",
+        call: "with action `create`",
+        signs: true,
     },
     Redirect {
         verb: ("pr", "edit"),
         tool: "pull_request",
-        action: "update",
+        call: "with action `update`",
+        signs: true,
     },
     Redirect {
         verb: ("pr", "ready"),
         tool: "pull_request",
-        action: "update with draft",
+        call: "with action `update` and `draft: false`",
+        signs: true,
     },
     Redirect {
         verb: ("pr", "close"),
         tool: "pull_request",
-        action: "close",
+        call: "with action `close`",
+        signs: true,
     },
     Redirect {
         verb: ("pr", "merge"),
         tool: "pull_request",
-        action: "merge with confirm: true",
+        call: "with action `merge` and `confirm: true`",
+        signs: true,
     },
     Redirect {
         verb: ("pr", "comment"),
         tool: "pull_request",
-        action: "comment",
+        call: "with action `comment`",
+        signs: true,
     },
     Redirect {
         verb: ("pr", "checks"),
         tool: "watch_ci",
-        action: "the pull request's branch",
+        call: "with `branch` set to the pull request's head branch",
+        signs: false,
     },
     Redirect {
         verb: ("issue", "create"),
         tool: "issue",
-        action: "create",
+        call: "with action `create`",
+        signs: true,
     },
     Redirect {
         verb: ("issue", "edit"),
         tool: "issue",
-        action: "update",
+        call: "with action `update`",
+        signs: true,
     },
     Redirect {
         verb: ("issue", "close"),
         tool: "issue",
-        action: "close",
+        call: "with action `close`",
+        signs: true,
     },
     Redirect {
         verb: ("issue", "comment"),
         tool: "issue",
-        action: "comment",
+        call: "with action `comment`",
+        signs: true,
     },
 ];
 
@@ -127,15 +145,28 @@ pub fn forge_redirect(command: &str, slots: &ForgeSlots) -> Option<String> {
             _ => pull_requests,
         };
         if attached && mentions(command, redirect.verb) {
-            return Some(format!(
-                "`gh {} {}` is covered by the `{}` tool, which signs what it writes so the record \
-                 says what produced it. Call `{}` with action `{}` instead. The rest of `gh` is \
-                 open, and so is `git`.",
-                redirect.verb.0, redirect.verb.1, redirect.tool, redirect.tool, redirect.action
-            ));
+            return Some(refusal(redirect));
         }
     }
     None
+}
+
+/// The sentence a refused command gets back.
+///
+/// The `action` backtick holds one enum value. Parameters that are not the
+/// action (`draft`, `confirm`, `branch`) are named beside it, in the shape
+/// the tool's schema uses.
+fn refusal(redirect: &Redirect) -> String {
+    let because = if redirect.signs {
+        ", which signs what it writes so the record says what produced it"
+    } else {
+        ""
+    };
+    format!(
+        "`gh {} {}` is covered by the `{}` tool{because}. Call `{}` {} instead. The rest of \
+         `gh` is open, and so is `git`.",
+        redirect.verb.0, redirect.verb.1, redirect.tool, redirect.tool, redirect.call
+    )
 }
 
 /// Does this command run `gh <group> <verb>` anywhere in it?
@@ -267,40 +298,145 @@ fn names_gh(word: &str) -> bool {
 
 /// Is the word after `prefix` the start of a command?
 ///
-/// It walks backwards over what a shell allows in front of a command and what
-/// does not change which command runs: a wrapper from [`WRAPPERS`], a flag
-/// belonging to one, and a one-shot assignment such as `GH_TOKEN=x`.
-/// Everything else answers the original question, which is whether the word
-/// before is a separator or there is no word before at all.
+/// Parsing starts after the last separator and reads the way a shell does:
+/// assignments, then a wrapper from [`WRAPPERS`] and the flags that belong to
+/// it, repeated. Anything else means the word is an argument of some earlier
+/// command, so `echo command gh pr create` stays open — the same answer
+/// `echo gh pr create` gets.
 ///
-/// The walk cannot turn a mention into a run. `echo command gh pr create`
-/// steps over `command` and reaches `echo`, which is neither a separator nor a
-/// wrapper, so it stays open — the same answer `echo gh pr create` gets.
+/// A flag counts only when a wrapper owns it. `env -i gh` is one command. A
+/// bare `--fill gh` is an argument of whatever ran `--fill`, and with no
+/// wrapper in front of that flag the position is not a command start.
 ///
-/// A flag has to be claimed by a wrapper to count. `env -i gh` is one command
-/// and a bare `--fill gh` is an argument to whatever ran `--fill`, and the
-/// walk meets the flag first in both, so it carries the unclaimed flag along
-/// and refuses to call the position a command start unless a wrapper turns up
-/// to own it.
+/// A flag that takes a value consumes it. `sudo -u user gh` runs `gh`; the
+/// value `user` is not a command, and stopping on it would let the real
+/// command through. A single-dash cluster is read letter by letter, so
+/// `sudo -Eu root` is `-E` and then `-u root`. The same letter does not mean
+/// the same thing on every wrapper — `nice -n` takes the adjustment and
+/// `sudo -n` does not — so the value is claimed only for the pairs
+/// [`flag_takes_value`] names. When the value would have to be the word under
+/// test itself (`command -v gh` prints a path and does not run `gh`), this
+/// returns false. `env -S` is not such a pair: GNU env splits that string
+/// into the command and runs it, so `env -S 'gh pr create'` is refused.
 fn is_command_position(prefix: &[&str]) -> bool {
-    let mut prefix = prefix;
-    let mut unclaimed_flag = false;
-    loop {
-        let Some((previous, rest)) = prefix.split_last() else {
-            return !unclaimed_flag;
-        };
-        if is_separator(previous) {
-            return !unclaimed_flag;
+    let start = prefix
+        .iter()
+        .rposition(|token| is_separator(token))
+        .map_or(0, |index| index + 1);
+    let mut words = &prefix[start..];
+    while let Some((first, rest)) = words.split_first() {
+        if is_assignment(first) {
+            words = rest;
+            continue;
         }
-        if WRAPPERS.contains(previous) {
-            unclaimed_flag = false;
-        } else if previous.starts_with('-') {
-            unclaimed_flag = true;
-        } else if !is_assignment(previous) {
+        if WRAPPERS.contains(first) {
+            words = match consume_wrapper_flags(first, rest) {
+                Some(remaining) => remaining,
+                None => return false,
+            };
+            continue;
+        }
+        return false;
+    }
+    true
+}
+
+/// Drop the flags of `wrapper` from the front of `words`.
+///
+/// `None` means a flag still needs a value and the next word is the one
+/// under test, so that word is the value and not the command.
+fn consume_wrapper_flags<'a>(wrapper: &str, mut words: &'a [&'a str]) -> Option<&'a [&'a str]> {
+    while let Some((token, rest)) = words.split_first() {
+        if *token == "--" {
+            return Some(rest);
+        }
+        if !token.starts_with('-') {
+            return Some(words);
+        }
+        if takes_separate_value(wrapper, token) {
+            if rest.is_empty() {
+                return None;
+            }
+            words = &rest[1..];
+        } else {
+            words = rest;
+        }
+    }
+    Some(words)
+}
+
+/// Does `token` take its value from the next word?
+///
+/// `--user=root` and `-n10` already carry the value. A single-dash cluster
+/// is walked letter by letter: a value-taking letter that is last takes the
+/// next word (`-Eu root`), and one with characters after it takes those
+/// (`-uuser`, `-n10`).
+fn takes_separate_value(wrapper: &str, token: &str) -> bool {
+    if token.contains('=') || !token.starts_with('-') {
+        return false;
+    }
+    if token.starts_with("--") {
+        return flag_takes_value(wrapper, token);
+    }
+    let mut takes_next = false;
+    for letter in token.chars().skip(1) {
+        if takes_next {
             return false;
         }
-        prefix = rest;
+        takes_next = letter_takes_value(wrapper, letter);
     }
+    takes_next
+}
+
+/// Whether one letter of a single-dash cluster consumes a value.
+fn letter_takes_value(wrapper: &str, letter: char) -> bool {
+    if !letter.is_ascii() {
+        return false;
+    }
+    let bytes = [b'-', letter as u8];
+    let Ok(flag) = std::str::from_utf8(&bytes) else {
+        return false;
+    };
+    flag_takes_value(wrapper, flag)
+}
+
+/// Does this wrapper's flag consume the next word?
+///
+/// Only the pairs that do are listed. A flag absent here is a switch:
+/// `sudo -n echo` runs `echo`, and treating `-n` as owning `echo` would
+/// call whatever follows the command. `env -S` and `--split-string` are
+/// absent because the string is the command GNU env runs, not a value to
+/// skip.
+fn flag_takes_value(wrapper: &str, flag: &str) -> bool {
+    matches!(
+        (wrapper, flag),
+        ("sudo" | "doas", "-u" | "--user")
+            | (
+                "sudo",
+                "-g" | "--group"
+                    | "-h"
+                    | "--host"
+                    | "-p"
+                    | "--prompt"
+                    | "-C"
+                    | "--close-from"
+                    | "-D"
+                    | "--chdir"
+                    | "-T"
+                    | "--command-timeout"
+                    | "-r"
+                    | "--role"
+                    | "-t"
+                    | "--type"
+                    | "-U"
+                    | "--other-user"
+            )
+            | ("nice", "-n" | "--adjustment")
+            | ("env", "-u" | "--unset" | "-C" | "--chdir")
+            | ("command", "-v" | "-V")
+            | ("exec", "-a")
+            | ("time", "-f" | "--format" | "-o" | "--output")
+    )
 }
 
 /// Does this token end the command before it?
@@ -336,6 +472,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::registry::Tool;
 
     /// Slots with both providers filled, so every redirect is armed.
     fn attached() -> ForgeSlots {
@@ -619,6 +756,23 @@ mod tests {
             "url=$(gh pr create --fill)",
             "url=`gh pr create --fill`",
             "echo hi && command gh pr create --fill",
+            "sudo -u user gh pr create --fill",
+            "sudo --user=root gh pr create --fill",
+            "nice -n 10 gh pr create --fill",
+            "nice -n10 gh pr create --fill",
+            "env -u FOO gh pr create --fill",
+            "env -uFOO gh pr create --fill",
+            "env -u FOO -u BAR gh pr create --fill",
+            "doas -u root gh pr create --fill",
+            "sudo -u user GH_TOKEN=x gh pr create --fill",
+            // GNU env splits the `-S` string into words and runs them.
+            "env -S 'gh pr create --fill'",
+            "env --split-string 'gh pr create --fill'",
+            // A bundled short flag is several flags. `-u` still takes the user.
+            "sudo -Eu root gh pr create --fill",
+            "sudo -iu user gh pr create --fill",
+            "sudo -Hu user gh pr create --fill",
+            "env -iu FOO gh pr create --fill",
         ] {
             assert!(
                 forge_redirect(spelling, &slots).is_some(),
@@ -629,9 +783,9 @@ mod tests {
 
     /// A wrapper word does not turn a mention into a run.
     ///
-    /// The backwards walk steps over `command`, and what it steps onto has to
-    /// answer the original question. `echo` is not a separator, so every line
-    /// here stays open — the same answer `echo gh pr create` already got.
+    /// The parse starts at `echo`, which is neither a wrapper nor an
+    /// assignment, so the position is not a command start. Every line here
+    /// stays open — the same answer `echo gh pr create` already got.
     #[test]
     fn a_wrapper_inside_an_argument_is_still_not_a_command() {
         let slots = attached();
@@ -641,8 +795,110 @@ mod tests {
             "echo /usr/bin/gh pr create",
             "git commit -m \"gh pr create\"",
             "echo GH_TOKEN=x gh pr create",
+            // `-n` on sudo takes no value, so `echo` is the command and `gh`
+            // is its argument.
+            "sudo -n echo gh pr create",
+            "echo -n gh pr create",
+            // `command -v` prints the path of its argument. It does not run it.
+            "command -v gh pr create",
         ] {
             assert_eq!(forge_redirect(open, &slots), None, "{open}");
         }
+    }
+
+    /// The three spellings whose flag takes a value still run `gh`.
+    ///
+    /// A backwards walk treated that value as a command word and stopped, so
+    /// `sudo -u user gh pr create` was indistinguishable from `echo gh pr
+    /// create` and the body went out unsigned.
+    #[test]
+    fn a_wrapper_flag_value_does_not_hide_the_command() {
+        let slots = attached();
+        for spelling in [
+            "sudo -u user gh pr create --fill",
+            "nice -n 10 gh pr merge 31",
+            "env -u FOO gh issue comment 412 --body hi",
+        ] {
+            assert!(
+                forge_redirect(spelling, &slots).is_some(),
+                "must be refused: {spelling}"
+            );
+        }
+    }
+
+    /// Every refusal names an input the tool's schema accepts.
+    ///
+    /// Ready is action `update` with `draft: false`. Merge names `confirm`
+    /// as its own field. `watch_ci` has no action; it takes `branch`.
+    #[test]
+    fn every_redirect_names_a_real_tool_input() {
+        let slots = attached();
+        let pr_actions = action_enum(&super::super::pr::PullRequestTool::new(attached()).schema());
+        let issue_actions = action_enum(&super::super::issue::IssueTool::new(attached()).schema());
+        let watch = super::super::watch::WatchCi::new(attached()).schema();
+        assert!(
+            watch.input_schema["properties"].get("action").is_none(),
+            "watch_ci takes no action"
+        );
+        assert!(watch.input_schema["properties"].get("branch").is_some());
+
+        for redirect in REDIRECTS {
+            let command = format!("gh {} {}", redirect.verb.0, redirect.verb.1);
+            let refusal = forge_redirect(&command, &slots).unwrap_or_else(|| {
+                panic!("{command} must be refused");
+            });
+            match redirect.tool {
+                "pull_request" => assert!(
+                    pr_actions
+                        .iter()
+                        .any(|action| action == named_action(&refusal)),
+                    "{command} names an action the tool does not have: {refusal}"
+                ),
+                "issue" => assert!(
+                    issue_actions
+                        .iter()
+                        .any(|action| action == named_action(&refusal)),
+                    "{command} names an action the tool does not have: {refusal}"
+                ),
+                "watch_ci" => {
+                    assert!(refusal.contains("`branch`"), "{refusal}");
+                    assert!(
+                        !refusal.contains("with action"),
+                        "watch_ci has no action: {refusal}"
+                    );
+                }
+                other => panic!("unknown tool {other}"),
+            }
+        }
+
+        let ready = forge_redirect("gh pr ready 31", &slots).expect("ready");
+        assert_eq!(named_action(&ready), "update");
+        assert!(ready.contains("`draft: false`"), "{ready}");
+
+        let merge = forge_redirect("gh pr merge 31", &slots).expect("merge");
+        assert_eq!(named_action(&merge), "merge");
+        assert!(merge.contains("`confirm: true`"), "{merge}");
+    }
+
+    /// The enum values on a tool schema.
+    fn action_enum(schema: &stella_protocol::tool::ToolSchema) -> Vec<String> {
+        schema.input_schema["properties"]["action"]["enum"]
+            .as_array()
+            .expect("action enum")
+            .iter()
+            .map(|value| value.as_str().expect("action string").to_owned())
+            .collect()
+    }
+
+    /// The single action value the refusal tells the model to pass.
+    fn named_action(refusal: &str) -> &str {
+        let marker = "with action `";
+        let start = refusal
+            .find(marker)
+            .unwrap_or_else(|| panic!("no action in {refusal}"))
+            + marker.len();
+        let rest = &refusal[start..];
+        let end = rest.find('`').expect("closing backtick");
+        &rest[..end]
     }
 }
