@@ -764,7 +764,8 @@ impl GeminiAssembly {
     /// Fold one chunk in. Unlike the OpenAI dialects there is no fragment
     /// reassembly: each `functionCall` part arrives whole (args already a
     /// JSON object), and text parts are plain deltas. Thought-summary parts
-    /// (`thought: true`) are excluded from the answer text; a part's
+    /// (`thought: true`) go to the observer as reasoning and stay out of
+    /// the answer text; a part's
     /// `thoughtSignature` is preserved by riding inside the minted call id
     /// (see [`SIGNATURE_SEPARATOR`]).
     pub(crate) fn absorb(
@@ -837,16 +838,23 @@ impl GeminiAssembly {
                         observer.tool_call_streamed(&tool_call);
                     }
                     self.tool_calls.push(tool_call);
-                } else if let Some(t) = part.text
-                    && !part.thought
-                {
-                    // Thought-summary parts stay silent, matching
-                    // anthropic and zai: the deck renders the answer,
-                    // not the model's reasoning.
-                    if let Some(observer) = observer {
-                        observer.text_delta(&t);
+                } else if let Some(t) = part.text {
+                    // A thought part is thinking. It goes to
+                    // `reasoning_delta` and stays out of the answer, the
+                    // way anthropic and zai send theirs. The guard that
+                    // catches a stuck stream reads only what the observer
+                    // is told and the answer. Drop the part, and a run of
+                    // one character in it is never seen.
+                    if part.thought {
+                        if let Some(observer) = observer {
+                            observer.reasoning_delta(&t);
+                        }
+                    } else {
+                        if let Some(observer) = observer {
+                            observer.text_delta(&t);
+                        }
+                        self.text.push_str(&t);
                     }
-                    self.text.push_str(&t);
                 }
             }
         }

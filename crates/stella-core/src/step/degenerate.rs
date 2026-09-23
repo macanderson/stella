@@ -31,12 +31,12 @@
 //! OpenAI, Gemini, Bedrock, and every OpenAI-compatible gateway. Five
 //! per-adapter copies would drift apart.
 //!
-//! Not every answer arrives through that port, though. An adapter whose
-//! stream recovery has latched sends a plain unary request instead, and
-//! returns the whole answer without calling the observer once. Bedrock is
-//! unary by construction and calls the observer itself, but the fallback
-//! path in the streaming adapters does not. So the check runs a second time
-//! where a dispatch finishes, over an answer the watch never saw. See
+//! Not every answer arrives through that port, though. The port is
+//! advisory: an adapter may announce all, some, or none of an answer. One
+//! whose stream recovery has latched sends a plain unary request instead,
+//! and returns the whole answer without calling the observer once. So the
+//! check runs a second time where a dispatch finishes, over the answer the
+//! call returned, whatever the observer saw of it. See
 //! [`crate::step::StreamProgress::settle`], which is where both readings
 //! live.
 
@@ -125,6 +125,39 @@ fn unpack(bits: u64) -> (u32, u32) {
     ((bits >> 32) as u32, bits as u32)
 }
 
+/// Continue a run of `(ch, run)` across `text`. Returns the run left at the
+/// end and whether it reached [`RUN_LIMIT`]. It stops at the crossing, since
+/// nothing after it can change the answer.
+///
+/// One scan for both readers, so the streamed check and the whole-answer
+/// check in [`answer_degenerates`] cannot come to count differently.
+fn extend_run(mut ch: u32, mut run: u32, text: &str) -> (u32, u32, bool) {
+    for c in text.chars() {
+        let c = u32::from(c);
+        if run > 0 && c == ch {
+            run = run.saturating_add(1);
+        } else {
+            ch = c;
+            run = 1;
+        }
+        if run >= RUN_LIMIT {
+            return (ch, run, true);
+        }
+    }
+    (ch, run, false)
+}
+
+/// Whether a finished answer, read on its own from the start, holds a run
+/// of one character [`RUN_LIMIT`] long.
+///
+/// It starts from nothing on purpose. The stream's watch may have seen part
+/// of this text already, and continuing its count would read that part
+/// twice: a rule written once would count as two. Read alone, the answer
+/// trips on exactly the runs it holds.
+pub(crate) fn answer_degenerates(text: &str) -> bool {
+    extend_run(0, 0, text).2
+}
+
 impl DegenerateWatch {
     /// Feed one stream fragment. Returns `true` the first time the count
     /// crosses [`RUN_LIMIT`]. Returns `false` every other time, later
@@ -134,21 +167,8 @@ impl DegenerateWatch {
         if self.is_tripped() {
             return false;
         }
-        let (mut ch, mut run) = unpack(self.run.load(Ordering::Relaxed));
-        let mut crossed = false;
-        for c in delta.chars() {
-            let c = u32::from(c);
-            if run > 0 && c == ch {
-                run = run.saturating_add(1);
-            } else {
-                ch = c;
-                run = 1;
-            }
-            if run >= RUN_LIMIT {
-                crossed = true;
-                break;
-            }
-        }
+        let (ch, run) = unpack(self.run.load(Ordering::Relaxed));
+        let (ch, run, crossed) = extend_run(ch, run, delta);
         self.run.store(pack(ch, run), Ordering::Relaxed);
         if crossed && !self.tripped.swap(true, Ordering::Relaxed) {
             self.trip.notify_one();
@@ -184,17 +204,6 @@ impl DegenerateWatch {
     /// Whether this stream has been marked broken.
     pub(crate) fn is_tripped(&self) -> bool {
         self.tripped.load(Ordering::Relaxed)
-    }
-
-    /// Whether this stream has fed the watch any text at all.
-    ///
-    /// A run length of zero is the packed state [`DegenerateWatch::reset`]
-    /// leaves behind, and [`DegenerateWatch::feed`] sets a length of at least
-    /// one for any text it is given. So this answers for the current stream
-    /// rather than for the call, which is what the caller needs: it asks
-    /// whether there is an answer here the watch has never seen.
-    pub(crate) fn saw_nothing(&self) -> bool {
-        unpack(self.run.load(Ordering::Relaxed)).1 == 0
     }
 
     /// Waits for the stream to be marked broken. Returns at once if it
@@ -316,6 +325,16 @@ mod tests {
             watch.tripped().now_or_never().is_none(),
             "a fresh attempt's waiter must not be woken by the last attempt's trip"
         );
+    }
+
+    #[test]
+    fn a_finished_answer_is_read_on_its_own_terms() {
+        assert!(answer_degenerates(&format!(
+            "The{}",
+            "!".repeat(RUN_LIMIT as usize)
+        )));
+        assert!(!answer_degenerates(&"-".repeat(RUN_LIMIT as usize - 1)));
+        assert!(!answer_degenerates(""));
     }
 
     #[tokio::test]

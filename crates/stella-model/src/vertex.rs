@@ -341,11 +341,13 @@ mod tests {
     /// #612 -- Vertex shares gemini's aggregator, so it inherits every
     /// announce site for free. This pins that inheritance: if Vertex ever
     /// grows its own aggregation path, the deck must not silently go blank
-    /// on it again.
+    /// on it again. A thought part must reach the observer as reasoning.
+    /// That is where the guard for a stuck stream reads it.
     #[tokio::test]
     async fn complete_observed_inherits_geminis_announce_sites() {
         let server = MockServer::start().await;
         let sse_body = concat!(
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"weighing\",\"thought\":true}]}}]}\n\n",
             "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hi \"}]}}]}\n\n",
             "data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"read_file\",\"args\":{\"path\":\"a.rs\"}}}]}}]}\n\n",
             "data: {\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[]}}]}\n\n",
@@ -361,6 +363,7 @@ mod tests {
         struct Recorder {
             calls: std::sync::Mutex<Vec<stella_protocol::ToolCall>>,
             deltas: std::sync::Mutex<Vec<String>>,
+            reasoning: std::sync::Mutex<Vec<String>>,
         }
         impl stella_protocol::ToolCallObserver for Recorder {
             fn tool_call_streamed(&self, call: &stella_protocol::ToolCall) {
@@ -369,10 +372,14 @@ mod tests {
             fn text_delta(&self, delta: &str) {
                 self.deltas.lock().unwrap().push(delta.to_string());
             }
+            fn reasoning_delta(&self, delta: &str) {
+                self.reasoning.lock().unwrap().push(delta.to_string());
+            }
         }
         let observer = Recorder {
             calls: std::sync::Mutex::new(Vec::new()),
             deltas: std::sync::Mutex::new(Vec::new()),
+            reasoning: std::sync::Mutex::new(Vec::new()),
         };
 
         let result = provider
@@ -395,6 +402,11 @@ mod tests {
             observer.deltas.lock().unwrap().as_slice(),
             &["Hi ".to_string()]
         );
+        assert_eq!(
+            observer.reasoning.lock().unwrap().as_slice(),
+            &["weighing".to_string()]
+        );
+        assert_eq!(result.text, "Hi ");
         assert_eq!(observer.calls.lock().unwrap().clone(), result.tool_calls);
         assert_eq!(result.tool_calls.len(), 1);
     }

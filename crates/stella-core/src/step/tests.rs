@@ -705,6 +705,69 @@ async fn a_rejected_answer_carries_its_charge_out_on_the_error() {
     );
 }
 
+/// The partial-preview witness. The observer is advisory: an adapter may
+/// announce all, some, or none of an answer, and the returned result is the
+/// definitive one. So a benign opening announced on the way past, followed by
+/// a run the adapter never announced, is within contract. The answer is the
+/// only place the run shows, and it has to be read whatever the observer saw.
+#[tokio::test]
+async fn a_benign_preview_does_not_hide_a_degenerate_answer() {
+    let progress = StreamProgress::default();
+    let previewed = async {
+        progress.record_text("The");
+        Ok(CompletionResult {
+            text: format!("The{}", "!".repeat(degenerate::RUN_LIMIT as usize)),
+            ..stub_completion_result()
+        })
+    };
+    let result = deadline_bounded_generation(&RealTime, None, None, &progress, previewed).await;
+    match result {
+        Err(ProviderError::Degenerate { message, .. }) => {
+            assert!(
+                message.contains("fault in the serving host"),
+                "the trip should name the fault, got {message:?}"
+            );
+        }
+        other => panic!("a preview must not exempt the answer from the check, got {other:?}"),
+    }
+}
+
+/// A rejected answer's charge rides out as a [`stella_protocol::PartialUsage`],
+/// and that type promises its inner `reported` is always `false`, so a
+/// partial can never pass [`CompletionUsage::is_complete`]. Copying the
+/// completed result's usage verbatim broke that promise for every provider
+/// that attests its usage. The attestation survives where the type keeps it,
+/// on `input_reported`.
+#[tokio::test]
+async fn a_rejected_answer_s_charge_keeps_the_partial_usage_invariant() {
+    let progress = StreamProgress::default();
+    let attested = async {
+        Ok(CompletionResult {
+            text: "!".repeat(degenerate::RUN_LIMIT as usize),
+            usage: CompletionUsage {
+                input_tokens: 4_200,
+                output_tokens: 1_024,
+                ..CompletionUsage::reported_zero()
+            },
+            cost_usd: 0.019,
+            ..stub_completion_result()
+        })
+    };
+    let result = deadline_bounded_generation(&RealTime, None, None, &progress, attested).await;
+    let Err(failed) = result else {
+        panic!("a degenerate answer must be cut, got {result:?}");
+    };
+    let spent = failed
+        .partial_usage()
+        .expect("the charge for an answer the host served must ride out on the error");
+    assert!(
+        !spent.usage.is_complete(),
+        "a partial must never read as settled accounting, got {spent:?}"
+    );
+    assert!(spent.input_reported, "the provider's attestation was lost");
+    assert_eq!(spent.usage.output_tokens, 1_024, "output tokens lost");
+}
+
 /// The control that second reading needs. A streamed answer was fed fragment
 /// by fragment on the way past, and the same text comes back on the result.
 /// Counting it twice would cut a stream for writing one long rule, which is

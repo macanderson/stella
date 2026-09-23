@@ -196,8 +196,8 @@ pub enum ProviderError {
     /// re-sending buys the same wall of characters again, once per attempt.
     ///
     /// The guard is `stella-core::step::degenerate`, and it reads two places:
-    /// the stream, fragment by fragment, and the finished answer, for the
-    /// adapters whose unary fallback reports nothing as it goes.
+    /// the stream, fragment by fragment, and the finished answer, which an
+    /// adapter may have announced only in part or not at all.
     #[error("generation degenerated: {message}")]
     Degenerate {
         /// What the guard saw, and the remedy, in the user's own terms.
