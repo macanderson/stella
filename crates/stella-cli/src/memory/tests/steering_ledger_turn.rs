@@ -82,3 +82,171 @@ fn a_later_turn_does_not_move_an_array_the_session_settled() {
 
     assert_eq!(ledger.settle(declared), settled);
 }
+
+/// Every production door that charges the steering ledger, by file.
+///
+/// `SteeringLedger::spend` charges whichever turn `open_turn` opened last. It
+/// has no way to know whether that turn is the one its caller is in. The only
+/// place a turn opens is `inject_opening_recall`, and a spender is right only
+/// if it runs after that call on the same turn. Charge from a path that never
+/// reaches it, and the cost lands on a turn that has already ended. The next
+/// re-settle then reads the previous turn's block plus this cost, and the tool
+/// array shrinks for a reason no operator can find.
+///
+/// The injection's own `spend` is paired by construction: it opens the turn and
+/// charges it in one body. A `ContextAllowance` hands the ledger to the plugin
+/// context plane, which charges it in rounds after the driver has opened the
+/// turn. A new entry here is a new door, and whoever adds one answers the
+/// question this test cannot: which turn is open when it runs.
+///
+/// Scanned from source for the reason
+/// `every_recalling_driver_routes_its_block_through_the_opening_seam` is. The
+/// question is about call sites, and no run of one door can see another.
+const LEDGER_SPENDERS: [(&str, &[&str]); 2] = [
+    (".spend(", &["memory/recall.rs"]),
+    ("ContextAllowance::new(", &["plugin_steering.rs"]),
+];
+
+/// No production code in `stella-cli` charges the steering ledger except
+/// through the doors [`LEDGER_SPENDERS`] names.
+#[test]
+fn every_steering_ledger_spender_is_one_the_turn_boundary_accounts_for() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    collect_production_sources(&src, &src, &mut files);
+    assert!(
+        files.iter().any(|(name, _)| name == "memory/recall.rs"),
+        "the scan must reach the turn-opening seam, or it proves nothing"
+    );
+
+    for (pattern, allowed) in LEDGER_SPENDERS {
+        let mut found: Vec<&str> = files
+            .iter()
+            .filter(|(_, text)| {
+                production_lines(text)
+                    .iter()
+                    .any(|line| line.contains(pattern))
+            })
+            .map(|(name, _)| name.as_str())
+            .collect();
+        found.sort_unstable();
+        assert_eq!(
+            found, allowed,
+            "`{pattern}` in production stella-cli code is a door into the \
+             steering ledger. A spend charges whichever turn \
+             inject_opening_recall opened last, so a door off that path bills \
+             a turn that already ended. Route the cost through the seam, or \
+             add the file to LEDGER_SPENDERS once you can say which turn is \
+             open when it runs. If the receiver is not a SteeringLedger, \
+             narrow the pattern rather than listing the file."
+        );
+    }
+}
+
+/// Every `.rs` file under `dir` that ships, keyed by its path below `root`
+/// with `/` separators. Test-only files are left out: a `tests.rs`, and
+/// anything under a `tests/` directory.
+fn collect_production_sources(
+    root: &std::path::Path,
+    dir: &std::path::Path,
+    out: &mut Vec<(String, String)>,
+) {
+    let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("read {}: {e}", dir.display()));
+    for entry in entries {
+        let path = entry
+            .unwrap_or_else(|e| panic!("list {}: {e}", dir.display()))
+            .path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if path.is_dir() {
+            if name != "tests" {
+                collect_production_sources(root, &path, out);
+            }
+        } else if name.ends_with(".rs") && name != "tests.rs" {
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+            let relative = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            out.push((relative, text));
+        }
+    }
+}
+
+/// The lines of `text` that ship: comments dropped, and the body of every
+/// `#[cfg(test)]` item whose head opens a block.
+///
+/// The body ends at the first `}` at the head's own indent. That is where
+/// rustfmt puts it, and CI holds the tree to rustfmt. Do not cut to the end of
+/// the file. Some files declare `#[cfg(test)] mod tests;` above their code.
+/// Some keep code below a test module. A gated item whose head does not end in
+/// `{` stays in. So a mistake here is a false alarm on test code. It is never
+/// a spender the scan missed.
+fn production_lines(text: &str) -> Vec<&str> {
+    fn indent(line: &str) -> usize {
+        line.len() - line.trim_start().len()
+    }
+
+    let lines: Vec<&str> = text.lines().collect();
+    let mut shipped = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let trimmed = lines[i].trim_start();
+        if trimmed.starts_with("#[cfg(test)]") {
+            // Skip the other attributes to reach the item itself.
+            let head = (i + 1..lines.len())
+                .find(|&j| !lines[j].trim_start().starts_with("#["))
+                .unwrap_or(lines.len());
+            if lines.get(head).is_some_and(|l| l.trim_end().ends_with('{')) {
+                let depth = indent(lines[head]);
+                let close = (head + 1..lines.len())
+                    .find(|&j| indent(lines[j]) == depth && lines[j].trim_start().starts_with('}'))
+                    .unwrap_or(lines.len());
+                i = close + 1;
+                continue;
+            }
+        }
+        if !trimmed.starts_with("//") {
+            shipped.push(lines[i]);
+        }
+        i += 1;
+    }
+    shipped
+}
+
+/// The scan's filter drops test bodies and nothing else. A filter that cut
+/// too much would pass the guard above over a real spender.
+#[test]
+fn the_production_filter_keeps_code_around_test_modules() {
+    let text = "\
+#[cfg(test)]
+mod tests;
+
+fn before() { ledger.spend(1); }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod inline {
+    fn helper() {
+        ledger.spend(2);
+    }
+}
+
+// ledger.spend(3) in a comment
+fn after() { ledger.spend(4); }
+";
+    let spends: Vec<&str> = production_lines(text)
+        .into_iter()
+        .filter(|line| line.contains(".spend("))
+        .collect();
+    assert_eq!(
+        spends,
+        [
+            "fn before() { ledger.spend(1); }",
+            "fn after() { ledger.spend(4); }"
+        ]
+    );
+}
