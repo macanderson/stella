@@ -94,6 +94,13 @@ stella run "…" --output-format json | jq -e '.status == "completed"'
   <OptionCard name="--spend-limit <usd>">
     Set a maximum amount to spend on this run. Once the cap is reached, the run stops cleanly.
   </OptionCard>
+  <OptionCard name="--max-steps <n>" defaultValue="no step cap">
+    Stop the turn after this many steps. A turn has no step cap unless you set one, so use
+    this when a count is what you mean, such as a CI job that must end after a known number
+    of model calls. The turn stops between steps, never in the middle of a tool, and reports
+    `aborted` with a reason naming the cap. `0` is refused. You can also set it with the
+    `STELLA_MAX_STEPS` environment variable.
+  </OptionCard>
 </CardGrid>
 
 ## Examples

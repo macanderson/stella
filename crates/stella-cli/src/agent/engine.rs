@@ -202,6 +202,13 @@ fn tuned_engine_config(cfg: &Config, catalog_ref: (&str, &str)) -> EngineConfig 
             None => cap,
         });
     }
+    // `--max-steps`, opt-in. A turn has no step cap by default (ADR 0031), so
+    // this only ever adds one, and only when the invocation asked. Every role,
+    // for the reason the turn budget is: a lane left uncapped beside a capped
+    // lead would spend past the bound its caller set.
+    if let Some(cap) = cfg.max_steps {
+        engine.max_steps = Some(cap);
+    }
     // Capability clamp: a catalog-confirmed non-reasoning model must not
     // carry effort/reasoning onto the wire — providers reject or silently
     // ignore them, and both outcomes are worse than omitting the fields

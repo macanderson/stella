@@ -311,6 +311,13 @@ pub struct Config {
     /// can make — this invocation, right now — and it is the one an operator
     /// reaches for when a configured value is the thing going wrong.
     pub max_output_tokens: Option<u32>,
+    /// `--max-steps`: a per-invocation ceiling on one turn's step count
+    /// (`EngineConfig::max_steps`). `None` — the default since ADR 0031 —
+    /// leaves every turn uncapped by count.
+    ///
+    /// Stamped from the flag in `main` like [`Self::turn_timeout`], for the
+    /// same reason: `Config::load` never consults it.
+    pub max_steps: Option<usize>,
     /// User-invoked plan mode (#1264): force the scope-review gate for this
     /// run whatever the plan's size. Stamped from `--plan-mode` in `main`, like
     /// [`Self::turn_timeout`], because `Config::load` has no view of the
@@ -778,6 +785,7 @@ impl Config {
                     // field's doc comment.
                     turn_timeout: None,
                     max_output_tokens: None,
+                    max_steps: None,
                     plan_mode: false,
                     minimal_prompt: false,
                     // Unbound: the session whose sidecar this points at is
@@ -1002,6 +1010,7 @@ impl Config {
             // Likewise stamped by the caller that holds the parsed CLI.
             turn_timeout: None,
             max_output_tokens: None,
+            max_steps: None,
             plan_mode: false,
             minimal_prompt: false,
             // Unbound until a driver resolves this run's session record — see
@@ -1187,6 +1196,7 @@ impl Config {
             model_id,
             turn_timeout: None,
             max_output_tokens: None,
+            max_steps: None,
             plan_mode: false,
             minimal_prompt: false,
             model_pinned_by_flag: false,

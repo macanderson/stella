@@ -22,7 +22,7 @@ use crate::{
 };
 pub(crate) use subcommands::{
     AuthCmd, DaemonCmd, McpCmd, MigrateCmd, ModelsCmd, SkillCmd, TelemetryCmd, parse_env_flag,
-    parse_max_output_tokens, parse_spend_limit, parse_turn_timeout,
+    parse_max_output_tokens, parse_max_steps, parse_spend_limit, parse_turn_timeout,
 };
 
 #[derive(Parser)]
@@ -229,6 +229,19 @@ pub(crate) struct GlobalArgs {
     /// Env: STELLA_MAX_OUTPUT_TOKENS.
     #[arg(long, global = true, env = "STELLA_MAX_OUTPUT_TOKENS", value_parser = parse_max_output_tokens)]
     pub(crate) max_output_tokens: Option<u32>,
+
+    /// Cap how many steps one turn may take
+    ///
+    /// A turn has no step cap by default: loop detection, the spend limit and
+    /// the turn timeout each end a turn on evidence that it is failing, where a
+    /// count ends a turn doing real work just as readily. Use this when a count
+    /// is what you mean — a CI job or a scripted batch that must end after N
+    /// model calls. The turn then stops at that boundary, never mid-tool.
+    ///
+    /// Applies to every role. Must be at least 1. Omit for no step cap.
+    /// Env: STELLA_MAX_STEPS.
+    #[arg(long, global = true, env = "STELLA_MAX_STEPS", value_parser = parse_max_steps)]
+    pub(crate) max_steps: Option<usize>,
 
     /// Use the plain line REPL instead of the Command Deck
     ///

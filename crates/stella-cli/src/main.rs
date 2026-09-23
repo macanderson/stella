@@ -940,6 +940,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
     // are both in hand.
     cfg.turn_timeout = cli.globals.turn_timeout;
     cfg.max_output_tokens = cli.globals.max_output_tokens;
+    cfg.max_steps = cli.globals.max_steps;
     cfg.plan_mode = cli.globals.plan_mode;
     cfg.minimal_prompt = cli.globals.minimal;
     // `--tools` is the lowest-authority scope (#1263): folded in AFTER

@@ -413,3 +413,22 @@ pub(crate) fn parse_max_output_tokens(raw: &str) -> Result<u32, String> {
     }
     Ok(value)
 }
+
+/// `--max-steps`: a positive ceiling on one turn's step count.
+///
+/// Zero is refused with the sentence `stella-serve`'s `validate_max_steps`
+/// answers a `max_steps: 0` turn with, for the reason it gives: a zero cap runs
+/// a zero-iteration turn that aborts with "reached the step cap (0)", which
+/// reads as the model failing rather than the caller mistyping. The flag's
+/// absence already means "no step cap" (ADR 0031), so zero has no second
+/// meaning to carry.
+pub(crate) fn parse_max_steps(raw: &str) -> Result<usize, String> {
+    let value: usize = raw
+        .trim()
+        .parse()
+        .map_err(|_| format!("`{raw}` is not a whole number of steps"))?;
+    if value == 0 {
+        return Err("max_steps must be at least 1 — omit --max-steps for no step cap".to_string());
+    }
+    Ok(value)
+}

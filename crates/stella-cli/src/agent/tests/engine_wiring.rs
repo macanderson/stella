@@ -724,6 +724,41 @@ fn the_max_output_tokens_flag_outranks_every_configured_cap() {
     );
 }
 
+/// `--max-steps` reaches every engine this session builds as a step cap.
+///
+/// A turn has no step cap by default (ADR 0031), and until this flag the CLI
+/// had no door to `EngineConfig::max_steps` at all: a CI job that wanted a
+/// count bound on `stella run` could only get one from `stella-serve`. Every
+/// constructor, for the reason `--turn-timeout` is every-role — a lane that
+/// ran uncapped beside a capped lead would defeat the bound its caller asked
+/// for.
+#[test]
+fn the_max_steps_flag_reaches_every_engine_as_a_step_cap() {
+    let mut cfg = cfg_for("zai");
+    cfg.max_steps = Some(7);
+
+    assert_eq!(crate::agent::engine_config_for(&cfg).max_steps, Some(7));
+    assert_eq!(
+        crate::agent::subsession_engine_config_for(
+            &cfg,
+            &crate::durability::SessionDurability::default()
+        )
+        .max_steps,
+        Some(7),
+    );
+}
+
+/// No flag, no cap. The flag is opt-in: ADR 0031 removed the default ceiling,
+/// and a CLI that quietly restored one would put back the cutoff that record
+/// argues against. Without this the test above would pass just as well if the
+/// wiring stamped some default whenever the flag was absent.
+#[test]
+fn no_max_steps_flag_leaves_the_turn_uncapped() {
+    let cfg = cfg_for("zai");
+    assert_eq!(cfg.max_steps, None, "fixture must not set the flag");
+    assert_eq!(crate::agent::engine_config_for(&cfg).max_steps, None);
+}
+
 /// The flag clamps too. It is the likeliest of the three to carry a
 /// fat-fingered digit — typed fresh each run, with no file to review it — and
 /// over-asking is a rejection on every step, not a longer answer.

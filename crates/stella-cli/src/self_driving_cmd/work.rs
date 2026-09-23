@@ -1119,6 +1119,7 @@ mod tests {
             spend_limit: Some(5.0),
             turn_timeout: Some(std::time::Duration::from_secs(900)),
             max_output_tokens: Some(8192),
+            max_steps: Some(40),
         });
 
         // The turn is still a machine-format `run`: the flags are additive to
@@ -1133,6 +1134,7 @@ mod tests {
             ("--spend-limit", "5"),
             ("--turn-timeout", "900"),
             ("--max-output-tokens", "8192"),
+            ("--max-steps", "40"),
         ] {
             assert!(
                 args.windows(2).any(|w| w == [flag, value]),

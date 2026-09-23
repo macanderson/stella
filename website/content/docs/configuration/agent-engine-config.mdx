@@ -388,6 +388,28 @@ unused. This gets corrected automatically the first time xAI's listing
 publishes a real number.
 </Callout>
 
+## Step cap
+
+**By default, a turn has no step cap.** Loop detection, `--spend-limit`, and
+`--turn-timeout` each end a turn on evidence that it's going wrong. A count
+can't tell a long turn doing real work from one that's wandering, so a
+default count would end both.
+
+When a count is what you mean, set one for the run:
+
+```bash
+stella run "fix the failing tests" --max-steps 40
+```
+
+This is a global flag that applies to every role in that run, also settable
+as `STELLA_MAX_STEPS`. The turn stops between steps, never in the middle of a
+tool, and a JSON run reports `aborted` with a reason naming the cap. `0` is
+refused: leaving the flag out already means "no step cap."
+
+There is no settings key for this on purpose. A cap written into a project's
+`settings.json` would bound every teammate's turns, which puts back the
+default cap stella removed. Scope it to the run that needs it.
+
 ## Generation parameters
 
 Every entry under `params` follows one rule: if you don't set a field, it's

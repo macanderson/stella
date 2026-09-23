@@ -555,7 +555,9 @@ pub static CAPABILITIES: &[Capability] = &[
         engine_home: "stella-core EngineConfig: effort, reasoning, output caps, timeouts, loop/compaction tuning",
         engine_entries: &[],
         cli: SurfacePosture::Shipped {
-            mechanism: "settings + flags resolved field-by-field into EngineConfig",
+            mechanism: "settings + flags resolved field-by-field into EngineConfig; \
+                        `--max-steps` sets max_steps for every role of the run, opt-in with \
+                        no default cap (ADR 0031), refusing 0 as POST /v1/turns does",
             witness: "configured_settings_beat_the_baseline_field_by_field",
         },
         api: SurfacePosture::Shipped {
