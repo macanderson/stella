@@ -360,6 +360,9 @@ crates/stella-cli/src/memory/projection.rs 12.14
 crates/stella-cli/src/memory/proposals.rs 11.57
 crates/stella-cli/src/memory/proposals/tests.rs 9.85
 crates/stella-cli/src/memory/recall.rs 12.19
+crates/stella-cli/src/memory/recall/control.rs 10.69
+crates/stella-cli/src/memory/recall/frames.rs 10.82
+crates/stella-cli/src/memory/recall/render.rs 10.46
 crates/stella-cli/src/memory/records_refresh.rs 12.12
 crates/stella-cli/src/memory/reflection.rs 11.37
 crates/stella-cli/src/memory/reflection/digest.rs 9.43
