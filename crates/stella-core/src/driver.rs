@@ -376,21 +376,20 @@ struct CommittedStep {
 }
 
 impl<'a> Engine<'a> {
-    /// Attribute this engine's provider calls to a concrete pipeline role.
-    /// Ordinary execution defaults to [`stella_protocol::ModelCallRole::Worker`].
     /// The role this engine attributes its model calls to — the reader for
     /// [`Engine::with_call_role`].
     ///
     /// Public because a host that drives [`Engine::run_step`] itself owns the
-    /// turn framing (`stella-serve`), and the `agent.turn.started` payload
-    /// names the role. Without this the host would have to keep its own copy
-    /// of the engine's default, which is a second source of truth for a value
-    /// it does not own.
+    /// turn framing, and the `agent.turn.started` payload names the role.
+    /// Without this the host would have to keep its own copy of the engine's
+    /// default, which is a second source of truth for a value it does not own.
     #[must_use]
     pub fn call_role(&self) -> stella_protocol::ModelCallRole {
         self.call_role
     }
 
+    /// Attribute this engine's provider calls to a concrete pipeline role.
+    /// Ordinary execution defaults to [`stella_protocol::ModelCallRole::Worker`].
     pub fn with_call_role(mut self, role: stella_protocol::ModelCallRole) -> Self {
         self.call_role = role;
         self
