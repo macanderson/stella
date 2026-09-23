@@ -114,7 +114,8 @@ A label makes that a query.
 ## How an agent complies
 
 - Check whether your branch changes a schema before you open the pull request.
-- If it does, expect the label `migration-required`.
+- If it does, the pull request needs the label `migration-required`.
+- Where no bot adds it, add it yourself.
 - Say which store changed.
 - Say what has to be applied.
 - Do not remove the label to make the pull request look cleaner.
