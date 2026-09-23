@@ -444,6 +444,62 @@ fn the_gate_reads_the_verdict_not_a_second_threshold() {
     }
 }
 
+/// The skill helped for ten windows, then stopped for one. Judged whole, the
+/// old lift still wins. Judged on its live window, the skill harms, because
+/// that window is the turns since it stopped.
+#[test]
+fn the_live_window_judges_a_skill_on_what_it_did_lately() {
+    let config = AppraisalConfig::default();
+    let mut trials = Vec::new();
+    for pair in 0..10 * config.window {
+        trials.push(trial("live", true, true));
+        trials.push(trial("live", false, pair % 2 == 0));
+    }
+    for _ in 0..config.window {
+        trials.push(trial("live", true, false));
+        trials.push(trial("live", false, true));
+    }
+
+    let whole = appraise(ArtifactKind::Skill, "stale", &trials, &config);
+    assert!(
+        matches!(whole.verdict, SkillVerdict::Helps { .. }),
+        "the whole history still reads as help: {:?}",
+        whole.verdict
+    );
+
+    let recent = live_window(&trials, config.window);
+    assert!(
+        recent.iter().all(|t| t.outcome.succeeded != t.selected),
+        "the window is only the turns after the skill stopped helping"
+    );
+    let windowed = appraise(ArtifactKind::Skill, "stale", recent, &config);
+    assert!(
+        matches!(windowed.verdict, SkillVerdict::Harms { .. }),
+        "got {:?}",
+        windowed.verdict
+    );
+}
+
+/// The window starts at the control trial that fills it, so a with-skill
+/// trial older than every baseline it keeps is dropped. History short of one
+/// window comes back whole, and a zero window keeps nothing.
+#[test]
+fn the_live_window_is_counted_in_control_trials() {
+    let trials = vec![
+        trial("live", true, true),
+        trial("live", false, true),
+        trial("live", true, true),
+        trial("live", true, true),
+        trial("live", false, true),
+        trial("live", true, true),
+    ];
+    assert_eq!(live_window(&trials, 2), &trials[1..]);
+    assert_eq!(live_window(&trials, 1), &trials[4..]);
+    assert_eq!(live_window(&trials, 3), &trials[..]);
+    assert!(live_window(&trials, 0).is_empty());
+    assert!(live_window(&[], 5).is_empty());
+}
+
 fn arb_trial() -> impl Strategy<Value = SkillTrial> {
     (
         prop::sample::select(vec!["alpha", "beta"]),
@@ -493,6 +549,23 @@ proptest! {
                 decide_demotion(origin, &appraisal),
                 DemotionDecision::Keep { reason: KeepSkillReason::HandAuthored }
             );
+        }
+    }
+
+    /// The live window is a suffix of the history holding `window` control
+    /// trials, or all of them when there are fewer, and it starts on a
+    /// control trial whenever it drops anything.
+    #[test]
+    fn the_live_window_is_the_suffix_holding_a_full_control_arm(
+        trials in proptest::collection::vec(arb_trial(), 0..80),
+        window in 0usize..30,
+    ) {
+        let recent = live_window(&trials, window);
+        prop_assert!(trials.ends_with(recent));
+        let controls = |ts: &[SkillTrial]| ts.iter().filter(|t| !t.selected).count();
+        prop_assert_eq!(controls(recent), controls(&trials).min(window));
+        if recent.len() < trials.len() && !recent.is_empty() {
+            prop_assert!(!recent[0].selected);
         }
     }
 

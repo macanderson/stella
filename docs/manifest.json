@@ -225,6 +225,11 @@
       "status": "implemented",
       "title": "ADR 0044: A forge tool groups verbs over one object"
     },
+    "adr/0045-an-appraisal-reads-a-window-of-control-trials": {
+      "path": "docs/adr/0045-an-appraisal-reads-a-window-of-control-trials.md",
+      "status": "implemented",
+      "title": "ADR 0045: An appraisal reads a window of control trials"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",

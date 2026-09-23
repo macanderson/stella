@@ -81,7 +81,7 @@ use stella_learn::ledger::{ArtifactKind, ArtifactTrial};
 use stella_learn::skills::SkillCandidate;
 use stella_learn::skills::appraisal::{
     AppraisalConfig, DemotionDecision, EvalEvidence, SkillAppraisal, SkillTrial, appraise,
-    decide_demotion,
+    decide_demotion, live_window,
 };
 use stella_records::context_record::{PromotionAction, PromotionActor, PromotionEventRecord};
 
@@ -278,6 +278,12 @@ fn stored_trials(workspace_root: &Path) -> Vec<ArtifactTrial> {
 /// Appraise every artifact of `kind` the trial ledger has evidence for, and
 /// return the demotion decisions for the ones whose origin allows it.
 ///
+/// Each artifact is judged on its live window
+/// ([`stella_learn::skills::appraisal::live_window`]), not its whole history:
+/// the newest trials back to a full control arm. A skill that helped for
+/// months and stopped last week is judged on last week's turns and the
+/// baseline beside them, so a long good record does not keep it in selection.
+///
 /// The kind is a filter rather than a fan-out because each surface retires on
 /// its own terms: a skill leaves selection, a memory record is retired, a rule
 /// is retracted. One sweep returning all three would hand its caller a list it
@@ -307,7 +313,7 @@ pub fn sweep(
     let mut out = Vec::new();
     for id in ids {
         let trials = by_id.remove(&id).unwrap_or_default();
-        let appraisal = appraise(kind, &id, &trials, config);
+        let appraisal = appraise(kind, &id, live_window(&trials, config.window), config);
         let origin = origins
             .get(&id)
             .copied()
@@ -331,6 +337,11 @@ pub fn sweep(
 /// An id with no trials at all is absent rather than zero. A caller asking
 /// about a whole catalog reads a missing entry as zero, which is what it
 /// means — nothing has been recorded about it yet.
+///
+/// The whole ledger is counted, not [`sweep`]'s live window. The window is
+/// measured in control trials, so it always holds this count or a full
+/// window of it, whichever is smaller. Below one window the two numbers are
+/// the same, and that is the only range the holdout's bar reads.
 pub fn control_arm_counts(workspace_root: &Path, kind: ArtifactKind) -> HashMap<String, usize> {
     let mut counts: HashMap<String, usize> = HashMap::new();
     for stored in stored_trials(workspace_root) {

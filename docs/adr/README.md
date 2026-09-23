@@ -111,6 +111,7 @@ open; nothing before Phase 3 forces it.
 | [0042](0042-the-engine-reads-time-through-the-sleeper-port.md) | The Engine Reads Time Through the Sleeper Port | Accepted |
 | [0043](0043-background-indexing-never-gates-prompts.md) | Background indexing never gates prompts | Accepted |
 | [0044](0044-a-forge-tool-groups-verbs-over-one-object.md) | A forge tool groups verbs over one object | Accepted |
+| [0045](0045-an-appraisal-reads-a-window-of-control-trials.md) | An appraisal reads a window of control trials | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible

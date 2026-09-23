@@ -307,38 +307,23 @@ async fn the_recall_control_supplies_the_without_skill_arm() {
     );
 }
 
-/// **The retirement half: promote → three negative appraisals →
-/// demoted → not selected.** The skill is minted through the real miner,
-/// selected and injected through the real turn seams, measured through the
-/// real trial ledger, and demoted by the real sweep — then a fresh session
-/// proves the demotion is durable: the skill is out of selection while its
-/// file and the append-only ledger row both survive.
-#[tokio::test]
-async fn a_promoted_skill_that_stops_helping_is_demoted_and_no_longer_selected() {
-    let dir = workspace_with_log();
-    set_gate(dir.path(), false);
-
-    // Promote: the miner writes the skill.
-    let mut memory = session(dir.path());
-    memory.auto_create_skills(&log_path(dir.path()), true);
-    let written = skill_files(dir.path());
-    assert_eq!(written.len(), 1, "the lesson promoted into a skill");
-    let name = written[0].trim_end_matches(".md").to_string();
-
-    // Live turns through the production seams. Every turn is a *matching*
-    // task, which is what makes the window evidence about this skill; the A/B
-    // recall control decides which side of the comparison each one lands on.
-    // Injected turns fail, control turns succeed — a skill that has stopped
-    // helping the very tasks it was mined for.
-    let mut memory = session(dir.path());
-    for _ in 0..8 {
+/// Run `pairs` pairs of live turns through the production seams, for a skill
+/// that has stopped helping the tasks it was mined for.
+///
+/// Every turn is a *matching* task, which is what makes the window evidence
+/// about this skill; the A/B recall control decides which side of the
+/// comparison each one lands on. The injected turn of each pair fails and the
+/// control turn succeeds.
+async fn run_stopped_helping_pairs(root: &Path, name: &str, pairs: usize) {
+    let mut memory = session(root);
+    for _ in 0..pairs {
         assert!(
             !memory.arm_recall_control_at(2),
             "the odd turn injects: the with-skill arm"
         );
         let selected = memory.note_turn_skills(MATCHING_PROMPT);
         assert!(
-            selected.iter().any(|(n, _)| *n == name),
+            selected.iter().any(|(n, _)| n == name),
             "the fixture's with-skill arm must actually select the skill: {selected:?}"
         );
         memory
@@ -357,25 +342,52 @@ async fn a_promoted_skill_that_stops_helping_is_demoted_and_no_longer_selected()
             .record_episode(MATCHING_PROMPT, EpisodeOutcome::Success, &[], 1_000, None)
             .await;
     }
+}
+
+/// Three reflection passes. Each sweep re-appraises the window and records
+/// the negative verdict, and the third consecutive one demotes (the shipped
+/// `demote_after_consecutive_negatives`). Returns the session, so the caller
+/// can read the demotion back from its store.
+fn sweep_three_times(root: &Path, name: &str) -> SessionMemory {
+    let mut memory = session(root);
+    for pass in 1..=3 {
+        memory.auto_create_skills(&log_path(root), true);
+        let negatives =
+            appraisals::consecutive_negative_appraisals(root, ArtifactKind::Skill, name);
+        assert_eq!(
+            negatives, pass,
+            "each sweep records exactly one negative appraisal"
+        );
+    }
+    memory
+}
+
+/// **The retirement half: promote → three negative appraisals →
+/// demoted → not selected.** The skill is minted through the real miner,
+/// selected and injected through the real turn seams, measured through the
+/// real trial ledger, and demoted by the real sweep — then a fresh session
+/// proves the demotion is durable: the skill is out of selection while its
+/// file and the append-only ledger row both survive.
+#[tokio::test]
+async fn a_promoted_skill_that_stops_helping_is_demoted_and_no_longer_selected() {
+    let dir = workspace_with_log();
+    set_gate(dir.path(), false);
+
+    // Promote: the miner writes the skill.
+    let mut memory = session(dir.path());
+    memory.auto_create_skills(&log_path(dir.path()), true);
+    let written = skill_files(dir.path());
+    assert_eq!(written.len(), 1, "the lesson promoted into a skill");
+    let name = written[0].trim_end_matches(".md").to_string();
+
+    run_stopped_helping_pairs(dir.path(), &name, 8).await;
     assert_eq!(
         trials(dir.path(), &name).len(),
         16,
         "every matching turn is evidence, whichever arm it landed in"
     );
 
-    // Three reflection passes: each sweep re-appraises the window and records
-    // the negative verdict; the third consecutive one demotes (the shipped
-    // `demote_after_consecutive_negatives`).
-    let mut memory = session(dir.path());
-    for pass in 1..=3 {
-        memory.auto_create_skills(&log_path(dir.path()), true);
-        let negatives =
-            appraisals::consecutive_negative_appraisals(dir.path(), ArtifactKind::Skill, &name);
-        assert_eq!(
-            negatives, pass,
-            "each sweep records exactly one negative appraisal"
-        );
-    }
+    let memory = sweep_three_times(dir.path(), &name);
     assert!(
         appraisals::demoted_skills(&memory.store, ArtifactKind::Skill).contains(&name),
         "three consecutive negatives demote the skill"
@@ -418,6 +430,61 @@ async fn a_promoted_skill_that_stops_helping_is_demoted_and_no_longer_selected()
             .iter()
             .any(|s| s.name == name),
         "a re-mine of the same lesson must not undo the demotion"
+    );
+}
+
+/// **A long helpful history does not shield a skill that stopped helping.**
+///
+/// The skill helped for ten windows' worth of matched turns: every injected
+/// turn succeeded and half the control turns did. Then it stopped, for one
+/// window of pairs, through the production seams. The sweep must judge the
+/// recent span, so the skill still demotes.
+///
+/// Appraising the whole ledger, the old successes outvote the new failures:
+/// the with-skill arm still leads, and the verdict says the skill helps. The
+/// longer the good history, the harder that is to overturn. The live window
+/// ends that. It spans the newest `window` control trials, and here those are
+/// exactly the turns after the skill stopped helping.
+#[tokio::test]
+async fn a_skill_that_helped_for_a_long_time_is_still_demoted_once_it_stops() {
+    let dir = workspace_with_log();
+    set_gate(dir.path(), false);
+
+    let mut memory = session(dir.path());
+    memory.auto_create_skills(&log_path(dir.path()), true);
+    let written = skill_files(dir.path());
+    assert_eq!(written.len(), 1, "the lesson promoted into a skill");
+    let name = written[0].trim_end_matches(".md").to_string();
+
+    let window = AppraisalConfig::default().window;
+    for pair in 0..10 * window {
+        seed_trial(dir.path(), &name, true, true);
+        seed_trial(dir.path(), &name, false, pair % 2 == 0);
+    }
+    // The negative control: the history alone is a skill that helps. Without
+    // it, a demotion below could be the history's own verdict.
+    let origins = std::collections::HashMap::from([(
+        name.clone(),
+        stella_learn::skills::SkillOrigin::AutoCreated,
+    )]);
+    let history = appraisals::sweep(
+        dir.path(),
+        ArtifactKind::Skill,
+        &origins,
+        &AppraisalConfig::default(),
+    );
+    assert!(
+        matches!(history[0].0.verdict, SkillVerdict::Helps { .. }),
+        "the seeded history must measure a skill that helps: {:?}",
+        history[0].0.verdict
+    );
+
+    run_stopped_helping_pairs(dir.path(), &name, window).await;
+
+    let memory = sweep_three_times(dir.path(), &name);
+    assert!(
+        appraisals::demoted_skills(&memory.store, ArtifactKind::Skill).contains(&name),
+        "a skill that stopped helping for a full window demotes, whatever came before"
     );
 }
 
@@ -494,27 +561,34 @@ fn workspace_with_two_skills() -> tempfile::TempDir {
     dir
 }
 
+/// Seed one live trial for `skill` straight into the ledger the sweep and the
+/// holdout read: a turn it matched, injected or not, that succeeded or not.
+fn seed_trial(root: &Path, skill: &str, selected: bool, succeeded: bool) {
+    let offered = [skill.to_string()];
+    appraisals::record_turn(
+        root,
+        ArtifactKind::Skill,
+        &offered,
+        if selected { &offered } else { &[] },
+        &SkillTrial {
+            task: appraisals::LIVE_WINDOW_TASK.to_string(),
+            selected,
+            outcome: TaskOutcome {
+                succeeded,
+                cost_usd: 0.0,
+                tokens: 0,
+                retries: 0,
+            },
+            turns: 1,
+        },
+    );
+}
+
 /// Seed `count` control-arm trials for `skill` — turns it matched and was not
 /// injected — straight into the ledger the holdout reads.
 fn seed_control_arm(root: &Path, skill: &str, count: usize) {
     for _ in 0..count {
-        appraisals::record_turn(
-            root,
-            ArtifactKind::Skill,
-            &[skill.to_string()],
-            &[],
-            &SkillTrial {
-                task: appraisals::LIVE_WINDOW_TASK.to_string(),
-                selected: false,
-                outcome: TaskOutcome {
-                    succeeded: true,
-                    cost_usd: 0.0,
-                    tokens: 0,
-                    retries: 0,
-                },
-                turns: 1,
-            },
-        );
+        seed_trial(root, skill, false, true);
     }
 }
 
