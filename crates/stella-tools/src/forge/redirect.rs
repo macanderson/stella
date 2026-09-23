@@ -10,8 +10,9 @@
 //! sent through `gh pr create` carries whatever footer the model chose to
 //! type. This plane exists to take that choice away.
 //!
-//! So the refusal is a redirect. It names the tool, and the action on it, and
-//! the call works on the retry. That shape counts for more than the ban does.
+//! So the refusal is a redirect. It names the tool and the input to call it
+//! with, and the call works on the retry. That shape counts for more than the
+//! ban does.
 //! A bare "not permitted" teaches a model that the tool is gone. What it does
 //! next is climb the fence: `gh api` by hand, or a `curl`.
 //!
@@ -307,13 +308,16 @@ fn names_gh(word: &str) -> bool {
 /// bare `--fill gh` is an argument of whatever ran `--fill`, and with no
 /// wrapper in front of that flag the position is not a command start.
 ///
-/// A flag that takes a value consumes the next word. `sudo -u user gh` runs
-/// `gh`; the value `user` is not a command, and stopping on it would let the
-/// real command through. The same flag does not mean the same thing on every
-/// wrapper — `nice -n` takes the adjustment and `sudo -n` does not — so the
-/// value is claimed only for the pairs [`flag_takes_value`] names. When the
-/// value would have to be the word under test itself (`command -v gh` prints
-/// a path and does not run `gh`), this returns false.
+/// A flag that takes a value consumes it. `sudo -u user gh` runs `gh`; the
+/// value `user` is not a command, and stopping on it would let the real
+/// command through. A single-dash cluster is read letter by letter, so
+/// `sudo -Eu root` is `-E` and then `-u root`. The same letter does not mean
+/// the same thing on every wrapper — `nice -n` takes the adjustment and
+/// `sudo -n` does not — so the value is claimed only for the pairs
+/// [`flag_takes_value`] names. When the value would have to be the word under
+/// test itself (`command -v gh` prints a path and does not run `gh`), this
+/// returns false. `env -S` is not such a pair: GNU env splits that string
+/// into the command and runs it, so `env -S 'gh pr create'` is refused.
 fn is_command_position(prefix: &[&str]) -> bool {
     let start = prefix
         .iter()
@@ -349,43 +353,60 @@ fn consume_wrapper_flags<'a>(wrapper: &str, mut words: &'a [&'a str]) -> Option<
         if !token.starts_with('-') {
             return Some(words);
         }
-        let (name, inline_value) = flag_name(token);
-        let takes_separate_value = flag_takes_value(wrapper, name) && !inline_value;
-        if takes_separate_value && rest.is_empty() {
-            return None;
-        }
-        words = if takes_separate_value {
-            &rest[1..]
+        if takes_separate_value(wrapper, token) {
+            if rest.is_empty() {
+                return None;
+            }
+            words = &rest[1..];
         } else {
-            rest
-        };
+            words = rest;
+        }
     }
     Some(words)
 }
 
-/// The flag's name, and whether its value is already glued on (`-n10`,
-/// `--user=root`).
-fn flag_name(token: &str) -> (&str, bool) {
-    if let Some((name, _)) = token.split_once('=') {
-        return (name, true);
+/// Does `token` take its value from the next word?
+///
+/// `--user=root` and `-n10` already carry the value. A single-dash cluster
+/// is walked letter by letter: a value-taking letter that is last takes the
+/// next word (`-Eu root`), and one with characters after it takes those
+/// (`-uuser`, `-n10`).
+fn takes_separate_value(wrapper: &str, token: &str) -> bool {
+    if token.contains('=') || !token.starts_with('-') {
+        return false;
     }
     if token.starts_with("--") {
-        return (token, false);
+        return flag_takes_value(wrapper, token);
     }
-    // `-n10`: the flag letter is the second character, and the rest is the
-    // value. Cut on characters so a non-ASCII word cannot panic on a byte
-    // boundary. A name this table does not know simply takes no extra word.
-    match token.char_indices().nth(2) {
-        Some((index, _)) => (&token[..index], true),
-        None => (token, false),
+    let mut takes_next = false;
+    for letter in token.chars().skip(1) {
+        if takes_next {
+            return false;
+        }
+        takes_next = letter_takes_value(wrapper, letter);
     }
+    takes_next
+}
+
+/// Whether one letter of a single-dash cluster consumes a value.
+fn letter_takes_value(wrapper: &str, letter: char) -> bool {
+    if !letter.is_ascii() {
+        return false;
+    }
+    let bytes = [b'-', letter as u8];
+    let Ok(flag) = std::str::from_utf8(&bytes) else {
+        return false;
+    };
+    flag_takes_value(wrapper, flag)
 }
 
 /// Does this wrapper's flag consume the next word?
 ///
 /// Only the pairs that do are listed. A flag absent here is a switch:
 /// `sudo -n echo` runs `echo`, and treating `-n` as owning `echo` would
-/// call whatever follows the command.
+/// call whatever follows the command. `env -S` and `--split-string` are
+/// absent because the string is the command GNU env runs, not a value to
+/// skip.
 fn flag_takes_value(wrapper: &str, flag: &str) -> bool {
     matches!(
         (wrapper, flag),
@@ -411,10 +432,7 @@ fn flag_takes_value(wrapper: &str, flag: &str) -> bool {
                     | "--other-user"
             )
             | ("nice", "-n" | "--adjustment")
-            | (
-                "env",
-                "-u" | "--unset" | "-C" | "--chdir" | "-S" | "--split-string"
-            )
+            | ("env", "-u" | "--unset" | "-C" | "--chdir")
             | ("command", "-v" | "-V")
             | ("exec", "-a")
             | ("time", "-f" | "--format" | "-o" | "--output")
@@ -747,6 +765,14 @@ mod tests {
             "env -u FOO -u BAR gh pr create --fill",
             "doas -u root gh pr create --fill",
             "sudo -u user GH_TOKEN=x gh pr create --fill",
+            // GNU env splits the `-S` string into words and runs them.
+            "env -S 'gh pr create --fill'",
+            "env --split-string 'gh pr create --fill'",
+            // A bundled short flag is several flags. `-u` still takes the user.
+            "sudo -Eu root gh pr create --fill",
+            "sudo -iu user gh pr create --fill",
+            "sudo -Hu user gh pr create --fill",
+            "env -iu FOO gh pr create --fill",
         ] {
             assert!(
                 forge_redirect(spelling, &slots).is_some(),
@@ -757,8 +783,8 @@ mod tests {
 
     /// A wrapper word does not turn a mention into a run.
     ///
-    /// The parse steps over `command`, and what it steps onto has to answer
-    /// the original question. `echo` is not a separator, so every line here
+    /// The parse starts at `echo`, which is neither a wrapper nor an
+    /// assignment, so the position is not a command start. Every line here
     /// stays open — the same answer `echo gh pr create` already got.
     #[test]
     fn a_wrapper_inside_an_argument_is_still_not_a_command() {
