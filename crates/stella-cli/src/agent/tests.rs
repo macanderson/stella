@@ -966,6 +966,7 @@ fn reflection_budget_tick_is_rebased_to_the_caller_session() {
             session_spent_usd: None,
             session_limit_usd: None,
             deadline_remaining_ms: None,
+            rejected_spend_figures: 0,
         }],
     };
 
@@ -987,6 +988,35 @@ fn reflection_budget_tick_is_rebased_to_the_caller_session() {
     assert_eq!(ticks.len(), 1);
     assert!((ticks[0].0 - 0.82).abs() < f64::EPSILON);
     assert_eq!(ticks[0].1, Some(1.0));
+}
+
+/// An unreadable reflection cost reaches the guard, which refuses it and says
+/// so on the rebased tick, instead of vanishing before the guard sees it.
+#[test]
+fn an_unreadable_reflection_cost_is_reported_on_the_rebased_tick() {
+    let mut guard = BudgetGuard::new(BudgetMode::Enforced, None, Some(1.0));
+    let _ = guard.record_spend(0.8);
+    let mut report = ReflectionReport {
+        recorded: 0,
+        model_error: None,
+        cost_usd: f64::NAN,
+        events: vec![guard.tick_event(std::time::Instant::now())],
+    };
+
+    settle_reflection_budget(&mut report, &mut guard);
+
+    assert_eq!(
+        guard.session_spent_usd(),
+        0.8,
+        "the refused figure adds nothing"
+    );
+    assert!(matches!(
+        report.events.as_slice(),
+        [AgentEvent::BudgetTick {
+            rejected_spend_figures: 1,
+            ..
+        }]
+    ));
 }
 
 #[test]

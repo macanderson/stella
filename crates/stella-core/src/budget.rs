@@ -163,6 +163,13 @@ pub struct BudgetGuard {
     /// or gated by `mode` — a deadline is a hard backstop the caller opted
     /// into, the same way `EngineConfig::tool_timeout`/`model_timeout` are.
     task_deadline: Option<Instant>,
+    /// Figures `spendable_usd` refused on any door onto the accumulators.
+    /// Never reset by [`begin_turn`](Self::begin_turn): the money a refusal
+    /// stands for is still missing from the session total, and the count is
+    /// how [`tick_event`](Self::tick_event) says so. A reseed keeps it too,
+    /// so the count covers the guard's whole life, which after an in-deck
+    /// session switch includes refusals made in the session left behind.
+    rejected_spend_figures: u32,
 }
 
 impl BudgetGuard {
@@ -181,6 +188,7 @@ impl BudgetGuard {
             turn_spent_usd: 0.0,
             session_spent_usd: 0.0,
             task_deadline: None,
+            rejected_spend_figures: 0,
         }
     }
 
@@ -193,9 +201,10 @@ impl BudgetGuard {
     /// is.
     ///
     /// An amount that is not a finite dollar figure contributes zero — see
-    /// `spendable_usd`.
+    /// `spendable_usd` — and is counted in
+    /// [`rejected_spend_figures`](Self::rejected_spend_figures).
     pub fn record_spend(&mut self, cost_usd: f64) -> BudgetOutcome {
-        let cost_usd = spendable_usd(cost_usd);
+        let cost_usd = self.admit(cost_usd);
         self.turn_spent_usd += cost_usd;
         self.session_spent_usd += cost_usd;
         self.evaluate()
@@ -263,9 +272,36 @@ impl BudgetGuard {
     /// The journal is storage this process reopens, so the figure it hands
     /// back is runtime data like any other: it goes through `spendable_usd`
     /// too, and a session whose recorded total is unreadable reseeds to zero
-    /// rather than wedging the gate.
+    /// rather than wedging the gate. That refusal is counted like any other.
     pub fn reseed_session_spend(&mut self, spent_usd: f64) {
-        self.session_spent_usd = spendable_usd(spent_usd);
+        self.session_spent_usd = self.admit(spent_usd);
+    }
+
+    /// The figure `spendable_usd` lets through, counting a refusal so the
+    /// next [`tick_event`](Self::tick_event) reports it. Every door onto the
+    /// accumulators goes through here, so none of them can skip the count.
+    fn admit(&mut self, cost_usd: f64) -> f64 {
+        spendable_usd(cost_usd).unwrap_or_else(|| {
+            self.rejected_spend_figures = self.rejected_spend_figures.saturating_add(1);
+            0.0
+        })
+    }
+
+    /// How many dollar figures this guard has refused and counted as zero,
+    /// its settled children's included. Nonzero means
+    /// [`session_spent_usd`](Self::session_spent_usd) is short of what the
+    /// calls cost, by an amount nobody can know.
+    #[must_use]
+    pub fn rejected_spend_figures(&self) -> u32 {
+        self.rejected_spend_figures
+    }
+
+    /// Add refusals recorded by an earlier incarnation of this guard — the
+    /// checkpoint restore in `crate::step::BudgetSnapshot::restore`. Crate
+    /// private and additive, so no caller outside the engine can lower the
+    /// count or invent one.
+    pub(crate) fn carry_rejected_spend_figures(&mut self, count: u32) {
+        self.rejected_spend_figures = self.rejected_spend_figures.saturating_add(count);
     }
 
     /// Retarget the session-axis cap mid-session (the deck's `/budget`
@@ -396,6 +432,7 @@ impl BudgetGuard {
                 // would otherwise wrap to a small number, which reads as
                 // "nearly out of time" — the exact inversion of the truth.
                 .map(|left| u64::try_from(left.as_millis()).unwrap_or(u64::MAX)),
+            rejected_spend_figures: self.rejected_spend_figures,
         }
     }
 
@@ -475,6 +512,7 @@ impl BudgetGuard {
             turn_spent_usd: 0.0,
             session_spent_usd: 0.0,
             task_deadline: self.task_deadline,
+            rejected_spend_figures: 0,
         }
     }
 
@@ -506,13 +544,21 @@ impl BudgetGuard {
     /// The returned outcome is the PARENT's, evaluated after the fold, so a
     /// caller whose child pushed it over a cap sees `AbortTurn` at its own
     /// next step boundary rather than one call later.
+    ///
+    /// The child's refused figures fold in too. Its own ticks are dropped at
+    /// the sub-agent boundary, so the parent's tick is the only place a
+    /// refusal inside the child can still be reported.
     pub fn settle_child(&mut self, child: &BudgetGuard) -> BudgetOutcome {
+        self.rejected_spend_figures = self
+            .rejected_spend_figures
+            .saturating_add(child.rejected_spend_figures);
         self.record_spend(child.session_spent_usd())
     }
 }
 
 /// A dollar amount this guard is willing to add to a running total: the
-/// figure itself when it is finite and not negative, and zero otherwise.
+/// figure itself when it is finite and not negative, and `None` otherwise,
+/// which the caller counts as zero and reports.
 ///
 /// Both refusals are about what the accumulator does next, not about taste.
 ///
@@ -531,12 +577,8 @@ impl BudgetGuard {
 /// check belongs here: this is the money meter, and it takes a bare `f64`
 /// from any caller. `stella-fleet` guards the same shape one layer up, where
 /// the producer is a worker process nobody here controls.
-fn spendable_usd(cost_usd: f64) -> f64 {
-    if cost_usd.is_finite() && cost_usd >= 0.0 {
-        cost_usd
-    } else {
-        0.0
-    }
+fn spendable_usd(cost_usd: f64) -> Option<f64> {
+    (cost_usd.is_finite() && cost_usd >= 0.0).then_some(cost_usd)
 }
 
 #[cfg(test)]
@@ -1193,6 +1235,56 @@ mod tests {
         child.record_spend(f64::NAN);
         assert_eq!(parent.settle_child(&child), BudgetOutcome::Continue);
         assert_eq!(parent.session_spent_usd(), 0.0);
+    }
+
+    fn rejected_on_tick(guard: &BudgetGuard) -> u32 {
+        match guard.tick_event(Instant::now()) {
+            AgentEvent::BudgetTick {
+                rejected_spend_figures,
+                ..
+            } => rejected_spend_figures,
+            other => panic!("tick_event minted {other:?}"),
+        }
+    }
+
+    /// The refusal above keeps the gate usable and would otherwise be silent:
+    /// the total on the HUD comes out short of the provider's bill with
+    /// nothing on screen saying why. Each refused figure is counted, and the
+    /// count rides the tick every HUD already reads.
+    #[test]
+    fn a_refused_figure_is_reported_on_the_tick_and_a_clean_session_reports_none() {
+        let mut clean = BudgetGuard::new(BudgetMode::Enforced, None, Some(1.00));
+        clean.record_spend(0.10);
+        clean.record_spend(0.0);
+        clean.reseed_session_spend(0.25);
+        assert_eq!(clean.rejected_spend_figures(), 0);
+        assert_eq!(rejected_on_tick(&clean), 0, "a clean session names none");
+
+        let mut guard = BudgetGuard::new(BudgetMode::Enforced, None, Some(1.00));
+        guard.record_spend(f64::NAN);
+        assert_eq!(
+            rejected_on_tick(&guard),
+            1,
+            "one refused figure, named once"
+        );
+
+        // Every door onto the accumulator counts, and a turn boundary keeps
+        // the count: the money it stands for is still missing from the total.
+        guard.record_spend(-5.0);
+        guard.begin_turn();
+        guard.reseed_session_spend(f64::INFINITY);
+        assert_eq!(rejected_on_tick(&guard), 3);
+
+        // A child's refusals reach the parent, whose tick is the one the
+        // session sees: the child's own ticks are dropped at the boundary.
+        let mut parent = BudgetGuard::new(BudgetMode::Enforced, None, Some(1.00));
+        let mut child = parent.carve(Some(0.50));
+        assert_eq!(child.rejected_spend_figures(), 0, "a carve starts clean");
+        child.record_spend(f64::NAN);
+        child.record_spend(0.05);
+        parent.settle_child(&child);
+        assert_eq!(rejected_on_tick(&parent), 1);
+        assert_eq!(parent.session_spent_usd(), 0.05);
     }
 
     #[test]

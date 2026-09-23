@@ -290,6 +290,7 @@ fn an_opening_rule_carries_only_facts_the_fold_was_given() {
         session_spent_usd: None,
         session_limit_usd: None,
         deadline_remaining_ms: None,
+        rejected_spend_figures: 0,
     });
     model.apply(&stage(StageKind::Execute));
     let second = openings(&model)[1].clone();
@@ -439,6 +440,7 @@ fn text_deltas_accumulate_as_a_preview_the_authoritative_text_replaces() {
         session_spent_usd: None,
         session_limit_usd: None,
         deadline_remaining_ms: None,
+        rejected_spend_figures: 0,
     });
     model.apply(&text("Hello!"));
     assert!(
@@ -511,6 +513,7 @@ fn replaying_a_log_with_deltas_is_deterministic() {
             session_spent_usd: None,
             session_limit_usd: None,
             deadline_remaining_ms: None,
+            rejected_spend_figures: 0,
         },
         text("Hello"),
         AgentEvent::RunComplete {
@@ -534,10 +537,15 @@ fn budget_tick_folds_into_the_hud_gauge_but_never_the_transcript() {
         session_spent_usd: None,
         session_limit_usd: None,
         deadline_remaining_ms: None,
+        rejected_spend_figures: 1,
     });
     assert_eq!(model.hud.spent_usd, 0.42);
     assert_eq!(model.hud.limit_usd, Some(2.0));
     assert_eq!(model.hud.budget_mode, Some(BudgetMode::Enforced));
+    assert_eq!(
+        model.hud.rejected_spend_figures, 1,
+        "the refusal reaches the HUD"
+    );
     // A tick is a gauge reading, not an event. It fires after every model
     // call that spends, so admitting it to the transcript meant four or
     // five near-identical spend rows per turn — the exact noise the

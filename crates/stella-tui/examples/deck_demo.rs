@@ -292,6 +292,7 @@ async fn main() -> std::io::Result<()> {
                             session_spent_usd: Some(0.054),
                             session_limit_usd: limit_usd,
                             deadline_remaining_ms: None,
+                            rejected_spend_figures: 0,
                         },
                     });
                 }
@@ -603,6 +604,7 @@ async fn mini_run(tx: &mpsc::UnboundedSender<Inbound>, id: &str) {
             session_spent_usd: None,
             session_limit_usd: None,
             deadline_remaining_ms: None,
+            rejected_spend_figures: 0,
         }),
         ev(AgentEvent::TurnComplete {
             model: "glm-5.2".into(),

@@ -424,6 +424,7 @@ mod tests {
             session_spent_usd: None,
             session_limit_usd: None,
             deadline_remaining_ms: None,
+            rejected_spend_figures: 0,
         }
     }
 

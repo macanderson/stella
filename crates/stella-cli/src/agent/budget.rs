@@ -54,7 +54,10 @@ pub(crate) fn settle_reflection_budget(report: &mut ReflectionReport, guard: &mu
     report
         .events
         .retain(|event| !matches!(event, AgentEvent::BudgetTick { .. }));
-    if report.cost_usd > 0.0 {
+    // Anything but an exact zero goes to the guard, which refuses and counts
+    // an unreadable figure. `> 0.0` read `false` for a `NaN` and
+    // dropped it here, before the guard could report it.
+    if report.cost_usd != 0.0 {
         let _ = guard.record_spend(report.cost_usd);
     }
     if had_accounting {

@@ -387,6 +387,7 @@ mod tests {
                 session_limit_usd: None,
                 turn_spent_usd: 0.5,
                 session_spent_usd: 0.5,
+                rejected_spend_figures: 0,
             },
             total_cost_usd: 0.5,
             calibration_model: None,

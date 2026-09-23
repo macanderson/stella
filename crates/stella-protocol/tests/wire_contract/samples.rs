@@ -855,6 +855,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 session_spent_usd: Some(1.75),
                 session_limit_usd: Some(10.0),
                 deadline_remaining_ms: Some(842_137),
+                rejected_spend_figures: 2,
             },
             AgentEvent::BudgetTick {
                 spent_usd: 0.42,
@@ -863,6 +864,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 session_spent_usd: None,
                 session_limit_usd: None,
                 deadline_remaining_ms: None,
+                rejected_spend_figures: 0,
             },
         ]
     }));

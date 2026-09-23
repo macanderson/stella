@@ -196,6 +196,12 @@ fn file_change_minimal_default() -> bool {
     true
 }
 
+/// Skips a count at zero. A count added to an event later then leaves a
+/// clean event byte for byte as it was.
+fn is_zero(count: &u32) -> bool {
+    *count == 0
+}
+
 mod kind;
 pub use kind::AgentEvent;
 

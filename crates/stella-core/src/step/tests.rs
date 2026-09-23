@@ -182,6 +182,23 @@ fn a_restored_budget_meters_from_exactly_where_it_stopped() {
         (restored.session_spent_usd() - 1.125).abs() < 1e-12,
         "session axis"
     );
+    assert_eq!(restored.rejected_spend_figures(), 0);
+}
+
+/// A resumed turn keeps saying its totals are short, and a clean
+/// snapshot's JSON never names the count at all.
+#[test]
+fn a_restored_budget_keeps_its_refused_figure_count() {
+    let clean = serde_json::to_string(&checkpoint_fixture().budget).expect("encode");
+    assert!(!clean.contains("rejected_spend_figures"), "{clean}");
+
+    let mut guard = BudgetGuard::new(BudgetMode::Enforced, None, Some(1.0));
+    let _ = guard.record_spend(f64::NAN);
+    let snapshot = BudgetSnapshot::of(&guard);
+    let json = serde_json::to_string(&snapshot).expect("encode");
+    let decoded: BudgetSnapshot = serde_json::from_str(&json).expect("decode");
+    assert_eq!(decoded, snapshot);
+    assert_eq!(decoded.restore().rejected_spend_figures(), 1);
 }
 
 #[test]

@@ -682,6 +682,7 @@ impl SessionModel {
                 limit_usd,
                 mode,
                 deadline_remaining_ms,
+                rejected_spend_figures,
                 ..
             } => {
                 // Gauge only — deliberately *not* pushed to the transcript.
@@ -707,6 +708,7 @@ impl SessionModel {
                 // must be able to go back to reporting nothing, and `or`-ing
                 // the old value would latch a stale clock onto it forever.
                 self.hud.deadline_remaining_ms = *deadline_remaining_ms;
+                self.hud.rejected_spend_figures = *rejected_spend_figures;
             }
             AgentEvent::ProviderFallback { from, to, reason } => {
                 self.transcript.push(TranscriptEntry::ProviderFallback {
