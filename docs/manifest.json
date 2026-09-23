@@ -759,6 +759,11 @@
       "status": "living",
       "title": "Creators label triage only; the triage agent owns priority"
     },
+    "scr/006-schema-changes-are-labelled": {
+      "path": "docs/scr/SCR-006-schema-changes-are-labelled.md",
+      "status": "living",
+      "title": "A schema change is labelled, and its migration is applied before its deploy"
+    },
     "scr/readme": {
       "path": "docs/scr/README.md",
       "status": "living",
