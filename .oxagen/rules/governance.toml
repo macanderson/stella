@@ -1,4 +1,0 @@
-# Read on the production branch when a pull request is opened and again
-# when it is merged. A missing file means team.
-mode = "solo"
-separation_of_duties = false
