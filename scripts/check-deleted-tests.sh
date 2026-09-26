@@ -71,12 +71,26 @@
 # adjudicate whether a deletion was correct — a script cannot — but to convert
 # an invisible deletion into a sentence a reviewer reads.
 #
+# ── Python tests count too ───────────────────────────────────────────────────
+#
+# A large and growing share of this repository's tests are Python, under
+# `bench/`, and until now this guard could not see any of them: it read only
+# `#[test]` / `#[tokio::test]`. scripts/collect-python-tests.py walks every
+# tracked `*.py` file's AST at a given ref and returns each `def test_*`
+# name, top-level or nested in a class, the same way `TestSweepAntiVacuity`'s
+# methods in bench/harbor_adapter/tests/test_manifest_parity.py each count on
+# their own. Its names are folded into the same base/head sets the Rust scan
+# below builds, so everything past that point — the diff, the acknowledgement
+# channels, the failure text — treats a dropped Python test exactly like a
+# dropped Rust one, without knowing the difference.
+#
 # ── What it keys on, and the miss that follows ───────────────────────────────
 #
 # The bare function name of anything carrying `#[test]` or `#[tokio::test]`,
-# unqualified by file or module. Unqualified is a choice: it means a test MOVED
-# between files or modules is silently fine, which is the common, legitimate
-# case and would otherwise be constant noise.
+# unqualified by file or module, plus every Python `def test_*` name the same
+# way. Unqualified is a choice: it means a test MOVED between files or modules
+# is silently fine, which is the common, legitimate case and would otherwise
+# be constant noise.
 #
 # The cost is that a duplicated name masks a deletion — delete one `fn works()`
 # while another survives elsewhere and this guard sees the name still present.
@@ -229,9 +243,59 @@ test_names_at() {
     ' | LC_ALL=C sort -u
 }
 
+# Every Python `def test_*` name in one tree, sorted and deduplicated, via
+# scripts/collect-python-tests.py.
+#
+# A tree with no Python at all is normal, the same as zero Rust tests above.
+#
+# The collector can flag its own trouble too (exit 3: a test-named file with
+# nothing readable inside). That flag is not enough alone. It can only speak
+# about files it found, and this guard's own file listing broke once,
+# silently: `git ls-tree`'s glob pathspec looked fine on a small fixture and
+# matched nothing on the real tree. A collector trusting its own empty list
+# would have called that tree clean. So `python_test_shaped_count_at` below
+# counts test-shaped `.py` paths straight from `git ls-tree`, no pathspec, no
+# Python run at all. That count is the one this guard trusts.
+python_vacuous=""
+
+# python_test_shaped_count_at <ref> — how many tracked `.py` paths at <ref>
+# are named the way pytest expects a test file to be named, counted without
+# a pathspec (see the note above) and without running any Python at all.
+python_test_shaped_count_at() {
+  git ls-tree -r --name-only "$1" 2>/dev/null | awk -F/ '
+    $NF ~ /^test_.*\.py$/ || $NF ~ /_test\.py$/ { c++ }
+    END { print c + 0 }
+  '
+}
+
+python_names_at() {
+  local ref="$1" out="$2" rc=0 shaped=0
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "check-deleted-tests: python3 is not on PATH, so Python tests at" >&2
+    echo "     $ref could not be scanned at all. Install python3, or this" >&2
+    echo "     guard has no Python coverage to give." >&2
+    exit 1
+  fi
+  set +e
+  python3 "$repo_root/scripts/collect-python-tests.py" "$ref" >"$out"
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ]; then
+    echo "check-deleted-tests: could not scan Python tests at $ref (collect-python-tests.py exited $rc)." >&2
+    exit 1
+  fi
+  shaped="$(python_test_shaped_count_at "$ref")"
+  if [ "$shaped" -gt 0 ] && [ ! -s "$out" ]; then
+    python_vacuous="$python_vacuous $ref"
+  fi
+  return 0
+}
+
 base_names="$(mktemp)"
 head_names="$(mktemp)"
-trap 'rm -f "$base_names" "$head_names"' EXIT
+py_base_names="$(mktemp)"
+py_head_names="$(mktemp)"
+trap 'rm -f "$base_names" "$head_names" "$py_base_names" "$py_head_names"' EXIT
 
 # `|| true` on each: `git grep` exits 1 on zero matches, which `test_names_at`'s
 # trailing pipe (with `pipefail`) turns into the whole function returning
@@ -245,6 +309,30 @@ trap 'rm -f "$base_names" "$head_names"' EXIT
 # exists to notice rather than crash silently on.
 test_names_at "$base_ref" >"$base_names" || true
 test_names_at "$head_ref" >"$head_names" || true
+
+python_names_at "$base_ref" "$py_base_names"
+python_names_at "$head_ref" "$py_head_names"
+
+if [ -n "$python_vacuous" ]; then
+  {
+    echo "check-deleted-tests: FAILED"
+    echo ""
+    echo "scripts/collect-python-tests.py found a pytest-named file (test_*.py"
+    echo "or *_test.py) at each of:$python_vacuous"
+    echo "but zero \`def test_*\` names anywhere in the tree there. That is the"
+    echo "collector's own glob or parser breaking, not a tree with no tests —"
+    echo "fixing it, not naming a deletion, is what this run needs."
+  } >&2
+  exit 1
+fi
+
+# Merge the Python names into the same sets the Rust scan built, so the
+# comparison, the acknowledgement channels and the failure text below run
+# once over both languages rather than twice.
+cat "$py_base_names" >>"$base_names"
+cat "$py_head_names" >>"$head_names"
+LC_ALL=C sort -u -o "$base_names" "$base_names"
+LC_ALL=C sort -u -o "$head_names" "$head_names"
 
 # In the base tree and not in the merged tree.
 removed="$(LC_ALL=C comm -23 "$base_names" "$head_names")"

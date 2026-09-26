@@ -27,6 +27,7 @@ set -uo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd -P)"
 guard="$repo_root/scripts/check-deleted-tests.sh"
+collector="$repo_root/scripts/collect-python-tests.py"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/stella-deleted-tests.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
@@ -43,6 +44,7 @@ new_repo() {
   rm -rf "$dir"
   mkdir -p "$dir/scripts" "$dir/crates/x/src"
   cp "$guard" "$dir/scripts/check-deleted-tests.sh"
+  cp "$collector" "$dir/scripts/collect-python-tests.py"
   git -C "$dir" init -q
   git -C "$dir" config user.email t@t.invalid
   git -C "$dir" config user.name t
@@ -70,6 +72,7 @@ new_repo_no_deletion() {
   rm -rf "$dir"
   mkdir -p "$dir/scripts" "$dir/crates/x/src"
   cp "$guard" "$dir/scripts/check-deleted-tests.sh"
+  cp "$collector" "$dir/scripts/collect-python-tests.py"
   git -C "$dir" init -q
   git -C "$dir" config user.email t@t.invalid
   git -C "$dir" config user.name t
@@ -86,6 +89,64 @@ new_repo_no_deletion() {
   printf '%s %s %s' "$dir" "$base_sha" "$head_sha"
 }
 
+# new_py_repo <name> [head-commit-message] — the Python analogue of new_repo,
+# for the D17/D18 witness pair: a base commit with
+# tests/test_thing.py holding one `def test_my_witness`, and a head commit
+# that removes the whole file. Deleting the file, not just the function
+# inside it, keeps the head tree free of a test-named file with nothing in
+# it — the ordinary way a repository actually drops a file's last test, and
+# the shape that does not also trip the collector's own anti-vacuity check
+# (D19 below), which is a different, narrower question: whether a test-named
+# file that still EXISTS ever comes back empty. Prints
+# "<dir> <base-sha> <head-sha>".
+new_py_repo() {
+  local name="$1" dir
+  dir="$tmp/$name"
+  rm -rf "$dir"
+  mkdir -p "$dir/scripts" "$dir/tests"
+  cp "$guard" "$dir/scripts/check-deleted-tests.sh"
+  cp "$collector" "$dir/scripts/collect-python-tests.py"
+  git -C "$dir" init -q
+  git -C "$dir" config user.email t@t.invalid
+  git -C "$dir" config user.name t
+
+  printf 'def test_my_witness():\n    assert True\n' >"$dir/tests/test_thing.py"
+  git -C "$dir" add -A
+  git -C "$dir" commit -q -m base
+  local base_sha
+  base_sha="$(git -C "$dir" rev-parse HEAD)"
+
+  git -C "$dir" rm -q tests/test_thing.py
+  git -C "$dir" commit -q -m "${2:-head}"
+  local head_sha
+  head_sha="$(git -C "$dir" rev-parse HEAD)"
+
+  printf '%s %s %s' "$dir" "$base_sha" "$head_sha"
+}
+
+# new_py_vacuous_repo <name> — a repo whose one Python file is named the way
+# pytest expects a test file to be named but does not parse (a leftover merge
+# marker), for D19: the AST walk finds the file but can read no `def test_*`
+# inside it, which must fail loudly as the collector or the tree breaking,
+# not pass silently as an empty tree with nothing to compare. Prints the
+# directory; caller diffs it against itself, since the point is the single
+# tree, not a deletion.
+new_py_vacuous_repo() {
+  local name="$1" dir
+  dir="$tmp/$name"
+  rm -rf "$dir"
+  mkdir -p "$dir/scripts" "$dir/tests"
+  cp "$guard" "$dir/scripts/check-deleted-tests.sh"
+  cp "$collector" "$dir/scripts/collect-python-tests.py"
+  git -C "$dir" init -q
+  git -C "$dir" config user.email t@t.invalid
+  git -C "$dir" config user.name t
+  printf '<<<<<<< HEAD\ndef test_a():\n    pass\n' >"$dir/tests/test_broken.py"
+  git -C "$dir" add -A
+  git -C "$dir" commit -q -m base
+  printf '%s' "$dir"
+}
+
 # new_pr_merge <name> <pr-lib> <main-lib> <merge-lib> builds the history ci.yml
 # checks out on a pull request. After the base commit, the PR branch and main
 # each gain a commit. HEAD merges the branch into main, so HEAD^1 is main's tip.
@@ -97,6 +158,7 @@ new_pr_merge() {
   rm -rf "$dir"
   mkdir -p "$dir/scripts" "$dir/crates/x/src"
   cp "$guard" "$dir/scripts/check-deleted-tests.sh"
+  cp "$collector" "$dir/scripts/collect-python-tests.py"
   git -C "$dir" init -q -b main
   git -C "$dir" config user.email t@t.invalid
   git -C "$dir" config user.name t
@@ -242,6 +304,7 @@ fi
 d10="$tmp/expiring_ack"
 mkdir -p "$d10/scripts" "$d10/crates/x/src"
 cp "$guard" "$d10/scripts/check-deleted-tests.sh"
+cp "$collector" "$d10/scripts/collect-python-tests.py"
 git -C "$d10" init -q -b main
 git -C "$d10" config user.email t@t.invalid
 git -C "$d10" config user.name t
@@ -341,6 +404,62 @@ want "D15 a rename passes when the PR body names the old test" \
   "renamed my_witness to witness_as_table_rows"
 want "D16 a rename fails when the PR body names only the new test" \
   expect-fail "my_witness" "$d15" "" "" "added witness_as_table_rows"
+
+# ── D17/D18: Python tests count, the D1/D2 shape ─────────────────────────────
+read -r d17_dir d17_base d17_head <<EOF
+$(new_py_repo py_unnamed_fails)
+EOF
+want "D17 a deleted Python test that is not named in the PR fails, naming it" \
+  expect-fail "test_my_witness" "$d17_dir" "$d17_base" "$d17_head" ""
+
+read -r d18_dir d18_base d18_head <<EOF
+$(new_py_repo py_named_passes)
+EOF
+want "D18 the same Python deletion passes once the PR body names it" \
+  expect-pass "each named in the PR description" "$d18_dir" "$d18_base" "$d18_head" \
+  "dropped test_my_witness, folded into a table test"
+
+# ── D19: the Python side's own anti-vacuity check ────────────────────────────
+#
+# A test-named file the walk cannot read is not the same shape as a tree
+# with no Python at all — D8's fixture has zero `.py` files anywhere, and
+# that passes, quietly, the same way the Rust side treats a tree with no
+# `#[test]` attribute as real but rare. A file called like a pytest test
+# that yields zero names is instead treated as this collector's own glob or
+# parser breaking, and must fail loudly rather than compare two empty sets.
+d19="$(new_py_vacuous_repo py_vacuous)"
+d19_sha="$(git -C "$d19" rev-parse HEAD)"
+want "D19 a test-named Python file that will not parse fails loudly, not silently empty" \
+  expect-fail "collector's own glob or parser breaking" "$d19" "$d19_sha" "$d19_sha" ""
+
+# ── D20: a collector that runs clean and finds nothing is still caught ──────
+#
+# D19 breaks the FILE (a syntax error). D20 breaks the COLLECTOR instead: it
+# runs, exits 0, and prints no names, the shape a broken `git ls-tree` glob
+# already produced once on the real tree (this guard's own fix for it is the
+# `_python_files_at` note in scripts/collect-python-tests.py). If the guard
+# trusted the collector's own silence, this tree would read as clean. The
+# independent `python_test_shaped_count_at` count is what catches it instead.
+new_py_broken_collector_repo() {
+  local name="$1" dir
+  dir="$tmp/$name"
+  rm -rf "$dir"
+  mkdir -p "$dir/scripts" "$dir/tests"
+  cp "$guard" "$dir/scripts/check-deleted-tests.sh"
+  printf '#!/usr/bin/env python3\nimport sys\nsys.exit(0)\n' >"$dir/scripts/collect-python-tests.py"
+  chmod +x "$dir/scripts/collect-python-tests.py"
+  git -C "$dir" init -q
+  git -C "$dir" config user.email t@t.invalid
+  git -C "$dir" config user.name t
+  printf 'def test_my_witness():\n    assert True\n' >"$dir/tests/test_thing.py"
+  git -C "$dir" add -A
+  git -C "$dir" commit -q -m base
+  printf '%s' "$dir"
+}
+d20="$(new_py_broken_collector_repo py_broken_collector)"
+d20_sha="$(git -C "$d20" rev-parse HEAD)"
+want "D20 a collector that exits clean but finds nothing still fails loudly" \
+  expect-fail "collector's own glob or parser breaking" "$d20" "$d20_sha" "$d20_sha" ""
 
 echo
 echo "passed ${pass}, failed ${fail}"
