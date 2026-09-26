@@ -507,10 +507,11 @@ fn print_reconstruction(
         recon.messages.len(),
         if full { ", full bodies" } else { "" }
     );
-    // Report the two failure modes separately: an unresolved block is a
-    // documented coverage gap, a digest mismatch means the bytes recovered for
-    // a block are not the bytes it recorded. Collapsing them into "unverified"
-    // would hide which one happened.
+    // Report each failure mode on its own line. An unresolved block is a
+    // known gap. A digest mismatch means the recovered bytes are not the
+    // block's real bytes. A local-content anomaly means a block that should
+    // only come from the journal carried its own stored bytes instead.
+    // Folding them into one "unverified" line would hide which one happened.
     if !recon.unresolved.is_empty() {
         println!(
             "!  {} block(s) could not be resolved (synthetic results, discarded \
@@ -521,6 +522,14 @@ fn print_reconstruction(
     }
     if let Some(line) = digest_mismatch_line(recon) {
         println!("{line}");
+    }
+    if !recon.local_content_anomalies.is_empty() {
+        println!(
+            "!! {} block(s) of a kind that should resolve from the journal carried local \
+             content instead — treat the reconstruction as untrustworthy: {}",
+            recon.local_content_anomalies.len(),
+            recon.local_content_anomalies.join(", ")
+        );
     }
     if recon.is_verified() {
         println!("verified: every journal-resolved block re-hashed to its recorded digest");
@@ -1137,6 +1146,11 @@ struct ReconstructionJson {
     verified: bool,
     unresolved: Vec<String>,
     digest_mismatches: Vec<String>,
+    /// Block ids of a kind that should only ever resolve from the journal
+    /// (never a gap kind) that carried local content instead. Withholds
+    /// `verified` on its own — see
+    /// [`stella_store::Reconstruction::local_content_anomalies`].
+    local_content_anomalies: Vec<String>,
     /// Which compaction-journaling era wrote this execution's journal —
     /// `compaction_journaled` or `compaction_unjournaled`. A script cannot
     /// read `digest_mismatches` honestly without it: on an unjournaled journal
@@ -1215,6 +1229,7 @@ fn reconstruction_json(recon: &Reconstruction) -> ReconstructionJson {
         verified: recon.is_verified(),
         unresolved: recon.unresolved.clone(),
         digest_mismatches: recon.digest_mismatches.clone(),
+        local_content_anomalies: recon.local_content_anomalies.clone(),
         journal_era: era_tag(recon.journal_era),
         digest_mismatch_severity: severity_tag(recon.mismatch_severity()),
         messages: recon
@@ -1263,6 +1278,7 @@ mod tests {
             messages: Vec::new(),
             unresolved: Vec::new(),
             digest_mismatches: vec!["blk_res".into()],
+            local_content_anomalies: Vec::new(),
             journal_era,
         }
     }
@@ -1301,6 +1317,7 @@ mod tests {
                 messages: Vec::new(),
                 unresolved: Vec::new(),
                 digest_mismatches: Vec::new(),
+                local_content_anomalies: Vec::new(),
                 journal_era: era,
             };
             assert!(digest_mismatch_line(&clean).is_none());

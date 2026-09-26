@@ -833,7 +833,7 @@ impl Store {
 
     /// The bare guard, for the two callers that already name the path
     /// themselves: [`Store::migrate`] and
-    /// [`crate::integrity::Store::migrate_and_prepare_exports`], both wrapped
+    /// [`Store::migrate_and_prepare_exports`], both wrapped
     /// end to end in [`crate::integrity::classify_store_corruption`]. Nothing
     /// else in the crate should reach for this — an ordinary read or write
     /// wants [`Store::lock`], so its corruption can name the file itself.
