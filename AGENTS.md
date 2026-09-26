@@ -28,6 +28,20 @@ Oxagen's *Engineering Deterministic AI Coding Agents* field manual.
 
 ---
 
+## Local execution
+
+Mac set this on 2026-09-26 for every repository on this machine. Local builds, test runs, dev servers, and git hooks ran the laptop out of memory and killed agent runs partway through, and every killed run costs money. CI is the only place code is built, checked, or tested.
+
+- Do not run the gate, a build, a typecheck, a lint, or any test, not even one test file. Push the branch and read the CI result. Read a failed job with `gh run view --job <id> --log-failed`.
+- Do not start a dev server: no `next dev`, `next start`, `pnpm dev`, a server under `cargo run`, or anything else that listens on a port.
+- Do not start Docker or Colima, and do not run anything that needs them.
+- Do not run Biome in any form.
+- Git hooks are off on this machine. `LEFTHOOK=0` and `HUSKY=0` are set for every shell and every Claude Code session. Do not reinstall a hook, turn one back on, or run a hook's commands by hand.
+- Code generators and small integrity scripts that only read and write files are allowed, such as regenerating a checksum, a schema index, or a message catalogue.
+- Put this rule, word for word, in the prompt of every subagent you start.
+
+---
+
 ## Essential commands
 
 The repo is a Cargo workspace. Rust is **pinned to a concrete version**
@@ -41,6 +55,9 @@ same commit (or the next one) so drift never accumulates. A **`Makefile`**
 wraps the common commands with the correct flags — run `make help` for the
 full list.
 
+CI runs the builds, tests, and lints these targets wrap. None of them is run
+on this machine, so push the branch and read the CI run instead.
+
 ```bash
 make build               # cargo build --workspace
 make test                # cargo test --workspace
@@ -50,7 +67,8 @@ make smoke               # compile check — runs `stella models` (no API key ne
 make help                # list every target
 ```
 
-**Iterate on a single crate** (much faster than the whole workspace):
+**Single-crate tests** run in CI as part of the workspace suite. They are not
+run on this machine:
 
 ```bash
 make test-core           # or: cargo test -p stella-core
@@ -58,7 +76,8 @@ make test-model          # or: cargo test -p stella-model
 make test-tools          # or: cargo test -p stella-tools
 ```
 
-**Watch mode** (requires `cargo install cargo-watch`):
+**Watch mode** (requires `cargo install cargo-watch`) re-runs tests and clippy
+on every save, so it is not run on this machine. CI runs the tests and clippy:
 
 ```bash
 make watch               # re-run workspace tests on every save
@@ -82,13 +101,13 @@ RUSTDOCFLAGS="-D warnings" cargo doc -p stella-core --no-deps --document-private
 
 It compiles, so it stays a `make gate` step rather than moving into
 `make guards-fast` — CARGO_SCOPE is what makes it seconds instead of the
-full workspace.
+full workspace. CI runs it, and it is not run on this machine.
 
 ### The gate — what every push is held to
 
-A red gate is an automatic "not yet". CI is where it runs: on the
-maintainer's laptop an agent session does not run `make gate`, a workspace
-build, or the workspace test suite — it pushes and reads the run
+A red gate is an automatic "not yet". CI is where it runs. On the
+maintainer's laptop an agent session does not run `make gate`, a build, or a
+test of any size. It pushes and reads the run
 (CLAUDE.md, "CI builds and tests; this laptop does not"). The list below is
 the contract CI enforces and the command a contributor with their own
 machine runs before pushing:
@@ -804,6 +823,10 @@ command for each platform. #3830 is where "the image agents run in should carry
 it" is tracked — that image is not defined in this repository, so nothing here
 can install it.
 
+**The pre-push hook is off on this machine.** Every mention of the hook below
+describes a clone where a contributor installed it with `make hooks`. On this
+machine CI runs every rung, and nothing runs at push time.
+
 `guards-fast` is not a rung you choose by hand; the pre-push hook picks it for
 a push that reaches no crate *and* cannot have touched the wire contract — a
 website-only or workflow-only push, which used to pay for a cargo build it had
@@ -831,9 +854,10 @@ git honours ignore patterns only for paths it is not already tracking. A
 failure can also mean an ignore rule is too broad to accept new files; the
 script's output tells you which case you're in.
 
-**Run `make hooks` once per clone.** It installs a `pre-push` git hook
-(`core.hooksPath=.githooks`) that runs `make gate` automatically on every push
-and aborts the push if it fails. The point is *when* it fails: on your machine,
+**`make hooks` is not run on this machine.** On another clone it installs a
+`pre-push` git hook (`core.hooksPath=.githooks`) that runs `make gate`
+automatically on every push and aborts the push if it fails. The point is
+*when* it fails: on your machine,
 in thirty seconds, instead of an hour into `ci.yml` and a review round-trip.
 It is advisory and per-clone (bypassable with `SKIP_GATE=1 git push` or
 `git push --no-verify`), so it complements the required server-side checks
@@ -1227,8 +1251,9 @@ For a behavior change or feature, a PR should include a **witness test**:
 - It **fails** on `main` without your change (the feature is genuinely absent).
 - It **passes** with your change (the feature is genuinely present).
 
-Check it the artisanal way (`git stash && cargo test -p <crate>`). Pure
-refactors, docs, and CI changes don't need a witness — say so in the PR
+Tests are not run on this machine, so check it in CI. Push the witness test
+alone and read the failing run, then push the change and read the passing
+one. Pure refactors, docs, and CI changes don't need a witness — say so in the PR
 template. If a witness is genuinely impractical (e.g. TUI rendering), explain
 how you verified the change instead.
 
@@ -1821,12 +1846,13 @@ trailer `Refs #N` instead.
   into a fixed-size `TestBackend` and the whole character grid is compared
   against a committed snapshot under `tests/snapshots/deck/`. This catches what
   a `contains` assertion cannot — a column that shifted, a panel that moved, a
-  row that vanished. Regenerate with
-  `BLESS=1 cargo test -p stella-tui --test deck_render_snapshots`, then **read
+  row that vanished. Regeneration runs
+  `BLESS=1 cargo test -p stella-tui --test deck_render_snapshots`, which
+  compiles, so it is not run on this machine. Wherever it runs, **read
   the diff**: a golden blessed without looking is a changelog, not a test.
 
-When iterating, run a single crate's tests — `cargo test -p stella-core` is
-seconds; `cargo test --workspace` rebuilds everything.
+CI runs the tests, one crate or the whole workspace. They are not run on this
+machine.
 
 ---
 
@@ -1837,7 +1863,8 @@ seconds; `cargo test --workspace` rebuilds everything.
   you run day to day passes `--locked`, which is what makes a stale lock
   invisible until release time — so `lockfile-sync`
   (`scripts/check-lockfile-sync.sh`) resolves it on every gate run, including
-  the `guards-fast` rung the pre-push hook picks. It compiles nothing.
+  the `guards-fast` rung. It compiles nothing. CI runs it, and it is not run on
+  this machine, where the pre-push hook is off.
 
   It catches the lock you forgot to regenerate. It cannot catch the other
   shape: two branches that are each correct and collide only once both land —
@@ -1904,7 +1931,7 @@ macanderson org repos.
   (inner loop):** Never compile or run the full test suite while developing.
   Build and test only the crates/packages/modules touched by the change
   (plus direct dependents on interface changes). The full suite is CI's job.
-  Here: `cargo test -p <crate> [filter]`, never bare `cargo test` / `cargo test --workspace`.
+  Here: CI runs every build and test, and none of them runs on this machine.
 - **[SCR-002](docs/scr/SCR-002-durability-first-architecture.md) —
   Architecture decisions:** Do not ask. Choose the most durable option — the
   one that can't be questioned in 10 years as the right move. Cheap-and-easy
