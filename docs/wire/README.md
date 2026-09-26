@@ -15,9 +15,11 @@ Generated files. Do not edit them by hand.
 | `serveframe.schema.json` | JSON Schema for `ServerFrame`, the `stella-serve` transport envelope |
 | `serveinbound.schema.json` | The bodies a host POSTs to the transport — three that answer a reverse request, plus the optional `engine` object on a turn — and every payload type they reference |
 | `serveframe.d.ts` | Both of the above as TypeScript, plus the `seq` envelope |
-| `wrapper.wire.json` | Every message the wrapper socket carries, in both its fullest and its emptiest legal form |
-| `wrapper.schema.json` | JSON Schema for the socket's two point messages, `WrapperRequest` and `WrapperResponse` |
+| `wrapper.wire.json` | Every message the wrapper socket, the host-call channel and the driver channel carry, in both its fullest and its emptiest legal form |
+| `wrapper.schema.json` | JSON Schema for the wrapper socket's two point messages, `WrapperRequest` and `WrapperResponse` |
 | `wrapper.d.ts` | The same contract as TypeScript declarations, plus the `WrapperPoint` union |
+| `driver.schema.json` | JSON Schema for the driver channel's four messages: `DriveRequest`, `DriverCallRequest`, `DriverCallResponse`, `DriveResponse` |
+| `driver.d.ts` | The same contract as TypeScript declarations |
 
 All are derived from the Rust types and committed, so a change to the wire
 format lands as a reviewable diff instead of as something a consumer discovers.
@@ -51,11 +53,16 @@ gaining a format or pattern constraint: neither changes a byte of an example.
 `wrapper.schema.json` is what states those — JSON Schema 2020-12 derived by
 `schemars` from the types, exactly as the two `AgentEvent`/`ServerFrame`
 artifacts are. It covers `WrapperRequest` and `WrapperResponse`, which is the
-point exchange; the host-call and driver channels stay corpus-only, because
-`HostCallOk` is an untagged union whose contract is that its variants are
-discriminable by their required keys — a property JSON Schema can state as
-`oneOf` and cannot check, so a schema there would read as more authority than
-it has.
+point exchange; the host-call channel stays corpus-only, because one of its
+answers, `HostCallOk`, is an untagged union whose contract is that its
+variants are discriminable by their required keys — a property JSON Schema
+can state as `oneOf` and cannot check, so a schema there would read as more
+authority than it has.
+
+The driver channel carries no such union — its request and response roots are
+all plain structs and externally tagged enums — so it is not held to the
+corpus alone: `driver.schema.json` and `driver.d.ts` publish it the same way,
+through the same printer (#6284).
 
 The corpus is not superseded and is not going away: a schema describes shapes,
 and the corpus pins the bytes a plugin's parser actually meets, which a schema

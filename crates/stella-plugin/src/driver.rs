@@ -67,6 +67,8 @@ use crate::host_call::HostCallFailure;
 use crate::runtime::Runtime;
 
 pub mod deliver;
+#[cfg(feature = "schema")]
+mod schema;
 pub mod sweep;
 
 pub use deliver::{
@@ -107,6 +109,7 @@ pub use sweep::{SweepReceipts, SweepReport, SweepSkip, SweepSkipReason, SweptSup
 /// the latter is simply not here yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum DriverCall {
     /// The ranked readiness queue.
     BacklogNext,
@@ -511,6 +514,7 @@ impl DriverEnvelope {
 /// addition here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum DrivePoint {
     /// The driver session itself.
     Drive,
@@ -524,6 +528,7 @@ pub enum DrivePoint {
 /// it here would be pinning a wire shape to a type that does not exist.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DriveRequest {
     /// Which point is open. Always [`DrivePoint::Drive`]; present so the
     /// request is self-describing on the wire.
@@ -548,6 +553,7 @@ impl DriveRequest {
 /// What the host tells a driver when it opens the session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DriveSession {
     /// The host's identifier for this session, echoed into its telemetry.
     pub session: String,
@@ -620,6 +626,7 @@ impl Serialize for DriveResponse {
 /// wakes (`WakeCondition`) arrive with the supply model in B4.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum DriveNext {
     /// Re-open a session after this many seconds.
     Sleep {
@@ -646,6 +653,21 @@ pub enum DriveNext {
 /// The `args` key is the verb's own table and nothing else — see
 /// [`DriverArgs`]. An ask for a verb that reads no arguments omits it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+// `Deserialize` is written out by hand over the shared, denying envelope
+// below rather than by attribute here, so the derived schema would otherwise
+// claim the channel accepts a key it refuses — [`crate::wire::WrapperRequest`]'s
+// reason.
+#[cfg_attr(feature = "schema", schemars(deny_unknown_fields))]
+#[cfg_attr(
+    feature = "schema",
+    schemars(
+        description = "One capability ask a driver writes mid-session. `id` is the driver's \
+                       own correlation number, echoed back on the answer, so a driver that \
+                       pipelines two asks can tell the answers apart. `args` is the named \
+                       verb's own table, omitted for a verb that reads none."
+    )
+)]
 pub struct DriverCallRequest {
     /// What the driver calls this ask, echoed on the answer.
     pub id: u32,
@@ -792,6 +814,7 @@ pub enum DriverCallOutcome {
 /// different unit from the one it would report on.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DriverArgs {
     /// Which unit [`DriverCall::BacklogClaim`] should take the lease on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -871,6 +894,7 @@ impl DriverArgs {
 /// have an opinion about that.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct UnitArgs {
     /// The tracker key.
     pub issue: String,
@@ -885,6 +909,7 @@ pub struct UnitArgs {
 /// nobody anything.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct AbandonArgs {
     /// What a human reads in the ledger.
     pub reason: String,
@@ -905,6 +930,7 @@ pub struct AbandonArgs {
 /// rather than a value silently dropped.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DriverOk {
     /// What [`DriverCall::BacklogNext`] answered with: the tracker's open
     /// queue, in the order the loop should take it.
@@ -961,6 +987,7 @@ pub struct DriverOk {
 /// from a backlog with one issue in it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct BacklogPage {
     /// The open issues the host read, most-ready first. Empty means the
     /// tracker answered and had nothing ready — a failed read is a
@@ -980,6 +1007,7 @@ pub struct BacklogPage {
 /// (`doc:agent-native-delivery` §10.2).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct BacklogEntry {
     /// The tracker's own identifier, as the tracker spells it — `"1234"`,
     /// `"STELLA-42"`. Opaque: a driver hands it back and never parses it.
@@ -1004,6 +1032,7 @@ pub struct BacklogEntry {
 /// [`Self::holder`] is empty exactly when nobody was named.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ClaimReport {
     /// The unit the ask named, echoed so a pipelined driver can join it.
     pub issue: String,
@@ -1018,6 +1047,7 @@ pub struct ClaimReport {
 /// The session's unit of work, as the three `work` verbs report it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct WorkReport {
     /// The unit, or empty when the session holds none.
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -1047,6 +1077,7 @@ pub struct WorkReport {
 /// that produces it).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum WorkState {
     /// This session holds no unit. The answer to a `work_status` asked before
     /// anything was started, and after a `work_abandon`.

@@ -38,6 +38,7 @@ use serde::{Deserialize, Serialize};
 /// report without joining it back to the ask that produced it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum SweptSupply {
     /// The closed issues this loop has claimed to fix.
     Regress,
@@ -72,6 +73,7 @@ impl std::fmt::Display for SweptSupply {
 /// answers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct SweepReport {
     /// Which supply this is a report about.
     pub supply: SweptSupply,
@@ -96,6 +98,7 @@ pub struct SweepReport {
 /// How much of the closure ledger one `sweep_regress` draw could re-ask.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct SweepReceipts {
     /// Receipts on file.
     pub total: u64,
@@ -109,6 +112,7 @@ pub struct SweepReceipts {
 /// One reason receipts could not be re-checked, and how many carried it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct SweepSkip {
     /// Why.
     pub reason: SweepSkipReason,
@@ -123,6 +127,7 @@ pub struct SweepSkip {
 /// alike, and filing the wrong one of those costs a person an hour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum SweepSkipReason {
     /// The closure cited no change at all.
     NoChangeCited,
