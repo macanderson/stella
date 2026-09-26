@@ -1244,6 +1244,14 @@ tap-current: ## Assert the Homebrew tap formula serves the newest published rele
 tap-current-test: ## Test the tap staleness rule (hermetic; not part of `gate`)
 	./scripts/test-tap-current.sh
 
+.PHONY: merged-branch-drift
+merged-branch-drift: ## Assert no merged pull request's branch is still on origin, ahead of its merge (#2658)
+	@./scripts/check-merged-branch-drift.sh
+
+.PHONY: merged-branch-drift-test
+merged-branch-drift-test: ## Test the merged-branch drift rule (hermetic; not part of `gate`)
+	./scripts/test-check-merged-branch-drift.sh
+
 .PHONY: hooks
 hooks: ## Install the pre-push gate hook (runs `make gate`, scoped to the diff, on every push)
 	git config core.hooksPath .githooks

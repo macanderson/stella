@@ -403,6 +403,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-releases-published-pagination.sh
 
+      - name: the merged-branch drift rule
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-check-merged-branch-drift.sh
+
       - name: rebase-replay guard directions, and the hazard itself
         if: ${{ !cancelled() }}
         run: ./scripts/test-rebase-replay.sh
