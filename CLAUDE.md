@@ -307,17 +307,18 @@
   names a diff-size limit, a spent weekly review budget, or its own outage is
   a refusal, not a pass, even though `gh pr checks` shows the same
   `skipped`-looking `Sourcery review` context as a PR nobody has reviewed
-  yet.
-  - **Sourcery could not review it.** A refusal review, or nothing at all
-    once the several minutes a real review takes have passed with no table
-    and no refusal either. Write one line in the PR description naming the
-    reason (over its diff limit, its weekly budget, or its service being
-    down) and the check you ran in its place, such as the command and result
-    that stood in for the missing review. That line is what you owe instead
-    of the table, and the PR is mergeable once it carries one.
-  - **Sourcery has not posted yet.** No table and no review, inside the few
-    minutes a post normally takes. Wait and check again. This is a timing
-    state, not a verdict, and it never turns into a refusal on its own.
+  yet. The two arms below split on one number: 15 minutes since your latest
+  push. Sourcery's table usually lands within two minutes, so 15 leaves
+  room for a slow queue.
+  - **Sourcery could not review it.** A refusal review, or no table and no
+    review 15 minutes after your latest push. Write one line in the PR
+    description naming the reason (over its diff limit, its weekly budget,
+    or no post within 15 minutes) and the check you ran in its place, such
+    as the command and result that stood in for the missing review. That
+    line is what you owe instead of the table, and the PR is mergeable once
+    it carries one.
+  - **Sourcery has not posted yet.** No table and no review, less than 15
+    minutes after your latest push. Wait and check again.
 
   A table takes precedence over a refusal review sitting beside it on the
   same PR: settle the table's rows under the first two arms above regardless
