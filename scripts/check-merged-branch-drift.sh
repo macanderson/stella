@@ -101,23 +101,29 @@ command -v jq >/dev/null 2>&1 || { echo "::error::jq is not installed" >&2; exit
 
 since="$(date -u -d "@$((now - days * 86400))" +%Y-%m-%d 2>/dev/null || date -u -r "$((now - days * 86400))" +%Y-%m-%d)"
 
-# The date bound (`merged:>=X`) is what keeps this cheap. The `--limit`
-# below is only a sanity ceiling, not a page size. This repository merges
-# hundreds of pull requests in 30 days. A limit of 500 once cut off a real
-# count of 630 and no one noticed. A cap that hides a cut-off list is worse
-# than no cap, so a result that lands right on the ceiling is refused, not
-# trusted.
-gh_limit=20000 # a sanity ceiling, not a page size; see the comment above
+# The date bound (`merged:>=X`) is what keeps this cheap. This repository
+# merges hundreds of pull requests in 30 days. A limit of 500 once cut off a
+# real count of 630 and no one noticed. A cap that hides a cut-off list is
+# worse than no cap, so a result that lands right on the ceiling is refused,
+# not trusted.
+#
+# `--search` goes through GitHub search, and search returns at most 1000
+# results whatever `--limit` asks for. So the ceiling is 1000. A higher
+# limit would never be reached, and a cut-off list would pass as whole.
+gh_limit=1000
 merged_json="$(CLICOLOR_FORCE=0 NO_COLOR=1 gh pr list --state merged \
   --search "merged:>=${since}" --limit "$gh_limit" \
   --json number,headRefName,headRefOid,mergedAt \
   --jq '[ .[] | { branch: .headRefName, sha: .headRefOid, mergedAt: .mergedAt, number: .number } ]')"
 merged_count_raw="$(printf '%s' "$merged_json" | jq 'length')"
 if [ "$merged_count_raw" -eq "$gh_limit" ]; then
-  echo "::error::the merged pull request list hit the ${gh_limit}-item ceiling for --days ${days}. That count is not plausible for this repository. The list was likely cut off. Check by hand, or narrow --days." >&2
+  echo "::error::the merged pull request list hit GitHub search's ${gh_limit}-result ceiling for --days ${days}. The list was likely cut off. Narrow --days." >&2
   exit 1
 fi
 
+# The open list shares the same limit. If it were ever cut off, a branch
+# with an open pull request could be reported by mistake. A cut-off open
+# list can add a report. It cannot hide one.
 open_heads_json="$(CLICOLOR_FORCE=0 NO_COLOR=1 gh pr list --state open --limit "$gh_limit" \
   --json headRefName --jq '[ .[].headRefName ]')"
 

@@ -8,8 +8,9 @@
 # a handful of jq calls over fixtures, like
 # scripts/test-releases-published.sh.
 #
-# Each case below drives the rule with the I/O taken out. It calls the
-# script's own --select mode. No live repository and no gh call runs here.
+# Most cases below drive the rule with the I/O taken out. They call the
+# script's own --select mode. The last two run the whole script. A fake gh
+# and a fake git on PATH stand in for GitHub. No live call runs here.
 #
 # The rule: report a branch only when it is still on origin, its own newest
 # pull request has merged, and its tip does not match what that pull
@@ -110,6 +111,39 @@ want "M2 a healthy branch does not hide a drifted one" \
   "{\"merged\":[$(merged fix/a sha-a $((3 * day)) 20),$(merged fix/b sha-b $((2 * day)) 21)],\"liveTips\":{\"fix/a\":\"sha-a\",\"fix/b\":\"other-b\"},\"openHeads\":[]}"
 
 want "E1 no merges at all reports nothing" "" '{"merged":[],"liveTips":{},"openHeads":[]}'
+
+# GitHub search returns at most 1000 pull requests, whatever --limit asks
+# for. A list of exactly 1000 may be cut off, so the script must refuse it.
+# The fake gh returns FAKE_MERGED merges and no open pull requests. The
+# fake git lists no live branches.
+fake_bin="$(mktemp -d)"
+trap 'rm -rf "$fake_bin"' EXIT
+cat >"$fake_bin/gh" <<'FAKE'
+#!/usr/bin/env bash
+case "$*" in
+  *"--state merged"*)
+    jq -n --argjson n "$FAKE_MERGED" \
+      '[range($n) | {branch: "b\(.)", sha: "s\(.)", mergedAt: "2026-01-01T00:00:00Z", number: .}]' ;;
+  *) echo '[]' ;;
+esac
+FAKE
+printf '#!/bin/sh\nexit 0\n' >"$fake_bin/git"
+chmod +x "$fake_bin/gh" "$fake_bin/git"
+
+# full_run checks one whole run. Give it a name, the merge count the fake
+# gh returns, the exit code you expect, and text the output must hold.
+full_run() {
+  local name="$1" count="$2" want_rc="$3" want_text="$4" out rc
+  out="$(PATH="$fake_bin:$PATH" FAKE_MERGED="$count" "$SCRIPT" 2>&1)"
+  rc=$?
+  case "$rc:$out" in
+    "$want_rc:"*"$want_text"*) pass=$((pass + 1)); echo "ok   $name" ;;
+    *) fail=$((fail + 1)); echo "FAIL $name — wanted exit ${want_rc} with '${want_text}', got exit ${rc}: ${out}" ;;
+  esac
+}
+
+full_run "C1 a list that hits the search ceiling is refused" 1000 1 "1000-result ceiling"
+full_run "C2 a list one under the ceiling is read" 999 0 "999 merge(s) checked"
 
 echo
 echo "passed ${pass}, failed ${fail}"
