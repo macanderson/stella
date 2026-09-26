@@ -65,7 +65,8 @@ if [ ! -f "${changelog}" ] || ! grep -q '^## \[Unreleased\]' "${changelog}"; the
   exit 0
 fi
 
-# Idempotent: if this version already has a section, leave the file alone.
+# Idempotent: if this version already has a section, check if the CI draft
+# has entries with NEW PR references (#NNNN) not already in the section.
 #
 # Two cases reach here, and neither wants a second heading. The roll runs at
 # TWO call sites per release (the tagged release commit and the bot/version-sync
@@ -73,11 +74,60 @@ fi
 # written the section in the release PR itself — a minor release is
 # a considered event, and the "CI writes this file" rule exists to stop
 # per-PR bullets accumulating in inconsistent voices, not to overwrite a section
-# someone sat down and wrote. Whoever got there first wins; the roll never
-# duplicates.
+# someone sat down and wrote.
+#
+# When a section already exists, append new entries from the CI draft that cite
+# PR numbers not already in the section (e.g. commits landing after the
+# hand-written PR was merged but before the release tag). This reconciles gaps
+# from release PRs that write their own section.
+version_section_exists=false
 if grep -q "^## \[${version}\]" "${changelog}"; then
-  echo "changelog-roll: ${changelog} already has a [${version}] section; leaving it alone."
-  exit 0
+  version_section_exists=true
+fi
+
+if [ "$version_section_exists" = true ]; then
+  if [ -n "${CHANGELOG_ENTRIES_FILE:-}" ] && [ -s "${CHANGELOG_ENTRIES_FILE}" ]; then
+    # Extract PR numbers from the existing section.
+    existing_prs="$(awk -v want="${version}" '
+      $0 ~ "^## \\[" want "\\]" { f = 1; next }
+      /^## \[/ { f = 0 }
+      f
+    ' "${changelog}" | grep -o '#[0-9]\+' || true | sort -u)"
+
+    # Extract PR numbers from the new entries draft.
+    draft_prs="$(grep -o '#[0-9]\+' "${CHANGELOG_ENTRIES_FILE}" || true | sort -u)"
+
+    # Find PR numbers in the draft that are NOT in the existing section.
+    has_new_prs=false
+    for pr in $draft_prs; do
+      if ! printf '%s\n' "$existing_prs" | grep -q "^${pr}$"; then
+        has_new_prs=true
+        break
+      fi
+    done
+
+    if [ "$has_new_prs" = false ]; then
+      # No new PR references, so the section is complete.
+      echo "changelog-roll: ${changelog} already has a [${version}] section; leaving it alone."
+      exit 0
+    else
+      # Append the new entries to the existing section.
+      ENTRIES_FILE="${CHANGELOG_ENTRIES_FILE}" VERSION="${version}" perl -0777 -pi -e '
+        open my $fh, "<", $ENV{ENTRIES_FILE} or die "cannot open $ENV{ENTRIES_FILE}: $!";
+        my $entries = do { local $/; <$fh> };
+        close $fh;
+        $entries =~ s/\s+\z//;
+        my $version = $ENV{VERSION};
+        s/(^## \[$version\].*?)(?=^## \[|\z)/$1\n$entries\n/ms;
+      ' "${changelog}"
+      echo "changelog-roll: appended new entries with PR references not in the existing [${version}] section."
+      exit 0
+    fi
+  else
+    # No CI draft, so leave the existing section alone.
+    echo "changelog-roll: ${changelog} already has a [${version}] section; leaving it alone."
+    exit 0
+  fi
 fi
 
 # Replace whatever sits under [Unreleased] with $1's contents.

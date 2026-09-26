@@ -120,6 +120,8 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #     flag pair cargo refuses; #5992)
                          #   + release-wiring (auto-tag.yml still asks
                          #     for a run on the commit it merges; #5857)
+                         #   + release-retry (release.yml's publish step
+                         #     retries once on a mid-publish 5xx; #5698)
                          #   + priority-scheme (the issue priority scheme is
                          #     stated once, in SCR-005, and the triage guard's
                          #     regex covers exactly the levels it names)

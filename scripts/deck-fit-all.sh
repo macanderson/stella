@@ -15,10 +15,16 @@
 # stubs `node` and needs no browser -- so unlike deck-fit.yml itself, this half
 # is a gate step.
 #
-# Exit: 0 every deck measured clean, 1 a deck overflowed or the tree was empty.
-# A deck the measurer classifies as not-a-deck (its exit 3) is reported as a
-# skip, by path and by count. A skip is never a pass; a SILENT skip is the bug
-# this step keeps re-learning, so the count is always printed.
+# Exit: 0 every deck measured clean, 1 a deck overflowed, failed to load, or
+# the tree was empty. A deck the measurer classifies as not-a-deck (its exit
+# 3) is reported as a skip, by path and by count. A deck that never finished
+# loading (its exit 4 -- the measurer's own comment has the failure this
+# status separates from an overflow) is reported as unloaded, by path and by
+# count, and still fails the run: a deck that never loaded is not proven to
+# fit. Neither a skip nor an unload is ever a pass, and neither is counted as
+# measured; a SILENT one is the bug this step keeps re-learning, so both
+# counts are always printed. No retry: distinguishing the failure and
+# reporting it is the fix, and a retry would only hide how often it recurs.
 
 set -uo pipefail
 
@@ -42,10 +48,10 @@ fi
 # measures.
 #
 # `find` covers the other case: a tree that git does not track. That is not a
-# fallback for convenience -- it is what lets the test above point this script
-# at a fixture directory outside the repository, which is the only way to
-# exercise the enumeration without committing a deliberately-failing deck under
-# website/public/presentations/, where the real job would measure it.
+# fallback for convenience. It is what lets the test above point this script
+# at a fixture directory outside the repository. That is the only way to
+# exercise the enumeration without committing a deliberately-failing deck
+# under website/public/presentations/, where the real job would measure it.
 decks=()
 if git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1 &&
   [ -n "$(git -C "$root" ls-files -- '*.html' 2>/dev/null | head -1)" ]; then
@@ -66,6 +72,7 @@ fi
 status=0
 measured=0
 skipped=0
+unloaded=0
 
 for deck in "${decks[@]}"; do
   echo "::group::$deck"
@@ -82,6 +89,11 @@ for deck in "${decks[@]}"; do
     skipped=$((skipped + 1))
     echo "deck-fit: SKIPPED $deck (not a fixed-canvas deck)"
     ;;
+  4)
+    unloaded=$((unloaded + 1))
+    status=1
+    echo "deck-fit: UNLOADED $deck (never finished loading; not proven to fit)"
+    ;;
   *)
     measured=$((measured + 1))
     status=1
@@ -89,5 +101,5 @@ for deck in "${decks[@]}"; do
   esac
 done
 
-echo "deck-fit: ${#decks[@]} file(s) found, $measured measured, $skipped skipped."
+echo "deck-fit: ${#decks[@]} file(s) found, $measured measured, $skipped skipped, $unloaded unloaded."
 exit $status

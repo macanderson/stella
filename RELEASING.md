@@ -202,7 +202,16 @@ the outcome — the version-sync PR opened and auto-merged, `CHANGELOG.md` rolle
 and every manifest was stamped. Only the last two jobs of `release.yml` skipped.
 Every surface a maintainer glances at said "released" (#1464).
 
-Three checks now catch it, each on a different failure:
+The `Create / update GitHub Release` step in `release.yml` now retries once
+on a mid-publish GitHub 5xx, the same shape as the `Upload build artifact`
+step above it. `v0.9.254` and `v0.9.264` both finished every build. Each then
+hit a 5xx right after its assets were uploaded, leaving a draft nobody had
+asked to re-run. The retry targets the same tag. `overwrite_files` is on by
+default, so it fills in or replaces whatever the first attempt left behind
+instead of duplicating it. A genuine refusal — bad credentials, or a tag that
+already has a published release — fails the same way on both attempts.
+
+Three checks catch what the retry cannot, each on a different failure:
 
 - **`smoke`** (in `release.yml`) unpacks the artifact and runs it before
   anything is published, so a release that *builds* but does not *work* cannot
@@ -259,7 +268,7 @@ different failures:
 
 | State | What happened | What to do |
 |---|---|---|
-| `draft` | The build ran and the assets are attached, but a `5xx` killed the publish step before the release left draft. | List the draft's assets. Publish it if the set is complete; delete it and re-run the tag if it is not. |
+| `draft` | The build ran and the assets are attached. A `5xx` beat the publish step's own retry (*When a release fails* above) and killed both attempts before the release left draft. | List the draft's assets. Publish it if the set is complete; delete it and re-run the tag if it is not. |
 | `absent` | No release object exists — a build job died, often in `actions/upload-artifact`. | Re-run `release.yml` on the tag, but read the version guard below first. |
 | gone | The build finished, and the run itself was killed after the fact. Build artifacts expire after 7 days, so an old one has nothing left to publish. | Grandfather the tag with a note. Rebuilding a version a hundred releases behind buys nothing. |
 

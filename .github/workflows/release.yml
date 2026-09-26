@@ -504,7 +504,32 @@ jobs:
             gh api -X DELETE "repos/{owner}/{repo}/releases/${id}"
           done
 
+      # `continue-on-error` on the first attempt is what lets the retry run,
+      # the same shape as the `Upload build artifact` retry above. v0.9.254
+      # and v0.9.264 each got past uploading assets and then hit a GitHub 5xx
+      # right here, stranding a finished build as an unpublished draft with
+      # nobody watching to re-run it (#5698).
       - name: Create / update GitHub Release
+        id: publish
+        continue-on-error: true
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        with:
+          files: |
+            artifacts/stella-*.tar.gz
+            artifacts/SHA256SUMS
+            artifacts/SHA256SUMS.bin
+          fail_on_unmatched_files: true
+          body_path: notes.md
+
+      # `overwrite_files` defaults to true, so retrying against the release
+      # object the first attempt already created (however far it got) fills in
+      # or replaces assets rather than duplicating or dropping them — a 5xx
+      # after five of six assets uploaded, as in v0.9.254, is exactly the case
+      # this covers. The step carries no `continue-on-error` of its own, so a
+      # genuine refusal (bad credentials, a malformed input) still fails the
+      # job on the second attempt the same way it would have on the first.
+      - name: Create / update GitHub Release (retry)
+        if: steps.publish.outcome == 'failure'
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           files: |
