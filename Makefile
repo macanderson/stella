@@ -42,7 +42,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     command-docs website-inputs brand-case file-size god-files gate-parity \
                     schema-tier-parity \
                     guard-trigger-coverage priority-scheme cargo-flags \
-                    release-wiring left-behind \
+                    release-wiring release-retry left-behind \
                     retired-model-keys \
                     stat-portability module-reachability core-reachability \
                     core-no-io \
@@ -875,6 +875,21 @@ release-wiring: ## Assert auto-tag.yml still asks for a run on the commit it mer
 .PHONY: release-wiring-test
 release-wiring-test: ## Test the release-wiring guard's failure directions (hermetic; not part of `gate`)
 	@python3 ./scripts/test-release-wiring.py
+
+# `release.yml`'s `Create / update GitHub Release` step survived a build but
+# not a GitHub 5xx mid-publish: v0.9.254 and v0.9.264 both uploaded every
+# asset and then stranded a finished release as an unpublished draft with
+# nobody watching to re-run it (#5698). This holds the retry the step now
+# gets to the same shape as the `Upload build artifact` retry above it —
+# `continue-on-error` and an `id` on the first attempt, a second step gated
+# on that id's outcome, and both pinning the same action with the same inputs.
+.PHONY: release-retry
+release-retry: ## Assert the release-publish step survives a mid-publish 5xx (#5698)
+	@python3 ./scripts/check-release-retry.py
+
+.PHONY: release-retry-test
+release-retry-test: ## Test the release-retry guard's failure directions (hermetic; not part of `gate`)
+	@python3 ./scripts/test-release-retry.py
 
 .PHONY: priority-scheme
 priority-scheme: ## Assert the issue priority scheme is stated once, in SCR-005 (#5216)

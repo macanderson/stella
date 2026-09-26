@@ -149,6 +149,15 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 ./scripts/check-release-wiring.py
 
+      # Here for the same reason one step up: it reads
+      # `.github/workflows/release.yml`, and a diff confined to a workflow
+      # file answers `rust=false`, which skips ci.yml's `check` job. The
+      # lines it holds open are the retry that keeps a GitHub 5xx mid-publish
+      # from stranding a finished build as an unpublished draft (#5698).
+      - name: the release-publish step survives a mid-publish 5xx
+        if: ${{ !cancelled() }}
+        run: python3 ./scripts/check-release-retry.py
+
       # The steps above run here because this trigger carries no `paths:`
       # filter at all -- that is what lets them fire on a scripts-only pull
       # request. Nothing enforced that absence except a comment, so this reads
@@ -286,6 +295,10 @@ jobs:
       - name: release-wiring guard failure directions
         if: ${{ !cancelled() }}
         run: python3 ./scripts/test-release-wiring.py
+
+      - name: release-retry guard failure directions
+        if: ${{ !cancelled() }}
+        run: python3 ./scripts/test-release-retry.py
 
       - name: gate-parity guard failure directions
         if: ${{ !cancelled() }}
