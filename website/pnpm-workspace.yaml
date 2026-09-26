@@ -50,8 +50,10 @@ overrides:
   # GHSA-rgj7-g3m4-5g8c) and fourteen LGPL-3.0 libvips tuples, each of which
   # `dependency-review` had to be told about by name every time `next` moved
   # (#2532). `-` is pnpm's spelling for "drop this dependency everywhere".
-  # If the site ever renders a `next/image`, restore a floor here and put the
-  # tuples back in `.github/workflows/dependency-review.yml`.
+  # `src/lib/no-sharp.test.ts` fails if sharp reaches the lockfile again. If
+  # the site ever turns image optimization on (`images.unoptimized` in
+  # `next.config.mjs`), restore a floor here, put the tuples back in
+  # `.github/workflows/dependency-review.yml`, and delete that test.
   sharp: "-"
   # js-yaml <4.3.2 carries a high advisory (GHSA-2883-xcg3-v3hh). It arrives
   # through `fumadocs-core` and `fumadocs-mdx`, so no direct bump reaches it;
