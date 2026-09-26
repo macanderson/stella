@@ -179,17 +179,15 @@ holds_text "...and holds the write scope a re-run needs" \
 
 printf '\n\033[1mwitness — the reader knows the check re-runs automatically\033[0m\n'
 
-# When the dod-check fails, the reader should know that ticking a box on the
-# issue automatically re-runs the check, and approximately how long they should
-# wait. This witness test verifies that the workflow documentation names this
-# behavior. Without the explanation, readers edit the PR body to force a re-run
-# unnecessarily, not knowing the automatic path exists.
+# A ticked box re-runs the check on its own. The reader should know that, and
+# know about how long to wait. Without that line, a reader edits the PR body
+# instead, to force a re-run they did not need.
 #
-# The actual failure message lives in oxagen's scr-dod-check.mjs and reads
-# "Ticking a box on the issue re-runs this check through `dod-recheck`. If it
-# is still red a few minutes after the edit, re-run the failed `dod` job from
-# the pull request's Checks tab." This test verifies stella's workflow
-# documentation explains the same mechanism.
+# oxagen's scr-dod-check.mjs already prints this failure message: "Ticking a
+# box on the issue re-runs this check through `dod-recheck`. If it is still
+# red a few minutes after the edit, re-run the failed `dod` job from the pull
+# request's Checks tab." This test checks that stella's own workflow file
+# says the same thing.
 holds_text "the workflow explains that ticking a box re-runs the check" \
   dod-recheck.yml "re-run"
 
