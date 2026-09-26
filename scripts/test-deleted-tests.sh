@@ -6,9 +6,10 @@
 #
 # Most cases check that the guard reads the PR's CURRENT description through
 # the API instead of the stale event-payload snapshot. An edited description
-# then counts on a re-run without a new push. D12 to D16 run the guard with no
-# arguments on a merge commit, which is how ci.yml runs it. D21 to D24 check
-# that the guard names the channel it read and the depth it could see.
+# then counts on a re-run without a new push. D12 to D16 and D25 to D26 run
+# the guard with no arguments on a merge commit, which is how ci.yml runs it.
+# D21 to D24 check that the guard names the channel it read and the depth it
+# could see.
 #
 #   ./scripts/test-deleted-tests.sh
 #
@@ -148,14 +149,18 @@ new_py_vacuous_repo() {
   printf '%s' "$dir"
 }
 
-# new_pr_merge <name> <pr-lib> <main-lib> <merge-lib> builds the history ci.yml
-# checks out on a pull request. After the base commit, the PR branch and main
-# each gain a commit. HEAD merges the branch into main, so HEAD^1 is main's tip.
-# Each lib argument is the text of crates/x/src/lib.rs on that side, and an
-# empty one leaves the file alone. A merge-lib replaces what git merged. That
-# is how a merge loses a test only main carried. Prints the directory.
+# new_pr_merge <name> <pr-lib> <main-lib> <merge-lib> [pr-commit-message] builds
+# the history ci.yml checks out on a pull request. After the base commit, the
+# PR branch and main each gain a commit. HEAD merges the branch into main, so
+# HEAD^1 is main's tip. Each lib argument is the text of crates/x/src/lib.rs
+# on that side, and an empty one leaves the file alone. A merge-lib replaces
+# what git merged. That is how a merge loses a test only main carried. The
+# fifth argument names the PR branch's own commit, which the guard's
+# `base_ref..head_ref` walk can read (it holds this commit and the merge
+# commit, since `main moves on` is on `main`'s own side and is excluded);
+# an empty value keeps the default "pr work". Prints the directory.
 new_pr_merge() {
-  local dir="$tmp/$1" pr_lib="$2" main_lib="$3" merge_lib="$4"
+  local dir="$tmp/$1" pr_lib="$2" main_lib="$3" merge_lib="$4" pr_msg="${5:-pr work}"
   rm -rf "$dir"
   mkdir -p "$dir/scripts" "$dir/crates/x/src"
   cp "$guard" "$dir/scripts/check-deleted-tests.sh"
@@ -172,7 +177,7 @@ new_pr_merge() {
   printf 'pr\n' >"$dir/pr.txt"
   [ -n "$pr_lib" ] && printf '%s' "$pr_lib" >"$dir/crates/x/src/lib.rs"
   git -C "$dir" add -A
-  git -C "$dir" commit -q -m "pr work"
+  git -C "$dir" commit -q -m "$pr_msg"
 
   git -C "$dir" checkout -q main
   printf 'main\n' >"$dir/main.txt"
@@ -416,6 +421,22 @@ want "D15 a rename passes when the PR body names the old test" \
   "renamed my_witness to witness_as_table_rows"
 want "D16 a rename fails when the PR body names only the new test" \
   expect-fail "my_witness" "$d15" "" "" "added witness_as_table_rows"
+
+# D25 drops the same test only main held, but names it in the PR branch's own
+# commit instead of the PR description. That commit is inside the guard's
+# base_ref..head_ref walk, so this proves the commit-message channel works
+# under the real merge topology, not only the linear fixture D7 and D21 use.
+d25="$(new_pr_merge dropped_named_in_commit "" "$lib_main_added" "$lib_base" \
+  "drop added_on_main with its feature")"
+want "D25 a merge that drops a test passes when the PR's own commit names it" \
+  expect-pass "only in a commit message" "$d25" "" "" ""
+
+# D26 is the no-args merge topology touching no test at all: main and the PR
+# both keep the original file untouched, so the merge carries every test
+# through and the fast "nothing lost" path fires regardless of PR_BODY.
+d26="$(new_pr_merge no_test_touched "" "" "")"
+want "D26 a merge that drops no test passes with no PR body at all" \
+  expect-pass "none lost by the merge" "$d26" "" "" ""
 
 # ── D17/D18: Python tests count, the D1/D2 shape ─────────────────────────────
 read -r d17_dir d17_base d17_head <<EOF
