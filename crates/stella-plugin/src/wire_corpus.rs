@@ -1017,6 +1017,7 @@ fn volatile_context() -> VolatileContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{DriveRequest, DriverCallRequest, DriverCallResponse, DriverMessage};
 
     /// `scripts/check-wire-schema.sh` regenerates into a temp directory and
     /// diffs; a corpus that varied between runs would fail the gate at random
@@ -1072,6 +1073,55 @@ mod tests {
             let message = &entry["message"];
             let decoded: HostCallResponse =
                 serde_json::from_value(message.clone()).expect("a published answer decodes");
+            assert_eq!(
+                &serde_json::to_value(&decoded).expect("re-encodes"),
+                message
+            );
+        }
+        // The session section carries two shapes. The host's opening is a
+        // `DriveRequest`; the two answers a driver sends back are read by the
+        // same envelope `DriverMessage` reads on every other driver output, so
+        // that is the reader tested against them.
+        for entry in doc["driver_session"]
+            .as_array()
+            .expect("driver_session is an array")
+        {
+            let message = &entry["message"];
+            if entry["case"] == json!("open") {
+                let decoded: DriveRequest = serde_json::from_value(message.clone())
+                    .expect("a published session open decodes");
+                assert_eq!(
+                    &serde_json::to_value(&decoded).expect("re-encodes"),
+                    message
+                );
+            } else {
+                let decoded: DriverMessage = serde_json::from_value(message.clone())
+                    .expect("a published session answer decodes");
+                assert_eq!(
+                    &serde_json::to_value(&decoded).expect("re-encodes"),
+                    message
+                );
+            }
+        }
+        for entry in doc["driver_calls"]
+            .as_array()
+            .expect("driver_calls is an array")
+        {
+            let message = &entry["message"];
+            let decoded: DriverCallRequest =
+                serde_json::from_value(message.clone()).expect("a published driver call decodes");
+            assert_eq!(
+                &serde_json::to_value(&decoded).expect("re-encodes"),
+                message
+            );
+        }
+        for entry in doc["driver_results"]
+            .as_array()
+            .expect("driver_results is an array")
+        {
+            let message = &entry["message"];
+            let decoded: DriverCallResponse =
+                serde_json::from_value(message.clone()).expect("a published driver answer decodes");
             assert_eq!(
                 &serde_json::to_value(&decoded).expect("re-encodes"),
                 message
