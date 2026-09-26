@@ -6,8 +6,9 @@
 #
 # Most cases check that the guard reads the PR's CURRENT description through
 # the API instead of the stale event-payload snapshot. An edited description
-# then counts on a re-run without a new push. The last cases run the guard with
-# no arguments on a merge commit, which is how ci.yml runs it.
+# then counts on a re-run without a new push. D12 to D16 run the guard with no
+# arguments on a merge commit, which is how ci.yml runs it. D21 to D24 check
+# that the guard names the channel it read and the depth it could see.
 #
 #   ./scripts/test-deleted-tests.sh
 #
@@ -200,6 +201,7 @@ want() {
   [ -n "$base" ] && refs=("$base" "$head")
   out="$(cd "$dir" && PR_BODY="$body" ./scripts/check-deleted-tests.sh "${refs[@]+"${refs[@]}"}" "$@" 2>&1)"
   rc=$?
+  last_out="$out"
   if [ "$expect" = "expect-pass" ]; then
     if [ "$rc" -ne 0 ]; then
       fail=$((fail + 1)); echo "FAIL $name — expected OK, got exit $rc:"; echo "$out"
@@ -220,6 +222,16 @@ want() {
   *) fail=$((fail + 1)); echo "FAIL $name — wrong reason (wanted '$needle'):"; echo "$out" ;;
   esac
 }
+
+# lacks <name> <needle> checks that the last `want` run did not print the
+# needle. A message that says the right thing on every run is no signal.
+lacks() {
+  case "$last_out" in
+  *"$2"*) fail=$((fail + 1)); echo "FAIL $1: printed '$2':"; echo "$last_out" ;;
+  *) pass=$((pass + 1)); echo "ok   $1" ;;
+  esac
+}
+last_out=""
 
 # ── D1/D2: the old channel (PR_BODY), unchanged by #4495 ────────────────────
 read -r d1_dir d1_base d1_head <<EOF
@@ -460,6 +472,41 @@ d20="$(new_py_broken_collector_repo py_broken_collector)"
 d20_sha="$(git -C "$d20" rev-parse HEAD)"
 want "D20 a collector that exits clean but finds nothing still fails loudly" \
   expect-fail "collector's own glob or parser breaking" "$d20" "$d20_sha" "$d20_sha" ""
+
+# ── D21 to D24: the guard names the channel it read ─────────────────────────
+#
+# A local run reads every commit message. CI reads two commits. So an OK that
+# came from a commit message can turn red in CI with the same tree. D21 and
+# D22 check that the OK line says which channel held each name. A name found
+# in the description is safe, so D22 must stay quiet about commits. The old
+# OK line said "the PR description or a commit" whichever one held the name.
+want "D21 a name found only in a commit message passes, and the OK line says so" \
+  expect-pass "only in a commit message" "$d7_dir" "$d7_base" "$d7_head" ""
+
+read -r d22_dir d22_base d22_head <<EOF
+$(new_repo both_channels "drop my_witness, folded into a table test")
+EOF
+want "D22 a name in both the description and a commit counts as the description" \
+  expect-pass "each named in the PR description" "$d22_dir" "$d22_base" "$d22_head" \
+  "dropped my_witness, folded into a table test"
+lacks "D22 the OK line does not warn about a commit message" "only in a commit message"
+lacks "D22 the OK line does not blur the two channels" "or a commit"
+
+# D23 and D24 check the failure text against the checkout it ran on. A full
+# clone must not be told its walk stopped at depth 2. The depth-2 clone from
+# D10 must be told that its checkout is shallow.
+want "D23 a failure on a full clone says the walk read the whole branch" \
+  expect-fail "This checkout holds full history" "$d2_dir" "$d2_base" "$d2_head" ""
+lacks "D23 the full-clone failure does not call the checkout shallow" "This checkout is shallow"
+lacks "D23 the remedy does not offer a commit message as the fix" "(or a commit message)"
+
+if [ -d "$shallow" ]; then
+  want "D24 a failure on the depth-2 clone says the checkout is shallow" \
+    expect-fail "This checkout is shallow" "$shallow" "" "" ""
+else
+  fail=$((fail + 1))
+  echo "FAIL D24: D10 did not build the shallow clone this case reads"
+fi
 
 echo
 echo "passed ${pass}, failed ${fail}"

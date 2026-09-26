@@ -49,7 +49,8 @@
 # A removed test is not automatically wrong. Tests are legitimately renamed,
 # merged into a table-driven case, or dropped with the feature
 # they covered. So a removal fails the guard only while it is UNNAMED: writing
-# the test's name in the PR description (or in a commit message) passes it.
+# the test's name in the PR description passes it. A commit message counts
+# too, but only while the checkout can read it, as the next section says.
 #
 # ── The two channels are not equally durable (`#5965`) ───────────────────────
 #
@@ -66,6 +67,11 @@
 # channel is worth. The guard says how far it could see instead: the failure
 # text names the number of commits the walk read and points at the description
 # as the channel that does not expire.
+#
+# The guard asks git whether the checkout is shallow, so its text matches the
+# run that printed it. A local clone reads every commit on the branch, and CI
+# reads two. So an OK that rests on a commit message lists those names. The
+# author then learns before CI does that the name belongs in the description.
 #
 # That is the entire mechanism, and it is weak. The goal is not to
 # adjudicate whether a deletion was correct — a script cannot — but to convert
@@ -347,10 +353,10 @@ if [ -z "$removed" ]; then
   exit 0
 fi
 
-# The acknowledgement text: the PR's CURRENT description when it can be
-# fetched live, `PR_BODY` (the event-payload snapshot) when it cannot, plus
-# `git log` best-effort on top of either — see "Reading the acknowledgement"
-# above for why the live fetch is the point of #4495.
+# The description channel: the PR's CURRENT description when it can be
+# fetched live, `PR_BODY` (the event-payload snapshot) when it cannot.
+# "Reading the acknowledgement" above says why the live fetch is the point of
+# #4495. The commit-message channel is read below and kept apart from it.
 live_body=""
 live_body_available=0
 stale_fallback=0
@@ -387,25 +393,40 @@ else
 fi
 
 if [ "$live_body_available" -eq 1 ]; then
-  ack="$live_body"
+  desc_ack="$live_body"
 else
-  ack="${PR_BODY:-}"
+  desc_ack="${PR_BODY:-}"
 fi
 
-# How far the commit-message channel could actually see. On CI's fetch-depth 2
-# checkout this is 1, and the failure text says so rather than leaving the
-# author to work out why a name that passed an hour ago stops counting.
+# How far the commit-message channel could see. CI's fetch-depth 2 checkout
+# of a merge commit holds the merge and the PR's tip, so its walk reads 2.
+# The text below prints the count, so a name that passed an hour ago and
+# fails now has a visible cause.
+commit_ack=""
 walked=0
 if commits="$(git log --format='%B' "$base_ref..$head_ref" 2>/dev/null)"; then
-  ack="$ack
-$commits"
+  commit_ack="$commits"
   walked="$(git log --format='%H' "$base_ref..$head_ref" 2>/dev/null | wc -l | tr -d ' ')"
 fi
 
+# A shallow clone holds no commit message below its boundary. Ask git rather
+# than assume every run is CI's.
+shallow=0
+if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+  shallow=1
+fi
+
+# The description is checked first, since it does not expire. A name found
+# there counts as the description even when a commit message names it too.
 unacknowledged=""
+commit_only=""
 for name in $removed; do
-  case "$ack" in
-  *"$name"*) ;;
+  case "$desc_ack" in
+  *"$name"*) continue ;;
+  esac
+  case "$commit_ack" in
+  *"$name"*) commit_only="$commit_only  $name
+" ;;
   *) unacknowledged="$unacknowledged  $name
 " ;;
   esac
@@ -414,7 +435,23 @@ done
 if [ -z "$unacknowledged" ]; then
   count=$(printf '%s\n' "$removed" | wc -l | tr -d ' ')
   trap '' PIPE
-  echo "check-deleted-tests: OK — $count removed test(s), each named in the PR description or a commit." || true
+  if [ -z "$commit_only" ]; then
+    echo "check-deleted-tests: OK, $count removed test(s), each named in the PR description." || true
+    exit 0
+  fi
+  # A pass off a commit message is real for this run and can fail in CI
+  # with the same tree, so the OK names the tests that rest on it.
+  {
+    echo "check-deleted-tests: OK, $count removed test(s) named. These are named only in a commit message:"
+    echo ""
+    printf '%s' "$commit_only"
+    echo ""
+    echo "This run's \`git log\` walk read $walked commit(s) and found them there."
+    echo "CI checks out at fetch-depth 2, so it reads the merge commit and the"
+    echo "PR's tip. Once a merge lands on top of the naming commit, CI cannot"
+    echo "read it, and the same tree fails. Name these tests in the PR"
+    echo "description too. The description does not expire."
+  } || true
   exit 0
 fi
 
@@ -437,30 +474,38 @@ fi
   echo ""
   echo "  2. YOU DID. Renaming, folding into a table-driven case, or dropping a"
   echo "     test with the feature it covered are all fine. Name each test above"
-  echo "     in the PR description (or a commit message) and this passes — the"
-  echo "     point is that a reviewer reads the sentence, not that the deletion"
-  echo "     is forbidden."
+  echo "     in the PR description and this passes. The point is that a"
+  echo "     reviewer reads the sentence, not that the deletion is forbidden."
   echo ""
   echo "A moved or renamed test is reported here because this guard keys on the"
   echo "bare function name; that is deliberate, and naming it in the PR is the"
   echo "whole cost."
   echo ""
-  echo "PUT THE NAME IN THE PR DESCRIPTION. The commit-message channel expires:"
-  echo "this run's \`git log\` walk read $walked commit(s), because CI checks out"
-  echo "at fetch-depth 2. A name written in a commit message counts while that"
-  echo "commit is the tip and stops counting once a merge lands on top of it, so"
-  echo "the same deletion can pass one run and fail the next with nothing about"
-  echo "the tree having changed. The description does not expire."
+  echo "PUT THE NAME IN THE PR DESCRIPTION. The commit-message channel expires."
+  if [ "$shallow" -eq 1 ]; then
+    echo "This checkout is shallow, so this run's \`git log\` walk read only"
+    echo "$walked commit(s). Older commit messages are not in this clone."
+  else
+    echo "This checkout holds full history, so this run's \`git log\` walk read"
+    echo "all $walked commit(s) on the branch. CI checks out at fetch-depth 2 and"
+    echo "reads only the merge commit and the PR's tip."
+  fi
+  echo "A name written in a commit message counts while that commit is the tip"
+  echo "and stops counting once a merge lands on top of it, so the same deletion"
+  echo "can pass one run and fail the next with nothing about the tree having"
+  echo "changed. The description does not expire."
   echo ""
   if [ "$stale_fallback" -eq 1 ]; then
     echo "THIS RUN READ A STALE DESCRIPTION. It could not fetch the PR's"
     echo "current body through the API (see the 'note:' line above, if any),"
     echo "so it fell back to the description as it stood in the event payload"
     echo "that started the run — editing the description and re-running this"
-    echo "same job replays that same stale text and will not help. The"
-    echo "commit-message channel cannot cover for it either: the checkout is"
-    echo "fetch-depth 2, so the \`git log\` above walks no branch history. A"
-    echo "new commit is what carries an edited description into a fresh event"
+    echo "same job replays that same stale text and will not help."
+    if [ "$shallow" -eq 1 ]; then
+      echo "The commit-message channel cannot cover for it either, because this"
+      echo "shallow checkout holds only the $walked commit(s) read above."
+    fi
+    echo "A new commit is what carries an edited description into a fresh event"
     echo "that CAN be fetched live."
   else
     echo "This run read the PR's CURRENT description through the API, so"
