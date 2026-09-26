@@ -152,5 +152,22 @@ case "$out" in
   *) no "the skip is logged" "$out" "an 'already has a [1.0.0] section' notice" ;;
 esac
 
+# ── C7: section exists + drafter has new entries → append the new ones ──────
+printf '\nC7  section exists, drafter has newer entries with new PR refs\n'
+f="$(changelog_with c7)"
+# Plant an existing section with one PR cited
+perl -0777 -pi -e 's/^## \[Unreleased\]\n/## [Unreleased]\n\n## [0.10.0] — 2026-08-07\n\n### Added\n\n- something from (#2850)\n/ms' "$f"
+# Draft entries that cite a PR not in the existing section
+printf '### Added\n\n- **Another thing.** From the later batch (#2867).\n- **Third thing.** Also later (#2859).\n' >"$TMP/c7-entries.md"
+out="$(roll "$f" 0.10.0 "$TMP/c7-entries.md")"
+check "exactly one 0.10.0 heading exists" "$(grep -c '^## \[0.10.0\]' "$f")" "1"
+check "the original entry survives" "$(grep -c 'something from (#2850)' "$f")" "1"
+check "the new draft entry was appended" "$(grep -c 'Another thing.*#2867' "$f")" "1"
+check "the second new draft entry was appended" "$(grep -c 'Third thing.*#2859' "$f")" "1"
+case "$out" in
+  *"appended"*|*"newer entries"*|*"added"*) ok "appending is logged" ;;
+  *) no "appending is logged" "$out" "a notice about appending new entries" ;;
+esac
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
