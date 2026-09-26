@@ -285,25 +285,48 @@
   novel design is `ultra`.
 - **Every Sourcery ❌ gets a fix or an answer before the PR is mergeable.**
   Sourcery reviews every PR, and when the PR links issues it posts an
-  "Assessment against linked issues" table as a `sourcery-ai` comment — one
+  "Assessment against linked issues" table as a `sourcery-ai` comment: one
   row per objective, `✅` for met, `❌` with an explanation for partial or
   missing. After opening a PR, and again after every later push to it, read
   that comment (it lands within a few minutes;
-  `gh pr view <n> --json comments --jq '.comments[] | select(.author.login == "sourcery-ai") | .body'`)
-  and settle every `❌` row before the session ends; the PR is unmergeable until
-  that comment can be read:
-  - **Fix it** when the objective belongs to the PR — push the commits that
+  `gh pr view <n> --json comments --jq '.comments[] | select(.author.login == "sourcery-ai") | .body'`).
+  When a table is there, settle every `❌` row before the session ends:
+  - **Fix it** when the objective belongs to the PR. Push the commits that
     satisfy it, then re-read the table Sourcery posts for the new head.
   - **Answer it** when it does not belong: deliberately out of scope,
     deferred into a filed issue, or a misreading of the diff. Post a PR
     comment naming the row and the reason, and file the follow-up issue
     where one is owed ("Fix over file" above). Sourcery's verdict is
-    a claim like any other review comment and can be wrong about your diff —
-    the rebuttal still goes on the PR, where the next reviewer finds it.
+    a claim like any other review comment and can be wrong about your diff.
+    The rebuttal still goes on the PR, where the next reviewer finds it.
 
-  A `❌` with neither a fix pushed nor a comment answering it is untracked
-  half-finished work, and the PR stays unmergeable until it has one or the
-  other.
+  No table can mean two different things, and reading it as the wrong one is
+  the failure this rule exists to prevent. Check whether Sourcery answered at
+  all: `gh pr view <n> --json reviews --jq '.reviews[] | select(.author.login
+  == "sourcery-ai[bot]") | {state, body}'`. A `COMMENTED` review whose body
+  names a diff-size limit, a spent weekly review budget, or its own outage is
+  a refusal, not a pass, even though `gh pr checks` shows the same
+  `skipped`-looking `Sourcery review` context as a PR nobody has reviewed
+  yet.
+  - **Sourcery could not review it.** A refusal review, or nothing at all
+    once the several minutes a real review takes have passed with no table
+    and no refusal either. Write one line in the PR description naming the
+    reason (over its diff limit, its weekly budget, or its service being
+    down) and the check you ran in its place, such as the command and result
+    that stood in for the missing review. That line is what you owe instead
+    of the table, and the PR is mergeable once it carries one.
+  - **Sourcery has not posted yet.** No table and no review, inside the few
+    minutes a post normally takes. Wait and check again. This is a timing
+    state, not a verdict, and it never turns into a refusal on its own.
+
+  A table takes precedence over a refusal review sitting beside it on the
+  same PR: settle the table's rows under the first two arms above regardless
+  of what else Sourcery posted.
+
+  A `❌` with neither a fix nor an answering comment, and a missing table
+  with neither a wait nor a one-line refusal note in the description, are
+  both untracked half-finished work. The PR stays unmergeable until it has
+  what it is owed.
 - **CI builds and tests; this laptop does not.** Never run `make gate`,
   `make check`, `make test`, `cargo build --workspace`, `cargo test
   --workspace`, or clippy over the workspace on the maintainer's machine.
