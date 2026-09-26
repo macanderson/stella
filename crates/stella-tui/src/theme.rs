@@ -36,6 +36,10 @@ use crate::palette;
 // always glyph-paired, and activity (running) is the only status that takes
 // the accent. Enforced by `gold_never_carries_a_verdict`.
 //
+// The web pages keep a stricter rule. There gold marks no state at all, and
+// that includes running. `doc:brand-hue` holds both rules and says why they
+// differ. Read it before you change either one.
+//
 // The corollary the transcript actually depends on: **prose is neutral.** The
 // accent buys attention, so it may only be spent where attention is owed — on
 // the deck that means the tool being called, the active tab, and the progress
@@ -200,7 +204,8 @@ pub const ACCENT_LIVE: Color = palette::BRAND_LIVE;
 /// markers, and brand chrome generally. The same value as [`ACCENT`]: chrome
 /// and accent are one colour. **Never a verdict** —
 /// `gold_never_carries_a_verdict` proves no outcome mapping can return it;
-/// activity (running/active) is the one status that takes gold.
+/// activity (running/active) is the one status that takes gold. The web
+/// pages give gold no status at all, and `doc:brand-hue` says why.
 pub const GOLD: Color = palette::GOLD;
 /// The live stop of the identity sweep — the same value as [`ACCENT_LIVE`],
 /// under the same reservation: small, and moving.

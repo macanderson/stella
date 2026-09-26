@@ -201,6 +201,8 @@ pub const BRAND_INK_DEEP: Color = Color::Rgb(0x4E, 0x3D, 0x00);
 // is far enough to tell apart, and the rule holds anyway: status is always
 // glyph-paired (`theme::gold_never_carries_a_verdict` enforces this).
 // Activity is the one status gold does carry: active/running IS the accent.
+// The web pages give gold no status, running included. `doc:brand-hue` holds
+// both rules and says why they differ.
 
 /// The mark's gold -- the same value as [`BRAND`].
 pub const GOLD: Color = token::GOLD;

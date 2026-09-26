@@ -522,7 +522,9 @@ fn render_dashboard(
      instrument's
      chrome must not carry a hue at all. Generating from the terminal guaranteed the
      export matched the one surface it should no longer match. The parity
-     test replaces that guarantee with the correct one.
+     test replaces that guarantee with the correct one. The spec page
+     doc:brand-hue (docs/spec/brand-hue.md) holds both rules and says why
+     they differ.
 
      Colour is meaning, and only meaning:
        --ok / --warn / --bad   a verdict — it passed, it needs attention, it

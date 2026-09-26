@@ -21,7 +21,7 @@ Every screen exists to make these four claims visible without saying them:
 ## 2. Design principles
 
 - **The turn is the unit of the transcript.** Turn boundaries are full-width rules with a begin line and an end receipt. Tool calls are details inside a turn, never the top-level rhythm.
-- **Two-metal rule.** Gold means stella acting on the world (edit, write, gate, brand, money). Silver means the world coming in (read, skill injection, memory). Red and green appear only for fail and pass semantics, desaturated and cool.
+- **Two-metal rule.** Gold means stella acting on the world (edit, write, gate, brand, money). Silver means the world coming in (read, skill injection, memory). Red and green appear only for fail and pass semantics, desaturated and cool. The web pages give gold to the brand alone. `doc:brand-hue` holds both rules and says why they differ.
 - **Red is the rarest color on screen.** Because red never appears in a healthy frame, a red gate reads as an alarm without animation or sound. Do not use red for anything except failure and destructive events.
 - **Evidence over vibes.** Progress is files, tests, gates, and graph writes, not percentages alone.
 - **Cell-grid honest.** Every element must be renderable on a terminal character grid. The only corner rounding is `BorderType::Rounded` (`╭ ╮ ╰ ╯`). Bars are block glyphs. No pixel gradients; per-cell color steps only.

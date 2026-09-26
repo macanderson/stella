@@ -276,6 +276,11 @@
       "status": "living",
       "title": "the house brand kit, mirrored"
     },
+    "brand-hue": {
+      "path": "docs/spec/brand-hue.md",
+      "status": "living",
+      "title": "What gold may mean"
+    },
     "config-system": {
       "path": "docs/spec/config-system/DESIGN.md",
       "sections": [
