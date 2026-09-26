@@ -13,6 +13,9 @@ name: dod-recheck
 # which is all the branch rules read — so nothing here has to report a check
 # against a head this event does not own.
 #
+# The failure message that sends a reader here lives in oxagen, in
+# `tools/scripts/scr-dod-check.mjs`. Change its words there, not here.
+#
 # Same shape as `main-red-clear.yml`, for the same bug one gate over: a check
 # that was right when it ran, on a commit with no event left to correct it.
 
