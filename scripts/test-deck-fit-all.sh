@@ -49,9 +49,10 @@ no() {
 # it reads $2 -- and its exit status comes from the deck's basename, which is
 # what lets one fixture tree exercise every arm of the case statement:
 #
-#   pass-*.html  -> 0, measured clean
-#   skip-*.html  -> 3, "not a fixed-canvas deck"
-#   fail-*.html  -> 1, overflowed
+#   pass-*.html    -> 0, measured clean
+#   skip-*.html    -> 3, "not a fixed-canvas deck"
+#   fail-*.html    -> 1, overflowed
+#   unload-*.html  -> 4, never finished loading
 #
 # It also appends every deck it was handed to $TMP/seen, which is how the
 # enumeration itself (rather than the summary line's arithmetic) is asserted.
@@ -62,9 +63,10 @@ cat >"$stub_bin/node" <<'EOF'
 deck="$2"
 printf '%s\n' "$deck" >>"$SEEN"
 case "$(basename "$deck")" in
-  skip-*) exit 3 ;;
-  fail-*) exit 1 ;;
-  *)      exit 0 ;;
+  skip-*)   exit 3 ;;
+  fail-*)   exit 1 ;;
+  unload-*) exit 4 ;;
+  *)        exit 0 ;;
 esac
 EOF
 chmod +x "$stub_bin/node"
@@ -209,6 +211,38 @@ run "$D"
 case "$seen" in
 *pass-untracked*) no "D2 an untracked file in a tracked tree is not measured" "$seen" ;;
 *) ok "D2 an untracked file in a tracked tree is not measured" ;;
+esac
+
+# ── E: a load failure is not a fitting deck ──────────────────────────────────
+#
+# rc=4 is the measurer's "never loaded" status -- a page that hung past its
+# deadline, distinct from rc=1's overflow and rc=3's skip. It must
+# still fail the run (a deck that never loaded is not proven to fit), it must
+# not be counted as measured, and the summary must name it by its own count so
+# it cannot be misread as either a pass or a skip.
+
+E="$TMP/unloaded"
+mkdir -p "$E"
+: >"$E/pass-one.html"
+: >"$E/unload-timeout.html"
+
+run "$E"
+if [ "$rc" -ne 0 ]; then
+  ok "E1 a load failure fails the run"
+else
+  no "E1 a load failure fails the run" "$out"
+fi
+case "$out" in
+*"UNLOADED"*"unload-timeout.html"*) ok "E2 a load failure is reported by path, not as an overflow" ;;
+*) no "E2 a load failure is reported by path, not as an overflow" "$out" ;;
+esac
+case "$out" in
+*"2 file(s) found, 1 measured, 0 skipped, 1 unloaded"*)
+  ok "E3 the summary counts a load failure separately from measured and skipped"
+  ;;
+*)
+  no "E3 the summary counts a load failure separately from measured and skipped" "$out"
+  ;;
 esac
 
 echo
