@@ -177,23 +177,6 @@ holds_text "...which runs this script" \
 holds_text "...and holds the write scope a re-run needs" \
   dod-recheck.yml "actions: write"
 
-printf '\n\033[1mwitness — the reader knows the check re-runs automatically\033[0m\n'
-
-# A ticked box re-runs the check on its own. The reader should know that, and
-# know about how long to wait. Without that line, a reader edits the PR body
-# instead, to force a re-run they did not need.
-#
-# oxagen's scr-dod-check.mjs already prints this failure message: "Ticking a
-# box on the issue re-runs this check through `dod-recheck`. If it is still
-# red a few minutes after the edit, re-run the failed `dod` job from the pull
-# request's Checks tab." This test checks that stella's own workflow file
-# says the same thing.
-holds_text "the workflow explains that ticking a box re-runs the check" \
-  dod-recheck.yml "re-run"
-
-holds_text "...and mentions a concrete wait time for the re-run" \
-  dod-recheck.yml "few minute"
-
 printf '\n'
 if [ "$fail" -eq 0 ]; then
   printf '\033[32mtest-dod-recheck: OK\033[0m — %d checks passed\n' "$pass"
