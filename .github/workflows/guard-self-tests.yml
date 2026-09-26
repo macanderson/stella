@@ -251,7 +251,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-diagnostic-codes.sh
 
-      - name: deleted-tests guard reads a live PR body over a stale one
+      - name: The deleted-tests guard can still fail
         if: ${{ !cancelled() }}
         run: ./scripts/test-deleted-tests.sh
 

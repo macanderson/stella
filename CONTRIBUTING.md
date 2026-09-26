@@ -156,6 +156,16 @@ which is the diff `prose` is about — beside the hermetic suites that prove a
 guard can still fail (#3820, #4427). `gate-parity` now also fails when a gate
 step is named in the `Makefile` and run by no workflow at all.
 
+**Name every test you delete in the PR description.** On a pull request,
+`ci.yml` runs `scripts/check-deleted-tests.sh` on the merge result. It fails
+when a `#[test]` or `#[tokio::test]` from the base branch is missing and
+nothing in the description names it. A renamed test counts as a deleted one
+under its old name. A commit message also counts, but only while that commit
+is the branch tip, so use the description. The guard compares two trees, so it
+is not a `make gate` step. `make deleted-tests-test` is its test suite. It
+builds throwaway histories and checks that the guard still fails an unnamed
+deletion.
+
 One more workflow, `deck-fit.yml`, measures every slide of every deck under
 `website/public/presentations/` against the fixed 1600x900 canvas they are
 authored in. That measurement needs a browser, so it cannot live in `make
