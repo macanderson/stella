@@ -91,9 +91,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use rusqlite::{Connection, TransactionBehavior, params};
 use serde::Serialize;
 use stella_protocol::{AgentEvent, TaskStatus};
+
+use crate::conn::OptionalExt as _;
 
 // Module map — this file holds the row types, the `Store` handle and its
 // query surface, and the tests; everything else is split by concern:
@@ -138,6 +140,7 @@ use stella_protocol::{AgentEvent, TaskStatus};
 //   telemetry   (crate-private impl) per-call telemetry rows and the
 //               execution-level paid-call accounting gate
 //   usage       `usage.db` — user-tier cross-project telemetry aggregate
+mod conn;
 mod ddl;
 mod dispatch;
 mod error;
@@ -757,7 +760,9 @@ impl Store {
     /// files run each pending `MIGRATIONS` entry in its own transaction
     /// (version stamped inside it — see [`apply_migration`]).
     fn migrate(&self) -> Result<()> {
-        let mut conn = self.lock();
+        // Raw: the caller, `migrate_and_prepare_exports`, already wraps this
+        // whole call in `classify_store_corruption` with the resolved path.
+        let mut conn = self.raw_lock();
         // The fresh-file decision is made under a write lock, because
         // "user_version is 0 AND no store table exists" is only true until
         // someone else acts on it. Read outside a transaction — or inside a
@@ -819,10 +824,20 @@ impl Store {
     /// `pub(crate)`: [`crate::cache_gaps`] is a separate module (split out to
     /// keep this file small) whose `impl Store` block needs
     /// the same connection access every query method here has.
-    pub(crate) fn lock(&self) -> std::sync::MutexGuard<'_, Connection> {
+    pub(crate) fn lock(&self) -> crate::conn::Guard<'_> {
         // A poisoned mutex means a panic mid-write; the connection itself
         // is still usable and refusing all further persistence would turn
         // one bad write into total observability loss.
+        crate::conn::Guard::new(self.raw_lock())
+    }
+
+    /// The bare guard, for the two callers that already name the path
+    /// themselves: [`Store::migrate`] and
+    /// [`crate::integrity::Store::migrate_and_prepare_exports`], both wrapped
+    /// end to end in [`crate::integrity::classify_store_corruption`]. Nothing
+    /// else in the crate should reach for this — an ordinary read or write
+    /// wants [`Store::lock`], so its corruption can name the file itself.
+    pub(crate) fn raw_lock(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.conn
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -1434,7 +1449,6 @@ impl Store {
                 |row| row.get(0),
             )
             .optional()
-            .map_err(StoreError::from)
     }
 
     /// Release a lock (only the holder's release removes it).

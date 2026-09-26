@@ -76,6 +76,7 @@
 use rusqlite::{OptionalExtension, TransactionBehavior, params};
 
 use super::{MAX_EXPORT_PAGE_ROWS, random_export_nonce, validate_sink_fingerprint};
+use crate::conn::OptionalExt as _;
 use crate::{Result, StoreError};
 
 /// Bounded, content-free reason for permanently skipping one malformed legacy export.
@@ -140,7 +141,6 @@ impl crate::Store {
             [],
             |row| row.get(0),
         )
-        .map_err(Into::into)
     }
 
     /// Enroll this store with one sink, stamping the current maximum execution

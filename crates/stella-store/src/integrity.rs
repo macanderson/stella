@@ -142,7 +142,11 @@ impl Store {
     pub(crate) fn migrate_and_prepare_exports(&self, db_path: Option<&Path>) -> Result<()> {
         self.migrate()
             .map_err(|error| classify_store_corruption(error, db_path))?;
-        crate::enterprise_telemetry::initialize_store_export_schema(&mut self.lock())
+        // Raw, not `self.lock()`. `classify_store_corruption` below already
+        // names `db_path` on any error this raises. This call runs once, at
+        // open, before any ordinary read or write.
+        let mut conn = self.raw_lock();
+        crate::enterprise_telemetry::initialize_store_export_schema(&mut conn)
             .map_err(|error| classify_store_corruption(error, db_path))
     }
 }
@@ -288,7 +292,9 @@ impl Store {
     /// WITHOUT opening it — the `stella doctor` case, where the whole problem
     /// may be that it cannot be opened — use [`check_workspace_store`].
     pub fn integrity_check(&self) -> Result<IntegrityReport> {
-        check_connection(&self.lock())
+        // Raw. This door reports SQLite's own wording in the verdict. It
+        // never returns `StoreError::Corrupt`, so no path helps here.
+        check_connection(&self.raw_lock())
     }
 }
 
@@ -742,7 +748,7 @@ mod tests {
             let conn = store.lock();
             conn.execute_batch("DROP INDEX IF EXISTS events_by_task;")
                 .expect("drop the index the migration rebuilds");
-            conn.pragma_update(None, "user_version", 38i64)
+            conn.execute_batch("PRAGMA user_version = 38;")
                 .expect("wind the schema stamp back to v38");
         }
         let db_path = checkpoint_and_close(&dir, store);
@@ -867,13 +873,115 @@ mod tests {
                 "reading {} events off shredded pages must fail",
                 journal.events.len()
             ),
-            Err(error @ StoreError::Corrupt { .. }) => assert!(
-                error.to_string().contains("stella doctor"),
-                "an ordinary read carries the remedy too: {error}"
-            ),
+            Err(error @ StoreError::Corrupt { .. }) => {
+                assert!(
+                    error.to_string().contains("stella doctor"),
+                    "an ordinary read carries the remedy too: {error}"
+                );
+                assert!(
+                    error.to_string().contains("store.db"),
+                    "and the file it happened to, not just the remedy: {error}"
+                );
+            }
             Err(other) => panic!(
                 "corruption raised by an ordinary read must classify as Corrupt, \
                  not as a bare SQLite failure: {other:?}"
+            ),
+        }
+    }
+
+    /// A `usage.db` padded with telemetry rows, then closed. Closing moves
+    /// the writes into the main file. A later corruption test would miss them
+    /// if they stayed in the `-wal` file instead.
+    ///
+    /// `UsageStore::lock()` is private to `crate::usage`, so this fixture
+    /// cannot run `PRAGMA wal_checkpoint` directly. SQLite checkpoints a WAL
+    /// database on its own when the last connection closes, and that is
+    /// enough here.
+    fn usage_hub_with_padded_telemetry(rows: usize) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("usage.db");
+        let hub = crate::usage::UsageStore::open_at(&db_path).expect("usage store");
+        let scope = crate::identity::TelemetryScope {
+            org_id: Some("org_a".to_string()),
+            workspace_id: Some("ws_a".to_string()),
+            repo_id: "repo_a".to_string(),
+            project_id: "proj_a".to_string(),
+        };
+        let batch: Vec<crate::SourceTelemetryRow> = (0..rows)
+            .map(|i| crate::SourceTelemetryRow {
+                source_rowid: i as i64 + 1,
+                execution_id: 1,
+                recorded_at: "2026-07-17T13:00:00Z".to_string(),
+                telemetry: crate::TelemetryRow {
+                    stream_seq: i as u64,
+                    turn_instance: None,
+                    engine_step: None,
+                    call_seq: None,
+                    provider: "zai".to_string(),
+                    call_role: "worker".to_string(),
+                    // Wide enough that the rows cannot all share a page.
+                    model: format!("{i:06} {}", "payload ".repeat(24)),
+                    input_tokens: 10,
+                    estimated_input_tokens: 10,
+                    output_tokens: 10,
+                    cache_read_tokens: 0,
+                    cache_miss_tokens: 0,
+                    cache_write_tokens: 0,
+                    cost_usd: 0.01,
+                    duration_ms: 5,
+                    retries: 0,
+                    tool_calls: 0,
+                    usage_complete: true,
+                    sub_agent_id: None,
+                },
+            })
+            .collect();
+        hub.replicate_telemetry(&scope, &batch)
+            .expect("replicate telemetry");
+        drop(hub);
+        assert!(db_path.is_file(), "fixture usage.db exists");
+        (dir, db_path)
+    }
+
+    /// The other half of the witness above. Corruption raised by an ordinary
+    /// read of `usage.db` must also name that file, not just say "a stella
+    /// SQLite database". Before this fix, `UsageStore::lock()` returned the
+    /// same bare `MutexGuard<Connection>` `Store::lock()` did, and a query
+    /// that failed inside `crate::conn::Rows::next` reached the caller with
+    /// no database to name.
+    #[test]
+    fn corruption_found_by_an_ordinary_read_names_the_usage_file() {
+        let (dir, db_path) = usage_hub_with_padded_telemetry(4_000);
+        shred_pages_past_the_header(&db_path);
+
+        let header = Connection::open(&db_path).expect("a damaged file still opens");
+        header
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .expect("the header still answers its version");
+        drop(header);
+
+        let hub = crate::usage::UsageStore::open_at(&dir.path().join("usage.db"))
+            .expect("a hub at the current schema opens even with damage past page 1");
+
+        match hub.cloud_pending("org_a", 10_000) {
+            Ok(pending) => panic!(
+                "reading {} telemetry rows off shredded pages must fail",
+                pending.len()
+            ),
+            Err(error @ StoreError::Corrupt { .. }) => {
+                assert!(
+                    error.to_string().contains("stella doctor"),
+                    "an ordinary read of usage.db carries the remedy too: {error}"
+                );
+                assert!(
+                    error.to_string().contains("usage.db"),
+                    "and the file it happened to: {error}"
+                );
+            }
+            Err(other) => panic!(
+                "corruption raised by an ordinary read of usage.db must classify as \
+                 Corrupt, not as a bare SQLite failure: {other:?}"
             ),
         }
     }

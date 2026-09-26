@@ -38,9 +38,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, params};
 
-use crate::Result;
+use crate::{Result, conn::OptionalExt as _};
 
 /// The user-tier stella data dir (usage rollup, session registry,
 /// notifications, enterprise spool). `STELLA_DATA_DIR` overrides; otherwise
@@ -159,8 +159,8 @@ impl UsageStore {
         })
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Connection> {
-        self.conn.lock().unwrap_or_else(|p| p.into_inner())
+    fn lock(&self) -> crate::conn::Guard<'_> {
+        crate::conn::Guard::new(self.conn.lock().unwrap_or_else(|p| p.into_inner()))
     }
 
     /// Roll one finished turn up into the aggregate: upsert its project, insert
@@ -234,18 +234,17 @@ impl UsageStore {
 
     /// Number of projects known to the aggregate.
     pub fn project_count(&self) -> Result<i64> {
-        Ok(self
-            .lock()
-            .query_row("SELECT COUNT(*) FROM projects", [], |r| r.get(0))?)
+        self.lock()
+            .query_row("SELECT COUNT(*) FROM projects", [], |r| r.get(0))
     }
 
     /// Count of rolled-up executions for a project.
     pub fn execution_count(&self, project_id: &str) -> Result<i64> {
-        Ok(self.lock().query_row(
+        self.lock().query_row(
             "SELECT COUNT(*) FROM execution_rollup WHERE project_id = ?1",
             params![project_id],
             |r| r.get(0),
-        )?)
+        )
     }
 
     /// The replication watermark for one project: the highest source-store
@@ -505,11 +504,11 @@ impl UsageStore {
     /// How many rows the cloud drain has dead-lettered for one org — the count
     /// half of what `stella cloud status` surfaces. `None` counts every org.
     pub fn cloud_quarantine_count(&self, org_id: Option<&str>) -> Result<i64> {
-        Ok(self.lock().query_row(
+        self.lock().query_row(
             "SELECT COUNT(*) FROM cloud_quarantine WHERE (?1 IS NULL OR org_id = ?1)",
             params![org_id],
             |r| r.get(0),
-        )?)
+        )
     }
 
     /// Dead-lettered rows for one org, newest first — the inspection view
@@ -762,7 +761,7 @@ impl UsageStore {
     /// the boundary row didn't survive the prune, the cursor resets to 0, which
     /// re-ships the retained acked backlog (idempotent server-side on
     /// `(workspace_id, source_rowid)`) rather than skipping an un-acked row.
-    fn vacuum_and_reanchor(conn: &Connection) -> Result<()> {
+    fn vacuum_and_reanchor(conn: &crate::conn::Guard<'_>) -> Result<()> {
         // (org_id, boundary key) captured post-delete, pre-VACUUM.
         let mut boundaries: Vec<(String, Option<(String, i64)>)> = Vec::new();
         {
@@ -1334,7 +1333,7 @@ mod tests {
         let mut columns: Vec<String> = stmt
             .query_map([], |r| r.get(0))
             .unwrap()
-            .collect::<rusqlite::Result<_>>()
+            .collect::<crate::Result<_>>()
             .unwrap();
         columns.sort();
         let mut allowed: Vec<String> = [

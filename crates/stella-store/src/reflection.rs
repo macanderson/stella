@@ -22,7 +22,9 @@
 //! recorded. Each writer therefore upserts only the columns it actually owns,
 //! and the two are order-independent.
 
-use rusqlite::{OptionalExtension, params};
+use rusqlite::params;
+
+use crate::conn::OptionalExt as _;
 
 use crate::{ExecutionReflectionRow, Result, Store};
 
@@ -158,14 +160,13 @@ impl Store {
     /// end — "nothing to learn yet" and "the learning loop has been broken for
     /// nine days" looked identical from every surface.
     pub fn reflection_parse_failure(&self, execution_id: i64) -> Result<Option<Option<String>>> {
-        Ok(self
-            .lock()
+        self.lock()
             .query_row(
                 "SELECT parse_error FROM execution_reflection WHERE execution_id = ?1",
                 params![execution_id],
                 |r| r.get::<_, Option<String>>(0),
             )
-            .optional()?)
+            .optional()
     }
 
     /// Read back one turn's self-review, if the model recorded one.
@@ -176,22 +177,21 @@ impl Store {
     /// "unrated" wants to tell them apart.
     pub fn self_review(&self, execution_id: i64) -> Result<Option<SelfReviewRow>> {
         let conn = self.lock();
-        Ok(conn
-            .query_row(
-                "SELECT delivered, self_rating, what_went_well, what_to_improve, critique \
-                 FROM execution_reflection WHERE execution_id = ?1",
-                params![execution_id],
-                |r| {
-                    Ok(SelfReviewRow {
-                        delivered: r.get::<_, Option<i64>>(0)?.map(|d| d != 0),
-                        self_rating: r.get(1)?,
-                        what_went_well: r.get(2)?,
-                        what_to_improve: r.get(3)?,
-                        critique: r.get(4)?,
-                    })
-                },
-            )
-            .optional()?)
+        conn.query_row(
+            "SELECT delivered, self_rating, what_went_well, what_to_improve, critique \
+             FROM execution_reflection WHERE execution_id = ?1",
+            params![execution_id],
+            |r| {
+                Ok(SelfReviewRow {
+                    delivered: r.get::<_, Option<i64>>(0)?.map(|d| d != 0),
+                    self_rating: r.get(1)?,
+                    what_went_well: r.get(2)?,
+                    what_to_improve: r.get(3)?,
+                    critique: r.get(4)?,
+                })
+            },
+        )
+        .optional()
     }
 
     /// Derive and record the objective half of this turn's

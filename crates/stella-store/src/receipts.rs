@@ -236,7 +236,7 @@ impl Store {
                     content: r.get(9)?,
                 })
             })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
+            .collect::<crate::Result<Vec<_>>>()?;
         Ok(rows)
     }
 
@@ -282,7 +282,7 @@ impl Store {
                     })
                 },
             )?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
+            .collect::<crate::Result<Vec<_>>>()?;
         Ok(rows)
     }
 
@@ -395,7 +395,7 @@ impl Store {
              ORDER BY id ASC",
         )?;
         let rows = stmt.query_map(params![execution_id], |r| r.get::<_, i64>(0))?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        rows.collect::<crate::Result<Vec<_>>>()
     }
 
     /// Executions with at least one recorded receipt, most recent first.
@@ -418,7 +418,7 @@ impl Store {
                     calls: r.get::<_, i64>(4)? as u64,
                 })
             })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
+            .collect::<crate::Result<Vec<_>>>()?;
         Ok(rows)
     }
 
@@ -451,7 +451,7 @@ impl Store {
                     stall_seconds_requested: r.get::<_, Option<i64>>(10)?.map(|s| s as u64),
                 })
             })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
+            .collect::<crate::Result<Vec<_>>>()?;
         Ok(rows)
     }
 }

@@ -299,7 +299,6 @@ mod tests {
         let ordinary = store
             .lock()
             .execute_batch("SELECT * FROM no_such_table")
-            .map_err(StoreError::from)
             .expect_err("a query against a missing table must fail");
         assert!(
             matches!(ordinary, StoreError::Sqlite(_)),

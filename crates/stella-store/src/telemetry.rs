@@ -2,7 +2,7 @@
 
 pub mod model_rates;
 
-use rusqlite::OptionalExtension as _;
+use crate::conn::OptionalExt as _;
 use rusqlite::params;
 
 use crate::{Result, Store, sqlite_i64};
@@ -434,13 +434,11 @@ impl Store {
     /// ask here. An execution with no landed model call settles at `0.0`,
     /// which is the truth and not a fallback.
     pub fn execution_settled_cost_usd(&self, execution_id: i64) -> Result<f64> {
-        self.lock()
-            .query_row(
-                "SELECT COALESCE(SUM(cost_usd), 0) FROM telemetry WHERE execution_id = ?1",
-                params![execution_id],
-                |row| row.get(0),
-            )
-            .map_err(Into::into)
+        self.lock().query_row(
+            "SELECT COALESCE(SUM(cost_usd), 0) FROM telemetry WHERE execution_id = ?1",
+            params![execution_id],
+            |row| row.get(0),
+        )
     }
 
     /// Permanently downgrade one execution's accounting state.
@@ -454,14 +452,12 @@ impl Store {
 
     /// Durable completeness bit used by local and enterprise projections.
     pub fn execution_usage_complete(&self, execution_id: i64) -> Result<bool> {
-        self.lock()
-            .query_row(
-                "SELECT finished_at IS NOT NULL AND usage_complete = 1 \
-                        AND usage_status = 'complete' FROM executions WHERE id = ?1",
-                params![execution_id],
-                |row| row.get(0),
-            )
-            .map_err(Into::into)
+        self.lock().query_row(
+            "SELECT finished_at IS NOT NULL AND usage_complete = 1 \
+                    AND usage_status = 'complete' FROM executions WHERE id = ?1",
+            params![execution_id],
+            |row| row.get(0),
+        )
     }
 }
 

@@ -36,7 +36,9 @@
 //! calls recorded *after* it, so a name that meant something else before
 //! adoption cannot inflate the number.
 
-use rusqlite::{OptionalExtension, params};
+use rusqlite::params;
+
+use crate::conn::OptionalExt as _;
 use stella_protocol::provenance::PublicationAuthority;
 
 use crate::{Result, Store};

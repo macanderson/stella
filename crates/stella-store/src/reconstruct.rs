@@ -46,7 +46,9 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
-use rusqlite::{OptionalExtension, params};
+use rusqlite::params;
+
+use crate::conn::OptionalExt as _;
 use sha2::{Digest, Sha256};
 use stella_protocol::{
     AgentEvent, CompletionMessage, MessageRole, ToolCall, ToolOutput, ToolResult,
@@ -288,8 +290,14 @@ impl Store {
 
     /// Index the execution's `tool_start` / `tool_result` / `text` events into a
     /// preimage lookup. Mirrors [`Store::materialize_tool_calls`]'s read shape.
+    ///
+    /// Raw, not `self.lock()`. The free function below also runs from inside
+    /// a migration's transaction. `&rusqlite::Transaction` derefs to
+    /// `&Connection`, so the function takes a bare connection, not the
+    /// path-carrying guard. A corruption error from this one path is still
+    /// `StoreError::Corrupt`. It just does not yet name the file.
     fn journal_preimages(&self, execution_id: i64) -> Result<JournalPreimages> {
-        journal_preimages(&self.lock(), execution_id)
+        journal_preimages(&self.raw_lock(), execution_id)
     }
 
     /// The era stamped on an execution row. An execution that is not there at

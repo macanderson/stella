@@ -28,7 +28,7 @@
 //! failed call that was never billed would drag both rates toward zero while
 //! looking like evidence.
 
-use rusqlite::OptionalExtension;
+use crate::conn::OptionalExt as _;
 
 use crate::{Result, Store};
 

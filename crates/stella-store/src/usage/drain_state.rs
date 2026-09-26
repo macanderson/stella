@@ -7,7 +7,9 @@
 //! hub that never drains never carries it, and older builds reading the same
 //! hub are unaffected.
 
-use rusqlite::{OptionalExtension, params};
+use rusqlite::params;
+
+use crate::conn::OptionalExt as _;
 
 use super::{Result, UsageStore};
 
@@ -61,19 +63,18 @@ impl UsageStore {
     pub fn last_drain_attempt(&self, org_id: &str) -> Result<Option<DrainAttempt>> {
         let conn = self.lock();
         conn.execute(ATTEMPTS_DDL, [])?;
-        Ok(conn
-            .query_row(
-                "SELECT attempted_at, ok, detail FROM cloud_drain_attempts WHERE org_id = ?1",
-                params![org_id],
-                |r| {
-                    Ok(DrainAttempt {
-                        attempted_at: r.get(0)?,
-                        ok: r.get::<_, i64>(1)? != 0,
-                        detail: r.get(2)?,
-                    })
-                },
-            )
-            .optional()?)
+        conn.query_row(
+            "SELECT attempted_at, ok, detail FROM cloud_drain_attempts WHERE org_id = ?1",
+            params![org_id],
+            |r| {
+                Ok(DrainAttempt {
+                    attempted_at: r.get(0)?,
+                    ok: r.get::<_, i64>(1)? != 0,
+                    detail: r.get(2)?,
+                })
+            },
+        )
+        .optional()
     }
 
     /// The org's monotonic drain cursor — the last hub rowid a confirmed ack
@@ -93,14 +94,14 @@ impl UsageStore {
     /// How many of the org's staged rows the cloud has not acked — the depth
     /// `cloud_pending` would page, without loading a single row.
     pub fn cloud_pending_count(&self, org_id: &str) -> Result<u64> {
-        Ok(self.lock().query_row(
+        self.lock().query_row(
             "SELECT COUNT(*) FROM telemetry t \
               WHERE t.org_id = ?1 \
                 AND t.rowid > COALESCE((SELECT last_hub_rowid FROM cloud_sync_cursors \
                                          WHERE org_id = ?1), 0)",
             params![org_id],
             |r| r.get::<_, i64>(0).map(|n| n.max(0) as u64),
-        )?)
+        )
     }
 }
 

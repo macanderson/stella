@@ -858,7 +858,7 @@ impl Store {
 /// [`Store::execution_rollup`]'s histogram, computed here because this table
 /// is where the counted facts live.
 pub(crate) fn tool_histogram(
-    conn: &Connection,
+    conn: &crate::conn::Guard<'_>,
     execution_id: i64,
 ) -> Result<Vec<crate::usage::ToolBucket>> {
     let mut stmt = conn.prepare(
@@ -886,7 +886,7 @@ pub(crate) fn tool_histogram(
 /// yet audited into a class). Abandonment is not an error here for the same
 /// reason it is not one there (#3146).
 pub(crate) fn error_class_histogram(
-    conn: &Connection,
+    conn: &crate::conn::Guard<'_>,
     execution_id: i64,
 ) -> Result<Vec<crate::usage::ErrorClassBucket>> {
     let mut stmt = conn.prepare(
