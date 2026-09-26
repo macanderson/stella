@@ -303,7 +303,7 @@
   No table can mean two different things, and reading it as the wrong one is
   the failure this rule exists to prevent. Check whether Sourcery answered at
   all: `gh pr view <n> --json reviews --jq '.reviews[] | select(.author.login
-  == "sourcery-ai[bot]") | {state, body}'`. A `COMMENTED` review whose body
+  == "sourcery-ai") | {state, body}'`. A `COMMENTED` review whose body
   names a diff-size limit, a spent weekly review budget, or its own outage is
   a refusal, not a pass, even though `gh pr checks` shows the same
   `skipped`-looking `Sourcery review` context as a PR nobody has reviewed
