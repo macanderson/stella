@@ -37,6 +37,8 @@ const PALETTE_BEGIN: &str = "<!-- BEGIN palette -->";
 const PALETTE_END: &str = "<!-- END palette -->";
 const DEGRADE_BEGIN: &str = "<!-- BEGIN degradation -->";
 const DEGRADE_END: &str = "<!-- END degradation -->";
+const SURVIVORS_BEGIN: &str = "<!-- BEGIN literal-survivors -->";
+const SURVIVORS_END: &str = "<!-- END literal-survivors -->";
 
 /// The surface `stella-tokens.json` uses for the deck's own ramp.
 const TUI_SURFACE: &str = "tui";
@@ -312,5 +314,95 @@ fn the_degradation_table_covers_the_palette_table() {
         "§3.1 names {} token(s) §3.5 does not stand down: {}",
         missing.len(),
         missing.join(", ")
+    );
+}
+
+/// `palette.rs`'s own doc comment names every `pub const` it still defines
+/// as a hand-typed literal, and names nothing else.
+///
+/// The module doc comment was found stale in both directions: it still
+/// listed `HAIRLINE_STRONG`, `PAPER`, `SNOW`, `PAPER_RAISED`,
+/// `PAPER_HAIRLINE` and `INK_MUTED` as literals the token system had no home
+/// for, when the v7.0 rebrand had already turned each into a `token::`
+/// re-export, and it never mentioned `DATA_1`..`DATA_5` at all. A doc
+/// comment that can drift out from under the code it describes is the same
+/// second-copy problem this whole migration exists to remove -- this pins
+/// the list to the code so a future migration or a future rebrand cannot
+/// leave it behind again.
+#[test]
+fn every_literal_survivor_is_named_and_justified() {
+    let source = include_str!("../src/palette.rs");
+
+    // Every `pub const` still defined with a hand-typed `Color::Rgb(...)`
+    // literal, read off the code rather than assumed.
+    let literal_consts: Vec<&str> = source
+        .lines()
+        .filter_map(|line| {
+            let rest = line.trim().strip_prefix("pub const ")?;
+            if !rest.contains("Color::Rgb(") {
+                return None;
+            }
+            rest.split(':').next()
+        })
+        .collect();
+    assert!(
+        !literal_consts.is_empty(),
+        "no literal `Color::Rgb(...)` const parsed out of palette.rs -- the \
+         parser above is looking at the wrong shape, and every comparison \
+         below would then be vacuous"
+    );
+
+    // Every all-caps, backtick-quoted name between the module doc comment's
+    // own markers. Filtering on all-caps (rather than every backtick span)
+    // is what keeps this from also matching prose like `` `Clamp` `` or
+    // `` `web-light` `` in the same bullets.
+    let from = source
+        .find(SURVIVORS_BEGIN)
+        .unwrap_or_else(|| panic!("palette.rs carries no `{SURVIVORS_BEGIN}`"))
+        + SURVIVORS_BEGIN.len();
+    let len = source[from..]
+        .find(SURVIVORS_END)
+        .unwrap_or_else(|| panic!("no `{SURVIVORS_END}` after `{SURVIVORS_BEGIN}`"));
+    let section = &source[from..from + len];
+    let named: Vec<&str> = section
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .filter(|name| {
+            !name.is_empty()
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit())
+        })
+        .collect();
+
+    let unjustified: Vec<&str> = literal_consts
+        .iter()
+        .filter(|name| !named.contains(name))
+        .copied()
+        .collect();
+    assert!(
+        unjustified.is_empty(),
+        "palette.rs defines {} literal const(s) its own module doc comment \
+         does not name as a justified survivor: {}. Either resolve it \
+         through `token::`, or name it between `{SURVIVORS_BEGIN}` and \
+         `{SURVIVORS_END}` and say why.",
+        unjustified.len(),
+        unjustified.join(", ")
+    );
+
+    let stale: Vec<&str> = named
+        .iter()
+        .filter(|name| !literal_consts.contains(name))
+        .copied()
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "palette.rs's module doc comment names {} const(s) as a hand-typed \
+         literal that is not one any more: {}. It now resolves through \
+         `token::` -- drop it from the list between `{SURVIVORS_BEGIN}` and \
+         `{SURVIVORS_END}`.",
+        stale.len(),
+        stale.join(", ")
     );
 }

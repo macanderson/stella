@@ -5,16 +5,19 @@
 //!
 //! ## What is a hex here, and what is not
 //!
-//! Seventeen of these constants are **not values at all** -- they are the
+//! Most of these constants are **not values at all** -- they are the
 //! generated tokens under another name:
 //!
 //! ```text
 //! GROUND SURFACE RAISED HAIRLINE  ->  token::BG PANEL HL BORDER
+//! HAIRLINE_STRONG                 ->  token::RULE
 //! BRAND BRAND_LIVE GOLD GOLD_LIVE ->  token::GOLD GOLD_BRIGHT
 //! TEXT_PRIMARY TEXT_EMPHASIS      ->  token::TEXT SILVER_TYPE
 //! TEXT_SECONDARY TEXT_TERTIARY    ->  token::SILVER MUTED
 //! TEXT_DIM SUCCESS DANGER INK     ->  token::DIM GREEN RED BG
 //! WARNING                         ->  token::WARNING
+//! PAPER SNOW PAPER_RAISED         ->  token::PAPER_GROUND PAPER PAPER_ROW
+//! PAPER_HAIRLINE INK_MUTED        ->  token::PAPER_SEAM INK_MUTED
 //! ```
 //!
 //! They were hand-typed copies of `design/tokens/stella-tokens.json`,
@@ -27,18 +30,33 @@
 //! generator never made it a constant.
 //!
 //! The rest still carry their own hex, and each is a colour the token system
-//! has no home for yet rather than an oversight (#4058):
+//! has no home for yet, not an oversight (#4058). The list below is a
+//! promise: `spec_palette.rs`'s test
+//! `every_literal_survivor_is_named_and_justified` checks it. Every literal
+//! `pub const` is named here. A name drops off the list once it moves to a
+//! `token::` re-export.
 //!
-//! - **The light theme.** `PAPER`, `SNOW`, `PAPER_RAISED`, `PAPER_HAIRLINE`,
-//!   `INK_MUTED`, `INK_DIM`, `INK_EMPHASIS`, the three ink golds (`BRAND_INK`,
-//!   `BRAND_INK_DEEP`, `GOLD_INK`), and the three status inks (`SUCCESS_INK`,
-//!   `WARNING_INK`, `DANGER_INK`). The JSON's `web-light` stops disagree with
-//!   these: its `paper` is pure white where the deck paints `#F4F4F6`, and
-//!   its `ink` is `#09090B` where this file means the dark ground.
-//!   Reconciling them is a design call about what the paper theme *is*, not
-//!   a remap. The three status inks wait on that same call.
-//! - **`VOID` and `HAIRLINE_STRONG`,** derived steps either side of the
-//!   declared ramp.
+//! <!-- BEGIN literal-survivors -->
+//! - **`BRAND_INK`, `BRAND_INK_DEEP`, `GOLD_INK`, `SUCCESS_INK`,
+//!   `WARNING_INK`, `DANGER_INK`, `INK_DIM`, `INK_EMPHASIS`.** The paper
+//!   theme's own ink tier. The JSON already declares four of these eight
+//!   values under other names -- `gold-ink`, `green-ink`, `amber-ink` and
+//!   `red-ink` match `BRAND_INK`, `SUCCESS_INK`, `WARNING_INK` and
+//!   `DANGER_INK` byte for byte -- but gives none of them a `rust` name:
+//!   doing that would claim the deck renders a value it does not. The
+//!   other four values have no JSON counterpart at all. Whether the paper
+//!   theme should take the JSON's names, and what the rest should become,
+//!   is a design call this file cannot make alone.
+//! - **`VOID`.** A derived step past the end of the declared dark ramp.
+//!   The JSON declares its own `void` at a different hex, on the
+//!   `web-dark` surface alone, with no `rust` name either. Whether the two
+//!   should become one token, and how a token says "one step past this
+//!   ramp" at all, is the same design call.
+//! - **The categorical data marks.** `DATA_1`, `DATA_2`, `DATA_3`, `DATA_4`,
+//!   `DATA_5`. Each one must sit 30 degrees of OKLCH hue away from every
+//!   other mark, and from gold. Every existing `Clamp` option checks one
+//!   token alone, so none of them can check a group like this.
+//! <!-- END literal-survivors -->
 //!
 //! Those are values the token system has no home for yet, and they are fine
 //! where they are: `scripts/check-tokens.py` only requires a hex to *be* a
