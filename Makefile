@@ -1072,6 +1072,15 @@ dispatch-main-verification-test: ## Test the main-tip dispatcher (hermetic; not 
 wait-for-armed-merge-test: ## Test the armed-auto-merge wait (hermetic; not part of `gate`)
 	./scripts/test-wait-for-armed-merge.sh
 
+# The one issue-lifecycle for a version write-back that did not merge in a
+# given run (`#5673`). auto-tag.yml's four warning branches (a red or
+# unreported check, the 45-minute timeout, an unresolvable Cargo.lock, and
+# an armed-but-unmerged auto-merge) all call this instead of writing their
+# own `gh issue` calls, so they report through one label and one issue.
+.PHONY: version-writeback-defer-test
+version-writeback-defer-test: ## Test the version write-back's deferred-issue reporting (hermetic; not part of `gate`)
+	./scripts/test-version-writeback-defer.sh
+
 .PHONY: main-red-hold
 main-red-hold: ## Ask whether an open `main-red` issue should hold a PR (reads the tracker)
 	@./scripts/check-main-red-hold.sh

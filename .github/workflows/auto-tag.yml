@@ -516,6 +516,11 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Computed once, up front, because every warning branch below that
+          # defers the write-back (#5673) needs it to name the commit the
+          # refusal happened at.
+          short_sha="$(git rev-parse --short HEAD)"
+
           # The previous step exits 0 early ("manifests already at ${version};
           # nothing to sync") when the bump was a no-op — a step exiting 0 is
           # a *success*, not a skip, so it doesn't stop this step from
@@ -577,12 +582,18 @@ jobs:
               fi
             elif [ "${rc}" -ne 8 ] && [ "$(now)" -ge "${grace_until}" ]; then
               echo "::warning::a required check on ${BRANCH} is red or never reported — NOT merging. Read the PR's checks, fix the failure, and re-run auto-tag.yml."
+              ./scripts/version-writeback-defer.sh open --case 2 \
+                --branch "${BRANCH}" --version "${VERSION}" --sha "${short_sha}" \
+                || echo "::warning::could not report the deferred write-back (case 2)"
               exit 0
             fi
             sleep 30
           done
           if [ "${checks_green}" != true ]; then
             echo "::warning::the required checks on ${BRANCH} did not finish within 45 minutes — NOT merging. Merge it once they are green, or re-run auto-tag.yml."
+            ./scripts/version-writeback-defer.sh open --case 3 \
+              --branch "${BRANCH}" --version "${VERSION}" --sha "${short_sha}" \
+              || echo "::warning::could not report the deferred write-back (case 3)"
             exit 0
           fi
 
@@ -618,7 +629,7 @@ jobs:
           merge_verdict=0
           ./scripts/check-merge-lockfile-sync.sh origin/main || merge_verdict=$?
 
-          # #3842: the refusal below used to be invisible outside this run's
+          # #3842: a refusal here used to be invisible outside this run's
           # log. `exit 0` is right — a stale sync branch is routine and
           # self-healing, and failing the job here would red the release
           # workflow on a condition that fixes itself — but nothing
@@ -629,74 +640,20 @@ jobs:
           # the refusal happens on the last merge before a quiet period, the
           # write-back never lands and every run still reports green.
           #
-          # Report it the way main-canary.yml reports a broken tree: one
-          # labelled issue, opened while the condition recurs and closed the
-          # run it clears — scripts/main-canary.sh's header carries the full
-          # argument for that shape, including why a monitor that only ever
-          # files gets muted and ends up worse than none. A distinct label
-          # from main-canary's own `main-red`: this is not "main is broken",
-          # `main` compiles and its lock resolves fine — it is "this branch's
-          # version write-back hasn't landed yet".
-          defer_label="version-writeback-deferred"
-          open_defer_issue="$(gh issue list --label "$defer_label" --state open --limit 1 \
-            --json number --jq '.[0].number // empty' 2>/dev/null || true)"
-
+          # scripts/version-writeback-defer.sh reports it the way
+          # main-canary.yml reports a broken tree: one labelled issue,
+          # opened while the condition recurs — its own header carries the
+          # full argument for that shape. #5673 found this was wired for
+          # only one of the job's four warning branches; the other three
+          # (a required check red or never reporting, the 45-minute timeout,
+          # and auto-merge armed but not yet landed, handled above and
+          # below) left no trace outside this run's log.
           if [ "${merge_verdict}" -ne 0 ]; then
             echo "::warning::merging ${BRANCH} would leave main's Cargo.lock unresolvable — NOT merging (#3336). main moved under this branch; the next release cycle rebuilds it from the current tip, or re-run auto-tag.yml by hand."
-
-            short_sha="$(git rev-parse --short HEAD)"
-            # Built as an array of whole lines rather than one multi-line
-            # quoted string: this step is one YAML block scalar, so every
-            # SCRIPT line has to stay indented to match it or YAML ends the
-            # block early and reads the rest as new top-level content — but
-            # the issue body must NOT carry that indentation, or GitHub's
-            # markdown reads each paragraph as an indented code block. An
-            # array element's own indentation (outside the quotes) satisfies
-            # YAML; the quoted content (inside them) carries none of it into
-            # the rendered body.
-            defer_lines=(
-              "Auto-tag refused to merge the \`${BRANCH}\` version-sync PR (writing back \`${VERSION}\`) at \`${short_sha}\`: merging it would leave \`main\`'s \`Cargo.lock\` unresolvable (#3336)."
-              ""
-              "This is usually self-healing — whatever merge moved \`main\` under this branch starts another \`auto-tag\` run, which force-updates \`${BRANCH}\` from the then-current tip and retries. That recovery only fires while commits keep landing on \`main\`, though: if this refusal happens on the last merge before a quiet period, the write-back never lands and nothing else would have said so (#3842)."
-              ""
-              "**If this is still open and no \`auto-tag\` run has retried recently**, run it by hand:"
-              ""
-              '```sh'
-              "gh workflow run auto-tag.yml"
-              '```'
-              ""
-              "Closes automatically the run the write-back merges."
-            )
-            defer_body="$(printf '%s\n' "${defer_lines[@]}")"
-
-            if [ -n "${open_defer_issue}" ]; then
-              gh issue comment "${open_defer_issue}" \
-                --body "Still deferred at \`${short_sha}\`, branch \`${BRANCH}\`, writing back \`${VERSION}\`." \
-                || echo "::warning::could not comment on deferral issue #${open_defer_issue}"
-            else
-              # `--force`: idempotent label creation, the same reason
-              # main-canary.sh ensures its own label before its first issue.
-              gh label create "$defer_label" \
-                --color FBCA04 \
-                --description "the version write-back to main was refused and has not since landed (#3842)" \
-                --force \
-                || echo "::warning::could not ensure the ${defer_label} label"
-              gh issue create \
-                --title "version write-back to main is deferred (${BRANCH})" \
-                --label "$defer_label" \
-                --body "$defer_body" \
-                || echo "::warning::could not open a deferral issue"
-            fi
+            ./scripts/version-writeback-defer.sh open --case 4 \
+              --branch "${BRANCH}" --version "${VERSION}" --sha "${short_sha}" \
+              || echo "::warning::could not report the deferred write-back (case 4)"
             exit 0
-          fi
-
-          if [ -n "${open_defer_issue}" ]; then
-            short_sha="$(git rev-parse --short HEAD)"
-            gh issue comment "${open_defer_issue}" \
-              --body "The write-back merges cleanly again as of \`${short_sha}\` — closing. Reopen if you disagree." \
-              || true
-            gh issue close "${open_defer_issue}" --reason completed \
-              || echo "::warning::could not close deferral issue #${open_defer_issue}"
           fi
 
           # The ordinary merge, with the required checks green. Retried for
@@ -704,8 +661,19 @@ jobs:
           # state that never settled. Ten tries over five minutes, which is
           # long enough for a late verdict and short enough that a genuine
           # refusal reaches the fallbacks below rather than sitting here.
+          #
+          # A merge here is CONFIRMED: `gh pr merge` returning success means
+          # GitHub has already applied it, unlike the armed auto-merge below,
+          # which only promises a merge later. So this is one of the three
+          # places scripts/version-writeback-defer.sh's `close` runs — never
+          # merely because merge_verdict cleared above, which is a fact
+          # about the lockfile, not about whether anything actually merged
+          # (#5673).
           for _ in $(seq 1 10); do
             if gh pr merge "${BRANCH}" --squash; then
+              ./scripts/version-writeback-defer.sh close \
+                --branch "${BRANCH}" --sha "${short_sha}" \
+                || echo "::warning::could not close the deferred write-back issue"
               exit 0
             fi
             sleep 30
@@ -716,9 +684,13 @@ jobs:
           # now, not the path: `enforce_admins` is on for main, which makes
           # `mergePullRequest` refuse an admin merge on the same grounds it
           # refuses any other (#5589). Kept for a repository whose protection
-          # still grants a bypass.
+          # still grants a bypass. Confirmed the same way the ordinary merge
+          # above is, so it closes the deferred write-back issue the same way.
           if [ -n "${ADMIN_MERGE_TOKEN:-}" ]; then
             if GH_TOKEN="${ADMIN_MERGE_TOKEN}" gh pr merge "${BRANCH}" --squash --admin; then
+              ./scripts/version-writeback-defer.sh close \
+                --branch "${BRANCH}" --sha "${short_sha}" \
+                || echo "::warning::could not close the deferred write-back issue"
               exit 0
             fi
             echo "::warning::admin merge of ${BRANCH} with RELEASE_ADMIN_TOKEN failed — falling back to auto-merge."
@@ -741,6 +713,15 @@ jobs:
             echo "::warning::could not enable auto-merge — merge the ${BRANCH} PR manually once checks are green."
           fi
           echo "::warning::${BRANCH} did not merge in this run; auto-merge is armed. If it is still open, check that its workflow runs are not parked in action_required (#5589)."
+          # Armed, not merged: this run is ending without a confirmed merge,
+          # so it reports case 5 the same way the red-check, timeout and
+          # lockfile cases above do (#5673). The step below closes this same
+          # issue once scripts/wait-for-armed-merge.sh confirms the merge
+          # actually landed — never here, because arming is a promise, not a
+          # merge.
+          ./scripts/version-writeback-defer.sh open --case 5 \
+            --branch "${BRANCH}" --version "${VERSION}" --sha "${short_sha}" \
+            || echo "::warning::could not report the deferred write-back (case 5)"
 
       # The merge above is made with `secrets.GITHUB_TOKEN`, and GitHub raises
       # no workflow-triggering event for a push made with that token. So
@@ -784,6 +765,17 @@ jobs:
         run: |
           set -uo pipefail
           if [ "${ARMED:-}" = "true" ]; then
-            ./scripts/wait-for-armed-merge.sh "${SYNC_BRANCH}"
+            wait_out="$(./scripts/wait-for-armed-merge.sh "${SYNC_BRANCH}")"
+            printf '%s\n' "${wait_out}"
+            # The one place case 5's deferred write-back issue (#5673) can
+            # honestly close: this is the first point after arming where the
+            # merge is a confirmed fact rather than a promise. TIMEOUT,
+            # CLOSED and UNKNOWN all leave the write-back exactly as
+            # undecided as arming did, so none of them closes anything.
+            if printf '%s\n' "${wait_out}" | grep -q '^wait-for-armed-merge: MERGED'; then
+              ./scripts/version-writeback-defer.sh close \
+                --branch "${SYNC_BRANCH}" --sha "$(git rev-parse --short HEAD)" \
+                || echo "::warning::could not close the deferred write-back issue"
+            fi
           fi
           ./scripts/dispatch-main-verification.sh

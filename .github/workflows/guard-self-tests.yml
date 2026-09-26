@@ -388,6 +388,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-wait-for-armed-merge.sh
 
+      - name: the deferred version write-back issue, one per case
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-version-writeback-defer.sh
+
       - name: the session-scratch boundary
         if: ${{ !cancelled() }}
         run: ./scripts/test-no-scratch.sh
