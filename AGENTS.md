@@ -718,8 +718,8 @@ That is exactly what happened to `fix/arenabench-dind-host-netns`: seven
 commits landed on the branch after GitHub recorded its merged head, survived
 nowhere but a local clone and a runner image built from the branch, and the
 loss stayed invisible for two days. The job runs hourly alongside the
-release checks above and reports each drifted branch by name, its PR number,
-and how far its live tip has moved.
+release checks above. For each drifted branch it reports the name, the PR
+number, the commit that merged, and the branch's live tip.
 
 **After a pull request merges, its branch is dead.** Do not push more commits
 to a branch once its pull request has merged, even to the same lane or issue
