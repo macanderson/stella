@@ -1,0 +1,184 @@
+---
+title: How stella built its own tool to check the weather
+description: A user asked stella for the weather. Stella has no web access — so it read its own docs, wrote a custom tool, validated it, and answered. Two files, a few minutes, zero dependencies.
+---
+
+Someone asked stella for the current weather in Los Angeles. Stella has no
+web search tool and no network access of its own, so the honest first answer
+was "I can't check that." Then came the natural follow-up: *can you build a
+tool that can?*
+
+Yes — and it turned out to be a good measure of how low the barrier is. This
+is what happened, start to finish.
+
+## The whole thing, first
+
+Two files in the workspace:
+
+```text
+.stella/tools/
+├── weather.toml            # the manifest — the whole contract
+└── scripts/
+    └── weather.py          # the script that runs
+```
+
+One command to prove it's wired up:
+
+```bash
+stella tools --validate
+#   ✓ .stella/tools/weather.toml (weather_lookup)
+#   1 manifest(s) checked: 1 ok, 0 with errors, 0 warning(s)
+```
+
+From the next session on, `weather_lookup` sits alongside the built-in tools,
+and the agent calls it like any other. No SDK, no Rust, no build step, no
+API key.
+
+## Step 1: Stella read its own docs
+
+The starting point wasn't a guess about how plugins work — it was the
+[Custom Tools](/docs/agent-tools/custom-tools) page in this very
+documentation site, plus a skim of the reference manifests under
+`plugins/` in the repo.
+
+That page settled the design in one read:
+
+- A **full plugin** (with its four participation points — context, tools,
+  hooks, panels) was more than this job needed. A **[custom tool](/docs/agent-tools/custom-tools)**
+  is just a TOML manifest plus a script, dropped into `.stella/tools/`.
+- The manifest declares a `name`, a `description`, a `command` as an argv
+  array (spawned directly, no shell), and an `[input_schema]` written as
+  TOML-flavored JSON Schema.
+- Input reaches the script two ways: the whole JSON object on **stdin**, and
+  every top-level scalar as a `STELLA_INPUT_<UPPER_SNAKE_KEY>` environment
+  variable. A simple script needs no JSON parser at all.
+- Exit 0 and stdout becomes the tool result. Non-zero and stderr becomes
+  the error the model sees.
+
+## Step 2: The manifest
+
+```toml title=".stella/tools/weather.toml"
+name = "weather_lookup"
+description = "Look up the current weather for any location worldwide. Uses the free Open-Meteo API (no API key needed). Returns condition, temperature, feels-like, humidity, and wind."
+command = ["python3", ".stella/tools/scripts/weather.py"]
+timeout_ms = 30000
+
+[input_schema]
+type = "object"
+required = ["location"]
+
+[input_schema.properties.location]
+type = "string"
+description = "The city or place to get weather for, e.g. \"Los Angeles\" or \"Tokyo, Japan\"."
+
+[input_schema.properties.units]
+type = "string"
+enum = ["fahrenheit", "celsius"]
+description = "Temperature units. Defaults to fahrenheit."
+```
+
+Three details from the docs mattered here:
+
+1. **`name` must match `^[a-z][a-z0-9_]{1,63}$`** — and names that collide
+   with built-ins or retired tools (like `web_fetch`) are refused.
+   `weather_lookup` is safely out of that namespace.
+2. **`command` is an argv array, not a string.** A bare string fails to
+   parse and the tool silently never loads.
+3. **Inputs go under `[input_schema]`, not `[parameters]`.** An unknown
+   table is silently ignored, which would have left the tool with an empty
+   schema and no way to receive the city name.
+
+The `description` field is doing real work too: it's the *only* thing the
+model has when deciding whether to call the tool, so it says what the tool
+returns and that no API key is needed.
+
+## Step 3: The script
+
+`weather.py` is a stdlib-only Python script — `urllib`, `json`, nothing to
+install. It uses the free [Open-Meteo](https://open-meteo.com) APIs:
+
+1. **Geocode** the location string (`geocoding-api.open-meteo.com`) to get
+   latitude/longitude.
+2. **Fetch current conditions** (`api.open-meteo.com/v1/forecast`) with the
+   requested units.
+3. **Print a short summary** — condition (decoded from the WMO weather
+   code), temperature, feels-like, humidity, wind.
+
+The input handling follows the docs' contract exactly:
+
+```python title=".stella/tools/scripts/weather.py"
+raw = sys.stdin.read()
+data = json.loads(raw) if raw.strip() else {}
+
+location = (data.get("location")
+            or os.environ.get("STELLA_INPUT_LOCATION") or "").strip()
+if not location:
+    print("weather error: missing required input: location", file=sys.stderr)
+    sys.exit(1)
+```
+
+Stdin first, `STELLA_INPUT_*` as fallback, and any failure exits non-zero
+with the reason on stderr — which is precisely what surfaces to the model as
+the tool error.
+
+## Step 4: Prove it before declaring it
+
+The docs are explicit that stella is lenient at discovery time — a broken
+manifest is just a diagnostic, and the session keeps running. So
+verification happened in two passes:
+
+**The strict validator:**
+
+```bash
+stella tools --validate
+```
+
+One manifest checked, one ok, zero warnings. (The validator is what catches
+a non-executable `command[0]`, a clamped `timeout_ms`, or a reserved name —
+before a real run spends budget discovering them.)
+
+**Live end-to-end runs**, piping input exactly the way the engine does:
+
+```bash
+$ echo '{"location": "Los Angeles"}' | python3 .stella/tools/scripts/weather.py
+Current weather for Los Angeles, California, United States (as of 2026-09-21T00:30 local):
+  Condition:   Clear sky
+  Temperature: 66.8°F (feels like 69.7°F)
+  Humidity:    86%
+  Wind:        3.5 mph
+```
+
+Tokyo in celsius, London through the `STELLA_INPUT_LOCATION` env channel,
+and the missing-input error path — all behaved as documented.
+
+## What made this easy
+
+The whole build took a few minutes, and the reasons are structural:
+
+- **The manifest is the whole contract.** There was nothing to learn about
+  stella's internals — the docs say a tool is a TOML file and a script, and
+  that turned out to be literally true.
+- **No SDK, no build, no dependencies.** The script is Python's standard
+  library talking to a keyless API. `command` is spawned directly, so the
+  script is exactly what runs.
+- **The input contract is forgiving by design.** JSON on stdin *and*
+  `STELLA_INPUT_*` env vars meant the script could be tested by hand with
+  `echo | python3` — no harness needed.
+- **Failure is one line.** Exit non-zero, print to stderr, done. The error
+  text goes straight back to the model.
+- **`stella tools --validate` closes the loop** before the tool is ever
+  called in a real session.
+
+<Callout type="info">
+One caveat worth knowing: workspace manifests sit behind the
+[project trust boundary](/docs/configuration/settings#the-project-trust-boundary),
+so `.stella/tools/` only loads in a trusted repo (`STELLA_TRUST_PROJECT=1`).
+For a tool you want everywhere, drop the manifest in `~/.stella/tools/`
+instead — the user-global directory always loads.
+</Callout>
+
+## See also
+
+- [Custom Tools](/docs/agent-tools/custom-tools) — the full manifest reference this build followed.
+- [Plugins](/docs/plugins) — when you need more than a tool: context, hooks, and panels too.
+- [Permissions](/docs/agent-tools/permissions) — how custom tool calls are gated like any other tool.

@@ -1,0 +1,21 @@
+schema = "context-record/v0.1"
+set_id = "macanderson.stella"
+
+[[record]]
+lineage_id = "ctx.macanderson.stella.tool-bash-failed-exit-code-1-869b28b0"
+record_id = "rec_macanderson_stella_tool_bash_failed_exit_code_1_869b28b0_f12ae8f326b0"
+record_hash = "sha256:5c1ee318a5965682da2e7529c047f6571eecf21361e8b5dced402861561b6a56"
+kind = "rule"
+statement = "tool bash failed: [exit code: 1]"
+tags = ["inferred"]
+origin = "inferred"
+sharing_scope = "repository"
+status = "active"
+
+[record.provenance]
+source_kind = "observation"
+source_uri = "proposal:rule:tool-bash-failed-exit-code-1-869b28b0"
+evidence_grade = "environment_observation"
+
+[record.steering]
+force = "should"
