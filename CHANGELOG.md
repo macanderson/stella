@@ -144,9 +144,6 @@ approval/skill/hook layer a host process can drive.
   graded** (#2443, #2501).
 - **A correct long-running service survives the agent's own exit** (#2766).
 - **Two open Dependabot alerts closed** (js-yaml, h2) (#2548).
-- **A creation task's missing deliverable is now a witness, not an inconclusive**
-  (#2867).
-- **A completed ArenaBench sweep no longer stops a running seat** (#2859).
 
 ### Removed
 

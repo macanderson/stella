@@ -48,10 +48,10 @@ fi
 # measures.
 #
 # `find` covers the other case: a tree that git does not track. That is not a
-# fallback for convenience -- it is what lets the test above point this script
-# at a fixture directory outside the repository, which is the only way to
-# exercise the enumeration without committing a deliberately-failing deck under
-# website/public/presentations/, where the real job would measure it.
+# fallback for convenience. It is what lets the test above point this script
+# at a fixture directory outside the repository. That is the only way to
+# exercise the enumeration without committing a deliberately-failing deck
+# under website/public/presentations/, where the real job would measure it.
 decks=()
 if git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1 &&
   [ -n "$(git -C "$root" ls-files -- '*.html' 2>/dev/null | head -1)" ]; then

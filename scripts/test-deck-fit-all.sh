@@ -13,10 +13,10 @@
 # #3376 was an enumeration bug: a recursive trigger paired with a
 # non-recursive glob, so the workflow started on a deck it then never
 # measured. #3403 fixed it against a throwaway fixture tree that was deleted
-# afterwards, leaving nothing to catch the same class again -- the enumeration
-# silently covering fewer files than the trigger implies. That is the third
-# occurrence of one shape (#2425, #3376), and the third one should be caught
-# by a check rather than by somebody noticing.
+# afterwards. That left nothing to catch the same class again: the
+# enumeration silently covering fewer files than the trigger implies. That is
+# the third occurrence of one shape (#2425, #3376), and the third one should
+# be caught by a check rather than by somebody noticing.
 #
 # A committed always-failing fixture deck is not the alternative: anything
 # under website/public/presentations/ is measured by construction, so it would
@@ -45,8 +45,8 @@ no() {
   return 0
 }
 
-# A `node` stub, first on PATH. It is handed the measurer path and the deck, so
-# it reads $2 -- and its exit status comes from the deck's basename, which is
+# A `node` stub, first on PATH. It is handed the measurer path and the deck,
+# so it reads $2. Its exit status comes from the deck's basename, which is
 # what lets one fixture tree exercise every arm of the case statement:
 #
 #   pass-*.html    -> 0, measured clean
@@ -181,8 +181,8 @@ fi
 # ── D: the tracked path, which is what CI actually runs ──────────────────────
 #
 # A and B exercise the `find` branch. Production takes the `git ls-files`
-# pathspec, and the #3376 bug was specifically a non-recursive enumeration --
-# so the recursion is asserted on that branch too, or the regression could
+# pathspec, and the #3376 bug was specifically a non-recursive enumeration.
+# So the recursion is asserted on that branch too, or the regression could
 # come back on the only branch that matters.
 
 D="$TMP/tracked"
