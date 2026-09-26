@@ -317,6 +317,16 @@ concluded, counts how many of the repository's 100 most recent runs are
 unfinished, exits 0, and closes no open `main-unverified` issue — a recovery
 is claimed off an answer, never off the absence of one.
 
+**A commit missing from that list gets one more read before it counts as
+missing.** The list can hold rows without holding the newest ones: on
+2026-09-14, 2026-09-15 and 2026-09-24 a populated list still reported ten
+commits as `missing`, each with a completed `ci` run a day old. A
+commit the list does not hold gets asked for by its own sha, on a second
+endpoint the list read does not use. A run found there turns the verdict
+`verified` or `pending` and says the list missed it; an empty answer or a
+failed read leaves the list's verdict standing. Either way the log names what
+the list held, so a stale read leaves a trace instead of a silent `missing`.
+
 It is a separate job because it was the third step of the compile job, so an
 answer that costs seconds waited on a toolchain, a cache and
 `cargo check --workspace`, and a timeout there took it away entirely. Its

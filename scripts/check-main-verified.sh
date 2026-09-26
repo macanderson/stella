@@ -97,6 +97,8 @@ stuck_minutes=45
 fixture_runs=""
 fixture_commits=""
 fixture_queue=""
+fixture_direct=""
+fixture_direct_fails=0
 use_fixture=0
 announce=0
 dry_run=0
@@ -162,6 +164,16 @@ while [ $# -gt 0 ]; do
     }
     fixture_queue="$2"
     shift 2
+    ;;
+  # Test-only: stand in for the read by commit below. The lines take the
+  # shape the run list takes. With neither flag, that read finds nothing.
+  --fixture-direct)
+    fixture_direct="${2:-}"
+    shift 2
+    ;;
+  --fixture-direct-fails)
+    fixture_direct_fails=1
+    shift
     ;;
   -h | --help)
     awk 'NR == 1 { next } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$0"
@@ -246,9 +258,15 @@ fi
 # The two cases are separable because the read asks for the last 60 `ci` runs
 # on `main` whatever their age. An outage creates no runs, and destroys none,
 # so it cannot empty that list — older runs stay in it, and a commit absent
-# from a populated list is still reported, which is the gap this script
+# from a populated list is still checked, which is the gap this script
 # watches. Empty means this run could not see the history at all, and that is
 # an unknown.
+#
+# A full list can still be stale. It has rows, but not the new ones. On
+# 2026-09-14, 2026-09-15 and 2026-09-24 a list like that named all ten
+# commits as missing. Each one had a green `ci` run a day old. So a commit the
+# list does not hold gets a second read, by commit, before it counts as
+# missing. That read and its log lines are further down.
 if [ -z "$runs" ]; then
   unknown "the ci run list came back empty, so no commit could be matched"
 fi
@@ -267,19 +285,12 @@ age_seconds() {
   echo $((now_epoch - at))
 }
 
-unverified=""
-still_running=""
-count=0
-
-while IFS= read -r commit; do
-  [ -z "$commit" ] && continue
-  sha="${commit%% *}"
-  rest="${commit#* }"
-  short="${rest%% *}"
-  subject="${rest#* }"
-  count=$((count + 1))
-
-  verdict="missing"
+# The verdict for one commit, from lines in the shape above. The list and the
+# read by commit both go through here. So the two reads cannot judge one run
+# in two ways.
+verdict_for() {
+  local sha="$1" list="$2" verdict="missing"
+  local run run_sha run_rest status conclusion created age
   while IFS= read -r run; do
     [ -z "$run" ] && continue
     run_sha="${run%% *}"
@@ -315,8 +326,66 @@ while IFS= read -r commit; do
       ;;
     esac
   done <<EOF
-$runs
+$list
 EOF
+  printf '%s\n' "$verdict"
+}
+
+# The runs for one commit, asked for by its sha. This is a second endpoint. It
+# skips the workflow name and the branch filter the list read goes through.
+# The `@` split drops the ref a run of a called workflow carries on its path.
+direct_runs() {
+  if [ "$use_fixture" -eq 1 ]; then
+    [ "$fixture_direct_fails" -eq 1 ] && return 1
+    printf '%s\n' "$fixture_direct"
+    return 0
+  fi
+  gh api "repos/{owner}/{repo}/actions/runs?head_sha=$1&per_page=100" \
+    --jq '.workflow_runs[]
+      | select((.path | split("@")[0]) == ".github/workflows/ci.yml")
+      | "\(.head_sha) \(.status) \(.conclusion // "none") \(.created_at)"' \
+    </dev/null 2>/dev/null
+}
+
+# What the list read held. It prints beside any report that leans on the
+# list. Without it, a stale list leaves no trace in the log.
+describe_list() {
+  local rows first last
+  rows="$(printf '%s\n' "$runs" | awk 'NF' | wc -l | tr -d ' ')"
+  first="$(printf '%s\n' "$runs" | awk 'NF { print $4; exit }')"
+  last="$(printf '%s\n' "$runs" | awk 'NF { t = $4 } END { print t }')"
+  printf 'The ci run list held %s row(s), created from %s to %s. Its first three:\n' \
+    "$rows" "$first" "$last"
+  printf '%s\n' "$runs" | awk 'NF' | head -3 | sed 's/^/  /'
+}
+
+unverified=""
+still_running=""
+list_missed=""
+count=0
+
+while IFS= read -r commit; do
+  [ -z "$commit" ] && continue
+  sha="${commit%% *}"
+  rest="${commit#* }"
+  short="${rest%% *}"
+  subject="${rest#* }"
+  count=$((count + 1))
+
+  verdict="$(verdict_for "$sha" "$runs")"
+
+  # The list has no run for this commit. Ask once more, by commit. A run
+  # found there is an answer, and the note below says the list missed it. An
+  # empty answer confirms the gap. A failed read leaves the list's verdict.
+  if [ "$verdict" = "missing" ]; then
+    if direct="$(direct_runs "$sha")"; then
+      verdict="$(verdict_for "$sha" "$direct")"
+      [ "$verdict" = "missing" ] || list_missed="${list_missed}  $short
+"
+    else
+      echo "check-main-verified: WARN: the read by commit failed for $short, so the list's answer stands" >&2
+    fi
+  fi
 
   case "$verdict" in
   verified) ;;
@@ -334,6 +403,15 @@ EOF
 done <<EOF
 $commits
 EOF
+
+if [ -n "$list_missed" ]; then
+  printf 'check-main-verified: NOTE: the ci run list did not hold these commits, but the read by commit found their runs:\n\n%s\n' \
+    "$list_missed"
+fi
+if [ -n "$list_missed" ] || [ -n "$unverified" ]; then
+  describe_list
+  echo
+fi
 
 # Three states, and only the first one is green. `pending` and `unverified`
 # both mean no answer; they differ in whether an answer is still coming.

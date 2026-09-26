@@ -385,6 +385,51 @@ case "$out" in
   *) pass=$((pass + 1)); echo "ok   ...and a pending run with nothing open files nothing" ;;
 esac
 
+# A stale list has rows, but not the new ones. On 2026-09-14, 2026-09-15 and
+# 2026-09-24 a list like that named all ten commits as missing. Each had a
+# green `ci` run a day old. The read by commit is the second source. These
+# cases pin what each of its answers does.
+stale_commits="$(commit $A 'a merge the list did not hold')"
+stale_runs="$B completed success $(long_ago)"
+found_by_commit="$A completed success $(now_iso)"
+
+want_announce "a run the list missed but the read by commit found is verified" expect-pass \
+  "$stale_commits" "$stale_runs" "green, nothing open to close" \
+  --fixture-direct "$found_by_commit"
+want_announce "...and the log says the list missed it" expect-pass \
+  "$stale_commits" "$stale_runs" "did not hold these commits" \
+  --fixture-direct "$found_by_commit"
+want_announce "...and prints what the list held" expect-pass \
+  "$stale_commits" "$stale_runs" "The ci run list held 1 row(s)" \
+  --fixture-direct "$found_by_commit"
+want_announce "...and closes the issue a stale list opened" expect-pass \
+  "$stale_commits" "$stale_runs" "gh issue close 42" \
+  --fixture-direct "$found_by_commit" --fixture-open-issue 42
+
+# The read by commit judges a run the way the list does. A queued run it
+# finds is pending.
+want_announce "a queued run found by commit is pending" expect-pass \
+  "$stale_commits" "$stale_runs" "PENDING" \
+  --fixture-direct "$A queued none $(now_iso)"
+
+# An empty answer confirms the gap. The second read must not turn a real
+# absence into green.
+want_announce "a commit neither read found a run for is still missing" expect-fail \
+  "$stale_commits" "$stale_runs" "missing" \
+  --fixture-direct "$B completed success $(now_iso)"
+want_announce "...and still files the issue" expect-fail \
+  "$stale_commits" "$stale_runs" "gh issue create" \
+  --fixture-direct ""
+want_announce "...and the log shows what the list held" expect-fail \
+  "$stale_commits" "$stale_runs" "The ci run list held 1 row(s)"
+
+# A failed read by commit changes nothing. The list's answer stands, and the
+# log says so.
+want_announce "a failed read by commit leaves the commit missing" expect-fail \
+  "$stale_commits" "$stale_runs" "missing" --fixture-direct-fails
+want_announce "...and says the read failed" expect-fail \
+  "$stale_commits" "$stale_runs" "read by commit failed" --fixture-direct-fails
+
 # ── the real repository ──────────────────────────────────────────────────────
 # It must not fabricate against real history. Skipped without `gh`, because
 # there the script correctly reports UNKNOWN and the case would prove nothing.
