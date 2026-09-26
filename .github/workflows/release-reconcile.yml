@@ -34,12 +34,19 @@ name: release-reconcile
 # part of an hour. Running more often than the grace window would just re-ask a
 # question whose answer cannot have changed.
 #
-# ── Two hops, two jobs ───────────────────────────────────────────────────────
+# ── Three hops, three jobs ────────────────────────────────────────────────────
 #
 # `reconcile` asks whether every tag has a published release. `tap` asks whether
 # the Homebrew tap serves the newest one, which is a different question with a
 # different remedy: a release can publish perfectly and still never reach
-# `brew install` (#5551).
+# `brew install` (#5551). `branch-drift` asks a question about pull requests
+# rather than releases, but the same silent-until-somebody-looks shape: is a
+# merged pull request's branch still on origin, moved past the commit that was
+# actually merged? #2180's tail (seven commits) answered that "yes" for two
+# days before anyone noticed, because nothing was reading it on a cadence
+# either (#2658). It rides this workflow rather than a new one because the
+# question fits the same hourly, state-comparing pattern the two release jobs
+# already use.
 
 on:
   schedule:
@@ -105,3 +112,30 @@ jobs:
         run: |
           ./scripts/check-tap-current.sh \
             --grace-secs "${{ inputs.grace-secs || '5400' }}"
+
+  # A merged pull request's branch is supposed to be dead the moment it
+  # merges — GitHub deletes it automatically. When one is still on origin and
+  # its tip no longer matches what actually merged, somebody pushed to a
+  # branch after its work already landed, and those commits sit outside every
+  # pull request and every branch main's history reaches. Deleting the branch
+  # later, which nothing here stops from happening, is exactly how #2180's
+  # tail was lost for two days.
+  #
+  # Its own job so a drifted branch and a release-pipeline finding are two
+  # things a maintainer can see at once, the same reason `tap` is not a second
+  # step of `reconcile`.
+  branch-drift:
+    name: no merged pull request's branch has moved past its own merge
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # No tag history needed, but `git ls-remote --heads origin` below reads
+      # the remote directly and needs `origin` to exist, which checkout sets
+      # up regardless of depth.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Check for commits stranded on a merged pull request's branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ./scripts/check-merged-branch-drift.sh
