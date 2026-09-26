@@ -13,6 +13,10 @@ name: dod-recheck
 # which is all the branch rules read — so nothing here has to report a check
 # against a head this event does not own.
 #
+# Ticking a box on the issue re-runs this check through this workflow. If it is
+# still red a few minutes after the edit, re-run the failed `dod` job from the
+# pull request's Checks tab.
+#
 # Same shape as `main-red-clear.yml`, for the same bug one gate over: a check
 # that was right when it ran, on a commit with no event left to correct it.
 

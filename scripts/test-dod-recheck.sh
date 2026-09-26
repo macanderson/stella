@@ -177,6 +177,25 @@ holds_text "...which runs this script" \
 holds_text "...and holds the write scope a re-run needs" \
   dod-recheck.yml "actions: write"
 
+printf '\n\033[1mwitness — the reader knows the check re-runs automatically\033[0m\n'
+
+# When the dod-check fails, the reader should know that ticking a box on the
+# issue automatically re-runs the check, and approximately how long they should
+# wait. This witness test verifies that the workflow documentation names this
+# behavior. Without the explanation, readers edit the PR body to force a re-run
+# unnecessarily, not knowing the automatic path exists.
+#
+# The actual failure message lives in oxagen's scr-dod-check.mjs and reads
+# "Ticking a box on the issue re-runs this check through `dod-recheck`. If it
+# is still red a few minutes after the edit, re-run the failed `dod` job from
+# the pull request's Checks tab." This test verifies stella's workflow
+# documentation explains the same mechanism.
+holds_text "the workflow explains that ticking a box re-runs the check" \
+  dod-recheck.yml "re-run"
+
+holds_text "...and mentions a concrete wait time for the re-run" \
+  dod-recheck.yml "few minute"
+
 printf '\n'
 if [ "$fail" -eq 0 ]; then
   printf '\033[32mtest-dod-recheck: OK\033[0m — %d checks passed\n' "$pass"
