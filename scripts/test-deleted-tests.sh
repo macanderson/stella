@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 #
-# Tests for check-deleted-tests.sh, focused on #4495: reading the PR's
-# CURRENT description through the API instead of the stale event-payload
-# snapshot, so an edited description counts on a re-run without a new push.
+# Tests for check-deleted-tests.sh. Each case builds a throwaway history, runs
+# the guard on it and checks the verdict. A guard that has stopped failing
+# turns this suite red.
+#
+# Most cases check that the guard reads the PR's CURRENT description through
+# the API instead of the stale event-payload snapshot. An edited description
+# then counts on a re-run without a new push. The last cases run the guard with
+# no arguments on a merge commit, which is how ci.yml runs it.
 #
 #   ./scripts/test-deleted-tests.sh
 #
@@ -81,19 +86,67 @@ new_repo_no_deletion() {
   printf '%s %s %s' "$dir" "$base_sha" "$head_sha"
 }
 
+# new_pr_merge <name> <pr-lib> <main-lib> <merge-lib> builds the history ci.yml
+# checks out on a pull request. After the base commit, the PR branch and main
+# each gain a commit. HEAD merges the branch into main, so HEAD^1 is main's tip.
+# Each lib argument is the text of crates/x/src/lib.rs on that side, and an
+# empty one leaves the file alone. A merge-lib replaces what git merged. That
+# is how a merge loses a test only main carried. Prints the directory.
+new_pr_merge() {
+  local dir="$tmp/$1" pr_lib="$2" main_lib="$3" merge_lib="$4"
+  rm -rf "$dir"
+  mkdir -p "$dir/scripts" "$dir/crates/x/src"
+  cp "$guard" "$dir/scripts/check-deleted-tests.sh"
+  git -C "$dir" init -q -b main
+  git -C "$dir" config user.email t@t.invalid
+  git -C "$dir" config user.name t
+  git -C "$dir" config commit.gpgsign false
+  printf '%s' "$lib_base" >"$dir/crates/x/src/lib.rs"
+  git -C "$dir" add -A
+  git -C "$dir" commit -q -m base
+
+  git -C "$dir" checkout -q -b pr
+  printf 'pr\n' >"$dir/pr.txt"
+  [ -n "$pr_lib" ] && printf '%s' "$pr_lib" >"$dir/crates/x/src/lib.rs"
+  git -C "$dir" add -A
+  git -C "$dir" commit -q -m "pr work"
+
+  git -C "$dir" checkout -q main
+  printf 'main\n' >"$dir/main.txt"
+  [ -n "$main_lib" ] && printf '%s' "$main_lib" >"$dir/crates/x/src/lib.rs"
+  git -C "$dir" add -A
+  git -C "$dir" commit -q -m "main moves on"
+
+  git -C "$dir" merge -q --no-ff --no-commit pr >/dev/null 2>&1
+  [ -n "$merge_lib" ] && printf '%s' "$merge_lib" >"$dir/crates/x/src/lib.rs"
+  git -C "$dir" add -A
+  git -C "$dir" commit -q -m "Merge pull request #1"
+  printf '%s' "$dir"
+}
+
+lib_base=$'#[test]\nfn my_witness() { assert!(true); }\n'
+
 # want <name> <expect-pass|expect-fail> <needle> <base> <head> <pr_body> [fixture-args...]
+#
+# An empty base runs the guard with no base or head argument, as ci.yml does.
+# A pass with a needle must also print it. That tells a real comparison apart
+# from the guard skipping the tree.
 want() {
   local name="$1" expect="$2" needle="$3" dir="$4" base="$5" head="$6" body="$7"
   shift 7
-  local out rc
-  out="$(cd "$dir" && PR_BODY="$body" ./scripts/check-deleted-tests.sh "$base" "$head" "$@" 2>&1)"
+  local out rc refs=()
+  [ -n "$base" ] && refs=("$base" "$head")
+  out="$(cd "$dir" && PR_BODY="$body" ./scripts/check-deleted-tests.sh "${refs[@]+"${refs[@]}"}" "$@" 2>&1)"
   rc=$?
   if [ "$expect" = "expect-pass" ]; then
-    if [ "$rc" -eq 0 ]; then
-      pass=$((pass + 1)); echo "ok   $name"
-    else
+    if [ "$rc" -ne 0 ]; then
       fail=$((fail + 1)); echo "FAIL $name — expected OK, got exit $rc:"; echo "$out"
+      return
     fi
+    case "$out" in
+    *"$needle"*) pass=$((pass + 1)); echo "ok   $name" ;;
+    *) fail=$((fail + 1)); echo "FAIL $name: passed without printing '$needle':"; echo "$out" ;;
+    esac
     return
   fi
   if [ "$rc" -eq 0 ]; then
@@ -255,6 +308,39 @@ else
   echo "FAIL D11 — expected OK at full depth, got exit $rc:"
   echo "$out"
 fi
+
+# The cases below run the guard with no arguments on a merge commit, as ci.yml
+# does. The guard then picks HEAD^1 as its base. D10 takes this path too, but
+# it tests the commit-message channel, and at depth 2.
+#
+# D12 and D13 are the shape the guard exists for. main gains a test after the
+# PR branched, and the merge result drops it. Only HEAD^1 holds that test. A
+# guard that compared against the merge base or the PR head would see nothing
+# lost.
+lib_main_added="${lib_base}"$'#[test]\nfn added_on_main() { assert!(true); }\n'
+d12="$(new_pr_merge dropped_on_merge "" "$lib_main_added" "$lib_base")"
+want "D12 a merge that drops a test only main held fails, naming it" \
+  expect-fail "added_on_main" "$d12" "" "" ""
+want "D13 the same merge passes once the PR body names the test" \
+  expect-pass "each named in the PR description" "$d12" "" "" \
+  "dropped added_on_main with the feature it covered"
+
+# D14 drops a test main gained as #[tokio::test(...)], with #[ignore] between
+# the attribute and its fn. A guard that read only #[test] would pass it.
+lib_main_async="${lib_base}"$'#[tokio::test(flavor = "multi_thread")]\n#[ignore = "slow"]\nasync fn added_async_on_main() {}\n'
+d14="$(new_pr_merge dropped_async_on_merge "" "$lib_main_async" "$lib_base")"
+want "D14 a dropped #[tokio::test] behind a second attribute fails too" \
+  expect-fail "added_async_on_main" "$d14" "" "" ""
+
+# D15 and D16 rename a test on the PR branch. The guard keys on the bare fn
+# name, so it reports the old name as lost. Naming the old name passes it.
+lib_renamed=$'#[test]\nfn witness_as_table_rows() { assert!(true); }\n'
+d15="$(new_pr_merge renamed_on_branch "$lib_renamed" "" "")"
+want "D15 a rename passes when the PR body names the old test" \
+  expect-pass "each named in the PR description" "$d15" "" "" \
+  "renamed my_witness to witness_as_table_rows"
+want "D16 a rename fails when the PR body names only the new test" \
+  expect-fail "my_witness" "$d15" "" "" "added witness_as_table_rows"
 
 echo
 echo "passed ${pass}, failed ${fail}"

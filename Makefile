@@ -1000,7 +1000,7 @@ main-canary-test: ## Test the post-merge canary, announcements included (not par
 	./scripts/test-main-canary.sh
 
 .PHONY: deleted-tests-test
-deleted-tests-test: ## Test the deleted-test guard's live-vs-stale PR body handling (hermetic; not part of `gate`; #4495)
+deleted-tests-test: ## Test that the deleted-test guard still fails an unnamed deletion (hermetic; not part of `gate`)
 	./scripts/test-deleted-tests.sh
 
 # Deliberately not a gate step, for the same reason as the one above: it
