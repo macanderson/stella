@@ -40,7 +40,7 @@ Target repo: **$ARGUMENTS**
 > `stella-tty` takes `area:tty`. The same rule holds for `stella-home`,
 > `stella-diag`, `stella-diff`, `stella-parity`, and `stella-tui-theme`. Some
 > crates have no label, such as `stella-learn`. For one of those, use the label
-> of the crate it serves most. Do not create a label during a sweep.
+> of the crate it serves most. Do not create an `area:*` label during a sweep.
 
 
 You are the **triage authority** for this run. Parse `$ARGUMENTS`: the first
