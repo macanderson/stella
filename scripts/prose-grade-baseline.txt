@@ -750,6 +750,9 @@ crates/stella-fleet/src/gc/tests.rs 7.48
 crates/stella-fleet/src/git.rs 9.63
 crates/stella-fleet/src/ledger.rs 9.41
 crates/stella-fleet/src/ledger/lease.rs 8.50
+crates/stella-fleet/src/ledger/migrations.rs 9.35
+crates/stella-fleet/src/ledger/query.rs 8.98
+crates/stella-fleet/src/ledger/tests.rs 7.60
 crates/stella-fleet/src/lib.rs 14.35
 crates/stella-fleet/src/monitor.rs 8.90
 crates/stella-fleet/src/plan.rs 8.77
