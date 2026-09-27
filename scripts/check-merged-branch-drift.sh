@@ -12,21 +12,30 @@
 # only in one clone and in one build image. The image kept working. Main did
 # not. Nobody saw the gap for two days.
 #
-# GitHub deletes a branch the moment its pull request merges. That is the
-# safe case. This script looks only at branches still alive on origin. For
-# each one: does its tip match the commit that actually merged? If not,
+# GitHub most often deletes a branch when its pull request merges. That is
+# the safe case. This script looks only at branches still alive on origin.
+# For each one: does its tip match the commit that actually merged? If not,
 # someone pushed new work to a branch whose job was already done. Those
 # commits live nowhere else. If the branch is deleted next, they are gone
 # for good.
 #
-# One branch name can merge more than once. The release bot reuses one
-# branch for every version bump, and each merge moves that branch forward on
-# purpose. So the rule below compares a branch only to its own newest merge,
-# never to an older one. That is what keeps normal reuse quiet.
+# One branch name can merge more than once. So the rule below compares a
+# branch only to its own newest merge, never to an older one. That is what
+# keeps normal reuse quiet.
+#
+# The release bot's own branch is skipped. It is `bot/version-sync`, set as
+# `SYNC_BRANCH` in `auto-tag.yml`. It stays on origin after each merge. The
+# bot force-pushes a new bump to it, then opens the pull request. A check
+# that runs between those two steps would see a moved tip and no open pull
+# request. Nothing a person wrote lives on that branch, so there is nothing
+# to lose.
 #
 # A branch can also come back for new work on purpose: the same name merges,
 # then someone opens a fresh pull request from it. That is fine too. A
 # branch that is the head of a pull request open right now is skipped.
+#
+# A pull request from a fork is skipped too. Its branch lives in the fork,
+# not on origin. A fork's `main` would match origin's `main` by name alone.
 #
 # The grace window covers GitHub's own lag. Branch deletion can trail a
 # merge by a few seconds. A merge inside that window is skipped, not
@@ -60,23 +69,34 @@ done
 # The rule, with the I/O taken out. Reads one JSON document on stdin:
 #
 #   { "merged":   [ { "branch": "fix/foo", "sha": "...", "mergedAt": "...",
-#                     "number": 2180 }, ... ],
+#                     "number": 1, "fork": false }, ... ],
 #     "liveTips": { "fix/foo": "<current sha on origin>", ... },
 #     "openHeads": [ "fix/bar", ... ] }
+#
+# `fork` may be left out. It counts as false.
 #
 # Prints one line per branch whose newest merge does not match what is live
 # on origin: `<branch>\t<number>\t<mergedAt>\t<mergedSha>\t<tipSha>`. Oldest
 # merge first. This mode has no I/O so a fixture can drive it, in
 # scripts/test-check-merged-branch-drift.sh, with no live repository.
+#
+# Fork merges drop out before the newest merge is picked. Were they dropped
+# after, a newer fork merge of the same name would hide the origin one.
+bot_branches='["bot/version-sync"]'
+
 select_drift() {
-  jq -r --argjson now "$now" --argjson grace "$grace_secs" '
+  jq -r --argjson now "$now" --argjson grace "$grace_secs" \
+    --argjson bots "$bot_branches" '
     ( [ (.openHeads // [])[] | { (.): true } ] | add // {} ) as $open
+    | ( [ $bots[] | { (.): true } ] | add // {} ) as $bot
     | (.liveTips // {}) as $live
     | ( .merged
+        | map(select(.fork | not))
         | group_by(.branch)
         | map(max_by(.mergedAt))
       ) as $latest
     | [ $latest[]
+        | select($bot[.branch] | not)
         | select($open[.branch] | not)
         | select($live[.branch] != null)
         | select($live[.branch] != .sha)
@@ -113,8 +133,8 @@ since="$(date -u -d "@$((now - days * 86400))" +%Y-%m-%d 2>/dev/null || date -u 
 gh_limit=1000
 merged_json="$(CLICOLOR_FORCE=0 NO_COLOR=1 gh pr list --state merged \
   --search "merged:>=${since}" --limit "$gh_limit" \
-  --json number,headRefName,headRefOid,mergedAt \
-  --jq '[ .[] | { branch: .headRefName, sha: .headRefOid, mergedAt: .mergedAt, number: .number } ]')"
+  --json number,headRefName,headRefOid,mergedAt,isCrossRepository \
+  --jq '[ .[] | { branch: .headRefName, sha: .headRefOid, mergedAt: .mergedAt, number: .number, fork: .isCrossRepository } ]')"
 merged_count_raw="$(printf '%s' "$merged_json" | jq 'length')"
 if [ "$merged_count_raw" -eq "$gh_limit" ]; then
   echo "::error::the merged pull request list hit GitHub search's ${gh_limit}-result ceiling for --days ${days}. The list was likely cut off. Narrow --days." >&2
@@ -124,8 +144,12 @@ fi
 # The open list shares the same limit. If it were ever cut off, a branch
 # with an open pull request could be reported by mistake. A cut-off open
 # list can add a report. It cannot hide one.
+#
+# An open pull request from a fork is left out. Its branch is not on
+# origin, so it says nothing about the origin branch of the same name.
 open_heads_json="$(CLICOLOR_FORCE=0 NO_COLOR=1 gh pr list --state open --limit "$gh_limit" \
-  --json headRefName --jq '[ .[].headRefName ]')"
+  --json headRefName,isCrossRepository \
+  --jq '[ .[] | select(.isCrossRepository | not) | .headRefName ]')"
 
 # One call reads every live branch tip at once. A separate gh call per
 # merged pull request would be slow: this repository holds dozens of
@@ -145,7 +169,7 @@ report="$(printf '%s' "$doc" | select_drift)"
 
 total_merged="$(printf '%s' "$merged_json" | jq 'length')"
 if [ -z "$report" ]; then
-  echo "check-merged-branch-drift: OK — no live branch has moved past its own merge (${total_merged} merge(s) checked since ${since})."
+  echo "check-merged-branch-drift: OK. No live branch has moved past its own merge (${total_merged} merge(s) checked since ${since})."
   exit 0
 fi
 

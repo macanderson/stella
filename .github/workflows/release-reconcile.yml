@@ -113,13 +113,14 @@ jobs:
           ./scripts/check-tap-current.sh \
             --grace-secs "${{ inputs.grace-secs || '5400' }}"
 
-  # A merged pull request's branch is supposed to be dead the moment it
-  # merges — GitHub deletes it automatically. When one is still on origin and
-  # its tip no longer matches what actually merged, somebody pushed to a
-  # branch after its work already landed, and those commits sit outside every
-  # pull request and every branch main's history reaches. Deleting the branch
-  # later, which nothing here stops from happening, is exactly how #2180's
-  # tail was lost for two days.
+  # A merged pull request's branch should be dead once it merges. GitHub
+  # most often deletes it. The release bot's `bot/version-sync` is the
+  # exception: it stays on origin after each merge, and the script skips it.
+  # When any other merged branch is still on origin and its tip does not
+  # match what merged, somebody pushed to it after its work landed. Those
+  # commits sit outside every pull request and outside main's history.
+  # Deleting the branch later, which nothing here stops, is how seven
+  # commits were lost for two days.
   #
   # Its own job so a drifted branch and a release-pipeline finding are two
   # things a maintainer can see at once, the same reason `tap` is not a second

@@ -730,19 +730,22 @@ built rather than described.
 An eleventh, the `branch-drift` job in `release-reconcile.yml`, asks a
 question about branches rather than releases or locks: is a merged pull
 request's branch still on origin, and has it moved past the commit that was
-actually merged? GitHub deletes a pull request's branch the moment it merges,
-so a branch still there and ahead of its own merge means somebody pushed to it
-afterward — work that is not part of any pull request and is not on `main`.
-That is exactly what happened to `fix/arenabench-dind-host-netns`: seven
-commits landed on the branch after GitHub recorded its merged head, survived
-nowhere but a local clone and a runner image built from the branch, and the
-loss stayed invisible for two days. The job runs hourly alongside the
+actually merged? GitHub most often deletes a pull request's branch when it
+merges. A branch still there and ahead of its own merge means somebody pushed
+to it afterward. That work is not part of any pull request and is not on
+`main`. That is exactly what happened to `fix/arenabench-dind-host-netns`:
+seven commits landed on the branch after GitHub recorded its merged head,
+survived nowhere but a local clone and a runner image built from the branch,
+and the loss stayed invisible for two days. The job runs hourly alongside the
 release checks above. For each drifted branch it reports the name, the PR
-number, the commit that merged, and the branch's live tip.
+number, the commit that merged, and the branch's live tip. It skips the
+release bot's `bot/version-sync`, which stays on origin after each merge
+because the next release reuses it. It also skips a pull request from a
+fork, whose branch lives in the fork.
 
 **After a pull request merges, its branch is dead.** Do not push more commits
-to a branch once its pull request has merged, even to the same lane or issue
-— open a fresh branch from `main` instead. A branch that keeps receiving
+to a branch once its pull request has merged, even to the same lane or issue.
+Open a fresh branch from `main` instead. A branch that keeps receiving
 commits after merge is invisible to review and to CI, and is one deletion away
 from losing whatever it carries; `branch-drift` above catches it only if it
 runs before that deletion happens.

@@ -9,14 +9,16 @@
 # scripts/test-releases-published.sh.
 #
 # Most cases below drive the rule with the I/O taken out. They call the
-# script's own --select mode. The last two run the whole script. A fake gh
-# and a fake git on PATH stand in for GitHub. No live call runs here.
+# script's own --select mode. The C cases at the end run the whole script.
+# A fake `gh` and a fake `git` on PATH stand in for GitHub. No live call
+# runs here.
 #
 # The rule: report a branch only when it is still on origin, its own newest
 # pull request has merged, and its tip does not match what that pull
 # request shipped. Stay silent in every other case. A deleted branch, a
 # branch whose tip still matches its merge, and a branch reused by a fresh
-# open pull request are all healthy and must stay silent.
+# open pull request are all healthy and must stay silent. So are the
+# release bot's own branch and any pull request from a fork.
 #
 # bash 3.2 compatible.
 
@@ -40,16 +42,17 @@ want() {
   if [ "$got" = "$expect" ]; then
     pass=$((pass + 1)); echo "ok   $name"
   else
-    fail=$((fail + 1)); echo "FAIL $name — wanted '${expect}', got '${got}'"
+    fail=$((fail + 1)); echo "FAIL $name: wanted '${expect}', got '${got}'"
   fi
 }
 
 # merged builds one merged-pull-request record. Give it the branch, its
-# merged sha, how many seconds ago it merged, and the PR number.
+# merged sha, how many seconds ago it merged, and the PR number. Add `true`
+# last for a pull request from a fork.
 merged() {
   local at
   at="$(date -u -d "@$((NOW - $3))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$((NOW - $3))" +%Y-%m-%dT%H:%M:%SZ)"
-  printf '{"branch":"%s","sha":"%s","mergedAt":"%s","number":%s}' "$1" "$2" "$at" "$4"
+  printf '{"branch":"%s","sha":"%s","mergedAt":"%s","number":%s,"fork":%s}' "$1" "$2" "$at" "$4" "${5:-false}"
 }
 
 day=86400
@@ -76,16 +79,35 @@ want "H3 a branch reused by a currently open pull request is silent" \
   "" \
   "{\"merged\":[$(merged fix/foo abc123 $((2 * day)) 10)],\"liveTips\":{\"fix/foo\":\"def456\"},\"openHeads\":[\"fix/foo\"]}"
 
-# The release bot's shape: one branch, many merges over time. Only the
-# newest merge should be checked against the live tip.
+# One branch, many merges over time. Only the newest merge should be
+# checked against the live tip.
 want "B1 only the branch's newest merge is compared against its live tip" \
   "" \
-  "{\"merged\":[$(merged bot/version-sync sha1 $((10 * day)) 100),$(merged bot/version-sync sha2 $((5 * day)) 101),$(merged bot/version-sync sha3 $((1 * day)) 102)],\"liveTips\":{\"bot/version-sync\":\"sha3\"},\"openHeads\":[]}"
+  "{\"merged\":[$(merged lane/reused sha1 $((10 * day)) 100),$(merged lane/reused sha2 $((5 * day)) 101),$(merged lane/reused sha3 $((1 * day)) 102)],\"liveTips\":{\"lane/reused\":\"sha3\"},\"openHeads\":[]}"
 
 # Comparing against an older merge of the same name would flag plain reuse.
 want "B2 a branch reused for many merges still catches drift after the newest one" \
-  "bot/version-sync" \
-  "{\"merged\":[$(merged bot/version-sync sha1 $((10 * day)) 100),$(merged bot/version-sync sha2 $((5 * day)) 101),$(merged bot/version-sync sha3 $((1 * day)) 102)],\"liveTips\":{\"bot/version-sync\":\"extra-commit\"},\"openHeads\":[]}"
+  "lane/reused" \
+  "{\"merged\":[$(merged lane/reused sha1 $((10 * day)) 100),$(merged lane/reused sha2 $((5 * day)) 101),$(merged lane/reused sha3 $((1 * day)) 102)],\"liveTips\":{\"lane/reused\":\"extra-commit\"},\"openHeads\":[]}"
+
+# The release bot pushes a new bump to its branch before it opens the pull
+# request. A run in that gap sees a moved tip and no open pull request.
+want "B3 the release bot's own branch is skipped even with a moved tip" \
+  "" \
+  "{\"merged\":[$(merged bot/version-sync sha1 $((1 * day)) 100)],\"liveTips\":{\"bot/version-sync\":\"next-bump\"},\"openHeads\":[]}"
+
+# A merged pull request from a fork. Its branch lives in the fork. Its name
+# can be `main`, which origin also has, at a sha that has nothing to do
+# with the fork.
+want "F1 a merged fork pull request named main is silent" \
+  "" \
+  "{\"merged\":[$(merged main fork-sha $((2 * day)) 30 true)],\"liveTips\":{\"main\":\"origin-main\"},\"openHeads\":[]}"
+
+# A fork merge of the same name, newer than the origin one, must not stand
+# in for it.
+want "F2 a newer fork merge does not hide drift on the origin branch" \
+  "fix/foo" \
+  "{\"merged\":[$(merged fix/foo sha-a $((5 * day)) 31),$(merged fix/foo sha-f $((1 * day)) 32 true)],\"liveTips\":{\"fix/foo\":\"moved\"},\"openHeads\":[]}"
 
 # GitHub can lag a few seconds before it deletes a merged branch. A merge
 # inside the grace window proves nothing yet.
@@ -112,38 +134,106 @@ want "M2 a healthy branch does not hide a drifted one" \
 
 want "E1 no merges at all reports nothing" "" '{"merged":[],"liveTips":{},"openHeads":[]}'
 
-# GitHub search returns at most 1000 pull requests, whatever --limit asks
-# for. A list of exactly 1000 may be cut off, so the script must refuse it.
-# The fake gh returns FAKE_MERGED merges and no open pull requests. The
-# fake git lists no live branches.
+# The rest run the whole script. A fake `gh` and a fake `git` sit first on
+# PATH. The fake `gh` hands back raw pull request fields and runs the
+# script's own `--jq` on them, the way `gh` does. The fake `git` prints
+# `FAKE_LIVE` for `ls-remote`.
 fake_bin="$(mktemp -d)"
 trap 'rm -rf "$fake_bin"' EXIT
 cat >"$fake_bin/gh" <<'FAKE'
 #!/usr/bin/env bash
-case "$*" in
-  *"--state merged"*)
-    jq -n --argjson n "$FAKE_MERGED" \
-      '[range($n) | {branch: "b\(.)", sha: "s\(.)", mergedAt: "2026-01-01T00:00:00Z", number: .}]' ;;
-  *) echo '[]' ;;
+expr='.' state='' prev=''
+for arg in "$@"; do
+  case "$prev" in
+    --jq) expr="$arg" ;;
+    --state) state="$arg" ;;
+  esac
+  prev="$arg"
+done
+case "$state" in
+  merged)
+    if [ -n "${FAKE_MERGED_JSON:-}" ]; then
+      raw="$FAKE_MERGED_JSON"
+    else
+      raw="$(jq -n --argjson n "${FAKE_MERGED:-0}" '[range($n) | {
+        number: ., headRefName: "b\(.)", headRefOid: "s\(.)",
+        mergedAt: "2026-01-01T00:00:00Z", isCrossRepository: false }]')"
+    fi ;;
+  open) raw="${FAKE_OPEN_JSON:-[]}" ;;
+  *) raw='[]' ;;
 esac
+printf '%s' "$raw" | jq -c "$expr"
 FAKE
-printf '#!/bin/sh\nexit 0\n' >"$fake_bin/git"
+cat >"$fake_bin/git" <<'FAKE'
+#!/bin/sh
+case "$*" in
+  *ls-remote*) printf '%b' "${FAKE_LIVE:-}" ;;
+esac
+exit 0
+FAKE
 chmod +x "$fake_bin/gh" "$fake_bin/git"
 
-# full_run checks one whole run. Give it a name, the merge count the fake
-# gh returns, the exit code you expect, and text the output must hold.
-full_run() {
-  local name="$1" count="$2" want_rc="$3" want_text="$4" out rc
-  out="$(PATH="$fake_bin:$PATH" FAKE_MERGED="$count" "$SCRIPT" 2>&1)"
-  rc=$?
-  case "$rc:$out" in
-    "$want_rc:"*"$want_text"*) pass=$((pass + 1)); echo "ok   $name" ;;
-    *) fail=$((fail + 1)); echo "FAIL $name — wanted exit ${want_rc} with '${want_text}', got exit ${rc}: ${out}" ;;
-  esac
+# One day after the fake merges, so every one of them is past the grace
+# window.
+FULL_NOW=1767312000
+
+# fakes sets what the fakes return. Give it a merge count, a raw merged
+# list to use in place of the count, the raw open list, and the `ls-remote`
+# lines.
+fakes() {
+  FAKE_MERGED="$1" FAKE_MERGED_JSON="$2" FAKE_OPEN_JSON="$3" FAKE_LIVE="$4"
 }
 
-full_run "C1 a list that hits the search ceiling is refused" 1000 1 "1000-result ceiling"
-full_run "C2 a list one under the ceiling is read" 999 0 "999 merge(s) checked"
+# full_run checks one whole run. Give it a name, the exit code you expect,
+# and each piece of text the output must hold.
+full_run() {
+  local name="$1" want_rc="$2" out rc text miss=""
+  shift 2
+  out="$(PATH="$fake_bin:$PATH" FAKE_MERGED="$FAKE_MERGED" \
+    FAKE_MERGED_JSON="$FAKE_MERGED_JSON" FAKE_OPEN_JSON="$FAKE_OPEN_JSON" \
+    FAKE_LIVE="$FAKE_LIVE" "$SCRIPT" --now "$FULL_NOW" 2>&1)"
+  rc=$?
+  [ "$rc" = "$want_rc" ] || miss="exit ${rc}"
+  for text in "$@"; do
+    case "$out" in
+      *"$text"*) ;;
+      *) miss="${miss:+${miss}, }no '${text}'" ;;
+    esac
+  done
+  if [ -z "$miss" ]; then
+    pass=$((pass + 1)); echo "ok   $name"
+  else
+    fail=$((fail + 1)); echo "FAIL $name: wanted exit ${want_rc}, got ${miss}: ${out}"
+  fi
+}
+
+# GitHub search returns at most 1000 pull requests, whatever --limit asks
+# for. A list of exactly 1000 may be cut off, so the script must refuse it.
+fakes 1000 "" "[]" ""
+full_run "C1 a list that hits the search ceiling is refused" 1 "1000-result ceiling"
+
+fakes 999 "" "[]" ""
+full_run "C2 a list one under the ceiling is read" 0 "999 merge(s) checked"
+
+# A live branch whose tip moved. The run must fail and print the branch, its
+# pull request, its merged sha and its live tip.
+fakes 1 "" "[]" 'aaaa\trefs/heads/main\nffff\trefs/heads/b0\n'
+full_run "C3 a drifted branch fails the run and fills in its row" 1 \
+  "1 branch(es) are still on origin" "  b0 " "#0 " " s0 " "ffff"
+
+# A fork's merged `main` must not be held up against origin's `main`.
+fakes 0 '[{"number":0,"headRefName":"main","headRefOid":"fork-sha","mergedAt":"2026-01-01T00:00:00Z","isCrossRepository":true}]' \
+  "[]" 'aaaa\trefs/heads/main\n'
+full_run "C4 a merged fork pull request named main is silent" 0 "1 merge(s) checked"
+
+# An open pull request from a fork has its branch in the fork. It must not
+# hide drift on the origin branch of the same name.
+fakes 1 "" '[{"headRefName":"b0","isCrossRepository":true}]' 'ffff\trefs/heads/b0\n'
+full_run "C5 an open fork pull request does not hide drift" 1 "  b0 "
+
+# An open pull request from origin does reuse the branch. That run is clean.
+fakes 1 "" '[{"headRefName":"b0","isCrossRepository":false}]' 'ffff\trefs/heads/b0\n'
+full_run "C6 an open pull request from origin hides the moved tip" 0 "1 merge(s) checked"
 
 echo
 echo "passed ${pass}, failed ${fail}"
