@@ -70,6 +70,26 @@
 # page and gets the whole set no matter how big it grows. No cap is needed.
 # `max_pages` below is not a cap either. It is a sanity check that paging
 # itself still works. See "the fetch" further down.
+#
+# ── An empty release list ────────────────────────────────────────────────────
+#
+# An empty page from the API and a repository that never shipped a release
+# look the same. Both arrive as `[[]]`, and `gh` exits 0 on both. If the
+# script took the first empty read at its word, one bad page would name every
+# tag as unpublished at once. So an empty list gets two more checks before it
+# counts.
+#
+# First, the script reads the list again. If the second read holds releases,
+# the run uses it and prints a note that the first read was empty.
+#
+# Second, if both reads are empty, it asks `releases/latest`, which is a
+# different endpoint. If that names a release, the list read is broken. The
+# script then stops with `::error::`, the same way the `max_pages` check does.
+# A 404 is the only answer that leaves the empty list in place, because that
+# is what GitHub returns for a repository with no release. So a repository
+# that truly shipped nothing is still reported. Any other failure, such as a
+# 5xx, a rate limit or a bad token, also stops the run with `::error::`: it
+# says nothing about whether a release exists.
 set -euo pipefail
 
 # shellcheck source=scripts/lib/help-header.sh
@@ -225,7 +245,42 @@ tags_json="$(
 # pages. Needing close to a thousand does not mean the repo grew that much —
 # it means paging broke, and a human should look before trusting this run.
 max_pages=1000 # 100000 releases at per_page=100 — decades past this repo's rate
-pages_json="$(CLICOLOR_FORCE=0 NO_COLOR=1 gh api --paginate --slurp 'repos/{owner}/{repo}/releases?per_page=100')"
+read_release_pages() {
+  CLICOLOR_FORCE=0 NO_COLOR=1 gh api --paginate --slurp 'repos/{owner}/{repo}/releases?per_page=100'
+}
+count_releases() {
+  printf '%s' "$1" | jq '[ .[][] ] | length'
+}
+pages_json="$(read_release_pages)"
+release_count="$(count_releases "$pages_json")"
+empty_list=0
+
+# An empty list is checked twice before it counts. The header section "An
+# empty release list" says why.
+if [ "$release_count" -eq 0 ]; then
+  pages_json="$(read_release_pages)"
+  release_count="$(count_releases "$pages_json")"
+  if [ "$release_count" -gt 0 ]; then
+    echo "check-releases-published: note: the first read of the release list was empty. The second read held ${release_count} release(s), and this run uses it." >&2
+  else
+    latest_tag=""
+    latest_err="$(mktemp)"
+    if latest_out="$(CLICOLOR_FORCE=0 NO_COLOR=1 gh api 'repos/{owner}/{repo}/releases/latest' --jq '.tag_name' 2>"$latest_err")"; then
+      latest_tag="$latest_out"
+    elif ! grep -q 'HTTP 404' "$latest_err"; then
+      echo "::error::the release list came back empty on two reads, and releases/latest failed without a 404: $(tr '\n' ' ' <"$latest_err"). This run cannot tell an empty repository from a broken read, so it has no answer. Run it again." >&2
+      rm -f "$latest_err"
+      exit 1
+    fi
+    rm -f "$latest_err"
+    if [ -n "$latest_tag" ]; then
+      echo "::error::the release list came back empty on two reads, but releases/latest names ${latest_tag}. The list read is broken, so this run has no answer. Run it again, or check with: gh release list --limit 5" >&2
+      exit 1
+    fi
+    empty_list=1
+  fi
+fi
+
 page_count="$(printf '%s' "$pages_json" | jq 'length')"
 if [ "$page_count" -gt "$max_pages" ]; then
   echo "::error::the release list needed ${page_count} pages to walk fully, past the ${max_pages}-page sanity ceiling. That is not plausible growth for this repository — gh's pagination itself likely misbehaved. Investigate before trusting this run's answer." >&2
@@ -272,6 +327,9 @@ fi
 
 count="$(printf '%s\n' "$report" | wc -l | tr -d ' ')"
 echo "::error::${count} tag(s) were cut but never published. The repository is stamping version numbers while shipping no binaries — this is the #1464 silence, live."
+if [ "$empty_list" -eq 1 ]; then
+  echo "The release list was empty on two reads, and releases/latest did not name a release either."
+fi
 echo ""
 echo "Tag                  Age     State"
 printf '%s\n' "$report" | while IFS="$(printf '\t')" read -r tag age state; do

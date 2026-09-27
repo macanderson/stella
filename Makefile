@@ -1257,7 +1257,7 @@ releases-published-test: ## Test the tag/release reconciliation rule (hermetic; 
 	./scripts/test-releases-published.sh
 
 .PHONY: releases-published-pagination-test
-releases-published-pagination-test: ## Witness that the release fetch has no fixed count cap (#5555; hermetic)
+releases-published-pagination-test: ## Witness that the release fetch has no fixed count cap (#5555) and rechecks an empty list (hermetic)
 	./scripts/test-releases-published-pagination.sh
 
 .PHONY: tap-current

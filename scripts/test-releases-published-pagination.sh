@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # Witness test. The release check must walk every page of the list. It must
-# also refuse a list it knows it did not finish reading.
+# also refuse a list it knows it did not finish reading, and it must check an
+# empty list before it reports every tag as unpublished.
 #
 #   ./scripts/test-releases-published-pagination.sh
 #
@@ -9,14 +10,32 @@
 # reach the FETCH. This test drives the fetch with a fake `gh` on PATH, so it
 # needs no network.
 #
-# Two arms, both against the script this tree ships:
+# The arms all run against the script this tree ships:
 #
 #   PAGES — 1001 releases arrive over 11 pages. All of them are walked, and
 #           nothing reports truncation. A fixed cap fails here.
 #   CEILING — a walk needs more pages than `max_pages` allows. The script
 #           refuses. Dropping that guard fails here.
+#   EMPTY-THEN-FOUND — the first list read is one empty page, and the second
+#           holds the release. The run is clean. A script that trusts the
+#           first empty read reports the tag as absent and fails here.
+#   EMPTY-LATEST-FOUND — every list read is empty, but `releases/latest`
+#           names a release. The script refuses with `::error::` and prints
+#           no report. Dropping that check fails here.
+#   EMPTY-NOTHING-PUBLISHED — every list read is empty and `releases/latest`
+#           answers 404. The tag is still reported as absent. This is the
+#           control: the real failure must stay loud.
+#   EMPTY-LATEST-FAILS — every list read is empty and `releases/latest` fails
+#           with a 502. The script refuses with `::error::` and prints no
+#           report. A script that reads every failed call as "no release"
+#           reports the tag as absent and fails here.
 #
-# Neither arm reads a second copy of the script out of a git ref. Say the
+# The EMPTY arms need one tag older than the grace window, so they run
+# in a throwaway git repository holding a single tag dated 2000-01-01. The
+# script reads tags from its working directory, and that keeps this
+# checkout's own tags out of it.
+#
+# No arm reads a second copy of the script out of a git ref. Say the
 # fail-side asserted that the copy on `origin/main` errors. That holds until
 # the fix merges. After that, `origin/main` has the fix too. The arm then
 # watches the fixed script pass, and the guard fails on every branch while
@@ -39,12 +58,14 @@ cleanup() { rm -rf "$work"; }
 trap cleanup EXIT
 
 # A grace window wide enough that every real tag in this checkout falls
-# inside it and is skipped. So the only thing the script can report is
-# its own truncation guard. The fixture never has to fake a real git tag.
+# inside it and is skipped. So in the PAGES and CEILING arms, the only thing
+# the script can report is its own truncation guard. The EMPTY arms bring
+# their own older tag, in a fixture repository further down.
 grace_secs=315360000 # 10 years
 now="$(date -u +%s)"
 
-# The fake `gh`. The script under test makes one call,
+# The fake `gh` for PAGES and CEILING. On a list that is not empty, the
+# script under test makes one call,
 # `gh api --paginate --slurp .../releases?per_page=100`, and the shim answers
 # it with `$pages` pages of `$per_page` releases each — the shape real `gh`
 # returns under `--slurp`, an array of page arrays.
@@ -87,6 +108,90 @@ run_with_fake_gh() {
   PATH="$shim:$PATH" "$@" --now "$now" --grace-secs "$grace_secs" 2>&1
 }
 
+# The fake `gh` for the EMPTY arms. It counts list reads in a file beside
+# itself. Each list read returns one empty page until read number
+# `<found_on_read>`, and from then on a page holding the published release
+# v0.0.0. A `<found_on_read>` of 0 means every read is empty.
+# `releases/latest` prints `<latest_tag>`, or fails with a 404 when that is
+# empty, which is what real `gh` does for a repository with no release.
+# A `<latest_error>` makes it fail with that message instead, the way real
+# `gh` reports a 5xx or a rate limit.
+#
+# `write_empty_shim <dir> <found_on_read> <latest_tag> [<latest_error>]`
+write_empty_shim() {
+  mkdir -p "$1"
+  printf '%s\n' "$2" >"$1/found-on-read"
+  printf '%s\n' "$3" >"$1/latest-tag"
+  printf '%s\n' "${4:-}" >"$1/latest-error"
+  printf '0\n' >"$1/list-reads"
+  cat >"$1/gh" <<'SHIM'
+#!/usr/bin/env bash
+set -euo pipefail
+here="$(cd "$(dirname "$0")" && pwd)"
+case "$*" in
+  *releases/latest*)
+    err="$(cat "$here/latest-error")"
+    if [ -n "$err" ]; then
+      echo "gh: $err" >&2
+      exit 1
+    fi
+    tag="$(cat "$here/latest-tag")"
+    if [ -z "$tag" ]; then
+      echo '{"message":"Not Found","status":"404"}'
+      echo 'gh: Not Found (HTTP 404)' >&2
+      exit 1
+    fi
+    echo "$tag"
+    exit 0
+    ;;
+  *releases\?per_page=100*)
+    reads=$(( $(cat "$here/list-reads") + 1 ))
+    echo "$reads" >"$here/list-reads"
+    found_on="$(cat "$here/found-on-read")"
+    if [ "$found_on" -gt 0 ] && [ "$reads" -ge "$found_on" ]; then
+      echo '[[{"tag_name":"v0.0.0","draft":false}]]'
+    else
+      echo '[[]]'
+    fi
+    exit 0
+    ;;
+esac
+echo "test-releases-published-pagination.sh: unhandled fake gh invocation: $*" >&2
+exit 3
+SHIM
+  chmod +x "$1/gh"
+}
+
+# One lightweight tag, v0.0.0, on a commit dated 2000-01-01. That is past the
+# ten-year grace window, so it is the one tag the EMPTY arms can report.
+#
+# A `GIT_DIR` inherited from a git hook would point these commands at the
+# real repository. Unsetting it keeps the fixture commit out of this clone.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+fixture_repo="$work/tags"
+mkdir -p "$fixture_repo"
+git -C "$fixture_repo" init -q
+git -C "$fixture_repo" config user.email t@t.invalid
+git -C "$fixture_repo" config user.name t
+git -C "$fixture_repo" config commit.gpgsign false
+git -C "$fixture_repo" config tag.gpgsign false
+GIT_AUTHOR_DATE='2000-01-01T00:00:00Z' GIT_COMMITTER_DATE='2000-01-01T00:00:00Z' \
+  git -C "$fixture_repo" commit -q --no-verify --allow-empty -m fixture
+git -C "$fixture_repo" tag v0.0.0
+
+# Runs the script from inside the fixture repository, with no baseline file,
+# so v0.0.0 is not grandfathered.
+run_in_fixture() {
+  local shim="$1"
+  (cd "$fixture_repo" && PATH="$shim:$PATH" "$SCRIPT" --now "$now" \
+    --grace-secs "$grace_secs" --baseline "$work/no-baseline" 2>&1)
+}
+
+write_empty_shim "$work/empty-then-found" 2 ""
+write_empty_shim "$work/empty-latest-found" 0 "v0.0.0"
+write_empty_shim "$work/empty-nothing" 0 ""
+write_empty_shim "$work/empty-latest-fails" 0 "" "Bad Gateway (HTTP 502)"
+
 pages_out="$(run_with_fake_gh "$work/pages" "$SCRIPT")"
 pages_status=$?
 if [ "$pages_status" -eq 0 ] && printf '%s' "$pages_out" | grep -q "^check-releases-published: OK"; then
@@ -110,6 +215,52 @@ if [ "$ceiling_status" -ne 0 ] && printf '%s' "$ceiling_out" | grep -qi "sanity 
 else
   fail=$((fail + 1))
   echo "FAIL CEILING a walk past the page ceiling is refused, not answered from a short list — exit ${ceiling_status}, got: ${ceiling_out}"
+fi
+
+found_out="$(run_in_fixture "$work/empty-then-found")"
+found_status=$?
+found_reads="$(cat "$work/empty-then-found/list-reads")"
+if [ "$found_status" -eq 0 ] \
+  && printf '%s' "$found_out" | grep -q "^check-releases-published: OK" \
+  && printf '%s' "$found_out" | grep -q "first read of the release list was empty" \
+  && [ "$found_reads" -eq 2 ]; then
+  pass=$((pass + 1)); echo "ok   EMPTY-THEN-FOUND an empty first read is read again, and the second read wins"
+else
+  fail=$((fail + 1))
+  echo "FAIL EMPTY-THEN-FOUND an empty first read is read again, and the second read wins — exit ${found_status}, list reads ${found_reads}, got: ${found_out}"
+fi
+
+latest_out="$(run_in_fixture "$work/empty-latest-found")"
+latest_status=$?
+if [ "$latest_status" -ne 0 ] \
+  && printf '%s' "$latest_out" | grep -q "releases/latest names v0.0.0" \
+  && ! printf '%s' "$latest_out" | grep -q "never published"; then
+  pass=$((pass + 1)); echo "ok   EMPTY-LATEST-FOUND an empty list that releases/latest contradicts is refused, and no report is printed"
+else
+  fail=$((fail + 1))
+  echo "FAIL EMPTY-LATEST-FOUND an empty list that releases/latest contradicts is refused, and no report is printed — exit ${latest_status}, got: ${latest_out}"
+fi
+
+nothing_out="$(run_in_fixture "$work/empty-nothing")"
+nothing_status=$?
+if [ "$nothing_status" -ne 0 ] \
+  && printf '%s' "$nothing_out" | grep -q "never published" \
+  && printf '%s' "$nothing_out" | grep -Eq "^ +v0\.0\.0 +[0-9]+h +absent$"; then
+  pass=$((pass + 1)); echo "ok   EMPTY-NOTHING-PUBLISHED a repository with no release still has its tag reported as absent"
+else
+  fail=$((fail + 1))
+  echo "FAIL EMPTY-NOTHING-PUBLISHED a repository with no release still has its tag reported as absent — exit ${nothing_status}, got: ${nothing_out}"
+fi
+
+fails_out="$(run_in_fixture "$work/empty-latest-fails")"
+fails_status=$?
+if [ "$fails_status" -ne 0 ] \
+  && printf '%s' "$fails_out" | grep -q "releases/latest failed without a 404" \
+  && ! printf '%s' "$fails_out" | grep -q "never published"; then
+  pass=$((pass + 1)); echo "ok   EMPTY-LATEST-FAILS a releases/latest failure that is not a 404 is refused, and no report is printed"
+else
+  fail=$((fail + 1))
+  echo "FAIL EMPTY-LATEST-FAILS a releases/latest failure that is not a 404 is refused, and no report is printed — exit ${fails_status}, got: ${fails_out}"
 fi
 
 echo

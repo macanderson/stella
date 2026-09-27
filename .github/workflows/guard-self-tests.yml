@@ -416,7 +416,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-tap-current.sh
 
-      - name: the release fetch has no fixed count cap
+      - name: the release fetch has no fixed count cap and rechecks an empty list
         if: ${{ !cancelled() }}
         run: ./scripts/test-releases-published-pagination.sh
 

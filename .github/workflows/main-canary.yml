@@ -154,10 +154,11 @@ jobs:
     timeout-minutes: 5
     # Narrower than the workflow's block, which the job above needs: this one
     # reads run history and writes one labelled issue. It re-runs nobody's
-    # hold, so it has no business with `actions` or `pull-requests`.
+    # hold, so it needs `actions: read` and not write, and no `pull-requests`.
     permissions:
       contents: read
       issues: write
+      actions: read
     steps:
       # `--limit 10` reads ten commits, and the default shallow checkout gives
       # it one. Every CI run of this script has reported on the tip alone —
