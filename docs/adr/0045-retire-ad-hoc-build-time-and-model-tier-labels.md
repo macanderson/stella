@@ -72,15 +72,12 @@ so this repo cannot change SCR-005 alone. To
 keep `build-time:*` next to `size/*` would mean two size labels at once. The
 done list in `#5631` rules that out.
 
-The tracker changes that carry out this choice are done.
-
 - The 11 open issues that had a tier label and no `use-model:*` label now have
   the matching `use-model:*` label. Tier 1 maps to `cheap`, tier 2 to
   `balanced`, tier 3 to `pro`, and tier 4 to `ultra`.
 - The repo's 11 labels in the two families are gone. That is 7 `build-time:*`
   labels and 4 `model:tier-*` labels. `build-time:5mins` never existed.
-- Size stays with `size/*`. Only one issue uses it today. A second size label
-  would not change that.
+- Size stays with `size/*`.
 - The triage job is not in this repo, and this record does not change it. If
   it puts a retired label on a new issue, report that as a bug in the job. Cite
   the time above.
