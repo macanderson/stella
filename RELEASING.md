@@ -101,12 +101,16 @@ duplicate section:
   roll writes a pointer to the releases page rather than a heading with an
   empty body — the failure mode above, which would otherwise recur once per
   line.
-- **It is idempotent.** If the version already has a section, the roll leaves
-  the file alone. That matters because it runs at two call sites per release,
-  and because a maintainer may have written the section by hand in the release
-  PR — a minor release is a considered event, and "CI writes this file" exists
-  to stop per-PR bullets accumulating in inconsistent voices, not to overwrite
-  a section someone sat down and wrote. Whoever got there first wins.
+- **It is idempotent.** The roll runs at two call sites per release, and a
+  maintainer may have written the section by hand in the release PR. A minor
+  release is a considered event. The "CI writes this file" rule keeps one voice
+  in the file. It does not exist to overwrite a section someone sat down and
+  wrote. When the version already has a section, the roll keeps every line of
+  it and writes no second heading. It adds only draft bullets whose PR refs the
+  section does not cite. It leaves out a draft bullet that cites no PR, or any
+  PR the section already cites, and it leaves out the draft's own prose. A
+  bullet that lands makes its refs cited. The second call site then finds
+  nothing new and leaves the file as it is.
 
 `make changelog-roll-test` (hermetic, not part of `make gate`) pins both rules.
 
@@ -208,8 +212,10 @@ step above it. `v0.9.254` and `v0.9.264` both finished every build. Each then
 hit a 5xx right after its assets were uploaded, leaving a draft nobody had
 asked to re-run. The retry targets the same tag. `overwrite_files` is on by
 default, so it fills in or replaces whatever the first attempt left behind
-instead of duplicating it. A genuine refusal — bad credentials, or a tag that
-already has a published release — fails the same way on both attempts.
+instead of duplicating it. When the tag already has a published release, the
+step replaces that release's body and assets. A real refusal, such as bad
+credentials or a release asset the build did not produce, fails the same way on
+both attempts.
 
 Three checks catch what the retry cannot, each on a different failure:
 

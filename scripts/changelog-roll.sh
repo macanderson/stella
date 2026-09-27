@@ -65,69 +65,133 @@ if [ ! -f "${changelog}" ] || ! grep -q '^## \[Unreleased\]' "${changelog}"; the
   exit 0
 fi
 
-# Idempotent: if this version already has a section, check if the CI draft
-# has entries with NEW PR references (#NNNN) not already in the section.
+# A version that already has a section keeps every line of it.
 #
-# Two cases reach here, and neither wants a second heading. The roll runs at
-# TWO call sites per release (the tagged release commit and the bot/version-sync
-# PR), so a re-run or a retry must not stack headings. And a maintainer may have
-# written the section in the release PR itself — a minor release is
-# a considered event, and the "CI writes this file" rule exists to stop
-# per-PR bullets accumulating in inconsistent voices, not to overwrite a section
-# someone sat down and wrote.
+# The roll runs at two call sites per release: the tagged release commit and
+# the bot/version-sync PR. A maintainer may also write the section by hand in
+# the release PR. A minor release is a considered event, and the "CI writes
+# this file" rule exists to keep one voice in the file. It does not exist to
+# overwrite a section someone sat down and wrote.
 #
-# When a section already exists, append new entries from the CI draft that cite
-# PR numbers not already in the section (e.g. commits landing after the
-# hand-written PR was merged but before the release tag). This reconciles gaps
-# from release PRs that write their own section.
-version_section_exists=false
+# So the roll keeps every line of the section and writes no second heading.
+# It adds only draft bullets whose PR refs the section does not cite. It leaves
+# out a draft bullet that cites no PR, or any PR the section already cites, and
+# it leaves out the draft's own prose. A kept bullet goes under the section's
+# matching `###` heading when it has one, and under a new heading when it does
+# not.
+#
+# A bullet that lands makes its refs cited. The second call site then finds
+# nothing new and leaves the file as it is.
+append_new_bullets() {
+  perl - "$@" <<'PERL'
+use strict;
+use warnings;
+
+my ($changelog, $entries_file, $version) = @ARGV;
+sub slurp {
+  my ($path) = @_;
+  open my $fh, "<", $path or die "cannot open $path: $!";
+  local $/;
+  my $text = <$fh>;
+  close $fh;
+  return $text;
+}
+my $text = slurp($changelog);
+my $draft = slurp($entries_file);
+
+my $v = quotemeta $version;
+if ($text !~ /^## \[$v\][^\n]*(?:\n|\z)/m) {
+  print "0\n";
+  exit 0;
+}
+my $body_start = $+[0];
+my $body_end = length $text;
+pos($text) = $body_start;
+$body_end = $-[0] if $text =~ /^## \[/mg;
+my $section = substr($text, $body_start, $body_end - $body_start);
+my %cited = map { $_ => 1 } $section =~ /#(\d+)/g;
+
+my @items;
+my ($head, $bullet, $gap) = ("", undef, 0);
+my $flush = sub {
+  push @items, [$head, $bullet] if defined $bullet;
+  $bullet = undef;
+};
+for my $line (split /\n/, $draft) {
+  if ($line =~ /^\s*$/) {
+    $gap = 1;
+    next;
+  }
+  if ($line =~ /^#{1,6}\s/) {
+    $flush->();
+    $head = $line =~ /^###\s+(.*?)\s*$/ ? $1 : "";
+  } elsif ($line =~ /^[-*+]\s/) {
+    $flush->();
+    $bullet = $line;
+  } elsif (defined $bullet && $line =~ /^\s+\S/) {
+    $bullet .= ($gap ? "\n\n" : "\n") . $line;
+  } else {
+    $flush->();
+  }
+  $gap = 0;
+}
+$flush->();
+
+my (@order, %keep);
+for my $item (@items) {
+  my ($h, $entry) = @$item;
+  my @refs = $entry =~ /#(\d+)/g;
+  next if !@refs || grep { $cited{$_} } @refs;
+  push @order, $h unless $keep{$h};
+  push @{ $keep{$h} }, $entry;
+}
+
+my $added = 0;
+for my $h (@order) {
+  my $add = join "\n", @{ $keep{$h} };
+  $added += @{ $keep{$h} };
+  if ($h ne "" && $section =~ /^###[ \t]+\Q$h\E[ \t]*(?:\n|\z)/m) {
+    my $sub_start = $+[0];
+    my $sub_end = length $section;
+    pos($section) = $sub_start;
+    $sub_end = $-[0] if $section =~ /^#{2,3}[ \t]/mg;
+    my $sub = substr($section, $sub_start, $sub_end - $sub_start);
+    $sub =~ s/\s+\z//;
+    substr($section, $sub_start, $sub_end - $sub_start) = "$sub\n$add\n\n";
+  } else {
+    $section =~ s/\s+\z//;
+    $section .= ($section eq "" ? "\n" : "\n\n")
+      . ($h ne "" ? "### $h\n\n" : "") . "$add\n";
+  }
+}
+
+if ($added) {
+  $section =~ s/\s+\z//;
+  $section .= $body_end < length $text ? "\n\n" : "\n";
+  substr($text, $body_start, $body_end - $body_start) = $section;
+  open my $out, ">", $changelog or die "cannot write $changelog: $!";
+  print {$out} $text;
+  close $out or die "cannot write $changelog: $!";
+}
+print "$added\n";
+PERL
+}
+
 if grep -q "^## \[${version}\]" "${changelog}"; then
-  version_section_exists=true
-fi
-
-if [ "$version_section_exists" = true ]; then
-  if [ -n "${CHANGELOG_ENTRIES_FILE:-}" ] && [ -s "${CHANGELOG_ENTRIES_FILE}" ]; then
-    # Extract PR numbers from the existing section.
-    existing_prs="$(awk -v want="${version}" '
-      $0 ~ "^## \\[" want "\\]" { f = 1; next }
-      /^## \[/ { f = 0 }
-      f
-    ' "${changelog}" | grep -o '#[0-9]\+' || true | sort -u)"
-
-    # Extract PR numbers from the new entries draft.
-    draft_prs="$(grep -o '#[0-9]\+' "${CHANGELOG_ENTRIES_FILE}" || true | sort -u)"
-
-    # Find PR numbers in the draft that are NOT in the existing section.
-    has_new_prs=false
-    for pr in $draft_prs; do
-      if ! printf '%s\n' "$existing_prs" | grep -q "^${pr}$"; then
-        has_new_prs=true
-        break
-      fi
-    done
-
-    if [ "$has_new_prs" = false ]; then
-      # No new PR references, so the section is complete.
-      echo "changelog-roll: ${changelog} already has a [${version}] section; leaving it alone."
-      exit 0
-    else
-      # Append the new entries to the existing section.
-      ENTRIES_FILE="${CHANGELOG_ENTRIES_FILE}" VERSION="${version}" perl -0777 -pi -e '
-        open my $fh, "<", $ENV{ENTRIES_FILE} or die "cannot open $ENV{ENTRIES_FILE}: $!";
-        my $entries = do { local $/; <$fh> };
-        close $fh;
-        $entries =~ s/\s+\z//;
-        my $version = $ENV{VERSION};
-        s/(^## \[$version\].*?)(?=^## \[|\z)/$1\n$entries\n/ms;
-      ' "${changelog}"
-      echo "changelog-roll: appended new entries with PR references not in the existing [${version}] section."
-      exit 0
-    fi
-  else
-    # No CI draft, so leave the existing section alone.
+  if [ -z "${CHANGELOG_ENTRIES_FILE:-}" ] || [ ! -s "${CHANGELOG_ENTRIES_FILE}" ]; then
     echo "changelog-roll: ${changelog} already has a [${version}] section; leaving it alone."
     exit 0
   fi
+  if ! added="$(append_new_bullets "${changelog}" "${CHANGELOG_ENTRIES_FILE}" "${version}")"; then
+    echo "::warning::could not add draft bullets to the existing [${version}] section; leaving it alone."
+    exit 0
+  fi
+  if [ "${added}" = "0" ]; then
+    echo "changelog-roll: ${changelog} already has a [${version}] section, and the draft cites no PR it lacks; leaving it alone."
+  else
+    echo "changelog-roll: appended ${added} draft bullet(s) to the existing [${version}] section, each citing only PRs it lacked."
+  fi
+  exit 0
 fi
 
 # Replace whatever sits under [Unreleased] with $1's contents.

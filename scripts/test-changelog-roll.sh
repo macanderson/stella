@@ -26,7 +26,9 @@
 # C1/C2 pin rule one (patches record nothing). C3/C4 pin rule two (a minor
 # release never emits a heading with an empty body, even when the drafter
 # degraded). C5 pins that a hand-written [Unreleased] is still honored, so the
-# fallback cannot eat real content.
+# fallback cannot eat real content. C6 to C8 pin what happens when the version
+# already has a section. The roll adds only draft bullets whose PR refs the
+# section does not cite, and it never adds a second heading.
 #
 # bash 3.2 compatible.
 
@@ -179,6 +181,88 @@ check "the second new draft entry was appended" \
 case "$out" in
   *"appended"*|*"newer entries"*|*"added"*) ok "appending is logged" ;;
   *) no "appending is logged" "$out" "a notice about appending new entries" ;;
+esac
+
+# ── C8: a draft that overlaps the section adds only what the section lacks ───
+printf '\nC8  section exists, draft overlaps it\n'
+f="$(changelog_with c8)"
+# Numbers, not literal citations, as in C7.
+r_hand_a=2850
+r_hand_b=2851
+r_hand_fix=2852
+r_hand_prose=2900
+r_late=2870
+r_mixed=2871
+r_changed=2872
+r_draft_prose=2999
+planted="$(printf '%s\n' \
+  "Written by hand. It names issue #${r_hand_prose} in passing." \
+  "" \
+  "### Added" \
+  "" \
+  "- **Hand thing.** Written by a maintainer (#${r_hand_a})." \
+  "- **Other hand thing.** Also by hand (#${r_hand_b})." \
+  "" \
+  "### Fixed" \
+  "" \
+  "- **A fix.** By hand (#${r_hand_fix}).")"
+PLANTED="$planted" perl -0777 -pi -e '
+  s/^## \[Unreleased\]\n/"## [Unreleased]\n\n## [0.11.0] — 2026-08-07\n\n" . $ENV{PLANTED} . "\n"/mse;
+' "$f"
+# The draft is the whole series, so it covers the hand-written bullets too.
+{
+  printf 'Everything since 0.10.0. It cites #%s in passing.\n\n' "$r_draft_prose"
+  printf '### Added\n\n'
+  printf -- '- **Hand thing, drafted.** Same change (#%s).\n' "$r_hand_a"
+  printf -- '- **Other hand thing, drafted.** It wraps onto\n  a second line (#%s).\n' "$r_hand_b"
+  printf -- '- **Late thing.** It landed after the release PR (#%s).\n' "$r_late"
+  printf '\n### Fixed\n\n'
+  printf -- '- **A fix, drafted.** Same fix (#%s).\n' "$r_hand_fix"
+  printf -- '- **Mixed.** One old change and one new (#%s, #%s).\n' "$r_hand_fix" "$r_mixed"
+  printf '\n### Changed\n\n'
+  printf -- '- **New kind.** Only the draft has this heading (#%s).\n' "$r_changed"
+} >"$TMP/c8-entries.md"
+out="$(roll "$f" 0.11.0 "$TMP/c8-entries.md")"
+
+# How many times ref $2 appears in file $1, as a whole number.
+ref_count() {
+  grep -oE "#$2([^0-9]|\$)" "$1" | wc -l | tr -d '[:space:]'
+}
+# The body of the 0.11.0 section, line by line.
+c8_section="$(awk '/^## \[0.11.0\]/{f=1;next} /^## \[/{f=0} f' "$f")"
+# The bullets under one `###` heading of that section.
+c8_sub() {
+  printf '%s\n' "$c8_section" | awk -v want="### $1" '$0 == want {f=1;next} /^### /{f=0} f'
+}
+
+check "exactly one 0.11.0 heading exists" "$(grep -c '^## \[0.11.0\]' "$f")" "1"
+check "the first hand-written ref appears once" "$(ref_count "$f" "$r_hand_a")" "1"
+check "the wrapped hand-written ref appears once" "$(ref_count "$f" "$r_hand_b")" "1"
+check "the hand-written fix ref appears once" "$(ref_count "$f" "$r_hand_fix")" "1"
+check "the hand-written prose survives once" "$(ref_count "$f" "$r_hand_prose")" "1"
+check "no drafted copy of a hand-written bullet lands" "$(grep -c 'drafted' "$f")" "0"
+check "the draft's prose never lands" "$(ref_count "$f" "$r_draft_prose")" "0"
+check "a bullet that cites an old and a new PR is left out" "$(ref_count "$f" "$r_mixed")" "0"
+check "the section keeps one Added heading" "$(printf '%s\n' "$c8_section" | grep -c '^### Added$')" "1"
+check "the section keeps one Fixed heading" "$(printf '%s\n' "$c8_section" | grep -c '^### Fixed$')" "1"
+check "the late bullet lands once, under Added" "$(c8_sub Added | grep -c "Late thing.*#${r_late}")" "1"
+check "the late bullet appears nowhere else" "$(ref_count "$f" "$r_late")" "1"
+check "a heading only the draft has is added once" "$(printf '%s\n' "$c8_section" | grep -c '^### Changed$')" "1"
+check "its bullet lands under it" "$(c8_sub Changed | grep -c "New kind.*#${r_changed}")" "1"
+check "a blank line comes before the next version heading" \
+  "$(grep -B1 '^## \[0.6.0\]' "$f" | head -n 1)" ""
+case "$out" in
+  *"appended 2 "*) ok "the two added bullets are logged" ;;
+  *) no "the two added bullets are logged" "$out" "an 'appended 2 draft bullet(s)' notice" ;;
+esac
+
+# The roll runs at two call sites per release. The second must change nothing.
+before="$(cat "$f")"
+out="$(roll "$f" 0.11.0 "$TMP/c8-entries.md")"
+check "a second roll with the same draft changes nothing" "$(cat "$f")" "$before"
+case "$out" in
+  *"already has a"*) ok "the second roll logs that it left the section alone" ;;
+  *) no "the second roll logs that it left the section alone" "$out" "an 'already has a [0.11.0] section' notice" ;;
 esac
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"

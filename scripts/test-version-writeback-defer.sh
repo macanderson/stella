@@ -3,16 +3,17 @@
 # Tests for `scripts/version-writeback-defer.sh`.
 #
 #   `./scripts/test-version-writeback-defer.sh`
-#   `make version-writeback-defer-test`
 #
 # No network and no real `gh`. Each case puts a fake `gh` first on `PATH`.
 # It is the same shape `test-wait-for-armed-merge.sh` uses. It logs every
 # call it gets, and answers from small fixture files the case writes first.
 #
 # `auto-tag.yml` has four warning paths that can leave the version
-# write-back unmerged. These cases prove each one calls `open` with its
-# own case number. They also prove `close` fires only when a caller says
-# the merge landed, never just because one case's own check cleared.
+# write-back unmerged. The cases below run the script with each case
+# number, and they prove `close` takes no case at all. The last block
+# reads `auto-tag.yml` itself. It checks that each path calls `open` with
+# its own case number. It also checks that `close` runs only right after
+# a merge that landed.
 #
 # bash 3.2 compatible.
 
@@ -247,6 +248,94 @@ if [ "$rc" -eq 0 ]; then
 else
   bad "--help exited $rc: $out"
 fi
+
+# ── The wiring in auto-tag.yml ─────────────────────────────────────────────
+# The cases above run the script. These read the workflow that calls it.
+printf '\n\033[1mauto-tag.yml: which line calls open and close\033[0m\n'
+workflow="$repo_root/.github/workflows/auto-tag.yml"
+
+wiring="$(awk '
+  { line = $0; sub(/^[ \t]+/, "", line) }
+  line == "" || substr(line, 1, 1) == "#" { next }
+  index(line, "version-writeback-defer.sh open --case ") {
+    n = line
+    sub(/.*open --case /, "", n)
+    sub(/[^0-9].*/, "", n)
+    print "open " n "\t" prev
+  }
+  index(line, "version-writeback-defer.sh close") { print "close\t" prev }
+  { prev = line }
+' "$workflow")"
+
+rows_for() { # rows_for <kind>: the code line before each call of that kind
+  printf '%s\n' "$wiring" | KIND="$1" awk -F '\t' '$1 == ENVIRON["KIND"]' | cut -f 2-
+}
+count_rows() { # count_rows <text>
+  printf '%s' "$1" | awk 'END { print NR }'
+}
+count_exact() { # count_exact <text> <line>
+  local n=0 row
+  while IFS= read -r row; do
+    [ "$row" = "$2" ] && n=$((n + 1))
+  done <<EOF
+$1
+EOF
+  printf '%s' "$n"
+}
+equals() { # equals <name> <got> <want>
+  if [ "$2" = "$3" ]; then ok "$1"; else bad "$1: wanted '$3', got '$2'"; fi
+}
+warning_for() { # warning_for <case>
+  case "$1" in
+  2) printf '%s' "is red or never reported" ;;
+  3) printf '%s' "did not finish within 45 minutes" ;;
+  4) printf '%s' "would leave main's Cargo.lock unresolvable" ;;
+  5) printf '%s' "did not merge in this run; auto-merge is armed" ;;
+  esac
+}
+
+for case_num in 2 3 4 5; do
+  rows="$(rows_for "open $case_num")"
+  equals "auto-tag.yml calls open --case $case_num exactly once" "$(count_rows "$rows")" "1"
+  contains "the code line before open --case $case_num prints a warning" "$rows" \
+    'echo "::warning::'
+  contains "and that warning is case $case_num's own condition" "$rows" \
+    "$(warning_for "$case_num")"
+done
+
+rows="$(rows_for close)"
+equals "auto-tag.yml calls close exactly three times" "$(count_rows "$rows")" "3"
+equals "one close follows the ordinary merge that returned success" \
+  "$(count_exact "$rows" 'if gh pr merge "${BRANCH}" --squash; then')" "1"
+equals "one close follows the admin merge that returned success" \
+  "$(count_exact "$rows" 'if GH_TOKEN="${ADMIN_MERGE_TOKEN}" gh pr merge "${BRANCH}" --squash --admin; then')" "1"
+merged_gate="if printf '%s\\n' \"\${wait_out}\" | grep -q '^wait-for-armed-merge: MERGED'; then"
+equals "one close follows the armed merge that the wait saw land" \
+  "$(count_exact "$rows" "$merged_gate")" "1"
+
+# The pattern that gate greps for, run against what the wait script prints.
+pattern="$(printf '%s\n' "$merged_gate" | sed -n "s/.*grep -q '\([^']*\)'.*/\1/p")"
+equals "the armed-merge gate greps for the MERGED line" "$pattern" "^wait-for-armed-merge: MERGED"
+for state in MERGED CLOSED OPEN; do
+  dir="$work/wait-$state"
+  mkdir -p "$dir"
+  printf '%s\n' "$state" >"$dir/state"
+  cat >"$dir/gh" <<'SHIM'
+#!/usr/bin/env bash
+cat "$GH_SHIM_DIR/state"
+SHIM
+  chmod +x "$dir/gh"
+  out="$(PATH="$dir:$PATH" GH_SHIM_DIR="$dir" \
+    "$repo_root/scripts/wait-for-armed-merge.sh" bot/version-sync --poll-seconds 0 2>/dev/null)"
+  if printf '%s\n' "$out" | grep -q "$pattern"; then
+    matched=yes
+  else
+    matched=no
+  fi
+  want=no
+  [ "$state" = MERGED ] && want=yes
+  equals "a wait that reads $state matches the gate: $want" "$matched" "$want"
+done
 
 printf '\n'
 if [ "$fail" -eq 0 ]; then
