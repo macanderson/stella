@@ -61,10 +61,13 @@
 //! which capabilities exist, which of them a driver declared, and what happens
 //! when it asks for one it did not.
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::error::ManifestError;
 use crate::host_call::HostCallFailure;
-use crate::runtime::Runtime;
+use crate::runtime::{ProcessBlock, Runtime};
 
 pub mod deliver;
 pub mod sweep;
@@ -403,6 +406,43 @@ impl DriverGrant {
         families.sort_unstable();
         families.dedup();
         families
+    }
+
+    /// This grant's own rules: `calls` declared without repeats, `max_calls`
+    /// asked only where there is something to bound, and `process` sound as a
+    /// program to start.
+    ///
+    /// **One condition short of
+    /// [`LoopGrant::validate`](crate::LoopGrant::validate)'s matching
+    /// checks**: no grade check. The module header's "Why a second context"
+    /// section says why — a driver is not on the
+    /// [`Participation`](crate::Participation) ladder at all.
+    ///
+    /// # Errors
+    ///
+    /// [`ManifestError::DuplicateDriverCall`],
+    /// [`ManifestError::DriverMaxCallsRequiresCalls`],
+    /// [`ManifestError::ZeroDriverMaxCalls`] and whatever
+    /// [`Runtime::validate`] reports for [`ProcessBlock::DriverProcess`], in
+    /// that order.
+    pub fn validate(&self) -> Result<(), ManifestError> {
+        let mut seen = HashSet::with_capacity(self.calls.len());
+        for call in &self.calls {
+            if !seen.insert(*call) {
+                return Err(ManifestError::DuplicateDriverCall { call: *call });
+            }
+        }
+        match self.max_calls {
+            Some(_) if self.calls.is_empty() => {
+                return Err(ManifestError::DriverMaxCallsRequiresCalls);
+            }
+            Some(0) => return Err(ManifestError::ZeroDriverMaxCalls),
+            _ => {}
+        }
+        if let Some(process) = &self.process {
+            process.validate(ProcessBlock::DriverProcess)?;
+        }
+        Ok(())
     }
 }
 

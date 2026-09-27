@@ -7,9 +7,11 @@
 //! What it keeps is the manifest *as a whole*: [`PluginManifest`], and every
 //! rule that reads more than one block — a grade against a block, a block
 //! against another block. A rule true of one block whatever else the manifest
-//! says lives with that block, which is why `[oracle]` ([`crate::oracle`]),
-//! `[runtime]`, `[wrapper]`, `[driver]` and the package blocks each own a
-//! module. The rules below are the epic's, restated where each is checked:
+//! says lives with that block: `[oracle]` ([`crate::oracle`]), `[runtime]`,
+//! `[wrapper]`, `[driver]` and the package blocks each own a module for
+//! theirs, and [`LoopGrant::validate`] plus
+//! [`LoopGrant::validate_stop_pairing`] hold `[loop]`'s on the type itself, in
+//! this module. The rules below are the epic's, restated where each is checked:
 //!
 //! - **Undeclared = none.** A manifest with no `[loop]` block participates
 //!   at [`Participation::None`] — a content bundle.
@@ -318,6 +320,168 @@ impl LoopGrant {
     pub fn permits_call(&self, call: HostCall) -> bool {
         self.participation.includes(Participation::Steering) && self.calls.contains(&call)
     }
+
+    /// The `[loop]` block's own rules: hooks, points and calls declared,
+    /// deduplicated and above the grade that grants them, and the
+    /// coherent-ask checks on `max_calls`, `max_fanout_width` and
+    /// `max_child_turns`.
+    ///
+    /// Here rather than in [`PluginManifest::validate`] for
+    /// [`PanelGrant::validate`](crate::PanelGrant::validate)'s reason: a rule
+    /// true of this block alone belongs beside the type it governs, so a
+    /// reader of `LoopGrant` sees what makes one legal without crossing to
+    /// another module.
+    ///
+    /// **Not every `[loop]` rule lives here.** The Stop-hook/arbiter pairing
+    /// and `max_holds` are [`LoopGrant::validate_stop_pairing`], called from a
+    /// separate point in [`PluginManifest::validate`] — the `[driver]` and
+    /// `[panel]` blocks are checked between the two there, so folding this
+    /// method and that one together would move those checks ahead of a rule
+    /// this method reports first today.
+    ///
+    /// # Errors
+    ///
+    /// [`ManifestError::DuplicateHook`], [`ManifestError::HookNotAvailableToPlugins`],
+    /// [`ManifestError::HooksRequireSteering`], [`ManifestError::DuplicatePoint`],
+    /// [`ManifestError::PointsRequireSteering`], [`ManifestError::DuplicateCall`],
+    /// [`ManifestError::CallsRequireSteering`], [`ManifestError::CallsRequirePoints`],
+    /// [`ManifestError::MaxCallsRequiresCalls`], [`ManifestError::ZeroMaxCalls`],
+    /// [`ManifestError::MaxFanoutWidthRequiresFanout`],
+    /// [`ManifestError::ZeroMaxFanoutWidth`],
+    /// [`ManifestError::MaxChildTurnsRequiresChildTurn`] and
+    /// [`ManifestError::ZeroMaxChildTurns`], in that order.
+    pub fn validate(&self) -> Result<(), ManifestError> {
+        let participation = self.participation;
+
+        // A set rather than a prefix scan, so a long declaration stays linear.
+        // `insert` returning false on the first repeat *is* the prefix scan's
+        // answer — the earliest element that some earlier element equals — so
+        // which duplicate gets named is unchanged.
+        let mut seen_hooks = HashSet::with_capacity(self.hooks.len());
+        for hook in &self.hooks {
+            if !seen_hooks.insert(*hook) {
+                return Err(ManifestError::DuplicateHook { hook: *hook });
+            }
+            // Every loop event is spellable here — it is one vocabulary — and
+            // none is routable to a plugin, so each is refused by name rather
+            // than granted and never dispatched (#3599, #4017).
+            //
+            // Asked of `in_turn` rather than of a list of names, because a
+            // list is what this was and it covered two events while the
+            // vocabulary held twenty-four. A new event outside a turn is
+            // refused the moment it is declared, without anyone remembering
+            // to add it here.
+            if !hook.in_turn() {
+                return Err(ManifestError::HookNotAvailableToPlugins { hook: *hook });
+            }
+        }
+        if !self.hooks.is_empty() && !participation.includes(Participation::Steering) {
+            return Err(ManifestError::HooksRequireSteering { participation });
+        }
+
+        // The points get the identical treatment the hooks just had, because
+        // they are the identical rule for the other dispatch surface.
+        let mut seen_points = HashSet::with_capacity(self.points.len());
+        for point in &self.points {
+            if !seen_points.insert(*point) {
+                return Err(ManifestError::DuplicatePoint { point: *point });
+            }
+        }
+        if !self.points.is_empty() && !participation.includes(Participation::Steering) {
+            return Err(ManifestError::PointsRequireSteering { participation });
+        }
+
+        // And the calls get it a third time, because "declared, deduplicated,
+        // and above the grade that grants it" is the same rule for every
+        // dispatch surface — the host-call channel included.
+        let mut seen_calls = HashSet::with_capacity(self.calls.len());
+        for call in &self.calls {
+            if !seen_calls.insert(*call) {
+                return Err(ManifestError::DuplicateCall { call: *call });
+            }
+        }
+        if !self.calls.is_empty() {
+            if !participation.includes(Participation::Steering) {
+                return Err(ManifestError::CallsRequireSteering { participation });
+            }
+            // A call happens *during* a point. Declaring one with no point to
+            // make it from is a manifest that quietly does nothing, which this
+            // crate refuses on principle rather than leaving to be discovered
+            // as a silence at run time.
+            if self.points.is_empty() {
+                return Err(ManifestError::CallsRequirePoints);
+            }
+        }
+        match self.max_calls {
+            Some(_) if self.calls.is_empty() => {
+                return Err(ManifestError::MaxCallsRequiresCalls);
+            }
+            // Zero is not "ask for none" — that is an empty `calls` list. It is
+            // a declaration that contradicts itself, and the `max_holds` rule
+            // for the same shape one rung up.
+            Some(0) => return Err(ManifestError::ZeroMaxCalls),
+            _ => {}
+        }
+        // The per-capability ceilings get `max_calls`'s two rules against their
+        // *own* capability rather than against the list as a whole: a plugin
+        // that declares `recall` and a fan-out width has written a number that
+        // bounds nothing, which is the manifest that quietly does nothing one
+        // more time.
+        match self.max_fanout_width {
+            Some(_) if !self.calls.contains(&HostCall::CandidateFanout) => {
+                return Err(ManifestError::MaxFanoutWidthRequiresFanout);
+            }
+            Some(0) => return Err(ManifestError::ZeroMaxFanoutWidth),
+            _ => {}
+        }
+        match self.max_child_turns {
+            Some(_) if !self.calls.contains(&HostCall::ChildTurn) => {
+                return Err(ManifestError::MaxChildTurnsRequiresChildTurn);
+            }
+            Some(0) => return Err(ManifestError::ZeroMaxChildTurns),
+            _ => {}
+        }
+
+        Ok(())
+    }
+
+    /// The Stop hook's pairing with [`Participation::Arbiter`], and
+    /// `max_holds`'s dependence on it.
+    ///
+    /// **A second method rather than a tail on [`LoopGrant::validate`].** In
+    /// [`PluginManifest::validate`] the `[driver]` and `[panel]` blocks are
+    /// checked between this rule and that one, so merging the two methods
+    /// would report an error from this method ahead of a driver or panel
+    /// defect that today surfaces first for the same manifest. Each stays at
+    /// its own position in the call sequence instead.
+    ///
+    /// # Errors
+    ///
+    /// [`ManifestError::StopHookRequiresArbiter`],
+    /// [`ManifestError::ArbiterMustDeclareStop`],
+    /// [`ManifestError::MaxHoldsRequiresArbiter`] and
+    /// [`ManifestError::ZeroMaxHolds`], in that order.
+    pub fn validate_stop_pairing(&self) -> Result<(), ManifestError> {
+        let participation = self.participation;
+
+        if self.hooks.contains(&HookEvent::Stop) && !participation.includes(Participation::Arbiter)
+        {
+            return Err(ManifestError::StopHookRequiresArbiter { participation });
+        }
+        if participation == Participation::Arbiter && !self.hooks.contains(&HookEvent::Stop) {
+            return Err(ManifestError::ArbiterMustDeclareStop);
+        }
+
+        match self.max_holds {
+            Some(_) if participation != Participation::Arbiter => {
+                return Err(ManifestError::MaxHoldsRequiresArbiter { participation });
+            }
+            Some(0) => return Err(ManifestError::ZeroMaxHolds),
+            _ => {}
+        }
+
+        Ok(())
+    }
 }
 
 /// The `[subloop]` block — stages the host runs as bounded child turns over
@@ -608,123 +772,17 @@ impl PluginManifest {
         let grant = &self.loop_grant;
         let participation = grant.participation;
 
-        // A set rather than a prefix scan, so a long declaration stays linear.
-        // `insert` returning false on the first repeat *is* the prefix scan's
-        // answer — the earliest element that some earlier element equals — so
-        // which duplicate gets named is unchanged.
-        let mut seen_hooks = HashSet::with_capacity(grant.hooks.len());
-        for hook in &grant.hooks {
-            if !seen_hooks.insert(*hook) {
-                return Err(ManifestError::DuplicateHook { hook: *hook });
-            }
-            // Every loop event is spellable here — it is one vocabulary — and
-            // none is routable to a plugin, so each is refused by name rather
-            // than granted and never dispatched (#3599, #4017).
-            //
-            // Asked of `in_turn` rather than of a list of names, because a
-            // list is what this was and it covered two events while the
-            // vocabulary held twenty-four. A new event outside a turn is
-            // refused the moment it is declared, without anyone remembering
-            // to add it here.
-            if !hook.in_turn() {
-                return Err(ManifestError::HookNotAvailableToPlugins { hook: *hook });
-            }
-        }
-        if !grant.hooks.is_empty() && !participation.includes(Participation::Steering) {
-            return Err(ManifestError::HooksRequireSteering { participation });
-        }
+        // The hooks, points and calls declared, deduplicated and above the
+        // grade that grants them, plus the coherent-ask checks on the three
+        // ceilings — every rule the `[loop]` block can answer about itself,
+        // beside the type it governs (`PanelGrant::validate`'s pattern).
+        grant.validate()?;
 
-        // The points get the identical treatment the hooks just had, because
-        // they are the identical rule for the other dispatch surface.
-        let mut seen_points = HashSet::with_capacity(grant.points.len());
-        for point in &grant.points {
-            if !seen_points.insert(*point) {
-                return Err(ManifestError::DuplicatePoint { point: *point });
-            }
-        }
-        if !grant.points.is_empty() && !participation.includes(Participation::Steering) {
-            return Err(ManifestError::PointsRequireSteering { participation });
-        }
-
-        // And the calls get it a third time, because "declared, deduplicated,
-        // and above the grade that grants it" is the same rule for every
-        // dispatch surface — the host-call channel included.
-        let mut seen_calls = HashSet::with_capacity(grant.calls.len());
-        for call in &grant.calls {
-            if !seen_calls.insert(*call) {
-                return Err(ManifestError::DuplicateCall { call: *call });
-            }
-        }
-        if !grant.calls.is_empty() {
-            if !participation.includes(Participation::Steering) {
-                return Err(ManifestError::CallsRequireSteering { participation });
-            }
-            // A call happens *during* a point. Declaring one with no point to
-            // make it from is a manifest that quietly does nothing, which this
-            // crate refuses on principle rather than leaving to be discovered
-            // as a silence at run time.
-            if grant.points.is_empty() {
-                return Err(ManifestError::CallsRequirePoints);
-            }
-        }
-        match grant.max_calls {
-            Some(_) if grant.calls.is_empty() => {
-                return Err(ManifestError::MaxCallsRequiresCalls);
-            }
-            // Zero is not "ask for none" — that is an empty `calls` list. It is
-            // a declaration that contradicts itself, and the `max_holds` rule
-            // for the same shape one rung up.
-            Some(0) => return Err(ManifestError::ZeroMaxCalls),
-            _ => {}
-        }
-        // The per-capability ceilings get `max_calls`'s two rules against their
-        // *own* capability rather than against the list as a whole: a plugin
-        // that declares `recall` and a fan-out width has written a number that
-        // bounds nothing, which is the manifest that quietly does nothing one
-        // more time.
-        match grant.max_fanout_width {
-            Some(_) if !grant.calls.contains(&HostCall::CandidateFanout) => {
-                return Err(ManifestError::MaxFanoutWidthRequiresFanout);
-            }
-            Some(0) => return Err(ManifestError::ZeroMaxFanoutWidth),
-            _ => {}
-        }
-        match grant.max_child_turns {
-            Some(_) if !grant.calls.contains(&HostCall::ChildTurn) => {
-                return Err(ManifestError::MaxChildTurnsRequiresChildTurn);
-            }
-            Some(0) => return Err(ManifestError::ZeroMaxChildTurns),
-            _ => {}
-        }
-
-        // The driver channel gets the same three rules and *not* the grade
-        // check, which is the one asymmetry in this function and the whole
-        // point of the block: a driver is not on the `Participation` ladder, so
-        // there is no grade to be above (`doc:backlog-self-driving` §3.0). Nor
-        // is there a `points` prerequisite — a driver call is made during a
-        // driver session, and the `[driver]` block *is* the declaration that
-        // this plugin has one.
+        // The driver channel gets the loop grant's three list rules and *not*
+        // the grade check — `DriverGrant::validate`'s own doc comment carries
+        // the reason a driver is exempt from it.
         if let Some(driver) = &self.driver {
-            let mut seen = HashSet::with_capacity(driver.calls.len());
-            for call in &driver.calls {
-                if !seen.insert(*call) {
-                    return Err(ManifestError::DuplicateDriverCall { call: *call });
-                }
-            }
-            match driver.max_calls {
-                Some(_) if driver.calls.is_empty() => {
-                    return Err(ManifestError::DriverMaxCallsRequiresCalls);
-                }
-                Some(0) => return Err(ManifestError::ZeroDriverMaxCalls),
-                _ => {}
-            }
-            // The process rules are `[runtime]`'s, and the grade check is
-            // again absent for the same reason: a driver's process is started
-            // outside every turn, so no standing inside one could be required
-            // of it (#3783).
-            if let Some(process) = &driver.process {
-                process.validate(ProcessBlock::DriverProcess)?;
-            }
+            driver.validate()?;
         }
 
         // The panel block's rules live on the grant itself, beside the type
@@ -735,21 +793,11 @@ impl PluginManifest {
             panel.validate(&self.name)?;
         }
 
-        if grant.hooks.contains(&HookEvent::Stop) && !participation.includes(Participation::Arbiter)
-        {
-            return Err(ManifestError::StopHookRequiresArbiter { participation });
-        }
-        if participation == Participation::Arbiter && !grant.hooks.contains(&HookEvent::Stop) {
-            return Err(ManifestError::ArbiterMustDeclareStop);
-        }
-
-        match grant.max_holds {
-            Some(_) if participation != Participation::Arbiter => {
-                return Err(ManifestError::MaxHoldsRequiresArbiter { participation });
-            }
-            Some(0) => return Err(ManifestError::ZeroMaxHolds),
-            _ => {}
-        }
+        // A second call rather than folded into `grant.validate()` above: the
+        // driver and panel blocks are checked between the two here, so merging
+        // them would move the Stop/arbiter pairing ahead of a driver or panel
+        // defect that today surfaces first for the same manifest.
+        grant.validate_stop_pairing()?;
 
         match (&self.requirements, participation) {
             (Some(_), p) if p != Participation::Arbiter => {
@@ -789,10 +837,11 @@ impl PluginManifest {
             if subloop.stages.is_empty() {
                 return Err(ManifestError::EmptyStages);
             }
-            // Same set-instead-of-prefix-scan as the hooks above. The two
-            // checks stay interleaved in one pass on purpose: hoisting the
-            // blank check into a pass of its own would re-order the two
-            // errors for a list that contains both.
+            // Same set-instead-of-prefix-scan as the hooks check in
+            // `LoopGrant::validate`. The two checks below stay interleaved in
+            // one pass on purpose: hoisting the blank check into a pass of
+            // its own would re-order the two errors for a list that contains
+            // both.
             let mut seen_stages = HashSet::with_capacity(subloop.stages.len());
             for stage in &subloop.stages {
                 if stage.trim().is_empty() {
