@@ -1287,11 +1287,20 @@ fn list(registry: &SessionRegistry) -> Result<(), String> {
         println!("No supervised runs. Every `stella run` in a terminal starts one.");
         return Ok(());
     }
+    // The name leads because it is what a person scans for. The ID closes
+    // the row because it is the argument `daemon resume` and `attach` take.
+    let name_of = |run: &SessionRecord| crate::command_deck::prompt_line(&run.title, 72);
+    let width = runs
+        .iter()
+        .map(|run| name_of(run).chars().count())
+        .max()
+        .unwrap_or(0)
+        .max("SESSION NAME".len());
     println!(
-        "{:<28} {:<12} {}",
-        "ID".bold(),
-        "STATUS".bold(),
-        "WHAT".bold()
+        "{} {} {}",
+        format!("{:<width$}", "SESSION NAME").bold(),
+        format!("{:<12}", "STATUS").bold(),
+        "ID".bold()
     );
     let mut any_resumable = false;
     for run in runs {
@@ -1330,10 +1339,10 @@ fn list(registry: &SessionRegistry) -> Result<(), String> {
         // counts the ANSI escapes as characters, so every coloured cell comes
         // out its escape-length too narrow and the last column ragged.
         println!(
-            "{:<28} {} {}",
-            run.id,
+            "{:<width$} {} {}",
+            name_of(&run),
             paint(&format!("{label:<12}")),
-            run.title
+            run.id
         );
     }
     if any_resumable {

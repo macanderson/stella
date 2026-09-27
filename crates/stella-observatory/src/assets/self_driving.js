@@ -192,7 +192,7 @@ function renderLive(d) {
     const lease = claims.find((c) => c.pid && c.pid === s.pid);
     return `<div class="sd-agent" data-session="${esc(s.id)}">
       <span class="sd-pulse" title="${esc(s.liveness)}"></span>
-      <div><div class="who">${esc(s.slug)} · ${esc(s.id)}</div>
+      <div><div class="who" title="${esc(s.id)}">${esc(s.slug)}</div>
         <div class="what">${what}</div>
         <div class="stage">${stage}${lease ? ` <span class="badge ok">lease ${dur(lease.held_secs)}</span>` : ""}</div></div>
       <div class="meta">up ${dur(s.seconds)}<br>${fmtUsd(s.spend_usd)} spent<br>${fmtInt(s.prs_merged)} merged · ${fmtInt(s.claimed)} claimed</div>
@@ -363,10 +363,10 @@ function renderGantt(d) {
 function renderSessions(d) {
   const s = d.sessions ?? [];
   el("sd-sessions").innerHTML = s.length ? `<table><thead><tr>
-      <th>Session</th><th>Status</th><th>Started</th><th class="num">Dur</th><th class="num">Claimed</th>
+      <th>Session name</th><th>Status</th><th>Started</th><th class="num">Dur</th><th class="num">Claimed</th>
       <th class="num">Changed</th><th class="num">PRs</th><th class="num">Merged</th><th class="num">Lessons</th><th class="num">Spend</th></tr></thead><tbody>
     ${s.map((r) => `<tr data-session="${esc(r.id)}" class="${S.session === r.id ? "sel" : ""}" title="${esc(r.liveness)}">
-      <td>${esc(r.slug)}<br><span class="kick">${esc(r.id)}</span></td>
+      <td title="${esc(r.id)}">${esc(r.slug)}</td>
       <td>${badge(r.status)}</td>
       <td>${agoUnix(r.started_unix)}</td>
       <td class="num">${dur(r.seconds)}</td>

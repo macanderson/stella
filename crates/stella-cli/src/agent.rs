@@ -299,7 +299,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     // Machine-wide presence: the plain REPL registers like the deck does,
     // so its sessions are findable in every SESSIONS overlay and replayable
     // from their journals. No inbox notifications — the user is right here.
-    let mut presence = SessionPresence::announce(cfg, "interactive session");
+    let mut presence = SessionPresence::announce(cfg, None);
     // Agent whistle: one tap for the whole interactive-mode session, not one per turn —
     // a message whistled between turns still has somewhere to land, and
     // `HeadlessSteerTap::drain_steering` reads empty when there is nothing

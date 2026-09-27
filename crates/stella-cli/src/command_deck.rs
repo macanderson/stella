@@ -1804,13 +1804,13 @@ pub async fn run_deck_session(
             }
         };
 
-        // A real model turn is about to run — announce the work machine-wide.
-        // The first prompt names the session (`<workspace>: <prompt…>`),
-        // every prompt refreshes the summary, and the phase flips to
-        // In Progress for other decks' SESSIONS overlays. Uses `submitted`
-        // (what the user typed), never a custom command's expansion.
+        // A real model turn is about to run, so announce the work machine-wide.
+        // The first prompt names the session (`crate::session_name`), every
+        // prompt refreshes the summary, and the phase flips to In Progress
+        // for other decks' SESSIONS overlays. Uses `submitted` (what the user
+        // typed), never a custom command's expansion.
         if session_record.summary.is_empty() {
-            session_record.title = format!("{workspace_name}: {}", prompt_line(&submitted, 48));
+            session_record.title = crate::session_name::session_name(&submitted);
         }
         session_record.summary = prompt_line(&submitted, 240);
         session_record.status = stella_store::SessionStatus::InProgress;

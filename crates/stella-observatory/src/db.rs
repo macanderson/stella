@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
 
+mod fleet;
 mod recall;
 
 /// Day bucket for rows SQLite's `date()` can't parse — see
@@ -1224,31 +1225,13 @@ impl Observatory {
         Ok(json!({ "executions": executions, "running_calls": running_calls }))
     }
 
-    /// Fleet ledger: every fan-out run with its tasks, attempts, commits.
+    /// Fleet ledger: every fan-out run with its name, tasks, attempts, and
+    /// commits. The name is the title of the run's first task.
     pub fn fleet(&self) -> Result<Value, DbError> {
         let Some(conn) = self.fleet_conn() else {
             return Ok(json!([]));
         };
-        let rows = collect_rows(
-            &conn,
-            "SELECT r.id, r.root_task_count, r.created_at_ms,
-                    (SELECT count(*) FROM attempts a WHERE a.run_id = r.id),
-                    (SELECT count(*) FROM attempts a
-                      WHERE a.run_id = r.id AND a.success = 1),
-                    (SELECT count(*) FROM commits c WHERE c.run_id = r.id)
-             FROM runs r ORDER BY r.created_at_ms DESC LIMIT 50",
-            |r| {
-                Ok(json!({
-                    "run_id": r.get::<_, String>(0)?,
-                    "tasks": r.get::<_, i64>(1)?,
-                    "created_at_ms": r.get::<_, i64>(2)?,
-                    "attempts": r.get::<_, i64>(3)?,
-                    "succeeded": r.get::<_, i64>(4)?,
-                    "commits": r.get::<_, i64>(5)?,
-                }))
-            },
-        )?;
-        Ok(Value::Array(rows))
+        Ok(Value::Array(fleet::fleet_runs(&conn)?))
     }
 }
 

@@ -2201,11 +2201,13 @@ function renderFleetMcp(fleet, mcp) {
   if (!changed("fleetmcp", fleet, mcp)) return;
   let html = "";
   if (fleet.length) {
-    html += `<table><thead><tr><th scope="col">fleet run</th><th scope="col" class="num">tasks</th>
+    /* A run is listed by its session name, the title of its first task. The
+       run id stays in the tooltip, and names a run that recorded no task. */
+    html += `<table><thead><tr><th scope="col">Session name</th><th scope="col" class="num">tasks</th>
       <th scope="col" class="num">attempts</th><th scope="col" class="num">ok</th>
       <th scope="col" class="num">commits</th></tr></thead><tbody>` +
       fleet.slice(0, 5).map(f => `<tr>
-        <td class="main" title="${esc(f.run_id)}">${esc(clip(f.run_id, 22))}</td>
+        <td class="main" title="${esc(f.name ? `${f.name}\n${f.run_id}` : f.run_id)}">${esc(clip(f.name || f.run_id, 40))}</td>
         <td class="num">${fmtInt(f.tasks)}</td><td class="num">${fmtInt(f.attempts)}</td>
         <td class="num">${fmtInt(f.succeeded)}</td><td class="num">${fmtInt(f.commits)}</td></tr>`).join("") +
       `</tbody></table>`;
@@ -4696,7 +4698,7 @@ function sesCardHtml(r) {
   return `<button type="button" class="ses-card${r.id === state.session ? " sel" : ""}"
       data-ses="${esc(r.id)}" aria-pressed="${r.id === state.session ? "true" : "false"}">
     <span class="row1">
-      <span class="t">${esc(r.title || r.summary || r.id)}</span>
+      <span class="t" title="${esc(r.id)}">${esc(clip(r.title || r.id, 72))}</span>
       <span class="when">${r.updated_at_ms ? agoMs(r.updated_at_ms) : "—"}</span>
     </span>
     <span class="mstrip">

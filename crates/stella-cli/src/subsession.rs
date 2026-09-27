@@ -1217,7 +1217,7 @@ pub(crate) fn spawn_prompt_lane(text: String, subs: &mut SubSessions, ctx: LaneC
     });
     let spec = SubSessionSpec {
         lane: lane.clone(),
-        title: prompt_line(&text, 48),
+        title: crate::session_name::session_name(&text),
         purpose: first_sentence(&text),
         notify_title: format!("reply ready — {}", prompt_line(&text, 40)),
         prompt: text,

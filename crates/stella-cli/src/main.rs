@@ -125,6 +125,7 @@ mod rules;
 mod runtime;
 mod search_cmd;
 mod semantic_worker;
+mod session_name;
 mod session_persist;
 mod settings;
 mod settings_check;
@@ -235,18 +236,6 @@ fn print_no_pipeline_notice_if_owed(posture: daemon::detach::Posture, no_pipelin
     }
 }
 
-/// The registry title for a supervised run: the same
-/// `<workspace>: <prompt…>` shape a session announces for itself, so a run
-/// reads identically in `stella daemon list` and in the deck's SESSIONS view.
-fn supervised_title(cfg: &config::Config, what: &str) -> String {
-    let name = cfg
-        .workspace_root
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| cfg.workspace_root.display().to_string());
-    format!("{name}: {}", command_deck::prompt_line(what, 48))
-}
-
 /// `stella resume --list`: every session in the machine-wide registry,
 /// newest activity first, with the rows resumable from THIS directory
 /// marked `↩`. Local reads only — works with zero API keys.
@@ -261,7 +250,23 @@ fn run_resume_list() -> Result<(), String> {
     let cwd = std::env::current_dir()
         .map(|d| d.display().to_string())
         .unwrap_or_default();
-    println!("{:2} {:<24} {:<12} SESSION", "", "ID", "STATUS");
+    // The name leads because it is what a person scans for. The ID closes
+    // the row because it is the argument `stella resume` takes.
+    let name_of = |s: &stella_store::SessionRecord| {
+        let name = if s.title.is_empty() {
+            &s.workspace
+        } else {
+            &s.title
+        };
+        command_deck::prompt_line(name, 72)
+    };
+    let width = sessions
+        .iter()
+        .map(|s| name_of(s).chars().count())
+        .max()
+        .unwrap_or(0)
+        .max("SESSION NAME".len());
+    println!("{:2} {:<width$} {:<12} ID", "", "SESSION NAME", "STATUS");
     for s in &sessions {
         let resumable = registry.resumable(&s.id);
         let marker = if resumable && s.workspace == cwd {
@@ -271,15 +276,11 @@ fn run_resume_list() -> Result<(), String> {
         } else {
             " "
         };
-        let title = if s.title.is_empty() {
-            s.workspace.clone()
-        } else {
-            s.title.clone()
-        };
         println!(
-            "{marker:2} {:<24} {:<12} {title}",
-            s.id,
+            "{marker:2} {:<width$} {:<12} {}",
+            name_of(s),
             stella_store::SessionRegistry::presented_status(s).label(),
+            s.id,
         );
     }
     println!(
@@ -1017,7 +1018,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 return daemon::supervise_this_invocation(
                     rt()?,
                     &cfg.workspace_root,
-                    &supervised_title(&cfg, &prompt),
+                    &session_name::session_name(&prompt),
                     prompt.as_bytes(),
                     posture,
                     output_format,
@@ -1148,7 +1149,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 return daemon::supervise_this_invocation(
                     rt()?,
                     &cfg.workspace_root,
-                    &supervised_title(&cfg, &goal),
+                    &session_name::session_name(&goal),
                     goal.as_bytes(),
                     posture,
                     // `goal` declares no `--output-format`, so there is no
@@ -1207,13 +1208,10 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 return daemon::supervise_this_invocation(
                     rt()?,
                     &cfg.workspace_root,
-                    &supervised_title(
-                        &cfg,
-                        &match plan.as_deref() {
-                            Some(file) => format!("fleet {}", file.display()),
-                            None => format!("fleet ({} tasks)", tasks.len()),
-                        },
-                    ),
+                    &session_name::session_name(&match plan.as_deref() {
+                        Some(file) => format!("fleet {}", file.display()),
+                        None => format!("fleet ({} tasks)", tasks.len()),
+                    }),
                     &[],
                     posture,
                     output_format,
@@ -1243,7 +1241,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 return daemon::supervise_this_invocation(
                     rt()?,
                     &cfg.workspace_root,
-                    &supervised_title(&cfg, &format!("monitor {target}")),
+                    &session_name::session_name(&format!("monitor {target}")),
                     &[],
                     posture,
                     // `monitor` declares no `--output-format` either.
