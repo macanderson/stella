@@ -2,6 +2,32 @@
 
 @AGENTS.md
 
+## Local execution
+
+Mac set this on 2026-09-26 for every repository on this machine. Local builds, test runs, dev servers, and git hooks ran the laptop out of memory and killed agent runs partway through, and every killed run costs money. CI is the only place code is built, checked, or tested.
+
+- Do not run the gate, a build, a typecheck, a lint, or any test, not even one test file. Push the branch and read the CI result. Read a failed job with `gh run view --job <id> --log-failed`.
+- Do not start a dev server: no `next dev`, `next start`, `pnpm dev`, a server under `cargo run`, or anything else that listens on a port.
+- Do not start Docker or Colima, and do not run anything that needs them.
+- Do not run Biome in any form.
+- Git hooks are off on this machine. `LEFTHOOK=0` and `HUSKY=0` are set for every shell and every Claude Code session. Do not reinstall a hook, turn one back on, or run a hook's commands by hand.
+- Code generators and small integrity scripts that only read and write files are allowed, such as regenerating a checksum, a schema index, or a message catalogue.
+- Put this rule, word for word, in the prompt of every subagent you start.
+
+## Agent-monitored pull requests
+
+Mac set this on 2026-09-26 for every repository. The `agent-monitored-pr` label marks a PR that an agent watches until it merges or closes. A labelled PR comes before other work, and its fixes run in parallel wherever that is safe.
+
+- **Label every PR an agent opens.** Pass `--label agent-monitored-pr` to `gh pr create`. If the repository has no such label, create it first: `gh label create agent-monitored-pr --color fd0880 --description "Agent polls every 60 seconds fixes CI, comments, conflicts."`
+- **Poll the PR every 60 seconds.** Each poll reads the PR's state, its mergeability, and the checks on the head commit. It reads every review thread with no inline reply after the reviewer's last comment. `gh pr view --json` does not return review threads, so read them with `gh api graphql` (`pullRequest.reviewThreads`). It also reads review bodies and top-level comments, because a finding there has no thread. Answer each finding there once, with a PR comment that quotes it, and record the id of the comment you answered. Start every comment a watcher posts with `<!-- pr-watch -->`. Skip comments that start with that marker or with `<!-- pr-claim -->`, so a watcher does not answer its own comments.
+- **Fix by review pass.** Pass N is the Nth review one reviewer submits on the PR. On pass 1, fix every P0, P1, and P2 finding. On pass 2, fix P0 and P1. From pass 3 on, fix P0 only. A P0 blocks the PR at every pass.
+- **File one residue issue.** Carry every P1 and P2 finding left unfixed into a single issue for the PR. Its title ends with `(residue #<PR>)`, and its body links the PR. Reply inline on every thread you handle, with the commit that fixed it or a link to the residue issue.
+- **Let the pass rule govern review findings.** On a labelled PR, the pass rule decides which review findings get fixed, in place of any repository rule on review rounds or on fixing every finding in the PR. Residue goes to one issue, even where a repository files each finding alone. Where a repository allows one change per issue, residue from unrelated changes splits into one issue per change. A defect you notice yourself still follows fix over file. A P3 finding follows the repository's usual rules.
+- **Clear conflicts and CI failures as they appear.** When the PR conflicts, merge the base branch in, resolve it, and push. When a job fails, read its failing step with `gh run view --job <id> --log-failed`, fix it, and push without waiting for the rest of the run.
+- **Dispatch subagents.** Give each independent fix its own subagent when no two fixes touch the same file. Stay active until the PR merges or closes.
+- **Search for the label every 60 seconds.** A session that watches PRs runs `gh search prs --owner macanderson --label agent-monitored-pr --state open --limit 1000` every 60 seconds. Without `--limit`, gh returns 30 results, and GitHub search returns at most 1000. The session takes each labelled PR that no live claim holds.
+- **Claim a PR before the first write.** A PR has one writer. Two writers on one branch restart each other's CI and reject each other's pushes. To claim, post a PR comment whose first line is `<!-- pr-claim --> <login> <session-word> <runtime> <session name>`, then read the PR's comments again. The session word is one word that names your session, such as a job id. A claim holds for 90 minutes after it is posted. The oldest claim that still holds owns the PR. If that claim is not yours, delete your comment and message the owner instead of pushing. Before your claim lapses, post a new one and delete the old one. Delete your claim when you stop watching the PR. Agents chose this claim on 2026-09-26 to answer review findings, in the format of stella's `scripts/pr-claim.sh`, and Mac has not ruled on it. In this repository, take the claim with `scripts/pr-claim.sh claim <PR>`, then read the comments again.
+
 ## Hard rules for every session
 
 - **The bar is reference-grade Rust, and there is no second bar.** This
@@ -285,36 +311,68 @@
   novel design is `ultra`.
 - **Every Sourcery ❌ gets a fix or an answer before the PR is mergeable.**
   Sourcery reviews every PR, and when the PR links issues it posts an
-  "Assessment against linked issues" table as a `sourcery-ai` comment — one
+  "Assessment against linked issues" table as a `sourcery-ai` comment: one
   row per objective, `✅` for met, `❌` with an explanation for partial or
   missing. After opening a PR, and again after every later push to it, read
   that comment (it lands within a few minutes;
-  `gh pr view <n> --json comments --jq '.comments[] | select(.author.login == "sourcery-ai") | .body'`)
-  and settle every `❌` row before the session ends; the PR is unmergeable until
-  that comment can be read:
-  - **Fix it** when the objective belongs to the PR — push the commits that
-    satisfy it, then re-read the table Sourcery posts for the new head.
+  `gh pr view <n> --json comments --jq '.comments[] | select(.author.login == "sourcery-ai") | {createdAt, body}'`).
+  Only a table for your latest push counts. The table names no commit, so
+  compare its `createdAt` with the head commit's time:
+  `gh pr view <n> --json headRefOid,commits --jq '{sha: .headRefOid, at: .commits[-1].committedDate}'`.
+  A table created before that time reviewed an older head. Treat it as no
+  table. When a current table is there, settle every `❌` row before the
+  session ends:
+  - **Fix it** when the objective belongs to the PR. Push the commits that
+    satisfy it, then check Sourcery again for the new head.
   - **Answer it** when it does not belong: deliberately out of scope,
     deferred into a filed issue, or a misreading of the diff. Post a PR
     comment naming the row and the reason, and file the follow-up issue
     where one is owed ("Fix over file" above). Sourcery's verdict is
-    a claim like any other review comment and can be wrong about your diff —
-    the rebuttal still goes on the PR, where the next reviewer finds it.
+    a claim like any other review comment and can be wrong about your diff.
+    The rebuttal still goes on the PR, where the next reviewer finds it.
 
-  A `❌` with neither a fix pushed nor a comment answering it is untracked
-  half-finished work, and the PR stays unmergeable until it has one or the
-  other.
+  No current table can mean two different things, and reading it as the
+  wrong one is the failure this rule exists to prevent. Check whether
+  Sourcery answered the head commit at all, with the head sha in place of
+  `<sha>`: `gh pr view <n> --json reviews --jq '.reviews[] |
+  select(.author.login == "sourcery-ai" and .commit.oid == "<sha>") |
+  {state, body}'`. A review on an older commit says nothing about the head.
+  A `COMMENTED` review whose body names a diff-size limit, a spent weekly
+  review budget, or its own outage is a refusal, not a pass, even though
+  `gh pr checks` shows the same `skipped`-looking `Sourcery review` context
+  as a PR nobody has reviewed yet. The two arms below split on one number:
+  15 minutes since your latest push. Sourcery's table usually lands within
+  two minutes, so 15 leaves room for a slow queue.
+  - **Sourcery could not review it.** A refusal review on the head commit,
+    or no current table and no review on the head commit 15 minutes after
+    your latest push. Write one line in the PR description naming the
+    reason (over its diff limit, its weekly budget, or no post within 15
+    minutes) and the check you ran in its place, such as the command and
+    result that stood in for the missing review. That line is what you owe
+    instead of the table, and the PR is mergeable once it carries one.
+  - **Sourcery has not posted yet.** No current table and no review on the
+    head commit, less than 15 minutes after your latest push. Wait and check
+    again.
+
+  A current table takes precedence over a refusal review on the same head:
+  settle the table's rows under the first two arms above regardless of what
+  else Sourcery posted. A table or a refusal from an older head settles
+  nothing for the latest push.
+
+  A `❌` with neither a fix nor an answering comment, and a missing table
+  with neither a wait nor a one-line refusal note in the description, are
+  both untracked half-finished work. The PR stays unmergeable until it has
+  what it is owed.
 - **CI builds and tests; this laptop does not.** Never run `make gate`,
   `make check`, `make test`, `cargo build --workspace`, `cargo test
   --workspace`, or clippy over the workspace on the maintainer's machine.
   Push the branch and read the workflow run instead — that is what CI is
   for, and a workspace build here competes with every other session on the
-  box. A local compile is allowed only when it is **targeted**: one crate,
-  one test filter, for a change you are iterating on right now
-  (`cargo test -p stella-core loop_detect`). `cargo fmt --check` and the
-  toolchain-free guards (`make guards-fast`) compile nothing and are always
-  fine. A PR's evidence is its CI run, so cite the run — a green workspace
-  build on this laptop is not evidence, it is a cost.
+  box. No local compile runs here, not even a targeted one for one crate or
+  one test filter. `cargo fmt --check` and the toolchain-free guards
+  (`make guards-fast`) are gate steps, so CI runs them, and they are not run
+  on this machine either. A PR's evidence is its CI run, so cite the run — a
+  green workspace build on this laptop is not evidence, it is a cost.
 - **Before you repair a red `main`, ask whether somebody already is.** Run
   `./scripts/main-red-claim.sh check`; if it stands you down, wait. If it
   clears you, `./scripts/main-red-claim.sh claim` before you start writing,

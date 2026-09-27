@@ -22,8 +22,11 @@ it. That is also exactly the range CI drafts it from.
 
 **CI writes this file, not contributors or coding agents.** Leave the
 `[Unreleased]` section alone in your PR rather than adding a bullet to it. (The
-exception is a release PR that deliberately writes its own section: the roll is
-idempotent and never overwrites or duplicates a version that already has one.)
+exception is a release PR that writes its own section. When the version already
+has a section, the roll keeps every line of it and writes no second heading. It
+adds only draft bullets whose PR refs the section does not cite. It leaves out a
+draft bullet that cites no PR, or any PR the section already cites, and it
+leaves out the draft's own prose.)
 [`scripts/changelog-ai.sh`](scripts/changelog-ai.sh) drafts the section from the
 series range when a minor or major release is cut, and
 [`scripts/changelog-roll.sh`](scripts/changelog-roll.sh) rolls it into place. If

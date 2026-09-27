@@ -149,6 +149,15 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 ./scripts/check-release-wiring.py
 
+      # Here for the same reason one step up: it reads
+      # `.github/workflows/release.yml`, and a diff confined to a workflow
+      # file answers `rust=false`, which skips ci.yml's `check` job. The
+      # lines it holds open are the retry that keeps a GitHub 5xx mid-publish
+      # from stranding a finished build as an unpublished draft (#5698).
+      - name: the release-publish step survives a mid-publish 5xx
+        if: ${{ !cancelled() }}
+        run: python3 ./scripts/check-release-retry.py
+
       # The steps above run here because this trigger carries no `paths:`
       # filter at all -- that is what lets them fire on a scripts-only pull
       # request. Nothing enforced that absence except a comment, so this reads
@@ -251,7 +260,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-diagnostic-codes.sh
 
-      - name: deleted-tests guard reads a live PR body over a stale one
+      - name: The deleted-tests guard can still fail
         if: ${{ !cancelled() }}
         run: ./scripts/test-deleted-tests.sh
 
@@ -286,6 +295,10 @@ jobs:
       - name: release-wiring guard failure directions
         if: ${{ !cancelled() }}
         run: python3 ./scripts/test-release-wiring.py
+
+      - name: release-retry guard failure directions
+        if: ${{ !cancelled() }}
+        run: python3 ./scripts/test-release-retry.py
 
       - name: gate-parity guard failure directions
         if: ${{ !cancelled() }}
@@ -375,6 +388,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-wait-for-armed-merge.sh
 
+      - name: the deferred version write-back issue, one per case
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-version-writeback-defer.sh
+
       - name: the session-scratch boundary
         if: ${{ !cancelled() }}
         run: ./scripts/test-no-scratch.sh
@@ -402,6 +419,10 @@ jobs:
       - name: the release fetch has no fixed count cap
         if: ${{ !cancelled() }}
         run: ./scripts/test-releases-published-pagination.sh
+
+      - name: the merged-branch drift rule
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-check-merged-branch-drift.sh
 
       - name: rebase-replay guard directions, and the hazard itself
         if: ${{ !cancelled() }}
