@@ -306,9 +306,9 @@ done
 rows="$(rows_for close)"
 equals "auto-tag.yml calls close exactly three times" "$(count_rows "$rows")" "3"
 equals "one close follows the ordinary merge that returned success" \
-  "$(count_exact "$rows" 'if gh pr merge "${BRANCH}" --squash; then')" "1"
+  "$(count_exact "$rows" "if gh pr merge \"\${BRANCH}\" --squash; then")" "1"
 equals "one close follows the admin merge that returned success" \
-  "$(count_exact "$rows" 'if GH_TOKEN="${ADMIN_MERGE_TOKEN}" gh pr merge "${BRANCH}" --squash --admin; then')" "1"
+  "$(count_exact "$rows" "if GH_TOKEN=\"\${ADMIN_MERGE_TOKEN}\" gh pr merge \"\${BRANCH}\" --squash --admin; then")" "1"
 merged_gate="if printf '%s\\n' \"\${wait_out}\" | grep -q '^wait-for-armed-merge: MERGED'; then"
 equals "one close follows the armed merge that the wait saw land" \
   "$(count_exact "$rows" "$merged_gate")" "1"
