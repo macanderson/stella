@@ -10,7 +10,7 @@
 # reach the FETCH. This test drives the fetch with a fake `gh` on PATH, so it
 # needs no network.
 #
-# Five arms, all against the script this tree ships:
+# The arms all run against the script this tree ships:
 #
 #   PAGES — 1001 releases arrive over 11 pages. All of them are walked, and
 #           nothing reports truncation. A fixed cap fails here.
@@ -25,8 +25,12 @@
 #   EMPTY-NOTHING-PUBLISHED — every list read is empty and `releases/latest`
 #           answers 404. The tag is still reported as absent. This is the
 #           control: the real failure must stay loud.
+#   EMPTY-LATEST-FAILS — every list read is empty and `releases/latest` fails
+#           with a 502. The script refuses with `::error::` and prints no
+#           report. A script that reads every failed call as "no release"
+#           reports the tag as absent and fails here.
 #
-# The three EMPTY arms need one tag older than the grace window, so they run
+# The EMPTY arms need one tag older than the grace window, so they run
 # in a throwaway git repository holding a single tag dated 2000-01-01. The
 # script reads tags from its working directory, and that keeps this
 # checkout's own tags out of it.
@@ -110,12 +114,15 @@ run_with_fake_gh() {
 # v0.0.0. A `<found_on_read>` of 0 means every read is empty.
 # `releases/latest` prints `<latest_tag>`, or fails with a 404 when that is
 # empty, which is what real `gh` does for a repository with no release.
+# A `<latest_error>` makes it fail with that message instead, the way real
+# `gh` reports a 5xx or a rate limit.
 #
-# `write_empty_shim <dir> <found_on_read> <latest_tag>`
+# `write_empty_shim <dir> <found_on_read> <latest_tag> [<latest_error>]`
 write_empty_shim() {
   mkdir -p "$1"
   printf '%s\n' "$2" >"$1/found-on-read"
   printf '%s\n' "$3" >"$1/latest-tag"
+  printf '%s\n' "${4:-}" >"$1/latest-error"
   printf '0\n' >"$1/list-reads"
   cat >"$1/gh" <<'SHIM'
 #!/usr/bin/env bash
@@ -123,6 +130,11 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 case "$*" in
   *releases/latest*)
+    err="$(cat "$here/latest-error")"
+    if [ -n "$err" ]; then
+      echo "gh: $err" >&2
+      exit 1
+    fi
     tag="$(cat "$here/latest-tag")"
     if [ -z "$tag" ]; then
       echo '{"message":"Not Found","status":"404"}'
@@ -178,6 +190,7 @@ run_in_fixture() {
 write_empty_shim "$work/empty-then-found" 2 ""
 write_empty_shim "$work/empty-latest-found" 0 "v0.0.0"
 write_empty_shim "$work/empty-nothing" 0 ""
+write_empty_shim "$work/empty-latest-fails" 0 "" "Bad Gateway (HTTP 502)"
 
 pages_out="$(run_with_fake_gh "$work/pages" "$SCRIPT")"
 pages_status=$?
@@ -237,6 +250,17 @@ if [ "$nothing_status" -ne 0 ] \
 else
   fail=$((fail + 1))
   echo "FAIL EMPTY-NOTHING-PUBLISHED a repository with no release still has its tag reported as absent — exit ${nothing_status}, got: ${nothing_out}"
+fi
+
+fails_out="$(run_in_fixture "$work/empty-latest-fails")"
+fails_status=$?
+if [ "$fails_status" -ne 0 ] \
+  && printf '%s' "$fails_out" | grep -q "releases/latest failed without a 404" \
+  && ! printf '%s' "$fails_out" | grep -q "never published"; then
+  pass=$((pass + 1)); echo "ok   EMPTY-LATEST-FAILS a releases/latest failure that is not a 404 is refused, and no report is printed"
+else
+  fail=$((fail + 1))
+  echo "FAIL EMPTY-LATEST-FAILS a releases/latest failure that is not a 404 is refused, and no report is printed — exit ${fails_status}, got: ${fails_out}"
 fi
 
 echo
