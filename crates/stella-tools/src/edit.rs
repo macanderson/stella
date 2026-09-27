@@ -1,16 +1,16 @@
 //! `edit_file` — replace an exact substring in a file. Surgical edits, not
 //! full rewrites. Supports `replace_all` for multi-occurrence.
 //!
-//! The tool shares the session's read-state ledger (#331): when `old_string`
-//! fails to match, it compares current disk bytes against the hash of what
-//! the model last saw (recorded by `read_file` and by the model's own
-//! edits/writes) and *attributes* the failure — a drifted file gets a
-//! drift-named error carrying the fresh content so the model can re-issue the
-//! edit against current bytes, instead of a generic not-found that sends it
-//! back into a read→edit-fail thrash. Because the drift echo
-//! embeds the changed content, a legitimate recovery never produces
-//! byte-identical outputs, so the loop detector (which requires identical
-//! outputs to flag a loop) keeps treating it as progress.
+//! The tool shares the session's read-state ledger. When `old_string` does
+//! not match, it compares the bytes on disk with the hash of what the model
+//! last saw. `read_file` records that hash, and so do the model's own edits
+//! and writes. So the tool can say why the edit failed. A file that changed
+//! on disk gets an error that names the drift and carries the fresh content,
+//! and the model can redo the edit against the bytes that are there now. A
+//! plain not-found error would send it round a read, fail, read loop. The
+//! echo holds the changed content, so a real recovery never repeats its
+//! output byte for byte. The loop detector fires only on identical outputs,
+//! so it sees progress.
 //!
 //! The ledger is also what the write is held to. The bytes this tool reads at
 //! the top of a call are a snapshot, and the file it writes at the end is
@@ -19,13 +19,12 @@
 //! re-reads the file through the same descriptor immediately before the write
 //! and refuses rather than clobber a change nobody would ever see again.
 //!
-//! The success path holds itself to the same contract (#3176): every success
-//! string carries the match's byte offset and a short digest of the resulting
-//! file, so N distinct edits to one file produce N distinct outputs. A
-//! constant `replaced 1 occurrence(s) in {path}` once made seven different,
-//! correct edits look byte-identical to that detector, which killed the run
-//! as stagnant mid-solve. Both stamps are deterministic — identity, never a
-//! timing.
+//! The success path meets the same rule. Every success string carries the
+//! byte offset of the match and a short digest of the new file, so N edits
+//! to one file give N different outputs. A constant
+//! `replaced 1 occurrence(s) in {path}` once made seven correct edits print
+//! the same text, and that detector killed the run as stuck in the middle of
+//! a fix. Both stamps are deterministic: they name the edit, never a time.
 
 use std::sync::Arc;
 
@@ -94,14 +93,14 @@ pub(crate) fn crlf_promoted(content: &str, old: &str, new: &str) -> Option<(Stri
 /// Lines of a needle that missed, but whose only difference from the file is
 /// leading whitespace — returned as the file's own bytes for that span.
 ///
-/// The most common shape of an "unchanged file, still no match" miss, and the
-/// one the generic message cannot resolve without a ranged re-read: a needle
-/// copied out of a nested context and re-indented by a few spaces, or copied
-/// from a `read_file` render whose line prefix was trimmed off unevenly. The
-/// literal comparison is right to fail — an edit must be byte-exact — but the
-/// tool knows *why* it failed and can say so.
+/// This is the most common way a needle misses a file that did not change.
+/// The needle was copied out of a nested block and indented by a few more or
+/// fewer spaces, or copied from a `read_file` render whose line prefix was
+/// cut off unevenly. The generic message cannot say that without a ranged
+/// re-read. The literal comparison is right to fail, since an edit must be
+/// byte-exact, but the tool knows why it failed and can say so.
 ///
-/// Deliberately narrow, so this can never claim a match the real edit would
+/// The check is narrow, so it can never claim a match the real edit would
 /// not have made:
 ///
 /// - Every line must be equal after stripping leading whitespace **only**.
