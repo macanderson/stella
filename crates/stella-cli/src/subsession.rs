@@ -1324,7 +1324,9 @@ pub(crate) fn spawn_task_worker(queued: &QueuedSpawn, subs: &mut SubSessions, ct
     let lane = task_lane(&req.task_id);
     let spec = SubSessionSpec {
         lane: lane.clone(),
-        title: format!("task #{}: {}", req.task_id, prompt_line(&req.subject, 40)),
+        // The lane id `sub:<task-id>` carries the task number wherever the
+        // title is drawn beside it, so the name is the subject alone.
+        title: crate::session_name::session_name(&req.subject),
         purpose: task_purpose(req),
         prompt: task_prompt(req),
         notify_title: format!(
