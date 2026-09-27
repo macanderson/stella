@@ -27,14 +27,20 @@ disable-model-invocation = true
 prompt = '''
 Target repo: **$ARGUMENTS**
 
-> **Not `/backlog-triage`.** The `stella` repo also ships `/backlog-triage`, which
-> is *specific to that repo*: it drives a six-facet contract, writes an Impact
-> score to Projects v2 field IDs, and knows stella's crate→`area:*` routing. Use
-> that one inside `macanderson/stella`. `/triage-sweep` is the **repo-agnostic**
-> sibling — it discovers whatever taxonomy the target repo has, re-derives every
-> issue's claim from the source tree, and fixes the trivially-fixable into one
-> cleanup PR. Where they overlap, `/backlog-triage` is the more specific tool and
-> wins.
+> **Not `/backlog-triage`.** `/backlog-triage` is a local command on the
+> maintainer's machine, and this repository does not track it. It is built for
+> `macanderson/stella` alone: it scores each issue and writes the score to a
+> project board. Where you have it, use it in that repo. `/triage-sweep` works
+> on any repo. It reads the target repo's labels, checks each issue against the
+> source tree, and fixes the easy ones in one cleanup PR.
+>
+> **Crate routing in `macanderson/stella`.** An issue about the crate
+> `stella-<name>` takes the label `area:<name>` when that label exists. Read the
+> live list with `gh label list`. So `stella-engine` takes `area:engine`, and
+> `stella-tty` takes `area:tty`. The same rule holds for `stella-home`,
+> `stella-diag`, `stella-diff`, `stella-parity`, and `stella-tui-theme`. Some
+> crates have no label, such as `stella-learn`. For one of those, use the label
+> of the crate it serves most. Do not create a label during a sweep.
 
 
 You are the **triage authority** for this run. Parse `$ARGUMENTS`: the first
