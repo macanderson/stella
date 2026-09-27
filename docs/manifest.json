@@ -225,6 +225,11 @@
       "status": "implemented",
       "title": "ADR 0044: A forge tool groups verbs over one object"
     },
+    "adr/0045-retire-ad-hoc-build-time-and-model-tier-labels": {
+      "path": "docs/adr/0045-retire-ad-hoc-build-time-and-model-tier-labels.md",
+      "status": "implemented",
+      "title": "ADR 0045: Retire the ad hoc build-time and model-tier labels"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",
