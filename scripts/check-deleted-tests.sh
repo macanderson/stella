@@ -49,7 +49,8 @@
 # A removed test is not automatically wrong. Tests are legitimately renamed,
 # merged into a table-driven case, or dropped with the feature
 # they covered. So a removal fails the guard only while it is UNNAMED: writing
-# the test's name in the PR description (or in a commit message) passes it.
+# the test's name in the PR description passes it. A commit message counts
+# too, but only while the checkout can read it, as the next section says.
 #
 # ── The two channels are not equally durable (`#5965`) ───────────────────────
 #
@@ -67,16 +68,35 @@
 # text names the number of commits the walk read and points at the description
 # as the channel that does not expire.
 #
+# The guard asks git whether the checkout is shallow, so its text matches the
+# run that printed it. A local clone reads every commit on the branch, and CI
+# reads two. So an OK that rests on a commit message lists those names. The
+# author then learns before CI does that the name belongs in the description.
+#
 # That is the entire mechanism, and it is weak. The goal is not to
 # adjudicate whether a deletion was correct — a script cannot — but to convert
 # an invisible deletion into a sentence a reviewer reads.
 #
+# ── Python tests count too ───────────────────────────────────────────────────
+#
+# A large and growing share of this repository's tests are Python, under
+# `bench/`, and until now this guard could not see any of them: it read only
+# `#[test]` / `#[tokio::test]`. scripts/collect-python-tests.py walks every
+# tracked `*.py` file's AST at a given ref and returns each `def test_*`
+# name, top-level or nested in a class, the same way `TestSweepAntiVacuity`'s
+# methods in bench/harbor_adapter/tests/test_manifest_parity.py each count on
+# their own. Its names are folded into the same base/head sets the Rust scan
+# below builds, so everything past that point — the diff, the acknowledgement
+# channels, the failure text — treats a dropped Python test exactly like a
+# dropped Rust one, without knowing the difference.
+#
 # ── What it keys on, and the miss that follows ───────────────────────────────
 #
 # The bare function name of anything carrying `#[test]` or `#[tokio::test]`,
-# unqualified by file or module. Unqualified is a choice: it means a test MOVED
-# between files or modules is silently fine, which is the common, legitimate
-# case and would otherwise be constant noise.
+# unqualified by file or module, plus every Python `def test_*` name the same
+# way. Unqualified is a choice: it means a test MOVED between files or modules
+# is silently fine, which is the common, legitimate case and would otherwise
+# be constant noise.
 #
 # The cost is that a duplicated name masks a deletion — delete one `fn works()`
 # while another survives elsewhere and this guard sees the name still present.
@@ -229,9 +249,59 @@ test_names_at() {
     ' | LC_ALL=C sort -u
 }
 
+# Every Python `def test_*` name in one tree, sorted and deduplicated, via
+# scripts/collect-python-tests.py.
+#
+# A tree with no Python at all is normal, the same as zero Rust tests above.
+#
+# The collector can flag its own trouble too (exit 3: a test-named file with
+# nothing readable inside). That flag is not enough alone. It can only speak
+# about files it found, and this guard's own file listing broke once,
+# silently: `git ls-tree`'s glob pathspec looked fine on a small fixture and
+# matched nothing on the real tree. A collector trusting its own empty list
+# would have called that tree clean. So `python_test_shaped_count_at` below
+# counts test-shaped `.py` paths straight from `git ls-tree`, no pathspec, no
+# Python run at all. That count is the one this guard trusts.
+python_vacuous=""
+
+# python_test_shaped_count_at <ref> — how many tracked `.py` paths at <ref>
+# are named the way pytest expects a test file to be named, counted without
+# a pathspec (see the note above) and without running any Python at all.
+python_test_shaped_count_at() {
+  git ls-tree -r --name-only "$1" 2>/dev/null | awk -F/ '
+    $NF ~ /^test_.*\.py$/ || $NF ~ /_test\.py$/ { c++ }
+    END { print c + 0 }
+  '
+}
+
+python_names_at() {
+  local ref="$1" out="$2" rc=0 shaped=0
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "check-deleted-tests: python3 is not on PATH, so Python tests at" >&2
+    echo "     $ref could not be scanned at all. Install python3, or this" >&2
+    echo "     guard has no Python coverage to give." >&2
+    exit 1
+  fi
+  set +e
+  python3 "$repo_root/scripts/collect-python-tests.py" "$ref" >"$out"
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ]; then
+    echo "check-deleted-tests: could not scan Python tests at $ref (collect-python-tests.py exited $rc)." >&2
+    exit 1
+  fi
+  shaped="$(python_test_shaped_count_at "$ref")"
+  if [ "$shaped" -gt 0 ] && [ ! -s "$out" ]; then
+    python_vacuous="$python_vacuous $ref"
+  fi
+  return 0
+}
+
 base_names="$(mktemp)"
 head_names="$(mktemp)"
-trap 'rm -f "$base_names" "$head_names"' EXIT
+py_base_names="$(mktemp)"
+py_head_names="$(mktemp)"
+trap 'rm -f "$base_names" "$head_names" "$py_base_names" "$py_head_names"' EXIT
 
 # `|| true` on each: `git grep` exits 1 on zero matches, which `test_names_at`'s
 # trailing pipe (with `pipefail`) turns into the whole function returning
@@ -246,6 +316,30 @@ trap 'rm -f "$base_names" "$head_names"' EXIT
 test_names_at "$base_ref" >"$base_names" || true
 test_names_at "$head_ref" >"$head_names" || true
 
+python_names_at "$base_ref" "$py_base_names"
+python_names_at "$head_ref" "$py_head_names"
+
+if [ -n "$python_vacuous" ]; then
+  {
+    echo "check-deleted-tests: FAILED"
+    echo ""
+    echo "scripts/collect-python-tests.py found a pytest-named file (test_*.py"
+    echo "or *_test.py) at each of:$python_vacuous"
+    echo "but zero \`def test_*\` names anywhere in the tree there. That is the"
+    echo "collector's own glob or parser breaking, not a tree with no tests —"
+    echo "fixing it, not naming a deletion, is what this run needs."
+  } >&2
+  exit 1
+fi
+
+# Merge the Python names into the same sets the Rust scan built, so the
+# comparison, the acknowledgement channels and the failure text below run
+# once over both languages rather than twice.
+cat "$py_base_names" >>"$base_names"
+cat "$py_head_names" >>"$head_names"
+LC_ALL=C sort -u -o "$base_names" "$base_names"
+LC_ALL=C sort -u -o "$head_names" "$head_names"
+
 # In the base tree and not in the merged tree.
 removed="$(LC_ALL=C comm -23 "$base_names" "$head_names")"
 
@@ -259,10 +353,10 @@ if [ -z "$removed" ]; then
   exit 0
 fi
 
-# The acknowledgement text: the PR's CURRENT description when it can be
-# fetched live, `PR_BODY` (the event-payload snapshot) when it cannot, plus
-# `git log` best-effort on top of either — see "Reading the acknowledgement"
-# above for why the live fetch is the point of #4495.
+# The description channel: the PR's CURRENT description when it can be
+# fetched live, `PR_BODY` (the event-payload snapshot) when it cannot.
+# "Reading the acknowledgement" above says why the live fetch is the point of
+# #4495. The commit-message channel is read below and kept apart from it.
 live_body=""
 live_body_available=0
 stale_fallback=0
@@ -299,25 +393,40 @@ else
 fi
 
 if [ "$live_body_available" -eq 1 ]; then
-  ack="$live_body"
+  desc_ack="$live_body"
 else
-  ack="${PR_BODY:-}"
+  desc_ack="${PR_BODY:-}"
 fi
 
-# How far the commit-message channel could actually see. On CI's fetch-depth 2
-# checkout this is 1, and the failure text says so rather than leaving the
-# author to work out why a name that passed an hour ago stops counting.
+# How far the commit-message channel could see. CI's fetch-depth 2 checkout
+# of a merge commit holds the merge and the PR's tip, so its walk reads 2.
+# The text below prints the count, so a name that passed an hour ago and
+# fails now has a visible cause.
+commit_ack=""
 walked=0
 if commits="$(git log --format='%B' "$base_ref..$head_ref" 2>/dev/null)"; then
-  ack="$ack
-$commits"
+  commit_ack="$commits"
   walked="$(git log --format='%H' "$base_ref..$head_ref" 2>/dev/null | wc -l | tr -d ' ')"
 fi
 
+# A shallow clone holds no commit message below its boundary. Ask git rather
+# than assume every run is CI's.
+shallow=0
+if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+  shallow=1
+fi
+
+# The description is checked first, since it does not expire. A name found
+# there counts as the description even when a commit message names it too.
 unacknowledged=""
+commit_only=""
 for name in $removed; do
-  case "$ack" in
-  *"$name"*) ;;
+  case "$desc_ack" in
+  *"$name"*) continue ;;
+  esac
+  case "$commit_ack" in
+  *"$name"*) commit_only="$commit_only  $name
+" ;;
   *) unacknowledged="$unacknowledged  $name
 " ;;
   esac
@@ -326,7 +435,23 @@ done
 if [ -z "$unacknowledged" ]; then
   count=$(printf '%s\n' "$removed" | wc -l | tr -d ' ')
   trap '' PIPE
-  echo "check-deleted-tests: OK — $count removed test(s), each named in the PR description or a commit." || true
+  if [ -z "$commit_only" ]; then
+    echo "check-deleted-tests: OK, $count removed test(s), each named in the PR description." || true
+    exit 0
+  fi
+  # A pass off a commit message is real for this run and can fail in CI
+  # with the same tree, so the OK names the tests that rest on it.
+  {
+    echo "check-deleted-tests: OK, $count removed test(s) named. These are named only in a commit message:"
+    echo ""
+    printf '%s' "$commit_only"
+    echo ""
+    echo "This run's \`git log\` walk read $walked commit(s) and found them there."
+    echo "CI checks out at fetch-depth 2, so it reads the merge commit and the"
+    echo "PR's tip. Once a merge lands on top of the naming commit, CI cannot"
+    echo "read it, and the same tree fails. Name these tests in the PR"
+    echo "description too. The description does not expire."
+  } || true
   exit 0
 fi
 
@@ -349,30 +474,38 @@ fi
   echo ""
   echo "  2. YOU DID. Renaming, folding into a table-driven case, or dropping a"
   echo "     test with the feature it covered are all fine. Name each test above"
-  echo "     in the PR description (or a commit message) and this passes — the"
-  echo "     point is that a reviewer reads the sentence, not that the deletion"
-  echo "     is forbidden."
+  echo "     in the PR description and this passes. The point is that a"
+  echo "     reviewer reads the sentence, not that the deletion is forbidden."
   echo ""
   echo "A moved or renamed test is reported here because this guard keys on the"
   echo "bare function name; that is deliberate, and naming it in the PR is the"
   echo "whole cost."
   echo ""
-  echo "PUT THE NAME IN THE PR DESCRIPTION. The commit-message channel expires:"
-  echo "this run's \`git log\` walk read $walked commit(s), because CI checks out"
-  echo "at fetch-depth 2. A name written in a commit message counts while that"
-  echo "commit is the tip and stops counting once a merge lands on top of it, so"
-  echo "the same deletion can pass one run and fail the next with nothing about"
-  echo "the tree having changed. The description does not expire."
+  echo "PUT THE NAME IN THE PR DESCRIPTION. The commit-message channel expires."
+  if [ "$shallow" -eq 1 ]; then
+    echo "This checkout is shallow, so this run's \`git log\` walk read only"
+    echo "$walked commit(s). Older commit messages are not in this clone."
+  else
+    echo "This checkout holds full history, so this run's \`git log\` walk read"
+    echo "all $walked commit(s) on the branch. CI checks out at fetch-depth 2 and"
+    echo "reads only the merge commit and the PR's tip."
+  fi
+  echo "A name written in a commit message counts while that commit is the tip"
+  echo "and stops counting once a merge lands on top of it, so the same deletion"
+  echo "can pass one run and fail the next with nothing about the tree having"
+  echo "changed. The description does not expire."
   echo ""
   if [ "$stale_fallback" -eq 1 ]; then
     echo "THIS RUN READ A STALE DESCRIPTION. It could not fetch the PR's"
     echo "current body through the API (see the 'note:' line above, if any),"
     echo "so it fell back to the description as it stood in the event payload"
     echo "that started the run — editing the description and re-running this"
-    echo "same job replays that same stale text and will not help. The"
-    echo "commit-message channel cannot cover for it either: the checkout is"
-    echo "fetch-depth 2, so the \`git log\` above walks no branch history. A"
-    echo "new commit is what carries an edited description into a fresh event"
+    echo "same job replays that same stale text and will not help."
+    if [ "$shallow" -eq 1 ]; then
+      echo "The commit-message channel cannot cover for it either, because this"
+      echo "shallow checkout holds only the $walked commit(s) read above."
+    fi
+    echo "A new commit is what carries an edited description into a fresh event"
     echo "that CAN be fetched live."
   else
     echo "This run read the PR's CURRENT description through the API, so"

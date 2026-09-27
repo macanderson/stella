@@ -42,7 +42,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     command-docs website-inputs brand-case file-size god-files gate-parity \
                     schema-tier-parity \
                     guard-trigger-coverage priority-scheme cargo-flags \
-                    release-wiring left-behind \
+                    release-wiring release-retry left-behind \
                     retired-model-keys \
                     stat-portability module-reachability core-reachability \
                     core-no-io \
@@ -876,6 +876,21 @@ release-wiring: ## Assert auto-tag.yml still asks for a run on the commit it mer
 release-wiring-test: ## Test the release-wiring guard's failure directions (hermetic; not part of `gate`)
 	@python3 ./scripts/test-release-wiring.py
 
+# `release.yml`'s `Create / update GitHub Release` step survived a build but
+# not a GitHub 5xx mid-publish: v0.9.254 and v0.9.264 both uploaded every
+# asset and then stranded a finished release as an unpublished draft with
+# nobody watching to re-run it (#5698). This holds the retry the step now
+# gets to the same shape as the `Upload build artifact` retry above it —
+# `continue-on-error` and an `id` on the first attempt, a second step gated
+# on that id's outcome, and both pinning the same action with the same inputs.
+.PHONY: release-retry
+release-retry: ## Assert the release-publish step survives a mid-publish 5xx (#5698)
+	@python3 ./scripts/check-release-retry.py
+
+.PHONY: release-retry-test
+release-retry-test: ## Test the release-retry guard's failure directions (hermetic; not part of `gate`)
+	@python3 ./scripts/test-release-retry.py
+
 .PHONY: priority-scheme
 priority-scheme: ## Assert the issue priority scheme is stated once, in SCR-005 (#5216)
 	@python3 ./scripts/check-priority-scheme.py
@@ -1000,7 +1015,7 @@ main-canary-test: ## Test the post-merge canary, announcements included (not par
 	./scripts/test-main-canary.sh
 
 .PHONY: deleted-tests-test
-deleted-tests-test: ## Test the deleted-test guard's live-vs-stale PR body handling (hermetic; not part of `gate`; #4495)
+deleted-tests-test: ## Test that the deleted-test guard still fails an unnamed deletion (hermetic; not part of `gate`)
 	./scripts/test-deleted-tests.sh
 
 # Deliberately not a gate step, for the same reason as the one above: it
@@ -1056,6 +1071,15 @@ dispatch-main-verification-test: ## Test the main-tip dispatcher (hermetic; not 
 .PHONY: wait-for-armed-merge-test
 wait-for-armed-merge-test: ## Test the armed-auto-merge wait (hermetic; not part of `gate`)
 	./scripts/test-wait-for-armed-merge.sh
+
+# The one issue-lifecycle for a version write-back that did not merge in a
+# given run (`#5673`). auto-tag.yml's four warning branches (a red or
+# unreported check, the 45-minute timeout, an unresolvable Cargo.lock, and
+# an armed-but-unmerged auto-merge) all call this instead of writing their
+# own `gh issue` calls, so they report through one label and one issue.
+.PHONY: version-writeback-defer-test
+version-writeback-defer-test: ## Test the version write-back's deferred-issue reporting (hermetic; not part of `gate`)
+	./scripts/test-version-writeback-defer.sh
 
 .PHONY: main-red-hold
 main-red-hold: ## Ask whether an open `main-red` issue should hold a PR (reads the tracker)
@@ -1243,6 +1267,14 @@ tap-current: ## Assert the Homebrew tap formula serves the newest published rele
 .PHONY: tap-current-test
 tap-current-test: ## Test the tap staleness rule (hermetic; not part of `gate`)
 	./scripts/test-tap-current.sh
+
+.PHONY: merged-branch-drift
+merged-branch-drift: ## Assert no merged pull request's branch is still on origin, ahead of its merge (#2658)
+	@./scripts/check-merged-branch-drift.sh
+
+.PHONY: merged-branch-drift-test
+merged-branch-drift-test: ## Test the merged-branch drift rule (hermetic; not part of `gate`)
+	./scripts/test-check-merged-branch-drift.sh
 
 .PHONY: hooks
 hooks: ## Install the pre-push gate hook (runs `make gate`, scoped to the diff, on every push)

@@ -28,6 +28,34 @@ Oxagen's *Engineering Deterministic AI Coding Agents* field manual.
 
 ---
 
+## Local execution
+
+Mac set this on 2026-09-26 for every repository on this machine. Local builds, test runs, dev servers, and git hooks ran the laptop out of memory and killed agent runs partway through, and every killed run costs money. CI is the only place code is built, checked, or tested.
+
+- Do not run the gate, a build, a typecheck, a lint, or any test, not even one test file. Push the branch and read the CI result. Read a failed job with `gh run view --job <id> --log-failed`.
+- Do not start a dev server: no `next dev`, `next start`, `pnpm dev`, a server under `cargo run`, or anything else that listens on a port.
+- Do not start Docker or Colima, and do not run anything that needs them.
+- Do not run Biome in any form.
+- Git hooks are off on this machine. `LEFTHOOK=0` and `HUSKY=0` are set for every shell and every Claude Code session. Do not reinstall a hook, turn one back on, or run a hook's commands by hand.
+- Code generators and small integrity scripts that only read and write files are allowed, such as regenerating a checksum, a schema index, or a message catalogue.
+- Put this rule, word for word, in the prompt of every subagent you start.
+
+---
+
+## Agent-monitored pull requests
+
+Mac set this on 2026-09-26 for every repository. The `agent-monitored-pr` label marks a PR that an agent watches until it merges or closes. A labelled PR comes before other work, and its fixes run in parallel wherever that is safe.
+
+- **Label every PR an agent opens.** Pass `--label agent-monitored-pr` to `gh pr create`. If the repository has no such label, create it first: `gh label create agent-monitored-pr --color fd0880 --description "Agent polls every 60 seconds fixes CI, comments, conflicts."`
+- **Poll the PR every 60 seconds.** Each poll reads the PR's state, its mergeability, and the checks on the head commit. It reads every review thread with no inline reply after the reviewer's last comment. `gh pr view --json` does not return review threads, so read them with `gh api graphql` (`pullRequest.reviewThreads`). It also reads review bodies and top-level comments, because a finding there has no thread. Answer each finding there once, with a PR comment that quotes it, and record the id of the comment you answered. Start every comment a watcher posts with `<!-- pr-watch -->`. Skip comments that start with that marker or with `<!-- pr-claim -->`, so a watcher does not answer its own comments.
+- **Fix by review pass.** Pass N is the Nth review one reviewer submits on the PR. On pass 1, fix every P0, P1, and P2 finding. On pass 2, fix P0 and P1. From pass 3 on, fix P0 only. A P0 blocks the PR at every pass.
+- **File one residue issue.** Carry every P1 and P2 finding left unfixed into a single issue for the PR. Its title ends with `(residue #<PR>)`, and its body links the PR. Reply inline on every thread you handle, with the commit that fixed it or a link to the residue issue.
+- **Let the pass rule govern review findings.** On a labelled PR, the pass rule decides which review findings get fixed, in place of any repository rule on review rounds or on fixing every finding in the PR. Residue goes to one issue, even where a repository files each finding alone. Where a repository allows one change per issue, residue from unrelated changes splits into one issue per change. A defect you notice yourself still follows fix over file. A P3 finding follows the repository's usual rules.
+- **Clear conflicts and CI failures as they appear.** When the PR conflicts, merge the base branch in, resolve it, and push. When a job fails, read its failing step with `gh run view --job <id> --log-failed`, fix it, and push without waiting for the rest of the run.
+- **Dispatch subagents.** Give each independent fix its own subagent when no two fixes touch the same file. Stay active until the PR merges or closes.
+- **Search for the label every 60 seconds.** A session that watches PRs runs `gh search prs --owner macanderson --label agent-monitored-pr --state open --limit 1000` every 60 seconds. Without `--limit`, gh returns 30 results, and GitHub search returns at most 1000. The session takes each labelled PR that no live claim holds.
+- **Claim a PR before the first write.** A PR has one writer. Two writers on one branch restart each other's CI and reject each other's pushes. To claim, post a PR comment whose first line is `<!-- pr-claim --> <login> <session-word> <runtime> <session name>`, then read the PR's comments again. The session word is one word that names your session, such as a job id. A claim holds for 90 minutes after it is posted. The oldest claim that still holds owns the PR. If that claim is not yours, delete your comment and message the owner instead of pushing. Before your claim lapses, post a new one and delete the old one. Delete your claim when you stop watching the PR. Agents chose this claim on 2026-09-26 to answer review findings, in the format of stella's `scripts/pr-claim.sh`, and Mac has not ruled on it. In this repository, take the claim with `scripts/pr-claim.sh claim <PR>`, then read the comments again.
+
 ## Essential commands
 
 The repo is a Cargo workspace. Rust is **pinned to a concrete version**
@@ -41,6 +69,9 @@ same commit (or the next one) so drift never accumulates. A **`Makefile`**
 wraps the common commands with the correct flags — run `make help` for the
 full list.
 
+CI runs the builds, tests, and lints these targets wrap. None of them is run
+on this machine, so push the branch and read the CI run instead.
+
 ```bash
 make build               # cargo build --workspace
 make test                # cargo test --workspace
@@ -50,7 +81,8 @@ make smoke               # compile check — runs `stella models` (no API key ne
 make help                # list every target
 ```
 
-**Iterate on a single crate** (much faster than the whole workspace):
+**Single-crate tests** run in CI as part of the workspace suite. They are not
+run on this machine:
 
 ```bash
 make test-core           # or: cargo test -p stella-core
@@ -58,7 +90,8 @@ make test-model          # or: cargo test -p stella-model
 make test-tools          # or: cargo test -p stella-tools
 ```
 
-**Watch mode** (requires `cargo install cargo-watch`):
+**Watch mode** (requires `cargo install cargo-watch`) re-runs tests and clippy
+on every save, so it is not run on this machine. CI runs the tests and clippy:
 
 ```bash
 make watch               # re-run workspace tests on every save
@@ -82,13 +115,13 @@ RUSTDOCFLAGS="-D warnings" cargo doc -p stella-core --no-deps --document-private
 
 It compiles, so it stays a `make gate` step rather than moving into
 `make guards-fast` — CARGO_SCOPE is what makes it seconds instead of the
-full workspace.
+full workspace. CI runs it, and it is not run on this machine.
 
 ### The gate — what every push is held to
 
-A red gate is an automatic "not yet". CI is where it runs: on the
-maintainer's laptop an agent session does not run `make gate`, a workspace
-build, or the workspace test suite — it pushes and reads the run
+A red gate is an automatic "not yet". CI is where it runs. On the
+maintainer's laptop an agent session does not run `make gate`, a build, or a
+test of any size. It pushes and reads the run
 (CLAUDE.md, "CI builds and tests; this laptop does not"). The list below is
 the contract CI enforces and the command a contributor with their own
 machine runs before pushing:
@@ -120,6 +153,8 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #     flag pair cargo refuses; #5992)
                          #   + release-wiring (auto-tag.yml still asks
                          #     for a run on the commit it merges; #5857)
+                         #   + release-retry (release.yml's publish step
+                         #     retries once on a mid-publish 5xx; #5698)
                          #   + priority-scheme (the issue priority scheme is
                          #     stated once, in SCR-005, and the triage guard's
                          #     regex covers exactly the levels it names)
@@ -718,6 +753,30 @@ from all three sides now — the sweep, `ci.yml`'s pull request step, and
 `make recheck-lock-compositions-test` cover both, the two-branch collision
 built rather than described.
 
+An eleventh, the `branch-drift` job in `release-reconcile.yml`, asks a
+question about branches rather than releases or locks: is a merged pull
+request's branch still on origin, and has it moved past the commit that was
+actually merged? GitHub most often deletes a pull request's branch when it
+merges. A branch still there and ahead of its own merge means somebody pushed
+to it afterward. That work is not part of any pull request and is not on
+`main`. That is exactly what happened to `fix/arenabench-dind-host-netns`:
+seven commits landed on the branch after GitHub recorded its merged head,
+survived nowhere but a local clone and a runner image built from the branch,
+and the loss stayed invisible for two days. The job runs hourly beside the
+`reconcile` and `tap` jobs that `RELEASING.md` describes. It checks every
+branch on origin, however long ago its pull request merged. For each drifted
+branch it reports the name, the PR number, the commit that merged, and the
+branch's live tip. It skips the release bot's `bot/version-sync`, which stays
+on origin after each merge because the next release reuses it. It also skips
+a pull request from a fork, whose branch lives in the fork.
+
+**After a pull request merges, its branch is dead.** Do not push more commits
+to a branch once its pull request has merged, even to the same lane or issue.
+Open a fresh branch from `main` instead. A branch that keeps receiving
+commits after merge is invisible to review and to CI, and is one deletion away
+from losing whatever it carries; `branch-drift` above catches it only if it
+runs before that deletion happens.
+
 **A stacked PR's evidence is the same CI run — but confirm it started.** No
 workflow's `pull_request:` trigger carries a `branches:` filter (`push:`
 triggers do, and only for the workflows above's own post-merge behavior), so a
@@ -814,6 +873,10 @@ command for each platform. #3830 is where "the image agents run in should carry
 it" is tracked — that image is not defined in this repository, so nothing here
 can install it.
 
+**The pre-push hook is off on this machine.** Every mention of the hook below
+describes a clone where a contributor installed it with `make hooks`. On this
+machine CI runs every rung, and nothing runs at push time.
+
 `guards-fast` is not a rung you choose by hand; the pre-push hook picks it for
 a push that reaches no crate *and* cannot have touched the wire contract — a
 website-only or workflow-only push, which used to pay for a cargo build it had
@@ -841,9 +904,10 @@ git honours ignore patterns only for paths it is not already tracking. A
 failure can also mean an ignore rule is too broad to accept new files; the
 script's output tells you which case you're in.
 
-**Run `make hooks` once per clone.** It installs a `pre-push` git hook
-(`core.hooksPath=.githooks`) that runs `make gate` automatically on every push
-and aborts the push if it fails. The point is *when* it fails: on your machine,
+**`make hooks` is not run on this machine.** On another clone it installs a
+`pre-push` git hook (`core.hooksPath=.githooks`) that runs `make gate`
+automatically on every push and aborts the push if it fails. The point is
+*when* it fails: on your machine,
 in thirty seconds, instead of an hour into `ci.yml` and a review round-trip.
 It is advisory and per-clone (bypassable with `SKIP_GATE=1 git push` or
 `git push --no-verify`), so it complements the required server-side checks
@@ -1237,8 +1301,9 @@ For a behavior change or feature, a PR should include a **witness test**:
 - It **fails** on `main` without your change (the feature is genuinely absent).
 - It **passes** with your change (the feature is genuinely present).
 
-Check it the artisanal way (`git stash && cargo test -p <crate>`). Pure
-refactors, docs, and CI changes don't need a witness — say so in the PR
+Tests are not run on this machine, so check it in CI. Push the witness test
+alone and read the failing run, then push the change and read the passing
+one. Pure refactors, docs, and CI changes don't need a witness — say so in the PR
 template. If a witness is genuinely impractical (e.g. TUI rendering), explain
 how you verified the change instead.
 
@@ -1831,12 +1896,13 @@ trailer `Refs #N` instead.
   into a fixed-size `TestBackend` and the whole character grid is compared
   against a committed snapshot under `tests/snapshots/deck/`. This catches what
   a `contains` assertion cannot — a column that shifted, a panel that moved, a
-  row that vanished. Regenerate with
-  `BLESS=1 cargo test -p stella-tui --test deck_render_snapshots`, then **read
+  row that vanished. Regeneration runs
+  `BLESS=1 cargo test -p stella-tui --test deck_render_snapshots`, which
+  compiles, so it is not run on this machine. Wherever it runs, **read
   the diff**: a golden blessed without looking is a changelog, not a test.
 
-When iterating, run a single crate's tests — `cargo test -p stella-core` is
-seconds; `cargo test --workspace` rebuilds everything.
+CI runs the tests, one crate or the whole workspace. They are not run on this
+machine.
 
 ---
 
@@ -1847,7 +1913,8 @@ seconds; `cargo test --workspace` rebuilds everything.
   you run day to day passes `--locked`, which is what makes a stale lock
   invisible until release time — so `lockfile-sync`
   (`scripts/check-lockfile-sync.sh`) resolves it on every gate run, including
-  the `guards-fast` rung the pre-push hook picks. It compiles nothing.
+  the `guards-fast` rung. It compiles nothing. CI runs it, and it is not run on
+  this machine, where the pre-push hook is off.
 
   It catches the lock you forgot to regenerate. It cannot catch the other
   shape: two branches that are each correct and collide only once both land —
@@ -1914,7 +1981,7 @@ macanderson org repos.
   (inner loop):** Never compile or run the full test suite while developing.
   Build and test only the crates/packages/modules touched by the change
   (plus direct dependents on interface changes). The full suite is CI's job.
-  Here: `cargo test -p <crate> [filter]`, never bare `cargo test` / `cargo test --workspace`.
+  Here: CI runs every build and test, and none of them runs on this machine.
 - **[SCR-002](docs/scr/SCR-002-durability-first-architecture.md) —
   Architecture decisions:** Do not ask. Choose the most durable option — the
   one that can't be questioned in 10 years as the right move. Cheap-and-easy
