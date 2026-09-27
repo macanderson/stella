@@ -301,10 +301,15 @@ Mac set this on 2026-09-26 for every repository on this machine. Local builds, t
   row per objective, `✅` for met, `❌` with an explanation for partial or
   missing. After opening a PR, and again after every later push to it, read
   that comment (it lands within a few minutes;
-  `gh pr view <n> --json comments --jq '.comments[] | select(.author.login == "sourcery-ai") | .body'`).
-  When a table is there, settle every `❌` row before the session ends:
+  `gh pr view <n> --json comments --jq '.comments[] | select(.author.login == "sourcery-ai") | {createdAt, body}'`).
+  Only a table for your latest push counts. The table names no commit, so
+  compare its `createdAt` with the head commit's time:
+  `gh pr view <n> --json headRefOid,commits --jq '{sha: .headRefOid, at: .commits[-1].committedDate}'`.
+  A table created before that time reviewed an older head. Treat it as no
+  table. When a current table is there, settle every `❌` row before the
+  session ends:
   - **Fix it** when the objective belongs to the PR. Push the commits that
-    satisfy it, then re-read the table Sourcery posts for the new head.
+    satisfy it, then check Sourcery again for the new head.
   - **Answer it** when it does not belong: deliberately out of scope,
     deferred into a filed issue, or a misreading of the diff. Post a PR
     comment naming the row and the reason, and file the follow-up issue
@@ -312,29 +317,33 @@ Mac set this on 2026-09-26 for every repository on this machine. Local builds, t
     a claim like any other review comment and can be wrong about your diff.
     The rebuttal still goes on the PR, where the next reviewer finds it.
 
-  No table can mean two different things, and reading it as the wrong one is
-  the failure this rule exists to prevent. Check whether Sourcery answered at
-  all: `gh pr view <n> --json reviews --jq '.reviews[] | select(.author.login
-  == "sourcery-ai") | {state, body}'`. A `COMMENTED` review whose body
-  names a diff-size limit, a spent weekly review budget, or its own outage is
-  a refusal, not a pass, even though `gh pr checks` shows the same
-  `skipped`-looking `Sourcery review` context as a PR nobody has reviewed
-  yet. The two arms below split on one number: 15 minutes since your latest
-  push. Sourcery's table usually lands within two minutes, so 15 leaves
-  room for a slow queue.
-  - **Sourcery could not review it.** A refusal review, or no table and no
-    review 15 minutes after your latest push. Write one line in the PR
-    description naming the reason (over its diff limit, its weekly budget,
-    or no post within 15 minutes) and the check you ran in its place, such
-    as the command and result that stood in for the missing review. That
-    line is what you owe instead of the table, and the PR is mergeable once
-    it carries one.
-  - **Sourcery has not posted yet.** No table and no review, less than 15
-    minutes after your latest push. Wait and check again.
+  No current table can mean two different things, and reading it as the
+  wrong one is the failure this rule exists to prevent. Check whether
+  Sourcery answered the head commit at all, with the head sha in place of
+  `<sha>`: `gh pr view <n> --json reviews --jq '.reviews[] |
+  select(.author.login == "sourcery-ai" and .commit.oid == "<sha>") |
+  {state, body}'`. A review on an older commit says nothing about the head.
+  A `COMMENTED` review whose body names a diff-size limit, a spent weekly
+  review budget, or its own outage is a refusal, not a pass, even though
+  `gh pr checks` shows the same `skipped`-looking `Sourcery review` context
+  as a PR nobody has reviewed yet. The two arms below split on one number:
+  15 minutes since your latest push. Sourcery's table usually lands within
+  two minutes, so 15 leaves room for a slow queue.
+  - **Sourcery could not review it.** A refusal review on the head commit,
+    or no current table and no review on the head commit 15 minutes after
+    your latest push. Write one line in the PR description naming the
+    reason (over its diff limit, its weekly budget, or no post within 15
+    minutes) and the check you ran in its place, such as the command and
+    result that stood in for the missing review. That line is what you owe
+    instead of the table, and the PR is mergeable once it carries one.
+  - **Sourcery has not posted yet.** No current table and no review on the
+    head commit, less than 15 minutes after your latest push. Wait and check
+    again.
 
-  A table takes precedence over a refusal review sitting beside it on the
-  same PR: settle the table's rows under the first two arms above regardless
-  of what else Sourcery posted.
+  A current table takes precedence over a refusal review on the same head:
+  settle the table's rows under the first two arms above regardless of what
+  else Sourcery posted. A table or a refusal from an older head settles
+  nothing for the latest push.
 
   A `❌` with neither a fix nor an answering comment, and a missing table
   with neither a wait nor a one-line refusal note in the description, are

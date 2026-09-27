@@ -34,7 +34,7 @@ name: release-reconcile
 # part of an hour. Running more often than the grace window would just re-ask a
 # question whose answer cannot have changed.
 #
-# ── Three hops, three jobs ────────────────────────────────────────────────────
+# ── Jobs ─────────────────────────────────────────────────────────────────────
 #
 # `reconcile` asks whether every tag has a published release. `tap` asks whether
 # the Homebrew tap serves the newest one, which is a different question with a

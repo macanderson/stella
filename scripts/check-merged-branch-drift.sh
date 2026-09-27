@@ -3,7 +3,7 @@
 # Find a branch that is still alive after its pull request merged, and has
 # moved past the commit that merged.
 #
-#   ./scripts/check-merged-branch-drift.sh [--days N] [--grace-secs N]
+#   ./scripts/check-merged-branch-drift.sh [--grace-secs N]
 #   ./scripts/check-merged-branch-drift.sh --select --now <unix>   # pure: JSON on stdin
 # --help text ends here.
 #
@@ -41,23 +41,22 @@
 # merge by a few seconds. A merge inside that window is skipped, not
 # reported.
 #
-# The default lookback is 14 days. Git prunes old objects after about two
-# weeks by default. This check has to run well inside that window, or the
-# commits it looks for may already be gone.
+# There is no lookback window. The check starts from the branches on
+# origin and asks each one for its own merges. A merge of any age counts.
+# Commits on a live branch stay as long as the branch does. So an old merge
+# can strand them just as a new one can.
 
 set -euo pipefail
 
 # shellcheck source=scripts/lib/help-header.sh
 . "$(dirname "$0")/lib/help-header.sh"
 
-days=14
 grace_secs=300
 select_only=0
 now=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --days) days="${2:?--days needs a number}"; shift 2 ;;
     --grace-secs) grace_secs="${2:?--grace-secs needs a number}"; shift 2 ;;
     --now) now="${2:?--now needs a unix timestamp}"; shift 2 ;;
     --select) select_only=1; shift ;;
@@ -119,47 +118,49 @@ command -v gh >/dev/null 2>&1 || { echo "::error::gh is not installed" >&2; exit
 command -v jq >/dev/null 2>&1 || { echo "::error::jq is not installed" >&2; exit 1; }
 [ -n "$now" ] || now="$(date -u +%s)"
 
-since="$(date -u -d "@$((now - days * 86400))" +%Y-%m-%d 2>/dev/null || date -u -r "$((now - days * 86400))" +%Y-%m-%d)"
-
-# The date bound (`merged:>=X`) is what keeps this cheap. This repository
-# merges hundreds of pull requests in 30 days. A limit of 500 once cut off a
-# real count of 630 and no one noticed. A cap that hides a cut-off list is
-# worse than no cap, so a result that lands right on the ceiling is refused,
-# not trusted.
-#
-# `--search` goes through GitHub search, and search returns at most 1000
-# results whatever `--limit` asks for. So the ceiling is 1000. A higher
-# limit would never be reached, and a cut-off list would pass as whole.
-gh_limit=1000
-merged_json="$(CLICOLOR_FORCE=0 NO_COLOR=1 gh pr list --state merged \
-  --search "merged:>=${since}" --limit "$gh_limit" \
-  --json number,headRefName,headRefOid,mergedAt,isCrossRepository \
-  --jq '[ .[] | { branch: .headRefName, sha: .headRefOid, mergedAt: .mergedAt, number: .number, fork: .isCrossRepository } ]')"
-merged_count_raw="$(printf '%s' "$merged_json" | jq 'length')"
-if [ "$merged_count_raw" -eq "$gh_limit" ]; then
-  echo "::error::the merged pull request list hit GitHub search's ${gh_limit}-result ceiling for --days ${days}. The list was likely cut off. Narrow --days." >&2
-  exit 1
-fi
-
-# The open list shares the same limit. If it were ever cut off, a branch
-# with an open pull request could be reported by mistake. A cut-off open
-# list can add a report. It cannot hide one.
-#
-# An open pull request from a fork is left out. Its branch is not on
-# origin, so it says nothing about the origin branch of the same name.
-open_heads_json="$(CLICOLOR_FORCE=0 NO_COLOR=1 gh pr list --state open --limit "$gh_limit" \
-  --json headRefName,isCrossRepository \
-  --jq '[ .[] | select(.isCrossRepository | not) | .headRefName ]')"
-
-# One call reads every live branch tip at once. A separate gh call per
-# merged pull request would be slow: this repository holds dozens of
-# branches and merges all the time.
+# One call reads every live branch tip at once.
 live_tips_json="$(git ls-remote --heads origin \
   | awk '{ sub("refs/heads/", "", $2); printf "%s\t%s\n", $2, $1 }' \
   | jq -R -s '
       split("\n") | map(select(length > 0) | split("\t"))
       | map({ (.[0]): .[1] }) | add // {}
     ')"
+
+# Then one call per live branch reads its merged pull requests. A few dozen
+# branches live on origin at a time, so this stays cheap. A search for all
+# recent merges would need a date bound. A merge older than the bound would
+# drop out. Its branch could still hold the stray commits.
+#
+# `gh` lists the newest pull request first. A branch with more than 100
+# merges loses its oldest ones, not its newest. The rule reads only the
+# newest.
+#
+# The release bot's branch is left out here. The rule skips it anyway. It
+# merges hundreds of times.
+branches="$(printf '%s' "$live_tips_json" | jq -r --argjson bots "$bot_branches" 'keys - $bots | .[]')"
+merged_json='[]'
+branch_count=0
+while IFS= read -r branch; do
+  [ -n "$branch" ] || continue
+  branch_count=$((branch_count + 1))
+  one="$(CLICOLOR_FORCE=0 NO_COLOR=1 gh pr list --state merged --head "$branch" \
+    --limit 100 \
+    --json number,headRefName,headRefOid,mergedAt,isCrossRepository \
+    --jq '[ .[] | { branch: .headRefName, sha: .headRefOid, mergedAt: .mergedAt, number: .number, fork: .isCrossRepository } ]')"
+  merged_json="$(jq -n --argjson a "$merged_json" --argjson b "$one" '$a + $b')"
+done <<EOF
+$branches
+EOF
+
+# The open list is capped at 1000. If it were ever cut off, a branch with
+# an open pull request could be reported by mistake. A cut-off open list
+# can add a report. It cannot hide one.
+#
+# An open pull request from a fork is left out. Its branch is not on
+# origin, so it says nothing about the origin branch of the same name.
+open_heads_json="$(CLICOLOR_FORCE=0 NO_COLOR=1 gh pr list --state open --limit 1000 \
+  --json headRefName,isCrossRepository \
+  --jq '[ .[] | select(.isCrossRepository | not) | .headRefName ]')"
 
 doc="$(jq -n --argjson merged "$merged_json" --argjson open "$open_heads_json" \
   --argjson live "$live_tips_json" \
@@ -169,7 +170,7 @@ report="$(printf '%s' "$doc" | select_drift)"
 
 total_merged="$(printf '%s' "$merged_json" | jq 'length')"
 if [ -z "$report" ]; then
-  echo "check-merged-branch-drift: OK. No live branch has moved past its own merge (${total_merged} merge(s) checked since ${since})."
+  echo "check-merged-branch-drift: OK. No live branch has moved past its own merge (${branch_count} live branch(es) checked, ${total_merged} merge(s) read)."
   exit 0
 fi
 
@@ -181,8 +182,14 @@ printf '%s\n' "$report" | while IFS="$(printf '\t')" read -r branch number merge
   printf '  %-40s #%-6s %-22s %-12s %s\n' "$branch" "$number" "$merged_at" "${sha:0:12}" "${tip:0:12}"
 done
 echo ""
-echo "Save the extra commits before the branch is pruned:"
-echo "  git fetch origin <branch>"
-echo "  git log --oneline <merged sha>..origin/<branch>"
+echo "Save the extra commits before the branch is deleted. Fetch the branch and the head that merged:"
+echo "  git fetch origin <branch> pull/<PR>/head"
+echo "Then list the commits the merge did not carry:"
+echo "  if git merge-base --is-ancestor <merged sha> origin/<branch>; then"
+echo "    git log --oneline <merged sha>..origin/<branch>"
+echo "  else"
+echo "    git log --oneline origin/main..origin/<branch>"
+echo "  fi"
+echo "The first range fits a branch that grew on top of its merge. The second fits a branch rebased onto main or made again from main."
 echo "Open a fresh pull request from main with those commits. Then delete the old branch."
 exit 1

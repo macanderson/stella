@@ -136,17 +136,21 @@ want "E1 no merges at all reports nothing" "" '{"merged":[],"liveTips":{},"openH
 
 # The rest run the whole script. A fake `gh` and a fake `git` sit first on
 # PATH. The fake `gh` hands back raw pull request fields and runs the
-# script's own `--jq` on them, the way `gh` does. The fake `git` prints
-# `FAKE_LIVE` for `ls-remote`.
+# script's own `--jq` on them, the way `gh` does. It keeps only the branch
+# that `--head` names. It also keeps only the merges a `merged:>=` search
+# would find, so a script that used a date bound would show it here. The
+# fake `git` prints `FAKE_LIVE` for `ls-remote`.
 fake_bin="$(mktemp -d)"
 trap 'rm -rf "$fake_bin"' EXIT
 cat >"$fake_bin/gh" <<'FAKE'
 #!/usr/bin/env bash
-expr='.' state='' prev=''
+expr='.' state='' head='' search='' prev=''
 for arg in "$@"; do
   case "$prev" in
     --jq) expr="$arg" ;;
     --state) state="$arg" ;;
+    --head) head="$arg" ;;
+    --search) search="$arg" ;;
   esac
   prev="$arg"
 done
@@ -161,6 +165,13 @@ case "$state" in
     fi ;;
   open) raw="${FAKE_OPEN_JSON:-[]}" ;;
   *) raw='[]' ;;
+esac
+if [ -n "$head" ]; then
+  raw="$(printf '%s' "$raw" | jq -c --arg h "$head" 'map(select(.headRefName == $h))')"
+fi
+case "$search" in
+  'merged:>='*)
+    raw="$(printf '%s' "$raw" | jq -c --arg d "${search#merged:>=}" 'map(select(.mergedAt >= $d))')" ;;
 esac
 printf '%s' "$raw" | jq -c "$expr"
 FAKE
@@ -207,13 +218,17 @@ full_run() {
   fi
 }
 
-# GitHub search returns at most 1000 pull requests, whatever --limit asks
-# for. A list of exactly 1000 may be cut off, so the script must refuse it.
-fakes 1000 "" "[]" ""
-full_run "C1 a list that hits the search ceiling is refused" 1 "1000-result ceiling"
+# A branch that merged two years before the run and has moved since. Its
+# stray commits are still on origin, so the run must still report it.
+fakes 0 '[{"number":7,"headRefName":"old/branch","headRefOid":"old-sha","mergedAt":"2024-01-01T00:00:00Z","isCrossRepository":false}]' \
+  "[]" 'ffff\trefs/heads/old/branch\n'
+full_run "C1 a merge from long ago on a moved branch is still reported" 1 \
+  "  old/branch " "#7 " "2024-01-01T00:00:00Z"
 
-fakes 999 "" "[]" ""
-full_run "C2 a list one under the ceiling is read" 0 "999 merge(s) checked"
+# Three live branches, each still at the sha that merged.
+fakes 3 "" "[]" 's0\trefs/heads/b0\ns1\trefs/heads/b1\ns2\trefs/heads/b2\n'
+full_run "C2 a clean run counts each live branch it checked" 0 \
+  "3 live branch(es) checked, 3 merge(s) read"
 
 # A live branch whose tip moved. The run must fail and print the branch, its
 # pull request, its merged sha and its live tip.
@@ -224,7 +239,8 @@ full_run "C3 a drifted branch fails the run and fills in its row" 1 \
 # A fork's merged `main` must not be held up against origin's `main`.
 fakes 0 '[{"number":0,"headRefName":"main","headRefOid":"fork-sha","mergedAt":"2026-01-01T00:00:00Z","isCrossRepository":true}]' \
   "[]" 'aaaa\trefs/heads/main\n'
-full_run "C4 a merged fork pull request named main is silent" 0 "1 merge(s) checked"
+full_run "C4 a merged fork pull request named main is silent" 0 \
+  "1 live branch(es) checked, 1 merge(s) read"
 
 # An open pull request from a fork has its branch in the fork. It must not
 # hide drift on the origin branch of the same name.
@@ -233,7 +249,15 @@ full_run "C5 an open fork pull request does not hide drift" 1 "  b0 "
 
 # An open pull request from origin does reuse the branch. That run is clean.
 fakes 1 "" '[{"headRefName":"b0","isCrossRepository":false}]' 'ffff\trefs/heads/b0\n'
-full_run "C6 an open pull request from origin hides the moved tip" 0 "1 merge(s) checked"
+full_run "C6 an open pull request from origin hides the moved tip" 0 \
+  "1 live branch(es) checked, 1 merge(s) read"
+
+# The release bot's branch is not looked up at all. It merges hundreds of
+# times, and the rule skips it anyway.
+fakes 0 '[{"number":9,"headRefName":"bot/version-sync","headRefOid":"sha1","mergedAt":"2026-01-01T00:00:00Z","isCrossRepository":false}]' \
+  "[]" 'next\trefs/heads/bot/version-sync\n'
+full_run "C7 the release bot's branch is not looked up" 0 \
+  "0 live branch(es) checked, 0 merge(s) read"
 
 echo
 echo "passed ${pass}, failed ${fail}"
