@@ -19,14 +19,14 @@ issues. No rule here set up either family. `build-time:*` guessed how long the
 work would take. `model:tier-*` guessed which model class the work needed. It
 had one tier each for Haiku, Sonnet, Opus, and Fable.
 
-Neither family is in the label list in AGENTS.md. Neither is in SCR-005. The
+Neither family is in the label taxonomy in `CLAUDE.md`. Neither is in SCR-005. The
 set was not whole. Only 7 of the 8 named `build-time:*` buckets existed. A
 triage pass on 2026-09-02 found only `model:tier-1` and `model:tier-3`.
 `model:tier-2` was on an issue by 2026-09-07, when `#6413` got it. A session
 working `#5669` made `model:tier-4` on 2026-09-27.
 
 Two labels already carry the same facts. `use-model:*` names the model class.
-AGENTS.md lists its four values: `cheap`, `balanced`, `pro`, and `ultra`.
+`CLAUDE.md` lists its four values: `cheap`, `balanced`, `pro`, and `ultra`.
 `size/*` names the size. SCR-005 gives it to the triage agent.
 
 The count below was taken on 2026-09-27, before any label came off.
