@@ -265,6 +265,63 @@ fn a_declared_load_sets_the_tier() {
     assert_eq!(applies_to.paths, vec!["src/billing/**".to_string()]);
 }
 
+/// A record whose targeting Stella cannot match parses, and `to_record`
+/// withholds it with the field it cannot match.
+fn withheld_for(text: &str) -> SteeringRecordError {
+    SteeringRecord::parse(text)
+        .expect("the record parses")
+        .to_record()
+        .expect_err("the record should be withheld")
+}
+
+#[test]
+fn a_tool_targeted_record_is_withheld_not_broadened() {
+    let text = with(
+        "status: active\n",
+        "status: active\nload: match\ntools:\n  - stripe.refund\n",
+    );
+    assert_eq!(
+        withheld_for(&text),
+        SteeringRecordError::UnsupportedTarget("tools")
+    );
+}
+
+#[test]
+fn a_skill_targeted_record_is_withheld_not_broadened() {
+    let text = with(
+        "status: active\n",
+        "status: active\nload: match\nskills:\n  - refund-review\n",
+    );
+    assert_eq!(
+        withheld_for(&text),
+        SteeringRecordError::UnsupportedTarget("skills")
+    );
+}
+
+#[test]
+fn a_toolbelt_targeted_record_is_withheld_not_broadened() {
+    let text = with(
+        "status: active\n",
+        "status: active\nload: match\ntoolbelt: billing\n",
+    );
+    assert_eq!(
+        withheld_for(&text),
+        SteeringRecordError::UnsupportedTarget("toolbelt")
+    );
+}
+
+#[test]
+fn a_repository_scoped_record_is_withheld_not_broadened() {
+    let text = with(
+        "scope: workspace\n",
+        "scope: repository\nrepos:\n  - acme/api\n",
+    );
+    assert_eq!(
+        withheld_for(&text),
+        SteeringRecordError::UnsupportedTarget("repos")
+    );
+}
+
 #[test]
 fn a_skill_record_parses_and_does_not_load() {
     let text = with(

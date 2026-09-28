@@ -98,6 +98,11 @@ pub enum SteeringRecordError {
     /// Stella has no record kind for this kind.
     #[error("Stella has no record kind for a `{0}` record, so it does not load one")]
     UnsupportedKind(&'static str),
+    /// Stella cannot match a record on this field. Loading the record
+    /// without the field would steer every turn the field was meant to
+    /// exclude, so Stella withholds it.
+    #[error("Stella cannot match a record on `{0}`, so it does not load one that sets it")]
+    UnsupportedTarget(&'static str),
 }
 
 /// A steering record's kind, as v1 spells it.
@@ -426,16 +431,42 @@ impl SteeringRecord {
         })
     }
 
+    /// The first targeting field Stella cannot match, if the record sets one.
+    fn unsupported_target(&self) -> Option<&'static str> {
+        if self.scope == SteeringScope::Repository {
+            Some("repos")
+        } else if !self.tools.is_empty() {
+            Some("tools")
+        } else if !self.skills.is_empty() {
+            Some("skills")
+        } else if self.toolbelt.is_some() {
+            Some("toolbelt")
+        } else {
+            None
+        }
+    }
+
     /// Turn this steering record into a Stella [`Record`].
     ///
     /// `id` and `hash` pass through as they are. An effect becomes a tag,
     /// such as `effect:forbid`. No guard is set from it. A skill fails with
     /// `UnsupportedKind`.
+    ///
+    /// A record that targets what Stella cannot match fails with
+    /// `UnsupportedTarget`, so it is withheld rather than broadened.
+    /// [`AppliesTo`] holds paths, tasks, and keywords, so `tools`, `skills`,
+    /// and `toolbelt` have nowhere to go. A `repository` record names the
+    /// repositories it reaches in `repos`, and Stella reads steering only from
+    /// inside the steering repository, so it cannot tell which repository the
+    /// turn is working in.
     pub fn to_record(&self) -> Result<Record, SteeringRecordError> {
         let kind = self
             .kind
             .record_kind()
             .ok_or_else(|| SteeringRecordError::UnsupportedKind(self.kind.as_str()))?;
+        if let Some(field) = self.unsupported_target() {
+            return Err(SteeringRecordError::UnsupportedTarget(field));
+        }
         let applies_to = (!self.applies_to.is_empty()).then(|| AppliesTo {
             paths: self.applies_to.clone(),
             ..AppliesTo::default()
