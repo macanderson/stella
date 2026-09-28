@@ -276,13 +276,13 @@ pub fn load(user_files: &[RuleFile], project_files: &[RuleFile], facts: &Facts<'
     load_with_steering(user_files, project_files, &[], facts)
 }
 
-/// [`load`], plus the `steering-record/v1` files of an Oxagen steering repository.
+/// [`load`], plus the `steering-record/v1` files of an Oxagen steering repo.
 ///
-/// Steering records join the project tier after `project_files`, so they merge
-/// by lineage at project trust and a steering record wins a lineage tie with a
-/// `.stella/rules` file. Each file is parsed by [`SteeringRecord::parse`], which
-/// keeps Oxagen's `id` and `hash` as the record's identity. A file that does not
-/// parse, or a skill record, becomes a [`Diagnostic`] and steers nothing.
+/// Steering records join the project tier after `project_files`. They merge by
+/// lineage at project trust. So a steering record wins a tie with a
+/// `.stella/rules` file. Each record keeps Oxagen's `id` and `hash`. A file
+/// that does not parse, or a skill, becomes a [`Diagnostic`]. It steers
+/// nothing.
 pub fn load_with_steering(
     user_files: &[RuleFile],
     project_files: &[RuleFile],
@@ -417,12 +417,11 @@ fn parse_tier(files: &[RuleFile], trust: Trust, diagnostics: &mut Vec<Diagnostic
     parsed
 }
 
-/// Parse an Oxagen steering repository's record files at project trust.
+/// Parse the record files of an Oxagen steering repo at project trust.
 ///
-/// A steering record needs no restamp: its `id` and `hash` are Oxagen's, and
-/// [`SteeringRecord::to_record`] carries them through unchanged. The reader
-/// sets `contributed_by`, and the CLI reader leaves it empty because no plugin
-/// ships a steering repository.
+/// Each record keeps Oxagen's `id` and `hash`. Stella does not hash it again.
+/// The caller sets `contributed_by`. The CLI leaves it empty, since no plugin
+/// ships a steering repo.
 fn parse_steering(files: &[RuleFile], diagnostics: &mut Vec<Diagnostic>) -> Vec<Parsed> {
     let mut parsed: Vec<Parsed> = Vec::new();
     for file in files {

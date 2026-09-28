@@ -475,7 +475,7 @@ pub(crate) fn rule_files(root: &Path, include_user: bool, include_project: bool)
         } else {
             Vec::new()
         },
-        // The repository's own files, so the same trust axis gates them.
+        // These are the repo's own files. So the same trust check gates them.
         steering: if include_project && is_steering_root(root) {
             steering_files(root)
         } else {
@@ -484,23 +484,22 @@ pub(crate) fn rule_files(root: &Path, include_user: bool, include_project: bool)
     }
 }
 
-/// The folder under a steering repository's root that holds its records.
+/// The folder in a steering repo that holds its records.
 const STEERING_DIR: &str = "steering";
 
-/// Folders directly under `steering/` that hold no file Stella loads as a
-/// record: Oxagen's promotion ledger, and skill folders, which Stella has no
-/// record kind for.
+/// Folders in `steering/` that Stella does not read.
+///
+/// `promotions` is Oxagen's log. Stella has no kind for a skill.
 const STEERING_SKIPPED_DIRS: [&str; 2] = ["promotions", "skills"];
 
-/// Whether `root` is the root of an Oxagen steering repository.
+/// Whether `root` is the root of an Oxagen steering repo.
 ///
-/// `steering/` must be a real directory, and one of two files Oxagen writes in
-/// a steering repository's first commit must declare its schema:
-/// `steering/governance.toml` with `schema = "governance/v1"`, which every
-/// steering repository has, or `workspace.toml` with `schema = "workspace/v1"`,
-/// which a workspace repository has. A project with a `steering/` folder and
-/// neither file is not a steering repository, so Stella never reads its
-/// Markdown as records.
+/// `steering/` must be a real folder. One of two marker files must also name
+/// its schema. The first is `steering/governance.toml` with
+/// `schema = "governance/v1"`. The second is `workspace.toml` with
+/// `schema = "workspace/v1"`. Oxagen writes these in the first commit. A
+/// project with a `steering/` folder and no marker is not a steering repo.
+/// Stella does not read its files as records.
 fn is_steering_root(root: &Path) -> bool {
     let steering = root.join(STEERING_DIR);
     std::fs::symlink_metadata(&steering).is_ok_and(|meta| meta.is_dir())
@@ -508,8 +507,9 @@ fn is_steering_root(root: &Path) -> bool {
             || declares_schema(&root.join("workspace.toml"), "workspace/v1"))
 }
 
-/// Whether the TOML file at `path` has a top-level `schema` equal to `schema`.
-/// A missing or unparsable file does not.
+/// Whether the TOML file at `path` sets its top `schema` key to `schema`.
+///
+/// A missing or bad file does not.
 fn declares_schema(path: &Path, schema: &str) -> bool {
     std::fs::read_to_string(path)
         .ok()
@@ -519,11 +519,10 @@ fn declares_schema(path: &Path, schema: &str) -> bool {
 
 /// Every `.md` file under `steering/`, sorted by path.
 ///
-/// Oxagen gives folders under `steering/` no meaning, so the walk reads every
-/// folder except [`STEERING_SKIPPED_DIRS`]. It skips hidden entries and does
-/// not follow symlinks, so a link cannot pull a file from outside the
-/// repository into the prompt. An unreadable folder or file is skipped, as
-/// [`crate::rules::FsRuleSource`] skips one.
+/// Folders in `steering/` carry no meaning. So the walk reads each one but
+/// [`STEERING_SKIPPED_DIRS`]. It skips hidden files. It does not follow a
+/// link, so a link cannot pull in a file from outside the repo. It skips a
+/// file or folder it cannot read.
 fn steering_files(root: &Path) -> Vec<RuleFile> {
     let steering = root.join(STEERING_DIR);
     let mut paths: Vec<PathBuf> = Vec::new();
@@ -540,8 +539,8 @@ fn steering_files(root: &Path) -> Vec<RuleFile> {
             if name.starts_with('.') {
                 continue;
             }
-            // `DirEntry::file_type` does not follow a symlink, so a link is
-            // neither a directory nor a file here and is skipped.
+            // `file_type` does not follow a link. So a link is not a folder or
+            // a file here, and the walk skips it.
             let Ok(kind) = entry.file_type() else {
                 continue;
             };
@@ -639,9 +638,9 @@ pub(crate) struct TieredFiles {
     pub user: Vec<RuleFile>,
     /// `<repo>/.claude/rules` and `<repo>/.stella/rules`, in precedence order.
     pub project: Vec<RuleFile>,
-    /// `<repo>/steering/**/*.md` when the repository is an Oxagen steering
-    /// repository, else empty. Project trust, merged after `project`: see
-    /// [`records::registry::load_with_steering`].
+    /// `<repo>/steering/**/*.md` when the repo is an Oxagen steering repo.
+    ///
+    /// Else it is empty. These load at project trust, after `project`.
     pub steering: Vec<RuleFile>,
 }
 

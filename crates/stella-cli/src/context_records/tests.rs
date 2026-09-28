@@ -730,7 +730,7 @@ fn the_head_anchor_is_private_and_not_beside_the_ledger() {
 
 // Steering repositories
 
-/// Oxagen's refunds record, byte for byte as a steering PR writes it.
+/// Oxagen's refunds record, as a steering PR writes it.
 const STEERING_FIXTURE: &str = "---
 schema: steering-record/v1
 lineage: a-intel.core-platform.refunds-over-100
@@ -750,9 +750,10 @@ hash: sha256:c9365650e669e54d69a420a621d98c45866445ffe98eae67a2b56b0e507577e3
 Refunds over $100 need a person's approval before the agent calls Stripe.
 ";
 
-/// A steering repository with the refunds record in a subfolder, and a file
-/// in `steering/promotions/` that is not a record. `marker` is the root
-/// marker file and its contents, or `None` for a repository with neither.
+/// A steering repo with the refunds record in a subfolder.
+///
+/// A file in `steering/promotions/` is not a record. `marker` is the root
+/// marker file and its text. `None` writes no marker.
 fn write_steering_repo(root: &Path, marker: Option<(&str, &str)>) {
     let records = root.join("steering/imported");
     std::fs::create_dir_all(&records).unwrap();
