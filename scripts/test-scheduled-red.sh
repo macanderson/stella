@@ -13,8 +13,8 @@
 # That `PATH` has no `jq` in it. Every reporter case below shows the script
 # needs none.
 #
-# The negative controls matter most. A reporter that fails open looks the
-# same as one that never ran, unless a case shows the warning it prints.
+# A reporter that fails open looks the same as one that never ran. So each
+# negative control checks for the warning it prints.
 #
 # The coverage check runs twice. It runs on fixtures, to show it can fail.
 # It also runs on this tree, so a new scheduled workflow that is not in

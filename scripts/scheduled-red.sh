@@ -27,7 +27,10 @@
 #
 # `main-canary.sh` and `codeql-canary.sh` keep one issue by label the same
 # way. Exit 2 is for a caller mistake, such as a missing flag.
-set -uo pipefail
+#
+# `set -e` holds as in those two. Every `gh` call sits in an `if` or carries
+# `|| true`, so a tracker error reaches a warning and never the exit status.
+set -euo pipefail
 
 # The verdict here is the tracker write, never the output. A reader that
 # closes the pipe must not kill the script before that write.
