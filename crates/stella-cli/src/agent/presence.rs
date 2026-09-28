@@ -46,15 +46,23 @@ impl SessionPresence {
         // prompt and, in `finish`, the outcome — and `stella daemon list` has
         // to show one session, not two halves of one. Its `pid` is already
         // this process: the supervisor recorded the child's, deliberately.
-        let record = crate::daemon::supervised_id()
-            .and_then(|id| registry.get(&id))
-            .unwrap_or_else(|| {
-                stella_store::SessionRecord::new(
-                    cfg.workspace_root.display().to_string(),
-                    name.clone(),
-                )
-            });
-        let presence = Self::begin(registry, record, name, cfg.durability.clone(), prompt);
+        //
+        // The supervisor names that record before this process starts, so an
+        // adopted record keeps its name. `stella monitor main` stays "Monitor
+        // main" rather than taking the name of the goal it expands into.
+        let supervised = crate::daemon::supervised_id().and_then(|id| registry.get(&id));
+        let named = supervised.is_some();
+        let record = supervised.unwrap_or_else(|| {
+            stella_store::SessionRecord::new(cfg.workspace_root.display().to_string(), name.clone())
+        });
+        let presence = Self::begin(
+            registry,
+            record,
+            name,
+            cfg.durability.clone(),
+            named,
+            prompt,
+        );
         // stderr, not stdout: `--output-format json` owns stdout, and a
         // durability advisory must never land inside a machine-readable
         // document.
@@ -68,22 +76,23 @@ impl SessionPresence {
         presence
     }
 
-    /// Register `record`, named from `prompt` when there is one. This is
-    /// [`Self::announce`] without the default registry, the supervisor
-    /// lookup, and the durability binding, so a test can hand it a registry
-    /// in a temporary directory.
+    /// Register `record`, named from `prompt` when there is one and `named`
+    /// is false. This is [`Self::announce`] without the default registry, the
+    /// supervisor lookup, and the durability binding, so a test can hand it a
+    /// registry in a temporary directory.
     fn begin(
         registry: stella_store::SessionRegistry,
         record: stella_store::SessionRecord,
         name: String,
         durability: crate::durability::SessionDurability,
+        named: bool,
         prompt: Option<&str>,
     ) -> Self {
         let mut presence = Self {
             registry,
             record,
             name,
-            named: false,
+            named,
             durability,
         };
         match prompt {
@@ -189,9 +198,8 @@ impl SessionPresence {
 mod tests {
     use super::SessionPresence;
 
-    /// The first prompt names the session and a later prompt keeps that
-    /// name. The old code retitled on every prompt, so an interactive
-    /// session wore the name of whatever it was asked last.
+    /// The first prompt names the session. A later prompt refreshes the
+    /// summary and keeps the name.
     #[test]
     fn only_the_first_prompt_names_the_session() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -202,6 +210,7 @@ mod tests {
             record,
             "stella".to_string(),
             crate::durability::SessionDurability::default(),
+            false,
             None,
         );
         let id = presence.id().to_string();
@@ -219,9 +228,9 @@ mod tests {
         assert_eq!(stored.summary, "now run the tests again");
     }
 
-    /// A headless run is named from its prompt the moment it is announced.
+    /// A `stella run` is named from its prompt the moment it is announced.
     #[test]
-    fn a_headless_run_is_named_from_its_prompt() {
+    fn a_one_shot_run_is_named_from_its_prompt() {
         let dir = tempfile::tempdir().expect("tempdir");
         let registry = stella_store::SessionRegistry::open(dir.path());
         let record = stella_store::SessionRecord::new("/w/stella", "stella");
@@ -230,9 +239,32 @@ mod tests {
             record,
             "stella".to_string(),
             crate::durability::SessionDurability::default(),
+            false,
             Some("fix the flaky parser test. Then push."),
         );
         let stored = registry.get(presence.id()).expect("registered");
         assert_eq!(stored.title, "Fix the flaky parser test");
+    }
+
+    /// A supervised run adopts the record its supervisor already named. The
+    /// child's prompt refreshes the summary and leaves the name alone, so
+    /// `stella monitor main` stays "Monitor main" rather than taking the name
+    /// of the goal it expands into.
+    #[test]
+    fn a_supervised_run_keeps_its_supervisor_name() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = stella_store::SessionRegistry::open(dir.path());
+        let record = stella_store::SessionRecord::new("/w/stella", "Monitor main");
+        let presence = SessionPresence::begin(
+            registry.clone(),
+            record,
+            "stella".to_string(),
+            crate::durability::SessionDurability::default(),
+            true,
+            Some("Drive CI for `main` to fully green."),
+        );
+        let stored = registry.get(presence.id()).expect("registered");
+        assert_eq!(stored.title, "Monitor main");
+        assert_eq!(stored.summary, "Drive CI for `main` to fully green.");
     }
 }

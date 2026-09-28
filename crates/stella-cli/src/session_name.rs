@@ -1,6 +1,6 @@
 //! A session's name, derived from the prompt that started it.
 //!
-//! A list shows this name where it used to show the session id. The name is
+//! A list shows this name in place of the session id. The name is
 //! the prompt's first clause in sentence case, at most [`MAX_CHARS`]
 //! characters, cut on a word boundary. A GitHub pull request or issue link
 //! becomes `PR 123` or `issue 123`, so `https://github.com/o/r/pull/123 fix
