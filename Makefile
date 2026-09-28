@@ -1137,6 +1137,15 @@ dependabot-pip-dirs-test: ## Test the dependabot pip-directory guard (hermetic; 
 codeql-canary-test: ## Test the CodeQL canary, announcing included (hermetic; not part of `gate`)
 	./scripts/test-codeql-canary.sh
 
+# The triage sweep's report on a non-200 from the Anthropic API. It tells a
+# credit refusal, which needs billing, from every other refusal, which may
+# need code. The workflow sources scripts/lib/anthropic-refusal.sh, so the
+# report has no command of its own to run by hand, and only the suite gets a
+# target.
+.PHONY: anthropic-refusal-test
+anthropic-refusal-test: ## Test the triage sweep's Anthropic refusal report (hermetic; not part of `gate`)
+	./scripts/test-anthropic-refusal.sh
+
 .PHONY: check
 check: $(CHECK_STEPS) ## Reduced pre-push gate: every guard + lock resolve + fmt + clippy (default and schema features), no rustdoc and no tests
 	@./scripts/check-hooks-installed.sh
