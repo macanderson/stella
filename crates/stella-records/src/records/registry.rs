@@ -62,9 +62,34 @@ use super::{
 };
 use stella_learn::rules::{Rule, RuleFile, rule_from_file_checked};
 
-/// One parsed entry: the record, and the legacy `.md` rule it was projected from
-/// when it was projected from one.
-type Parsed = (LoadedRecord, Option<Rule>);
+/// One parsed entry: the record, and the kind of file it came from.
+type Parsed = (LoadedRecord, Source);
+
+/// The kind of file one parsed record came from.
+///
+/// The merge carries it beside the record, so the per-record checks can tell a
+/// native TOML record from a record whose statement is prose. Both a legacy
+/// `.md` rule and a steering record carry prose.
+#[derive(Debug, Clone)]
+enum Source {
+    /// A native TOML record from a context file.
+    Native,
+    /// A legacy `.md` rule, kept so the tool boundary sees its text verbatim.
+    Markdown(Rule),
+    /// A `steering-record/v1` file from an Oxagen steering repo. Its statement
+    /// is the file's Markdown body.
+    Steering,
+}
+
+impl Source {
+    /// The legacy rule, when this record came from one.
+    fn into_markdown(self) -> Option<Rule> {
+        match self {
+            Self::Markdown(rule) => Some(rule),
+            Self::Native | Self::Steering => None,
+        }
+    }
+}
 
 /// What the registry could not load, and why. Reported rather than swallowed: a
 /// policy file that silently stopped loading is indistinguishable from a policy
@@ -292,9 +317,9 @@ pub fn load_with_steering(
     let mut diagnostics = Vec::new();
 
     // Pass 1: parse each tier into records, in directory-precedence order. Each
-    // carries the legacy markdown rule it came from, when it came from one, and the
-    // tier it was read out of — which is the one fact the file cannot claim about
-    // itself.
+    // carries the kind of file it came from (with the legacy markdown rule, when it
+    // came from one) and the tier it was read out of — which is the one fact the
+    // file cannot claim about itself.
     let user = parse_tier(user_files, Trust::User, &mut diagnostics);
     let mut project = parse_tier(project_files, Trust::Project, &mut diagnostics);
     project.extend(parse_steering(steering_files, &mut diagnostics));
@@ -311,21 +336,24 @@ pub fn load_with_steering(
 
     // Handles are only unambiguous across the surviving set, and conflicts compare
     // records against each other, so both happen once, globally. The per-record
-    // schema checks run on TOML records only — see `validate::check_record` on why a
-    // legacy markdown body must not be judged against the record schema.
-    let (mut records, markdown): (Vec<LoadedRecord>, Vec<Option<Rule>>) =
-        merged.into_iter().unzip();
+    // schema checks follow the kind of file. See `validate::check_record` on why a
+    // legacy markdown body must not be judged against the record schema, and
+    // `validate::check_steering_record` on what a steering body skips.
+    let (mut records, sources): (Vec<LoadedRecord>, Vec<Source>) = merged.into_iter().unzip();
     assign_handles(&mut records);
-    for (record, markdown) in records.iter_mut().zip(&markdown) {
-        if markdown.is_none() {
-            super::validate::check_record(record);
+    for (record, source) in records.iter_mut().zip(&sources) {
+        match source {
+            Source::Native => super::validate::check_record(record),
+            Source::Steering => super::validate::check_steering_record(record),
+            Source::Markdown(_) => {}
         }
     }
     let conflicts = super::validate::detect_conflicts(&mut records);
 
     // Pass 3: sweep and arm.
     let mut entries: Vec<Entry> = Vec::new();
-    for (mut record, markdown) in records.into_iter().zip(markdown) {
+    for (mut record, source) in records.into_iter().zip(sources) {
+        let markdown = source.into_markdown();
         let mut disposition = super::disposition(&SweepInput {
             record: &record.record,
             trust: record.trust,
@@ -389,7 +417,7 @@ fn parse_tier(files: &[RuleFile], trust: Trust, diagnostics: &mut Vec<Diagnostic
                 Ok(records) => parsed.extend(records.into_iter().map(|mut record| {
                     record.trust = trust;
                     record.contributed_by = contributed_by.clone();
-                    (record, None)
+                    (record, Source::Native)
                 })),
                 Err(err) => diagnostics.push(Diagnostic {
                     source: err.source,
@@ -402,7 +430,7 @@ fn parse_tier(files: &[RuleFile], trust: Trust, diagnostics: &mut Vec<Diagnostic
             Ok(rule) => {
                 let mut record = record_from_markdown(&rule, trust);
                 record.contributed_by = contributed_by;
-                parsed.push((record, Some(rule)));
+                parsed.push((record, Source::Markdown(rule)));
             }
             // A file with no statement is not a rule and never was; saying so for
             // every README in a rules directory would be noise. The nesting and
@@ -436,7 +464,7 @@ fn parse_steering(files: &[RuleFile], diagnostics: &mut Vec<Diagnostic>) -> Vec<
                     handle: String::new(),
                     findings: Vec::new(),
                 },
-                None,
+                Source::Steering,
             )),
             Err(err) => diagnostics.push(Diagnostic {
                 source: file.path.clone(),

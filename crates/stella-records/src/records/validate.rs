@@ -91,6 +91,23 @@ pub fn check_record(loaded: &mut LoadedRecord) {
     loaded.findings.append(&mut findings);
 }
 
+/// The per-record checks for a `steering-record/v1` record from an Oxagen
+/// steering repo.
+///
+/// A steering record's statement is the Markdown body of its file. A
+/// `procedure` body is often a list of steps over several lines. So the two
+/// checks on a statement's shape do not run here. The first is the
+/// one-sentence check, which refuses a newline or a statement over 600
+/// characters. The second is the compound-claim check. It exists so one
+/// refutation verdict can describe a claim, and a steering record carries no
+/// truth block to receive one. The secrets scan and every check on the
+/// record's other fields still run, and a blocking finding still stops the
+/// record from steering.
+pub fn check_steering_record(loaded: &mut LoadedRecord) {
+    let mut findings = check_steering(&loaded.record, loaded.trust);
+    loaded.findings.append(&mut findings);
+}
+
 /// The cross-record half: every equal-precedence conflict, attached to both sides.
 pub fn detect_conflicts(records: &mut [LoadedRecord]) -> Vec<Conflict> {
     let conflicts = find_conflicts(records);
@@ -124,9 +141,23 @@ pub fn is_suspended(handle: &str, conflicts: &[Conflict]) -> bool {
 fn check_one(record: &Record, trust: Trust) -> Vec<RecordFinding> {
     let mut findings = Vec::new();
     findings.extend(forbidden_data(record));
+    findings.extend(pasted_statement(record));
     findings.extend(guard_lint(record));
     findings.extend(unknown_tasks(record));
     findings.extend(atomicity(record));
+    findings.extend(scoped_without_trigger(record));
+    findings.extend(gated_probe_refused(record, trust));
+    findings
+}
+
+/// Everything wrong with one steering record, independent of its neighbours.
+/// It is [`check_one`] without the statement-shape checks
+/// ([`pasted_statement`] and [`atomicity`]). [`check_steering_record`] says why.
+fn check_steering(record: &Record, trust: Trust) -> Vec<RecordFinding> {
+    let mut findings = Vec::new();
+    findings.extend(forbidden_data(record));
+    findings.extend(guard_lint(record));
+    findings.extend(unknown_tasks(record));
     findings.extend(scoped_without_trigger(record));
     findings.extend(gated_probe_refused(record, trust));
     findings
@@ -177,7 +208,7 @@ fn scoped_without_trigger(record: &Record) -> Vec<RecordFinding> {
 /// Secrets, credentials, and raw pasted text must never enter a Git-tracked policy
 /// file (§10). The redaction pass that already protects persisted records is reused
 /// here as the detector: anything it *would* redact is something that must not be
-/// committed.
+/// committed. Raw pasted text in a native statement is [`pasted_statement`]'s check.
 fn forbidden_data(record: &Record) -> Vec<RecordFinding> {
     let mut findings = Vec::new();
     let mut scan = |field: &'static str, text: Option<&str>| {
@@ -198,19 +229,21 @@ fn forbidden_data(record: &Record) -> Vec<RecordFinding> {
         scan("truth.probe.pattern", probe.pattern.as_deref());
         scan("truth.probe.note", probe.note.as_deref());
     }
+    findings
+}
 
-    // A statement is one sentence. Embedded newlines or novel-length text mean raw
-    // prompt or tool output was pasted into a reviewable field — which is both a
-    // privacy boundary (§10) and an atomicity problem.
-    if statement_reads_as_pasted(&record.statement) {
-        findings.push(RecordFinding::GuardLint(format!(
+/// A statement is one sentence. Embedded newlines or novel-length text mean raw
+/// prompt or tool output was pasted into a reviewable field — which is both a
+/// privacy boundary (§10) and an atomicity problem.
+fn pasted_statement(record: &Record) -> Option<RecordFinding> {
+    statement_reads_as_pasted(&record.statement).then(|| {
+        RecordFinding::GuardLint(format!(
             "statement is {} characters over {} lines — a record's statement is a single \
              sentence; this reads as pasted prompt or tool text",
             record.statement.chars().count(),
             record.statement.lines().count()
-        )));
-    }
-    findings
+        ))
+    })
 }
 
 /// Guard-key lint: names that cannot resolve, globs that cannot match what they

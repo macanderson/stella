@@ -365,3 +365,143 @@ fn a_run_memory_keeps_a_null_agent() {
         }]
     );
 }
+
+// Loading through the registry
+
+/// A project rule file with one native TOML record whose statement holds a
+/// newline. Native records keep the one-sentence check.
+const NATIVE_MULTILINE: &str = r#"
+schema = "context-record/v0.1"
+set_id = "acme.web"
+
+[defaults]
+origin = "user"
+status = "active"
+
+[[record]]
+lineage_id = "ctx.acme.web.build"
+kind = "rule"
+statement = "Run the build.\n$ pnpm build\nDone in 4.2s"
+
+[record.steering]
+force = "must"
+precedence = 50
+"#;
+
+/// The fixture as a procedure whose body is `body`.
+fn procedure(body: &str) -> String {
+    with(
+        "Refunds over $100 need a person's approval before the agent calls Stripe.\n",
+        body,
+    )
+    .replacen("kind: business-rule", "kind: procedure", 1)
+}
+
+/// Load one native project file and one steering file through the registry.
+fn load(native: &str, steering: &str) -> crate::records::Registry {
+    let file = |path: &str, contents: &str| stella_learn::rules::RuleFile {
+        path: path.to_string(),
+        contents: contents.to_string(),
+        contributed_by: None,
+    };
+    crate::records::registry::load_with_steering(
+        &[],
+        &[file(".stella/rules/acme.web.toml", native)],
+        &[file("steering/procedures/refunds.md", steering)],
+        &crate::records::Facts {
+            now: "2026-09-28T00:00:00Z",
+            ..crate::records::Facts::default()
+        },
+    )
+}
+
+fn entry<'a>(registry: &'a crate::records::Registry, lineage: &str) -> &'a crate::records::Entry {
+    registry
+        .entries
+        .iter()
+        .find(|entry| entry.record.record.lineage_id == lineage)
+        .unwrap_or_else(|| panic!("no entry for {lineage}: {:?}", registry.diagnostics))
+}
+
+fn blocking(entry: &crate::records::Entry) -> Vec<&crate::records::RecordFinding> {
+    entry
+        .record
+        .findings
+        .iter()
+        .filter(|finding| finding.severity() == crate::records::Severity::Blocking)
+        .collect()
+}
+
+#[test]
+fn a_multiline_steering_body_steers_and_a_multiline_native_statement_does_not() {
+    let steering = procedure(
+        "1. Read the refund and its order.\n2. Ask a person to approve a refund over $100.\n3. Call Stripe after the approval.\n",
+    );
+    let registry = load(NATIVE_MULTILINE, &steering);
+    assert!(
+        registry.diagnostics.is_empty(),
+        "{:?}",
+        registry.diagnostics
+    );
+
+    let steered = entry(&registry, "a-intel.core-platform.refunds-over-100");
+    assert_eq!(steered.record.record.statement.lines().count(), 3);
+    assert!(
+        blocking(steered).is_empty(),
+        "{:?}",
+        steered.record.findings
+    );
+    assert!(
+        !matches!(
+            steered.disposition,
+            crate::records::Disposition::Block { .. }
+        ),
+        "{:?}",
+        steered.disposition
+    );
+
+    let native = entry(&registry, "ctx.acme.web.build");
+    assert!(
+        native.record.findings.iter().any(|finding| matches!(
+            finding,
+            crate::records::RecordFinding::GuardLint(detail) if detail.contains("single")
+        )),
+        "{:?}",
+        native.record.findings
+    );
+    assert!(
+        matches!(
+            native.disposition,
+            crate::records::Disposition::Block { .. }
+        ),
+        "{:?}",
+        native.disposition
+    );
+}
+
+#[test]
+fn a_steering_body_with_a_list_skips_the_compound_claim_check() {
+    let statement = "Read the refund, the order, and the invoice before you call Stripe.";
+    let pasted = r"Run the build.\n$ pnpm build\nDone in 4.2s";
+    assert!(
+        NATIVE_MULTILINE.contains(pasted),
+        "the native file has no `{pasted}`"
+    );
+    let native = NATIVE_MULTILINE.replacen(pasted, statement, 1);
+    let registry = load(&native, &procedure(&format!("{statement}\n")));
+    assert!(
+        registry.diagnostics.is_empty(),
+        "{:?}",
+        registry.diagnostics
+    );
+
+    let steered = entry(&registry, "a-intel.core-platform.refunds-over-100");
+    assert!(
+        blocking(steered).is_empty(),
+        "{:?}",
+        steered.record.findings
+    );
+
+    let native = entry(&registry, "ctx.acme.web.build");
+    assert!(!blocking(native).is_empty(), "{:?}", native.record.findings);
+}
