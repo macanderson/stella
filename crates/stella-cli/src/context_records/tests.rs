@@ -727,3 +727,138 @@ fn the_head_anchor_is_private_and_not_beside_the_ledger() {
         "and never beside the reviewed ledger"
     );
 }
+
+// Steering repositories
+
+/// Oxagen's refunds record, byte for byte as a steering PR writes it.
+const STEERING_FIXTURE: &str = "---
+schema: steering-record/v1
+lineage: a-intel.core-platform.refunds-over-100
+label: Refunds over $100
+kind: business-rule
+force: must
+scope: workspace
+status: active
+origin: user
+provenance:
+  source: proposal
+  uri: oxagen:proposal/prp_01K5RW2P
+id: rec_a_intel_core_platform_refunds_over_100_f7e8bb90125e
+hash: sha256:c9365650e669e54d69a420a621d98c45866445ffe98eae67a2b56b0e507577e3
+---
+
+Refunds over $100 need a person's approval before the agent calls Stripe.
+";
+
+/// A steering repository with the refunds record in a subfolder, and a file
+/// in `steering/promotions/` that is not a record. `marker` is the root
+/// marker file and its contents, or `None` for a repository with neither.
+fn write_steering_repo(root: &Path, marker: Option<(&str, &str)>) {
+    let records = root.join("steering/imported");
+    std::fs::create_dir_all(&records).unwrap();
+    std::fs::write(
+        records.join("a-intel.core-platform.refunds-over-100.md"),
+        STEERING_FIXTURE,
+    )
+    .unwrap();
+    let promotions = root.join("steering/promotions");
+    std::fs::create_dir_all(&promotions).unwrap();
+    std::fs::write(promotions.join("2026-09.md"), "not a steering record\n").unwrap();
+    if let Some((path, contents)) = marker {
+        std::fs::write(root.join(path), contents).unwrap();
+    }
+}
+
+#[test]
+fn a_workspace_steering_repo_root_yields_its_records() {
+    let root = tempfile::tempdir().unwrap();
+    write_steering_repo(
+        root.path(),
+        Some((
+            "workspace.toml",
+            "#:schema https://oxagen.sh/schemas/workspace/v1.json\nschema = \"workspace/v1\"\n",
+        )),
+    );
+
+    let files = rule_files(root.path(), false, true);
+    assert_eq!(
+        files.steering.len(),
+        1,
+        "one record file, and nothing from steering/promotions: {:?}",
+        files.steering.iter().map(|file| &file.path).collect::<Vec<_>>()
+    );
+    let registry = registry_with_cache(
+        root.path(),
+        &files,
+        &SweepCache::default(),
+        "2026-09-27T00:00:00Z",
+    );
+
+    assert!(
+        registry.diagnostics.is_empty(),
+        "{:?}",
+        registry.diagnostics
+    );
+    let entry = registry
+        .by_handle("refunds-over-100")
+        .expect("the steering record loaded");
+    let record = &entry.record.record;
+    assert_eq!(record.lineage_id, "a-intel.core-platform.refunds-over-100");
+    assert_eq!(
+        record.record_id.as_deref(),
+        Some("rec_a_intel_core_platform_refunds_over_100_f7e8bb90125e"),
+        "Oxagen's id is the record's identity"
+    );
+    assert_eq!(
+        record.record_hash.as_deref(),
+        Some("sha256:c9365650e669e54d69a420a621d98c45866445ffe98eae67a2b56b0e507577e3"),
+        "and so is Oxagen's hash"
+    );
+    assert_eq!(entry.record.trust, Trust::Project);
+    assert!(
+        entry.disposition.is_selected(),
+        "{:?}",
+        entry.disposition
+    );
+    assert!(
+        registry
+            .render(Channel::Cached, None)
+            .text
+            .contains("Refunds over $100 need a person's approval before the agent calls Stripe."),
+        "a must record rides the cached channel"
+    );
+}
+
+#[test]
+fn an_organization_steering_repo_is_found_by_its_governance_file() {
+    let root = tempfile::tempdir().unwrap();
+    write_steering_repo(
+        root.path(),
+        Some((
+            "steering/governance.toml",
+            "schema = \"governance/v1\"\nmode = \"solo\"\n",
+        )),
+    );
+
+    let files = rule_files(root.path(), false, true);
+    assert_eq!(files.steering.len(), 1);
+}
+
+#[test]
+fn a_steering_folder_without_a_marker_is_not_read() {
+    let root = tempfile::tempdir().unwrap();
+    write_steering_repo(root.path(), None);
+
+    assert!(rule_files(root.path(), false, true).steering.is_empty());
+}
+
+#[test]
+fn an_untrusted_checkout_contributes_no_steering_records() {
+    let root = tempfile::tempdir().unwrap();
+    write_steering_repo(
+        root.path(),
+        Some(("workspace.toml", "schema = \"workspace/v1\"\n")),
+    );
+
+    assert!(rule_files(root.path(), false, false).steering.is_empty());
+}

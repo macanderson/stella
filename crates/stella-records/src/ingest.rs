@@ -32,6 +32,7 @@ pub mod gate;
 pub mod lineage;
 pub mod record;
 pub mod refresh;
+pub mod steering;
 
 pub use freshness::{Retention, retention_for};
 pub use gate::{GateOutcome, gate_proposal};

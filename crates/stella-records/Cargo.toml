@@ -20,6 +20,8 @@ stella-learn = { path = "../stella-learn" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
+# `ingest::steering`, to read the YAML frontmatter of a steering-record/v1 file.
+serde_norway = { workspace = true }
 thiserror = { workspace = true }
 sha2 = { workspace = true }
 

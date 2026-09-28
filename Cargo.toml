@@ -117,6 +117,13 @@ toml = "1.1"
 # of the user's file byte-identical. MIT OR Apache-2.0, same license pair and
 # same maintainer as `toml` itself. See stella-cli/src/settings/toml_io.rs.
 toml_edit = { version = "0.25", features = ["serde"] }
+# YAML frontmatter for Oxagen's `steering-record/v1` files, which a steering
+# repository keeps under `steering/`. serde_norway is the maintained fork of
+# serde_yaml, and it keeps the same `Value` and serde API. serde_yaml itself is
+# archived, and serde_yml carries a RustSec advisory, so neither passes
+# deny.toml's `unmaintained = "all"`. MIT OR Apache-2.0. Its one new transitive
+# crate, unsafe-libyaml-norway, is MIT. See stella-records/src/ingest/steering.rs.
+serde_norway = "0.9.42"
 # Vetted dotenv parser (quotes, escapes, multi-line values, `export` prefixes),
 # used as a non-mutating iterator so the CLI keeps control of precedence and
 # never overrides the live shell. See stella-cli/src/env_files.rs.
