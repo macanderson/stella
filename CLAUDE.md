@@ -14,14 +14,26 @@ Mac set this on 2026-09-26 for every repository on this machine. Local builds, t
 - Code generators and small integrity scripts that only read and write files are allowed, such as regenerating a checksum, a schema index, or a message catalogue.
 - Put this rule, word for word, in the prompt of every subagent you start.
 
+## Replies to PR feedback
+
+Mac set this on 2026-09-28 for every repository and every PR, labelled or not. Each feedback comment an agent fixes gets two replies from that agent, with no exceptions.
+
+- **Reply with the fix branch before the first edit.** Create the branch that will carry the fix, then reply to the feedback comment with the branch name. Post this reply before you change any file for that comment.
+- **Reply with the commit SHA once the fix is done.** After the fix is committed and pushed, post a second reply to the same comment with the commit SHA.
+- **Give every comment its own two replies.** One reply answers one feedback comment. When one branch or one commit fixes several comments, each comment still gets both replies.
+- **Reply where the comment lives.** Answer a review thread inline, on the comment itself (`gh api repos/<owner>/<repo>/pulls/<n>/comments/<id>/replies`). A finding in a review body or a top-level comment has no thread, so answer it with two PR comments that each quote it.
+- **Mark both replies.** A watcher starts each reply with `<!-- pr-watch -->`, as it does every comment it posts.
+
+Agents chose these details on 2026-09-28, and Mac has not ruled on them. Cut the fix branch from the PR's head branch. One fix branch may carry several comments. Merge the fix branch into the PR's head branch before the second reply, so the SHA in that reply is a commit on the PR branch. A comment the agent does not fix, because it goes to a residue issue or does not hold, keeps one reply with the issue link or the evidence.
+
 ## Agent-monitored pull requests
 
 Mac set this on 2026-09-26 for every repository. The `agent-monitored-pr` label marks a PR that an agent watches until it merges or closes. A labelled PR comes before other work, and its fixes run in parallel wherever that is safe.
 
 - **Label every PR an agent opens.** Pass `--label agent-monitored-pr` to `gh pr create`. If the repository has no such label, create it first: `gh label create agent-monitored-pr --color fd0880 --description "Agent polls every 60 seconds fixes CI, comments, conflicts."`
-- **Poll the PR every 60 seconds.** Each poll reads the PR's state, its mergeability, and the checks on the head commit. It reads every review thread with no inline reply after the reviewer's last comment. `gh pr view --json` does not return review threads, so read them with `gh api graphql` (`pullRequest.reviewThreads`). It also reads review bodies and top-level comments, because a finding there has no thread. Answer each finding there once, with a PR comment that quotes it, and record the id of the comment you answered. Start every comment a watcher posts with `<!-- pr-watch -->`. Skip comments that start with that marker or with `<!-- pr-claim -->`, so a watcher does not answer its own comments.
+- **Poll the PR every 60 seconds.** Each poll reads the PR's state, its mergeability, and the checks on the head commit. It reads every review thread with no inline reply after the reviewer's last comment. `gh pr view --json` does not return review threads, so read them with `gh api graphql` (`pullRequest.reviewThreads`). It also reads review bodies and top-level comments, because a finding there has no thread. Answer each finding there as Replies to PR feedback sets out, with PR comments that quote it, and record the id of the comment you answered. Start every comment a watcher posts with `<!-- pr-watch -->`. Skip comments that start with that marker or with `<!-- pr-claim -->`, so a watcher does not answer its own comments.
 - **Fix by review pass.** Pass N is the Nth review one reviewer submits on the PR. On pass 1, fix every P0, P1, and P2 finding. On pass 2, fix P0 and P1. From pass 3 on, fix P0 only. A P0 blocks the PR at every pass.
-- **File one residue issue.** Carry every P1 and P2 finding left unfixed into a single issue for the PR. Its title ends with `(residue #<PR>)`, and its body links the PR. Reply inline on every thread you handle, with the commit that fixed it or a link to the residue issue.
+- **File one residue issue.** Carry every P1 and P2 finding left unfixed into a single issue for the PR. Its title ends with `(residue #<PR>)`, and its body links the PR. Reply inline on every thread you handle. A finding you fix gets the two replies in Replies to PR feedback. A finding you carry gets a reply that links the residue issue.
 - **Let the pass rule govern review findings.** On a labelled PR, the pass rule decides which review findings get fixed, in place of any repository rule on review rounds or on fixing every finding in the PR. Residue goes to one issue, even where a repository files each finding alone. Where a repository allows one change per issue, residue from unrelated changes splits into one issue per change. A defect you notice yourself still follows fix over file. A P3 finding follows the repository's usual rules.
 - **Clear conflicts and CI failures as they appear.** When the PR conflicts, merge the base branch in, resolve it, and push. When a job fails, read its failing step with `gh run view --job <id> --log-failed`, fix it, and push without waiting for the rest of the run.
 - **Dispatch subagents.** Give each independent fix its own subagent when no two fixes touch the same file. Stay active until the PR merges or closes.
