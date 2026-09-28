@@ -6,7 +6,7 @@
 
 use super::*;
 
-/// Oxagen's refunds record, exactly as a steering PR writes it.
+/// The refunds record, just as a steering PR writes it.
 const FIXTURE: &str = "---
 schema: steering-record/v1
 lineage: a-intel.core-platform.refunds-over-100
@@ -30,9 +30,8 @@ const FIXTURE_ID: &str = "rec_a_intel_core_platform_refunds_over_100_f7e8bb90125
 const FIXTURE_HASH: &str =
     "sha256:c9365650e669e54d69a420a621d98c45866445ffe98eae67a2b56b0e507577e3";
 
-/// The fixture with its first `from` replaced by `to`, and a check that the
-/// replacement happened, so a typo in a test cannot pass by leaving the
-/// fixture valid.
+/// The fixture with its first `from` swapped for `to`. It panics when the
+/// fixture has no `from`, so a typo in a test fails.
 fn with(from: &str, to: &str) -> String {
     assert!(FIXTURE.contains(from), "the fixture has no `{from}`");
     FIXTURE.replacen(from, to, 1)
@@ -366,10 +365,10 @@ fn a_run_memory_keeps_a_null_agent() {
     );
 }
 
-// Loading through the registry
+// Tests that load records through the registry.
 
-/// A project rule file with one native TOML record whose statement holds a
-/// newline. Native records keep the one-sentence check.
+/// A project file with one native record. Its statement has two line
+/// breaks. A native record must be one sentence, so this one is blocked.
 const NATIVE_MULTILINE: &str = r#"
 schema = "context-record/v0.1"
 set_id = "acme.web"
@@ -388,7 +387,7 @@ force = "must"
 precedence = 50
 "#;
 
-/// The fixture as a procedure whose body is `body`.
+/// The fixture as a procedure with this body.
 fn procedure(body: &str) -> String {
     with(
         "Refunds over $100 need a person's approval before the agent calls Stripe.\n",
@@ -397,7 +396,7 @@ fn procedure(body: &str) -> String {
     .replacen("kind: business-rule", "kind: procedure", 1)
 }
 
-/// Load one native project file and one steering file through the registry.
+/// Load one native file and one steering file.
 fn load(native: &str, steering: &str) -> crate::records::Registry {
     let file = |path: &str, contents: &str| stella_learn::rules::RuleFile {
         path: path.to_string(),
