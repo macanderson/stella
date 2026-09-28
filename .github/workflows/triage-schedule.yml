@@ -16,6 +16,17 @@ name: Scheduled triage
 # It refuses out loud. A missing credential, an API rejection, or a reply it
 # cannot parse fails the run, because a sweep that could not size anything
 # must not read like a sweep that found nothing to size.
+#
+# An API rejection also says which kind it is, on the run page, so nobody has
+# to open the job log to find out. `scripts/lib/anthropic-refusal.sh` reads
+# the status and the body. A 400 whose `error.type` is `invalid_request_error`
+# and whose message says the credit balance is too low is reported as
+# `ANTHROPIC CREDIT REFUSAL`: the account needs credit, and no code change
+# will help. Any other non-200 is reported as `ANTHROPIC API REFUSAL` with its
+# status, `error.type` and `error.message`, or with a note that the body was
+# not the API's error JSON. Both land in the step summary and as an error note
+# on the run, and both still fail the run. The report lives in a file of its
+# own, not inline here, so `scripts/test-anthropic-refusal.sh` can drive it.
 
 on:
   schedule:
@@ -46,10 +57,11 @@ jobs:
   triage:
     runs-on: ubuntu-latest
     steps:
-      # Checked out for one file: the SCR that names the priority levels. The
-      # sweep reads them at run time rather than carrying its own copy, which
-      # is what `scripts/check-priority-scheme.py` asks of every file but the
-      # one derived copy in `triage-guard.yml`.
+      # Checked out for the SCR that names the priority levels, and for
+      # `scripts/lib/anthropic-refusal.sh`, which reports an API refusal. The
+      # sweep reads the levels at run time rather than carrying its own copy,
+      # which is what `scripts/check-priority-scheme.py` asks of every file
+      # but the one derived copy in `triage-guard.yml`.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Size every issue in the triage queue
@@ -58,6 +70,9 @@ jobs:
           SCR: docs/scr/SCR-005-triage-separation-of-duties.md
         run: |
           set -euo pipefail
+
+          # shellcheck source=scripts/lib/anthropic-refusal.sh
+          . scripts/lib/anthropic-refusal.sh
 
           if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
             echo "ANTHROPIC_API_KEY: UNAVAILABLE — THIS SWEEP DID NOT RUN" >&2
@@ -127,6 +142,10 @@ jobs:
                 }]
               }' > /tmp/req.json
 
+            # Emptied first. curl writes the file only when a body arrives,
+            # so an empty reply would leave the last issue's 200 in it, and
+            # the report would quote that body as this refusal's.
+            : > /tmp/resp.json
             status=$(curl -sS -o /tmp/resp.json -w '%{http_code}' https://api.anthropic.com/v1/messages \
               -H "x-api-key: $ANTHROPIC_API_KEY" \
               -H 'anthropic-version: 2023-06-01' \
@@ -135,7 +154,7 @@ jobs:
 
             if [ "$status" != "200" ]; then
               echo "issue $n: the API answered $status — THIS SWEEP DID NOT FINISH" >&2
-              head -c 400 /tmp/resp.json >&2
+              report_anthropic_refusal "$status" /tmp/resp.json
               exit 1
             fi
 

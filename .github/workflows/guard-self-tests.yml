@@ -352,6 +352,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-codeql-canary.sh
 
+      - name: the triage sweep tells a credit refusal from any other API refusal
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-anthropic-refusal.sh
+
       - name: the retired-hex ban in every notation, and the citation check
         if: ${{ !cancelled() }}
         run: ./scripts/test-tokens.sh
