@@ -101,7 +101,9 @@ report_anthropic_refusal() {
   done
   if [ "$kind" = other ] && [ -s "$body" ]; then
     echo "  first 400 bytes of the body:" >&2
-    head -c 400 "$body" >&2 || true
+    # Each line gets a "| " prefix so a body line that starts with "::"
+    # cannot reach the Actions runner as a workflow command.
+    { head -c 400 "$body" | sed 's/^/  | /'; } >&2 || true
     echo >&2
   fi
 

@@ -127,6 +127,16 @@ has "...and shows the start of the body" "$scratch/err" "502 Bad Gateway"
 has "...and names the status in the summary" "$scratch/summary" "ANTHROPIC API REFUSAL: HTTP 502"
 lacks "...and never the credit line" "$scratch/err" "CREDIT REFUSAL"
 
+# A body line that starts with "::" would reach the runner as a workflow
+# command if the report printed it bare.
+run_report 502 $'gateway\n::error::injected\n'
+has "a body line starting with :: is still shown" "$scratch/err" "injected"
+if grep -q '^::' "$scratch/err"; then
+  bad "...but no stderr line may start with :: — $(cat "$scratch/err")"
+else
+  ok "...but no stderr line starts with ::"
+fi
+
 # An empty body. curl writes nothing when the server sends nothing.
 run_report 504 ''
 returned_zero "an empty body returns 0 under set -e"
