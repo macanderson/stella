@@ -2201,9 +2201,10 @@ function renderFleetMcp(fleet, mcp) {
   if (!changed("fleetmcp", fleet, mcp)) return;
   let html = "";
   if (fleet.length) {
-    /* A run is listed by its session name, the title of its first task. The
-       run id stays in the tooltip, and names a run that recorded no task. */
-    html += `<table><thead><tr><th scope="col">Session name</th><th scope="col" class="num">tasks</th>
+    /* A fleet run is listed by its name, the title of its first task. A fleet
+       run is keyed by its run_id and is not a session. The run id stays in
+       the tooltip, and names a run that recorded no task. */
+    html += `<table><thead><tr><th scope="col">Run name</th><th scope="col" class="num">tasks</th>
       <th scope="col" class="num">attempts</th><th scope="col" class="num">ok</th>
       <th scope="col" class="num">commits</th></tr></thead><tbody>` +
       fleet.slice(0, 5).map(f => `<tr>
