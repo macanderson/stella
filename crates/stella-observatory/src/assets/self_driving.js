@@ -19,6 +19,14 @@
 const S = { data: null, session: null, detail: null, drawn: {}, tween: {} };
 const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+/* A drive's session id is `sd-<unix seconds>-<pid>`. Two drives started
+   together in one repository share a slug and differ only at the end of
+   the id, so the short form keeps the tail. The full id goes in the title. */
+const shortId = (id) => {
+  const s = String(id ?? "");
+  return s.length > 12 ? "…" + s.slice(-10) : s;
+};
+
 /* ── styles ───────────────────────────────────────────────────────────────
    Scoped under #panel-self-driving so nothing here can restyle another tab. */
 const css = `
@@ -192,7 +200,7 @@ function renderLive(d) {
     const lease = claims.find((c) => c.pid && c.pid === s.pid);
     return `<div class="sd-agent" data-session="${esc(s.id)}">
       <span class="sd-pulse" title="${esc(s.liveness)}"></span>
-      <div><div class="who" title="${esc(s.id)}">${esc(s.slug)}</div>
+      <div><div class="who" title="${esc(s.id)}">${esc(s.slug)} <span class="kick">${esc(shortId(s.id))}</span></div>
         <div class="what">${what}</div>
         <div class="stage">${stage}${lease ? ` <span class="badge ok">lease ${dur(lease.held_secs)}</span>` : ""}</div></div>
       <div class="meta">up ${dur(s.seconds)}<br>${fmtUsd(s.spend_usd)} spent<br>${fmtInt(s.prs_merged)} merged · ${fmtInt(s.claimed)} claimed</div>
@@ -366,7 +374,7 @@ function renderSessions(d) {
       <th>Session name</th><th>Status</th><th>Started</th><th class="num">Dur</th><th class="num">Claimed</th>
       <th class="num">Changed</th><th class="num">PRs</th><th class="num">Merged</th><th class="num">Lessons</th><th class="num">Spend</th></tr></thead><tbody>
     ${s.map((r) => `<tr data-session="${esc(r.id)}" class="${S.session === r.id ? "sel" : ""}" title="${esc(r.liveness)}">
-      <td title="${esc(r.id)}">${esc(r.slug)}</td>
+      <td title="${esc(r.id)}">${esc(r.slug)} <span class="kick">${esc(shortId(r.id))}</span></td>
       <td>${badge(r.status)}</td>
       <td>${agoUnix(r.started_unix)}</td>
       <td class="num">${dur(r.seconds)}</td>
