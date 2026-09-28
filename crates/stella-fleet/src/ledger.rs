@@ -222,15 +222,15 @@ impl Ledger {
         Ok(())
     }
 
-    /// Record a task belonging to a run (idempotent on (run_id, task_id)).
+    /// Record a task. A repeat updates its row in place, so a run's first task keeps its rowid.
     pub fn record_task(&self, run_id: &str, task: &Task) -> Result<(), LedgerError> {
         let isolation = match task.isolation {
             Isolation::Isolated => "isolated",
             Isolation::SharedTree => "shared_tree",
         };
         self.conn.execute(
-            "INSERT OR REPLACE INTO tasks (run_id, task_id, title, isolation) \
-             VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO tasks (run_id, task_id, title, isolation) VALUES (?1, ?2, ?3, ?4) \
+             ON CONFLICT(run_id, task_id) DO UPDATE SET title = excluded.title, isolation = excluded.isolation",
             params![run_id, task.id, task.title, isolation],
         )?;
         Ok(())

@@ -18,6 +18,8 @@ use super::{DbError, collect_rows};
 /// `name` is `null` for a run that recorded no task. The ledger has no name
 /// column, so the name comes from `tasks`. The first task by `rowid` is the
 /// first one the plan recorded, which is the task the operator typed first.
+/// The ledger updates a task in place when it is written again, so its
+/// `rowid` does not change.
 pub(super) fn fleet_runs(conn: &Connection) -> Result<Vec<Value>, DbError> {
     collect_rows(
         conn,
