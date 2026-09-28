@@ -153,6 +153,20 @@ case "$out" in
 *) bad "under Actions, the run-page note was missing or untitled: $out" ;;
 esac
 
+# Any other refusal gets the other title, and a `%` in the message is
+# encoded so the runner does not read it as the start of an escape.
+printf '%s' '{"type":"error","error":{"type":"rate_limit_error","message":"100% of the limit used"}}' >"$scratch/body"
+out="$(GITHUB_STEP_SUMMARY='' GITHUB_ACTIONS=true \
+  report_anthropic_refusal 429 "$scratch/body" 2>/dev/null)"
+case "$out" in
+*"::error title=Anthropic API refusal::ANTHROPIC API REFUSAL: HTTP 429"*) ok "under Actions, any other refusal writes the API refusal note" ;;
+*) bad "under Actions, the API refusal note was missing or mistitled: $out" ;;
+esac
+case "$out" in
+*"100%25 of the limit used"*) ok "...and encodes a % in the message" ;;
+*) bad "...and did not encode the % in the message: $out" ;;
+esac
+
 echo
 echo "anthropic-refusal: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -57,11 +57,11 @@ jobs:
   triage:
     runs-on: ubuntu-latest
     steps:
-      # Checked out for two files. One is the SCR that names the priority
-      # levels. The sweep reads them at run time rather than carrying its own
-      # copy, which is what `scripts/check-priority-scheme.py` asks of every
-      # file but the one derived copy in `triage-guard.yml`. The other is
-      # `scripts/lib/anthropic-refusal.sh`, which reports an API refusal.
+      # Checked out for the SCR that names the priority levels, and for
+      # `scripts/lib/anthropic-refusal.sh`, which reports an API refusal. The
+      # sweep reads the levels at run time rather than carrying its own copy,
+      # which is what `scripts/check-priority-scheme.py` asks of every file
+      # but the one derived copy in `triage-guard.yml`.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Size every issue in the triage queue
@@ -142,6 +142,10 @@ jobs:
                 }]
               }' > /tmp/req.json
 
+            # Emptied first. curl writes the file only when a body arrives,
+            # so an empty reply would leave the last issue's 200 in it, and
+            # the report would quote that body as this refusal's.
+            : > /tmp/resp.json
             status=$(curl -sS -o /tmp/resp.json -w '%{http_code}' https://api.anthropic.com/v1/messages \
               -H "x-api-key: $ANTHROPIC_API_KEY" \
               -H 'anthropic-version: 2023-06-01' \
