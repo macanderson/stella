@@ -169,7 +169,10 @@ fn a_missing_final_newline_is_refused() {
 #[test]
 fn a_yaml_tag_is_refused() {
     assert_eq!(
-        refusal(&with("label: Refunds over $100", "label: !money Refunds over $100")),
+        refusal(&with(
+            "label: Refunds over $100",
+            "label: !money Refunds over $100"
+        )),
         SteeringRecordError::Tagged
     );
 }

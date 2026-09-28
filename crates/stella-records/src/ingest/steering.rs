@@ -13,7 +13,9 @@ use serde::{Deserialize, Deserializer};
 use serde_norway::Value;
 
 use super::super::context_record::kind::{Origin, RecordStatus};
-use super::record::{AppliesTo, Force, Provenance, Record, RecordKind, SharingScope, Steering, Tier};
+use super::record::{
+    AppliesTo, Force, Provenance, Record, RecordKind, SharingScope, Steering, Tier,
+};
 
 /// The schema tag each steering record has.
 pub const STEERING_SCHEMA: &str = "steering-record/v1";
@@ -524,31 +526,42 @@ impl RawFrontmatter {
     fn into_record(self, statement: String) -> Result<SteeringRecord, SteeringRecordError> {
         let kind = SteeringKind::parse(&self.kind)
             .ok_or_else(|| SteeringRecordError::UnknownKind(self.kind.clone()))?;
-        let force = one_of("force", &self.force, "must, should, may, or info", |value| {
-            [Force::Must, Force::Should, Force::May, Force::Info]
-                .into_iter()
-                .find(|force| force.as_str() == value)
-        })?;
+        let force = one_of(
+            "force",
+            &self.force,
+            "must, should, may, or info",
+            |value| {
+                [Force::Must, Force::Should, Force::May, Force::Info]
+                    .into_iter()
+                    .find(|force| force.as_str() == value)
+            },
+        )?;
         let scope = one_of(
             "scope",
             &self.scope,
             "workspace, repository, or organization",
             SteeringScope::parse,
         )?;
-        let status = one_of("status", &self.status, "active or archived", |value| {
-            match value {
+        let status = one_of(
+            "status",
+            &self.status,
+            "active or archived",
+            |value| match value {
                 "active" => Some(RecordStatus::Active),
                 "archived" => Some(RecordStatus::Archived),
                 _ => None,
-            }
-        })?;
-        let origin = one_of("origin", &self.origin, "user or inferred", |value| {
-            match value {
+            },
+        )?;
+        let origin = one_of(
+            "origin",
+            &self.origin,
+            "user or inferred",
+            |value| match value {
                 "user" => Some(Origin::User),
                 "inferred" => Some(Origin::Inferred),
                 _ => None,
-            }
-        })?;
+            },
+        )?;
         let effect = self
             .effect
             .as_deref()

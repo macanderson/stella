@@ -786,7 +786,11 @@ fn a_workspace_steering_repo_root_yields_its_records() {
         files.steering.len(),
         1,
         "one record file, and nothing from steering/promotions: {:?}",
-        files.steering.iter().map(|file| &file.path).collect::<Vec<_>>()
+        files
+            .steering
+            .iter()
+            .map(|file| &file.path)
+            .collect::<Vec<_>>()
     );
     let registry = registry_with_cache(
         root.path(),
@@ -816,11 +820,7 @@ fn a_workspace_steering_repo_root_yields_its_records() {
         "and so is Oxagen's hash"
     );
     assert_eq!(entry.record.trust, Trust::Project);
-    assert!(
-        entry.disposition.is_selected(),
-        "{:?}",
-        entry.disposition
-    );
+    assert!(entry.disposition.is_selected(), "{:?}", entry.disposition);
     assert!(
         registry
             .render(Channel::Cached, None)
