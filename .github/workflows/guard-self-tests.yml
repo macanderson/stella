@@ -339,6 +339,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-codeql-canary.sh
 
+      - name: the scheduled-red reporter and its workflow list
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-scheduled-red.sh
+
       - name: the retired-hex ban in every notation, and the citation check
         if: ${{ !cancelled() }}
         run: ./scripts/test-tokens.sh
