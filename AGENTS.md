@@ -420,6 +420,21 @@ nothing. It fails open like its sibling. The run it starts carries the event
 was a push, so it cannot loop. `make dispatch-main-verification-test` covers
 it, the case where the tip already has a run included.
 
+**A red scheduled run opens an issue too.** A scheduled run has no pull
+request and no author. When one fails, it shows only in the Actions tab. The
+triage sweep failed on every run that way. `scheduled-red.yml` starts on
+`workflow_run` after each workflow with an `on: schedule` trigger. It acts
+only when that run's event was `schedule`. It runs `scripts/scheduled-red.sh`,
+which keeps one open issue per workflow, labelled `scheduled-red` and titled
+with the workflow's name. A second red run adds a comment, and the next green
+run closes the issue. A cancelled or skipped run changes nothing. The script
+fails open, with a `::warning::` line, when `gh` is missing, the tracker
+errors, or two issues match one workflow. `workflow_run` finds a workflow by
+its `name:` field, so `scripts/check-scheduled-red-coverage.sh` holds that
+list to the scheduled workflows, in both directions. `make scheduled-red-test`
+covers both scripts. `guard-self-tests.yml` runs it on every pull request, and
+it runs the coverage check on this tree.
+
 A seventh, `main-red-hold.yml`, is the canary's other half: the canary *detects*,
 and this is what consumes the detection at the point a merge is still a
 decision. It runs on `pull_request`. Each run asks the tracker whether a

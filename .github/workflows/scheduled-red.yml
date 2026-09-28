@@ -1,0 +1,80 @@
+name: scheduled-red
+
+# A scheduled run has no pull request and no author. When one fails, the only
+# trace is a red row in the Actions tab, and nobody reads that tab. The
+# triage sweep failed on every run that way, with no issue to say so.
+#
+# This workflow turns a red scheduled run into an issue.
+# `scripts/scheduled-red.sh` keeps one open issue per workflow, labelled
+# `scheduled-red` and titled with the workflow's name. A second red run adds
+# a comment. The next green scheduled run closes the issue. A cancelled or
+# skipped run changes nothing. The script fails open, with a `::warning::`
+# line, when it cannot ask the tracker or finds two issues for one workflow.
+#
+# ── The list below ───────────────────────────────────────────────────────────
+#
+# `workflow_run` matches each workflow by its `name:` field, not its file. So
+# the list holds every workflow with an `on: schedule` trigger, spelled as its
+# name. `scripts/check-scheduled-red-coverage.sh` fails when a scheduled
+# workflow is missing here, or when a name here has no scheduled workflow.
+# `scripts/test-scheduled-red.sh` runs that check on this tree, from
+# `guard-self-tests.yml`, on every pull request.
+#
+# ── The checkout ─────────────────────────────────────────────────────────────
+#
+# A `workflow_run` job holds this repository's token whatever run started it.
+# So the checkout takes no `ref:` and gets the default branch, which branch
+# protection vouches for. It never runs code from the triggering run's head.
+# `scripts/check-untrusted-checkout.sh` holds that rule for every such job.
+
+on:
+  workflow_run:
+    workflows:
+      - CodeQL
+      - live-smoke
+      - main-canary
+      - msrv
+      - nightly-bench
+      - release-reconcile
+      - scorecard
+      - Scheduled triage
+    types: [completed]
+
+permissions:
+  contents: read
+
+# One writer per workflow at a time, so two runs that finish close together
+# cannot both open an issue.
+concurrency:
+  group: scheduled-red-${{ github.event.workflow_run.name }}
+  cancel-in-progress: false
+
+jobs:
+  report:
+    name: report a scheduled run
+    # A push, pull request or manual run has a person watching it. Only a
+    # scheduled run is reported here.
+    if: github.event.workflow_run.event == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # To open, comment on and close the issue, and to create its label on
+      # first use.
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          sparse-checkout: scripts
+          persist-credentials: false
+
+      # The run's fields go in through env, never into the script text. A
+      # workflow name spliced into `run:` would be shell the name could shape.
+      - name: Open, update or close the scheduled-red issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SCHEDULED_RED_WORKFLOW: ${{ github.event.workflow_run.name }}
+          SCHEDULED_RED_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          SCHEDULED_RED_RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: ./scripts/scheduled-red.sh

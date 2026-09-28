@@ -1170,6 +1170,19 @@ codeql-canary-test: ## Test the CodeQL canary, announcing included (hermetic; no
 anthropic-refusal-test: ## Test the triage sweep's Anthropic refusal report (hermetic; not part of `gate`)
 	./scripts/test-anthropic-refusal.sh
 
+# One issue per red scheduled workflow. scheduled-red.yml runs the reporter
+# after every scheduled run, with that run's conclusion. The coverage check
+# holds its workflow_run list to the workflows that run on a schedule. It is
+# not a gate step: test-scheduled-red.sh runs it on this tree, from
+# guard-self-tests.yml, on every pull request.
+.PHONY: scheduled-red-coverage
+scheduled-red-coverage: ## Assert scheduled-red.yml listens to every scheduled workflow, and only those
+	@./scripts/check-scheduled-red-coverage.sh
+
+.PHONY: scheduled-red-test
+scheduled-red-test: ## Test the scheduled-run reporter and its coverage check (hermetic; not part of `gate`)
+	./scripts/test-scheduled-red.sh
+
 .PHONY: check
 check: $(CHECK_STEPS) ## Reduced pre-push gate: every guard + lock resolve + fmt + clippy (default and schema features), no rustdoc and no tests
 	@./scripts/check-hooks-installed.sh
