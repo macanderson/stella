@@ -46,7 +46,7 @@ export const DECK_SHOTS = {
     height: 520,
     alt: "A turn in the deck's session view: a skill injected, a folded read, an expanded edit diff, and a closing receipt carrying the turn's cost, token count, deterministic share, and test result.",
     caption:
-      "The turn is the unit of the transcript. It opens with a rule, folds the reads that changed nothing, keeps the edit expanded, and closes on a receipt — cost, tokens, tests, and the share of the work that never reached a model.",
+      "The turn is the unit of the transcript. It opens with a rule, folds the reads that changed nothing, keeps the edit expanded, and closes on a receipt: cost, tokens, tests, and the share of the work that never reached a model.",
   },
   events: {
     file: "02-event-vocabulary",
@@ -102,7 +102,7 @@ export const DECK_SHOTS = {
     height: 584,
     alt: "The deck's command palette: a fuzzy-matched list of commands with the matched characters highlighted, a section of commands relevant to what is running now, and a recent section.",
     caption:
-      "Fuzzy match over every command, with a section for the ones that make sense right now — while a verify turn is running, the gate commands come first.",
+      "Fuzzy match over every command, with a section for the ones that make sense right now. While a verify turn is running, the gate commands come first.",
   },
   gate: {
     file: "09-gate-failure",
@@ -110,7 +110,7 @@ export const DECK_SHOTS = {
     height: 520,
     alt: "A gate board with four gates green and an end-to-end smoke test red, the failing case and its assertion quoted underneath, and a proposed plan revision awaiting approval while the merge stays blocked.",
     caption:
-      "A red gate is not something the model can argue with. It answers with a proposed plan revision naming the cause, and nothing runs until you approve it — while the merge stays blocked and the verify work keeps costing $0.00.",
+      "A red gate is not something the model can argue with. It answers with a proposed plan revision naming the cause, and nothing runs until you approve it. The merge stays blocked meanwhile, and the verify work keeps costing $0.00.",
   },
   "start-work": {
     file: "10-start-work",

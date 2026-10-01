@@ -19,7 +19,7 @@ import { REPO_URL, SITE_URL } from "@/lib/site";
 // part that got cut was the proposition. It also disagreed with the Open Graph
 // and Twitter titles right below it, which are NOT template-expanded — the tab
 // said one thing and every shared card said another.
-const HOME_TITLE = "stella — the terminal agent that proves its work finished";
+const HOME_TITLE = "stella: the terminal agent that proves its work finished";
 // "ends a run on evidence" is required and not "a second
 // model confirms it". That was the old wording, and it described a rung that
 // does not exist: there is no model verdict, and no arm that
@@ -29,7 +29,7 @@ const HOME_TITLE = "stella — the terminal agent that proves its work finished"
 // `stella goal` does still end on a verifier model's judgement, but it is one
 // mode, and the front page was generalising it to the whole product.
 const HOME_DESCRIPTION =
-  "A terminal coding agent that runs on the API keys you already have, speaks ten providers' own protocols, and ends a run on evidence — a test that failed before the change and passes after — rather than on a model's say-so.";
+  "A terminal coding agent that runs on the API keys you already have, speaks ten providers' own protocols, and ends a run on evidence, a test that failed before the change and passes after, rather than on a model's say-so.";
 
 export const metadata: Metadata = {
   title: { absolute: HOME_TITLE },
@@ -94,7 +94,7 @@ const DOORS = [
   {
     href: "/docs/agent-modes",
     title: "Pick a mode",
-    body: "chat, run, goal, monitor, or fleet — and which of them fits the task in front of you.",
+    body: "chat, run, goal, monitor, or fleet, and which of them fits the task in front of you.",
   },
   {
     href: "/docs/agent-tools/permissions",
@@ -104,7 +104,7 @@ const DOORS = [
   {
     href: "/docs/plugins",
     title: "Wrap a run in evidence",
-    body: "Install a verification plugin and a turn reports what proves it — and where a run can stop.",
+    body: "Install a verification plugin and a turn reports what proves it, and where a run can stop.",
   },
 ];
 
@@ -129,8 +129,8 @@ export default function HomePage() {
           </h1>
           <p className="lp-lead mt-6">
             It runs on the API keys you already have, speaks ten providers&apos;
-            own protocols, and ends a run on evidence — a test that failed
-            before the change and passes after — rather than on a model&apos;s
+            own protocols, and ends a run on evidence, a test that failed
+            before the change and passes after, rather than on a model&apos;s
             say-so. Nothing is proxied through a hosted service, and telemetry
             never leaves your disk.
           </p>
@@ -175,13 +175,13 @@ export default function HomePage() {
                 className="underline underline-offset-4 hover:text-fd-foreground"
               >
                 @macanderson
-              </a>{" "}
-              —{" "}
+              </a>
+              .{" "}
               <a
                 href="https://github.com/macanderson/stella"
                 className="underline underline-offset-4 hover:text-fd-foreground"
               >
-                star <span className="lp-brand-face">stella</span> on GitHub
+                Star <span className="lp-brand-face">stella</span> on GitHub
               </a>{" "}
               and follow for{" "}
               <a
@@ -207,7 +207,7 @@ export default function HomePage() {
             proof. The rows and the metering are
             <span className="lp-brand-face"> stella</span>&apos;s own; the
             figures illustrate a run rather than a benchmark. Verification is
-            opt-in —{" "}
+            opt-in:{" "}
             <Link
               href="/docs/agent-modes"
               className="underline underline-offset-4 hover:text-fd-foreground"
@@ -228,7 +228,7 @@ export default function HomePage() {
             what it does before it starts, and what it does when a check goes
             red. Running <span className="lp-brand-face">stella</span> with no
             subcommand opens the interactive deck, where both of them look
-            like this —{" "}
+            like this. The docs list{" "}
             <Link
               href="/docs/agent-modes#interactive-the-command-deck"
               className="underline underline-offset-4"
@@ -337,7 +337,7 @@ export default function HomePage() {
           <span className="inline-flex items-center gap-2">
             <Mark className="h-4 w-auto" />
             <span className="lp-brand-face text-fd-foreground">stella</span>
-            <span>— AGPL 3.0</span>
+            <span>is licensed under AGPL 3.0</span>
           </span>
           <nav aria-label="Footer" className="flex items-center gap-5">
             <Link href="/docs" className="hover:text-fd-foreground">

@@ -53,7 +53,7 @@ function Ok({ children }: { children: string }) {
  */
 export function HeroTerminal() {
   return (
-    <Terminal title="zsh — stella">
+    <Terminal title="stella (zsh)">
       <Prompt>export ANTHROPIC_API_KEY=…</Prompt>
       <Prompt>stella run &quot;fix the failing test&quot;</Prompt>
       <Dim>{"  ▶ read_file(path=src/parser.rs)\n"}</Dim>

@@ -101,6 +101,11 @@
   --color-fd-secondary: var(--stella-paper-row);
   --color-fd-secondary-foreground: var(--stella-fg);
   --color-fd-ring: var(--stella-accent-text);
+  /* Callout states. Fumadocs' own warning is an amber that sits in the
+   * gold's hue band, so the site takes Stella's status tokens instead. */
+  --color-fd-warning: var(--stella-warning-ink);
+  --color-fd-error: var(--stella-danger-ink);
+  --color-fd-success: var(--stella-success-ink);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -132,6 +137,9 @@
   --color-fd-secondary: var(--stella-canvas-row);
   --color-fd-secondary-foreground: var(--stella-fg);
   --color-fd-ring: var(--stella-signal);
+  --color-fd-warning: var(--stella-warning);
+  --color-fd-error: var(--stella-danger);
+  --color-fd-success: var(--stella-success);
 }
 
 /* Selection swaps worlds: highlighting in light mode paints the dark mode
