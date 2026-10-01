@@ -62,12 +62,16 @@ pub(super) const SIZE_SCALE: [(&str, &str, &str); 5] = [
 
 /// The family every size label belongs to.
 ///
-/// A size label is also the durable mark that this loop placed the issue.
-/// The guard strips only priorities, so a size with no rung is what lets
-/// [`assessment_stripped`] tell "placed, then stripped by the triage
-/// guard" from "never placed at all". [`labels::in_family`] reads an old
-/// `size/M` as `SIZE:MEDIUM`, so a placement from before the rename counts.
+/// [`labels::in_family`] reads an old `size/M` as `SIZE:MEDIUM`, so a
+/// placement from before the rename counts.
 pub(super) const SIZE_FAMILY: &str = "SIZE:";
+
+/// The label that holds an issue in the triage queue.
+///
+/// `triage-guard.yml` adds it again after it strips a priority, and the loop
+/// never writes it as a kind: it marks an issue nobody has judged, and the
+/// loop knows what it judged.
+pub(super) const QUEUE_LABEL: &str = "TRIAGE";
 
 /// The label meaning an assessed issue has no open blockers left.
 ///
@@ -154,8 +158,8 @@ const MARKER: &str = "ASSESSMENT:";
 #[must_use]
 pub(super) fn prompt(issue: &Unassessed, body: &str, policy: &TriagePolicy) -> String {
     let rungs = policy.ladder.rungs.join(", ");
-    let defects = policy.defect_kinds.join(", ");
-    let excluded = policy.excluded_kinds.join(", ");
+    let defects = answerable(&policy.defect_kinds).join(", ");
+    let excluded = answerable(&policy.excluded_kinds).join(", ");
     let sizes = SIZE_SCALE.map(|(answer, ..)| answer).join(", ");
     let bands = SIZE_SCALE
         .map(|(answer, _, band)| format!("{answer} is {}", band.to_lowercase()))
@@ -288,9 +292,26 @@ pub(super) fn parse(output: &str, policy: &TriagePolicy) -> Option<Assessment> {
     })
 }
 
-/// The policy's spelling of `answer`, if the policy declares that label.
+/// The policy's spelling of `answer`, if the policy declares that label and
+/// a turn may answer with it.
 fn declared(words: &[String], answer: &str) -> Option<String> {
-    words.iter().find(|w| labels::same(w, answer)).cloned()
+    answerable(words)
+        .into_iter()
+        .find(|w| labels::same(w, answer))
+        .map(str::to_owned)
+}
+
+/// The kind words a turn may answer with: the list, less [`QUEUE_LABEL`].
+///
+/// The default policy counts an issue in the queue as a defect, so the queue
+/// label sits in `defect_kinds`. Offered as an answer, it let a turn place an
+/// issue as `TRIAGE`, which writes the label the loop must never apply.
+fn answerable(words: &[String]) -> Vec<&str> {
+    words
+        .iter()
+        .map(String::as_str)
+        .filter(|w| !labels::same(w, QUEUE_LABEL))
+        .collect()
 }
 
 /// Write an assessment onto the issue.
@@ -340,11 +361,12 @@ pub(super) fn apply(
 /// disallowed login would re-triage it, get stripped again, and pay for
 /// the same turn forever.
 ///
-/// The size label is the tell. The guard strips only priorities, and every
-/// placement writes both. So "sized with no rung" can only mean the
-/// placement landed and its priority was removed. The caller escalates once
-/// instead of re-asking, and the escalation label keeps the issue out of
-/// the queue.
+/// The shape is the tell: a size, no rung, and [`QUEUE_LABEL`]. Every
+/// placement writes a size and a rung. The guard strips only the rung, and
+/// puts the queue label back. A person who takes a rung off to re-judge an
+/// issue leaves no queue label, so that issue is asked about again rather
+/// than blamed on the guard. The caller escalates once instead of
+/// re-asking, and the escalation label keeps the issue out of the queue.
 #[must_use]
 pub(super) fn assessment_stripped(
     issue: &stella_protocol::issue::Issue,
@@ -355,7 +377,7 @@ pub(super) fn assessment_stripped(
         .iter()
         .any(|label| labels::in_family(&label.name, SIZE_FAMILY));
     let runged = policy.ladder.rungs.iter().any(|rung| carries(issue, rung));
-    sized && !runged
+    sized && !runged && carries(issue, QUEUE_LABEL)
 }
 
 /// Whether `issue` carries `name`, in any spelling.
@@ -548,6 +570,19 @@ mod tests {
         );
     }
 
+    /// The queue label is never a kind answer. The default policy counts a
+    /// queued issue as a defect, and offering `TRIAGE` let a turn write the
+    /// one label the loop must never apply.
+    #[test]
+    fn the_queue_label_is_not_a_kind_a_turn_may_answer() {
+        assert_eq!(
+            parse("ASSESSMENT: kind=TRIAGE; priority=P1; size=S", &policy()),
+            None
+        );
+        let text = prompt(&unassessed(), "it broke", &policy());
+        assert!(text.contains("kind=<one of: KIND:BUG>"), "{text}");
+    }
+
     /// An invented label is not an answer.
     ///
     /// The witness for this module's strictness. Writing `urgent` when the
@@ -612,13 +647,14 @@ mod tests {
         assert!(!text.contains("P0"), "a built-in rung must not leak in");
     }
 
-    /// An excluded kind is a complete answer on its own.
+    /// An excluded kind is a complete answer on its own. GitHub's stock
+    /// `enhancement` is a feature request, and is written as one.
     #[test]
     fn an_exclusion_needs_no_rung() {
         assert_eq!(
             parse("ASSESSMENT: exclude=enhancement", &policy()),
             Some(Assessment::Exclude {
-                kind: "enhancement".into()
+                kind: "KIND:FEATURE".into()
             })
         );
     }
@@ -803,8 +839,12 @@ mod tests {
         );
         // The same shape under the new names. A `size/` prefix test missed
         // it, and the loop re-triaged a stripped issue on every cycle.
-        let renamed = issue("45", IssueState::Open, &["KIND:BUG", "SIZE:MEDIUM"], "");
+        let renamed = issue("45", IssueState::Open, &["SIZE:MEDIUM", "TRIAGE"], "");
         assert!(assessment_stripped(&renamed, &policy), "SIZE: is a size");
+        // A person took the rung off to re-judge it: no queue label, so it is
+        // a question again rather than a strip.
+        let rejudged = issue("46", IssueState::Open, &["KIND:BUG", "SIZE:MEDIUM"], "");
+        assert!(!assessment_stripped(&rejudged, &policy), "no queue label");
         assert!(
             !assessment_stripped(
                 &issue("43", IssueState::Open, &["bug", "size/M", "P1"], ""),

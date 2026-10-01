@@ -769,7 +769,7 @@ different ladders.
   <OptionCard name="self_driving.triage.defect_kinds" defaultValue='["KIND:BUG", "TRIAGE"]'>
     Labels meaning "this loop works this".
   </OptionCard>
-  <OptionCard name="self_driving.triage.excluded_kinds" defaultValue='["KIND:FEATURE", "KIND:IMPROVEMENT", "KIND:DOCUMENTATION", "QUESTION", "enhancement", "EPIC"]'>
+  <OptionCard name="self_driving.triage.excluded_kinds" defaultValue='["KIND:FEATURE", "KIND:IMPROVEMENT", "KIND:DOCUMENTATION", "QUESTION", "EPIC"]'>
     Labels meaning "this loop does not work this". Named explicitly rather than inferred
     from "not a defect kind": an issue labelled `enhancement` has been judged and
     excluded, while an issue labelled only `P0` has been judged on one axis and not the
@@ -798,7 +798,9 @@ adding to it — a partial override would leave you unable to *remove* a built-i
 disagree with.
 
 A label matches in any case. The old name of a renamed label matches too, so an issue
-labelled `bug` counts as `KIND:BUG`. The loop writes only the names in these lists.
+labelled `bug` counts as `KIND:BUG`, and GitHub's stock `enhancement` counts as
+`KIND:FEATURE`. Triage answers a kind only from these lists. When the loop writes a label
+your repository holds under an old name, it writes the name your repository holds.
 
 ```toml title="stella.toml"
 [self_driving.triage]

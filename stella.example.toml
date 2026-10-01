@@ -828,9 +828,10 @@ park_after = 3
 # on GitHub's common conventions.
 #
 # A name matches in any case, and an old name such as `bug` matches `KIND:BUG`.
+# GitHub's stock `enhancement` matches `KIND:FEATURE`.
 priorities = ["P0", "P1", "P2", "P3", "P4"]     # most urgent first
 defect_kinds = ["KIND:BUG", "TRIAGE"]           # "this loop works this"
-excluded_kinds = ["KIND:FEATURE", "KIND:IMPROVEMENT", "KIND:DOCUMENTATION", "EPIC", "QUESTION", "enhancement"]
+excluded_kinds = ["KIND:FEATURE", "KIND:IMPROVEMENT", "KIND:DOCUMENTATION", "QUESTION", "EPIC"]
 
 
 # -----------------------------------------------------------------------------

@@ -9,17 +9,19 @@
 //!
 //! [`RENAMED`] lets the old name of a renamed label match its new name. It
 //! holds the move this repository made to the uppercase scheme (ADR 0046),
-//! and no more. An operator's own words go in `[self_driving.triage]`.
+//! plus GitHub's stock `enhancement`. An operator's own words go in
+//! `[self_driving.triage]`.
 
 /// Old label names and the names that took their place, old first.
 ///
 /// Each pair changes more than case. A pair that only changed case would
 /// add nothing, since [`same`] does not look at case. GitHub gives each new
-/// repository `bug` and `documentation` too, so a repository that kept its
-/// stock labels still fits the default policy.
+/// repository `bug`, `documentation`, and `enhancement` too, so a repository
+/// that kept its stock labels still fits the default policy.
 pub const RENAMED: &[(&str, &str)] = &[
     ("bug", "KIND:BUG"),
     ("feature", "KIND:FEATURE"),
+    ("enhancement", "KIND:FEATURE"),
     ("chore", "KIND:CHORE"),
     ("tech-debt", "KIND:CHORE"),
     ("documentation", "KIND:DOCUMENTATION"),

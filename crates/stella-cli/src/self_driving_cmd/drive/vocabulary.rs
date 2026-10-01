@@ -32,8 +32,40 @@ pub(super) const ALARM: &str = "D5584D";
 /// The color of a label automation applies to its own pull requests.
 pub(super) const AUTOMATION: &str = "71717A";
 
-/// The description of a defect kind an operator set.
-const OPERATOR_KIND: &str = "Work the self-driving loop may take.";
+/// The description of a kind label an operator set.
+const OPERATOR_KIND: &str = "A kind the self-driving loop's triage may write.";
+
+/// The default kinds, each with its color and the text the label manifest
+/// gives it.
+const KNOWN_KINDS: &[(&str, &str, &str)] = &[
+    (
+        "TRIAGE",
+        STATUS,
+        "Untriaged: the only label a creator applies. Triage replaces it",
+    ),
+    ("KIND:BUG", KIND, "Something that exists behaves wrongly"),
+    (
+        "KIND:FEATURE",
+        KIND,
+        "A new capability a person can use, where none of it exists yet",
+    ),
+    (
+        "KIND:IMPROVEMENT",
+        KIND,
+        "Makes an existing capability better: polish, speed, a missing option, a partly built gap",
+    ),
+    (
+        "KIND:DOCUMENTATION",
+        KIND,
+        "Docs, READMEs, ADRs, specs, or help text as the main deliverable",
+    ),
+    (
+        "EPIC",
+        STATUS,
+        "A container for a large effort that spans several issues",
+    ),
+    ("QUESTION", STATUS, "Further information is requested"),
+];
 
 /// Put each label triage may write on the tracker, if it can.
 ///
@@ -44,7 +76,9 @@ pub(super) fn install(policy: &TriagePolicy) {
         let description = format!("Priority {index}, installed by the self-driving loop.");
         let _ = ensure_label(rung, PRIORITY, &description);
     }
-    for kind in &policy.defect_kinds {
+    // Both lists: a triage turn may answer with an excluded kind, and that
+    // answer is written as a label too.
+    for kind in policy.defect_kinds.iter().chain(&policy.excluded_kinds) {
         let (color, description) = kind_label(kind);
         let _ = ensure_label(kind, color, description);
     }
@@ -63,21 +97,15 @@ pub(super) fn install(policy: &TriagePolicy) {
     );
 }
 
-/// The color and description a defect kind is created with.
+/// The color and description a kind label is created with.
 ///
-/// The two defaults carry the manifest's text. A kind an operator set gets
+/// A default kind carries the manifest's text. A kind an operator set gets
 /// the kind color and a plain line.
 fn kind_label(kind: &str) -> (&'static str, &'static str) {
-    if labels::same(kind, "TRIAGE") {
-        (
-            STATUS,
-            "Untriaged: the only label a creator applies. Triage replaces it",
-        )
-    } else if labels::same(kind, "KIND:BUG") {
-        (KIND, "Something that exists behaves wrongly")
-    } else {
-        (KIND, OPERATOR_KIND)
-    }
+    KNOWN_KINDS
+        .iter()
+        .find(|(name, ..)| labels::same(name, kind))
+        .map_or((KIND, OPERATOR_KIND), |&(_, color, text)| (color, text))
 }
 
 #[cfg(test)]
@@ -87,7 +115,8 @@ mod tests {
     /// Every default kind gets the manifest's text, in its own family's color.
     #[test]
     fn the_default_kinds_carry_the_manifest_text() {
-        for kind in &TriagePolicy::default().defect_kinds {
+        let policy = TriagePolicy::default();
+        for kind in policy.defect_kinds.iter().chain(&policy.excluded_kinds) {
             let (_, description) = kind_label(kind);
             assert_ne!(description, OPERATOR_KIND, "{kind}");
         }
@@ -98,9 +127,9 @@ mod tests {
     /// GitHub turns down a label whose text is longer than 100 characters.
     #[test]
     fn every_description_fits_the_trackers_limit() {
-        let kinds = ["TRIAGE", "KIND:BUG", "other"].map(|kind| kind_label(kind).1);
+        let kinds = KNOWN_KINDS.iter().map(|&(_, _, text)| text);
         let bands = SIZE_SCALE.map(|(_, _, band)| band);
-        for description in kinds.iter().chain(&bands) {
+        for description in kinds.chain(bands).chain([OPERATOR_KIND]) {
             assert!(description.len() <= 100, "{description}");
         }
     }

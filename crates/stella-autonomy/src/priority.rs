@@ -233,10 +233,6 @@ impl Default for TriagePolicy {
                 "KIND:IMPROVEMENT",
                 "KIND:DOCUMENTATION",
                 "QUESTION",
-                // GitHub's stock word for a feature request. The scheme
-                // has no such label, and a repository that never adopted
-                // the scheme still carries it.
-                "enhancement",
                 // A tracking issue — a checklist of other issues — is
                 // bookkeeping, not a defect the loop can fix. See
                 // `crate::ready::DEFAULT_CONTAINER_LABELS`, the same

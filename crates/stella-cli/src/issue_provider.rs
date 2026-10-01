@@ -42,6 +42,7 @@ use std::path::Path;
 use std::process::Command;
 
 use async_trait::async_trait;
+use stella_autonomy::labels::same as same_label;
 use stella_protocol::issue::{
     CommentId, Issue, IssueClass, IssueClosure, IssueDraft, IssueError, IssueKey, IssueLabel,
     IssueProvider, IssueState, RESOLUTION_COMPLETED, RESOLUTION_DUPLICATE, RESOLUTION_NOT_PLANNED,
@@ -279,9 +280,10 @@ impl IssueProvider for GhIssueProvider {
             "--body".into(),
             draft.body.clone(),
         ];
-        for label in &draft.labels {
+        let wanted: Vec<String> = draft.labels.iter().map(|l| l.name.clone()).collect();
+        for label in stored_spellings(&wanted) {
             args.push("--label".into());
-            args.push(label.name.clone());
+            args.push(label);
         }
         // Assigned in the create call rather than a follow-up `gh issue edit`:
         // one call cannot half-succeed, and a second one could leave the issue
@@ -368,13 +370,13 @@ impl IssueProvider for GhIssueProvider {
             return Ok(());
         }
         let mut args: Vec<String> = vec!["issue".into(), "edit".into(), key.as_str().to_owned()];
-        for label in add {
+        for label in stored_spellings(add) {
             args.push("--add-label".into());
-            args.push(label.clone());
+            args.push(label);
         }
-        for label in remove {
+        for label in stored_spellings(remove) {
             args.push("--remove-label".into());
-            args.push(label.clone());
+            args.push(label);
         }
         let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
         gh_json(&borrowed).map(|_| ())
@@ -533,11 +535,18 @@ impl IssueProvider for GhIssueProvider {
 /// not race each other into a failure, and `gh` reports the collision on
 /// stderr rather than distinguishing it in an exit code worth branching on.
 ///
-/// No `--force`. GitHub treats label names without regard to case, so a
-/// label the tracker carries in another case already exists, and its color
-/// and description stay as a person set them. `color` is six hex digits
-/// with no `#`.
+/// No `--force`, and no create at all when the repository already carries the
+/// label under any spelling [`same_label`] accepts. A repository that still
+/// stores `bug` gets no second `KIND:BUG` beside it: that pair would split its
+/// issues across two labels, and a later rename of `bug` would fail on the
+/// name already taken. The stored label keeps the color and description a
+/// person gave it. `color` is six hex digits with no `#`.
 pub(crate) fn ensure_label(name: &str, color: &str, description: &str) -> Result<(), IssueError> {
+    if let Ok(stored) = repository_labels()
+        && stored.iter().any(|label| same_label(label, name))
+    {
+        return Ok(());
+    }
     match gh_json(&[
         "label",
         "create",
@@ -551,6 +560,48 @@ pub(crate) fn ensure_label(name: &str, color: &str, description: &str) -> Result
         Err(IssueError::Failed { reason, .. }) if reason.contains("already exists") => Ok(()),
         Err(other) => Err(other),
     }
+}
+
+/// Every label name the repository carries, as it stores them.
+fn repository_labels() -> Result<Vec<String>, IssueError> {
+    let raw = gh_json(&["label", "list", "--limit", "1000", "--json", "name"])?;
+    serde_json::from_str::<Vec<GhLabel>>(&raw)
+        .map(|rows| rows.into_iter().map(|label| label.name).collect())
+        .map_err(|error| IssueError::Malformed {
+            provider: GITHUB.into(),
+            reason: error.to_string(),
+        })
+}
+
+/// The names to send for a label write, in the repository's own spelling.
+///
+/// The loop names labels in the uppercase scheme, and a repository may still
+/// store an older name, such as `bug` for `KIND:BUG`. GitHub matches a name
+/// in any case but knows no renames, so `--add-label KIND:BUG` fails where
+/// only `bug` exists. One read of the repository's labels settles it. An
+/// empty list costs no read, and a failed read sends the names as given.
+fn stored_spellings(names: &[String]) -> Vec<String> {
+    if names.is_empty() {
+        return Vec::new();
+    }
+    spell_as_stored(names, &repository_labels().unwrap_or_default())
+}
+
+/// Each name in `names` as `stored` spells it, or as given when `stored`
+/// lacks it. A name that differs only in case wins over an old name, so a
+/// repository that carries both `bug` and `KIND:BUG` gets `KIND:BUG`.
+fn spell_as_stored(names: &[String], stored: &[String]) -> Vec<String> {
+    names
+        .iter()
+        .map(|name| {
+            stored
+                .iter()
+                .find(|label| label.eq_ignore_ascii_case(name))
+                .or_else(|| stored.iter().find(|label| same_label(label, name)))
+                .unwrap_or(name)
+                .clone()
+        })
+        .collect()
 }
 
 /// Map stella's canonical resolution onto the reason `gh issue close` accepts.
@@ -696,6 +747,19 @@ pub(crate) fn to_queue_issue(issue: &Issue) -> stella_autonomy::QueueIssue {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **The write witness.** A repository that still stores `bug` gets
+    /// `bug` written when the loop asks for `KIND:BUG`. The write lands,
+    /// and no second label is made beside the first.
+    #[test]
+    fn a_label_write_uses_the_repositorys_own_spelling() {
+        let stored = ["bug", "P1", "KIND:CHORE", "chore"].map(str::to_owned);
+        let wanted = ["KIND:BUG", "p1", "KIND:CHORE", "SIZE:MEDIUM"].map(str::to_owned);
+        assert_eq!(
+            spell_as_stored(&wanted, &stored),
+            ["bug", "P1", "KIND:CHORE", "SIZE:MEDIUM"]
+        );
+    }
 
     fn gh_payload() -> &'static str {
         r#"[
