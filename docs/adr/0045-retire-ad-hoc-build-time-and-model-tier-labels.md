@@ -10,6 +10,7 @@ status: implemented
 - Date: 2026-09-27
 - Deciders: an agent under SCR-002, awaiting the repository owner's review
 - Decides: `#5631`, `#5669`
+- Amended by: ADR 0046 (the tier and size label names)
 - Not part of the Phase 0 series.
 
 ## Context

@@ -11,7 +11,7 @@ enforcement: "In oxagen, `migration-label.yml` adds the label from the diff. It 
 ## Directive
 
 A pull request that changes a schema gets the label
-`migration-required`.
+`MIGRATION-REQUIRED`.
 
 The change is not deployed until the migration has run in production.
 
@@ -114,7 +114,7 @@ A label makes that a query.
 ## How an agent complies
 
 - Check whether your branch changes a schema before you open the pull request.
-- If it does, the pull request needs the label `migration-required`.
+- If it does, the pull request needs the label `MIGRATION-REQUIRED`.
 - Where no bot adds it, add it yourself.
 - Say which store changed.
 - Say what has to be applied.

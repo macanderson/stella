@@ -299,28 +299,40 @@ Mac set this on 2026-09-26 for every repository. The `agent-monitored-pr` label 
   tracker bookkeeping is not an issue — decide it in the PR, or drop it. The
   full policy is AGENTS.md § "Fix over file". Never end a turn with
   untracked half-finished work.
-- **An issue you file carries the `triage` label and nothing else.** SCR-004
-  and SCR-005 (AGENTS.md's standing-decisions block) hold sizing and priority
-  for a dedicated triage agent, and `triage-guard` strips a creator-applied
-  priority — so a `P2` you add is both a rule break and a label that does not
-  survive. The taxonomy below is what **triage** applies; read it to
-  understand what the labels on an issue mean, not as a list to add yourself.
-- **The taxonomy, in this order.** First a priority (SCR-005's Directive names
-  the levels, and is the only place that does), then the `area:*` tag — several when the work genuinely spans areas — then
-  exactly one `use-model:*` tag (`cheap` / `balanced` / `pro` / `ultra`)
-  naming the cheapest model class that can do the work without sacrificing
-  quality, then the `pain:*` tags for the pains the issue relieves
-  (`pain:speed`, `pain:cost`, `pain:accuracy`, `pain:context`,
-  `pain:auditability`, `pain:over-engineering`, `pain:complex-prose`,
-  `pain:tech-debt`, `pain:infra-cost`, `pain:vendor-lock`,
-  `pain:user-experience`, `pain:brand-consistency`, `pain:maintainability`,
-  `pain:test-coverage`, `pain:ci-time`, `pain:system-compatibility`). The
-  order is a habit for the reader: the list scans as urgency → where → who
-  runs it → why it matters. Pick `use-model` by the hardest step in the
-  issue, not the average: templated or mechanical work is `cheap`, routine
-  implementation against a clear spec is `balanced`, cross-crate design or
-  subtle correctness rules are `pro`, and architecture-critical or genuinely
-  novel design is `ultra`.
+- **An issue you file carries the `TRIAGE` label and nothing else.** SCR-004
+  and SCR-005 (AGENTS.md's standing-decisions block) give every other label
+  to a dedicated triage agent. `triage-guard` strips a priority a creator
+  adds, so a `P2` you add breaks the rule and does not survive. You may write
+  the title in the format below. The labels below are what **triage**
+  applies. Read them to know what an issue's labels mean. Do not add them
+  yourself.
+- **The title and the labels.** A triaged issue's title reads
+  `<Priority> <Tier> <Size> <Kind> (<Area>): <Statement>`, for example
+  `P1 T3 XS Bug (CLI): The resume picker drops the newest thread`. Triage
+  applies exactly one label from each of five families, and any number of
+  pain labels:
+  - **Priority:** one `P` label. SCR-005's Directive names the levels, and
+    is the only place that does.
+  - **Tier:** one `MODEL:` label, picked by the hardest step in the issue,
+    not the average. `MODEL:T1` (Haiku) is templated or mechanical work.
+    `MODEL:T2` (Sonnet) is routine work against a clear spec. `MODEL:T3`
+    (Opus) is cross-crate design or subtle correctness rules. `MODEL:T4`
+    (Fable) is architecture-critical or novel design.
+  - **Size:** one `SIZE:` label, by agent minutes to a merge-ready pull
+    request. `SIZE:EXTRA-SMALL` (`XS`) is 30 or fewer. `SIZE:SMALL` (`S`) is
+    31 to 90. `SIZE:MEDIUM` (`M`) is 91 to 240. `SIZE:LARGE` (`L`) is 241 to
+    480. `SIZE:EXTRA-LARGE` (`XL`) is more than 480.
+  - **Kind:** one of `KIND:BUG`, `KIND:FEATURE`, `KIND:IMPROVEMENT`,
+    `KIND:CHORE`, `KIND:DOCUMENTATION`, or `KIND:DEVOPS`. `EPIC` marks a
+    container issue and is not a kind.
+  - **Area:** one `AREA:` label, named for the crate or the domain, such as
+    `AREA:CLI` or `AREA:CGP`.
+  - **Pain:** the pains the issue relieves (`PAIN:SPEED`, `PAIN:COST`,
+    `PAIN:ACCURACY`, `PAIN:CONTEXT`, `PAIN:AUDITABILITY`,
+    `PAIN:OVER-ENGINEERING`, `PAIN:COMPLEX-PROSE`, `PAIN:TECH-DEBT`,
+    `PAIN:INFRA-COST`, `PAIN:VENDOR-LOCK`, `PAIN:USER-EXPERIENCE`,
+    `PAIN:BRAND-CONSISTENCY`, `PAIN:MAINTAINABILITY`, `PAIN:TEST-COVERAGE`,
+    `PAIN:CI-TIME`, `PAIN:SYSTEM-COMPATIBILITY`).
 - **Every Sourcery ❌ gets a fix or an answer before the PR is mergeable.**
   Sourcery reviews every PR, and when the PR links issues it posts an
   "Assessment against linked issues" table as a `sourcery-ai` comment: one

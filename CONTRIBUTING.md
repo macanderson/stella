@@ -28,12 +28,12 @@ Every one of these is genuinely valued — pick the one that fits your energy:
 
 | Contribution | Where to start | Effort |
 |---|---|---|
-| 🐛 **A bug report with a repro** | [Bug report form](https://github.com/macanderson/stella/issues/new?template=bug_report.yml) | 10 minutes |
+| 🐛 **A bug report with a repro** | [Request form](https://github.com/macanderson/stella/issues/new?template=request.yml) | 10 minutes |
 | 🧭 **Docs & examples** — fix a lie in the docs before it fools someone else | `website/content/docs/**.mdx` for anything a *user* reads, `docs/**` for contributor-facing specs, plus `README.md`, `--help` text, doc comments | Small |
 | 🔌 **A new provider adapter** — Stella is BYOK; every model provider we speak makes it more useful | `crates/stella-model/src/` — copy the shape of an existing adapter | Medium |
 | 🛠 **A new built-in tool** | `crates/stella-tools/src/` — implement the tool trait, register it in `ToolRegistry`, then declare one line in [`catalog.rs`](crates/stella-tools/src/catalog.rs) | Medium |
 | 🌐 **A Context Graph Protocol (CGP) provider** — implement it in your language and prove it green | [macanderson/context-graph-protocol](https://github.com/macanderson/context-graph-protocol) — its own repo, no Stella code required | Medium |
-| 🏗 **Core engine work** | `good first issue` / `help wanted` labels | Varies |
+| 🏗 **Core engine work** | `GOOD FIRST ISSUE` / `HELP WANTED` labels | Varies |
 
 If you're not sure where something fits, open an issue first — a ten-line
 sketch of the idea saves a thousand-line PR that can't merge.
@@ -393,13 +393,16 @@ normal part of the loop here, not a rejection.
 
 ## Issues and labels
 
-- **[Bug report](https://github.com/macanderson/stella/issues/new?template=bug_report.yml)** — include `stella --version`, OS, provider/model, and a repro.
-- **[Feature request](https://github.com/macanderson/stella/issues/new?template=feature_request.yml)** — say what you're trying to do, not just what to add.
+- **[Request](https://github.com/macanderson/stella/issues/new?template=request.yml)**: one form for a bug, a feature, or a question. For a bug, include `stella --version`, OS, provider/model, and a repro. For a feature, say what you're trying to do, not just what to add.
+- **[Task](https://github.com/macanderson/stella/issues/new?template=task.yml)**: a unit of work with a definition of done the closer checks line by line.
 
-Labels you'll see: `area:*` routes an issue to a crate; a `P` label is priority,
-and [SCR-005](docs/scr/SCR-005-triage-separation-of-duties.md) names the levels;
-`good first issue` and `help wanted` mean what they say; `needs-witness` means
-a PR is waiting on its witness test.
+Both forms apply the `TRIAGE` label, and triage replaces it. Labels you'll
+see after that:
+
+- `AREA:*` routes an issue to a crate.
+- A `P` label is priority. [SCR-005](docs/scr/SCR-005-triage-separation-of-duties.md) names the levels.
+- `GOOD FIRST ISSUE` and `HELP WANTED` mean what they say.
+- `NEEDS-WITNESS` means a PR is waiting on its witness test.
 
 ## Security
 

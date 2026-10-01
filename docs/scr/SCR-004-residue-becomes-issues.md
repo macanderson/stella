@@ -41,7 +41,7 @@ settle a finding is the pull request that found it.
   task template (`.github/ISSUE_TEMPLATE/task.yml`): the problem, the file
   paths, how to reproduce, the constraints you found, which of the three
   cases stopped you fixing it, which pillar it moves, and a concrete
-  definition of done. Apply ONLY the `triage` label (SCR-005).
+  definition of done. Apply ONLY the `TRIAGE` label (SCR-005).
 - Do not file an open design question (decide it in the pull request, or
   write an ADR under `docs/adr/`), a record of a choice already in effect, a
   measurement that cannot change a decision, a test for a path nothing

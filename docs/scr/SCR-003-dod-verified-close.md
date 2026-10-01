@@ -29,7 +29,7 @@ Before closing (or declaring done), run the end-of-task checklist:
 1. Re-read the issue's DoD; verify each item with evidence — test output, a
    doc diff, a CI link. A sentence of assertion is not evidence.
 2. Sweep for residue; file each item as its own issue via the task template,
-   `triage` label only (SCR-004, SCR-005).
+   `TRIAGE` label only (SCR-004, SCR-005).
 3. Confirm every architectural choice made during the task has an ADR
    (SCR-002).
 4. Report: what shipped, where it lives, which issues were filed.
@@ -44,17 +44,17 @@ met, and it is the one `dod-close-guard` verifies.
 A pull request that closes no issue is waived by one of two labels. Which
 one is itself a claim.
 
-`no-issue` says the change is trivial: a typo, a bump, a revert. There is no
+`NO-ISSUE` says the change is trivial: a typo, a bump, a revert. There is no
 DoD to verify.
 
-`closes-nothing` says the change is large and closes no issue by design. An
+`CLOSES-NOTHING` says the change is large and closes no issue by design. An
 audit that files issues rather than closing them. A refactor. A sweep.
 Without it, such a pull request had no route through the gate that was not a
 false claim. `Closes #N` would name a close that is not happening.
-`no-issue` claims a triviality that is not there.
+`NO-ISSUE` claims a triviality that is not there.
 
 They are labels rather than phrases, so that every use is enumerable
-(`is:pr label:no-issue`, `is:pr label:closes-nothing`). An escape hatch
+(`is:pr label:NO-ISSUE`, `is:pr label:CLOSES-NOTHING`). An escape hatch
 nobody can audit becomes the default path. Two labels, not one, so a
 reviewer can tell a small waived change from a large one at a glance. Reach
 for either when filing an issue would be pure ceremony. Never to skip a DoD

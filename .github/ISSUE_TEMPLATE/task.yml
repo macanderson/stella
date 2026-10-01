@@ -1,6 +1,6 @@
 name: Task
 description: A unit of work with an explicit definition of done
-labels: ["triage"]
+labels: ["TRIAGE"]
 body:
   - type: textarea
     id: context
@@ -16,5 +16,5 @@ body:
         - [ ] Scoped tests added/updated and passing
         - [ ] Full CI green
         - [ ] Code comments and docs updated
-        - [ ] Residue filed as new issues (triage label only)
+        - [ ] Residue filed as new issues (`TRIAGE` label only)
     validations: { required: true }

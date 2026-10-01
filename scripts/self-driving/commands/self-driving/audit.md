@@ -116,8 +116,8 @@ is the fastest way to make the queue useless:
 | `P1` | important, next in line |
 | `P2` | polish, worth doing, not urgent |
 
-Add the crate label (`area:core`, `area:cli`, …) — the queue ranks on priority
-but a fresh agent picks up work by area. Add `self-improvement` when the finding
+Add the crate label (`AREA:CORE`, `AREA:CLI`, …) — the queue ranks on priority
+but a fresh agent picks up work by area. Add `SELF-IMPROVEMENT` when the finding
 is about Stella's own capability rather than a defect in it.
 
 ## What is not a finding

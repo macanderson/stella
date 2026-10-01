@@ -230,6 +230,11 @@
       "status": "implemented",
       "title": "ADR 0045: Retire the ad hoc build-time and model-tier labels"
     },
+    "adr/0046-one-uppercase-label-scheme": {
+      "path": "docs/adr/0046-one-uppercase-label-scheme.md",
+      "status": "implemented",
+      "title": "ADR 0046: One uppercase label scheme"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",

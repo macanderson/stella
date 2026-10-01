@@ -77,7 +77,7 @@ change:
 - **Keep the file under the size gate.** If `self-driving.sh` approaches the ceiling,
   split a subcommand into `scripts/self-driving/` rather than growing it — the same
   rule the workspace's god files live under.
-- **A PR, labelled `self-improvement`**, with the metrics output quoted in the
+- **A PR, labelled `SELF-IMPROVEMENT`**, with the metrics output quoted in the
   description as the before-state.
 - **Prose changes go in the command files** under `scripts/self-driving/commands/`,
   then `scripts/self-driving.sh install-commands` to pick them up. Editing
@@ -100,6 +100,6 @@ Three things look like tuning opportunities but are required as they stand:
 ## Filing rather than fixing
 
 If the pathology needs a change bigger than this cycle can carry, file it like
-any other finding — `self-improvement` plus the area label — and quote the
+any other finding — `SELF-IMPROVEMENT` plus the `AREA:` label — and quote the
 metrics output in the issue body. The next `/self-driving:evolve` reads the ledger,
 not your session, so the numbers have to be *in* the issue.

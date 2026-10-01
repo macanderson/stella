@@ -1,5 +1,5 @@
 ---
-description: Sweep a repo's `triage`-labeled backlog — vet every issue against the code, fix the easy ones in one cleanup PR, and label the rest priority → area → descriptors, with epics grouped and ranked. Repo-agnostic: discovers each repo's label taxonomy at runtime.
+description: Sweep a repo's `TRIAGE`-labeled backlog — vet every issue against the code, fix the easy ones in one cleanup PR, and label the rest priority → tier → size → kind → area → signals, with epics grouped and ranked. Repo-agnostic: discovers each repo's label taxonomy at runtime.
 argument-hint: "<owner/repo> [--dry-run] [--no-fix] [--label-only] [--limit N] [--concurrency N] [--no-close]"
 allowed-tools: "Bash(gh:*), Bash(git:*), Bash(rg:*), Bash(fd:*), Bash(jq:*), Bash(mkdir:*), Read, Grep, Glob, Edit, Write, MultiEdit, Agent"
 disable-model-invocation: true
@@ -15,12 +15,12 @@ Target repo: **$ARGUMENTS**
 > source tree, and fixes the easy ones in one cleanup PR.
 >
 > **Crate routing in `macanderson/stella`.** An issue about the crate
-> `stella-<name>` takes the label `area:<name>` when that label exists. Read the
-> live list with `gh label list`. So `stella-engine` takes `area:engine`, and
-> `stella-tty` takes `area:tty`. The same rule holds for `stella-home`,
+> `stella-<name>` takes the label `AREA:<NAME>` when that label exists. Read the
+> live list with `gh label list`. So `stella-engine` takes `AREA:ENGINE`, and
+> `stella-tty` takes `AREA:TTY`. The same rule holds for `stella-home`,
 > `stella-diag`, `stella-diff`, `stella-parity`, and `stella-tui-theme`. Some
 > crates have no label, such as `stella-learn`. For one of those, use the label
-> of the crate it serves most. Do not create an `area:*` label during a sweep.
+> of the crate it serves most. Do not create an `AREA:*` label during a sweep.
 
 
 You are the **triage authority** for this run. Parse `$ARGUMENTS`: the first
@@ -31,7 +31,7 @@ Flags:
 |---|---|
 | `--dry-run` | Plan and report only. Zero writes: no labels, no comments, no commits, no PR. |
 | `--no-fix` / `--label-only` | Skip Phase 4 entirely. Vet, dedup, label, epic — but fix nothing. |
-| `--limit N` | Only process the N oldest `triage` issues. |
+| `--limit N` | Only process the N oldest `TRIAGE` issues. |
 | `--concurrency N` | Vetting subagents in flight (default 5). |
 | `--no-close` | Never close anything. Duplicates and already-fixed issues get a comment and stay open. |
 
@@ -53,7 +53,7 @@ refusing:
   fixed issue leaves triage via the PR, not via a P-label.
 - If the repo has a triage-guard workflow, read it
   (`.github/workflows/triage-guard.yml`) before writing any label. It names the
-  whitelisted identities and the P-label-vs-`triage` rule. If your `gh`
+  whitelisted identities and the P-label-vs-`TRIAGE` rule. If your `gh`
   identity is not whitelisted, your P-labels will be **stripped and the issue
   re-queued** — detect this up front (`gh api user -q .login`), and if you are
   not whitelisted, **stop and report** rather than fighting the workflow issue
@@ -89,17 +89,24 @@ Do all of this before touching a single issue.
    ```sh
    env -u CLICOLOR_FORCE gh label list -R "$REPO" --limit 300 --json name,description > "$WORK/labels.json"
    ```
-   Classify what exists into five buckets and record the result:
-   - **priority** — the `P` levels SCR-005 names.
-   - **type** — `bug`, `feature`, `chore`, `epic`, `documentation`, `duplicate`,
-     `invalid`, `wontfix`, `tech-debt`
-   - **area** — `area:*` (and `@package/*` / `@app/*` where the repo uses them)
-   - **pain** — `pain:*` (and `goal:*`)
-   - **state** — `triage`, `blocked`, `HOLD`, `in-progress`, `needs-witness`, `size/*`
+   Classify what exists into these buckets and record the result:
+   - **priority**: the `P` levels SCR-005 names.
+   - **tier**: `MODEL:T1`, `MODEL:T2`, `MODEL:T3`, `MODEL:T4`
+   - **size**: `SIZE:EXTRA-SMALL`, `SIZE:SMALL`, `SIZE:MEDIUM`, `SIZE:LARGE`,
+     `SIZE:EXTRA-LARGE`
+   - **kind**: `KIND:BUG`, `KIND:FEATURE`, `KIND:IMPROVEMENT`, `KIND:CHORE`,
+     `KIND:DOCUMENTATION`, `KIND:DEVOPS`
+   - **area**: `AREA:*` (and `@package/*` / `@app/*` where the repo uses them)
+   - **pain**: `PAIN:*` (and `GOAL:*`, `PILLAR:*`)
+   - **state**: `TRIAGE`, `BLOCKED`, `HOLD`, `IN-PROGRESS`, `NEEDS-WITNESS`,
+     `EPIC`, `DUPLICATE`, `WONTFIX`
+
+   A repo that has not adopted these names may carry the earlier ones, such as
+   `bug`, `area:*`, and `size/*`. Use the names the repo has.
 3. **Read the guard.** `.github/workflows/triage-guard.yml`, if present (see above).
 4. **Pull the backlog** with everything needed to judge it:
    ```sh
-   env -u CLICOLOR_FORCE gh issue list -R "$REPO" --label triage --state open --limit 500 \
+   env -u CLICOLOR_FORCE gh issue list -R "$REPO" --label TRIAGE --state open --limit 500 \
      --json number,title,body,labels,createdAt,updatedAt,author,comments,url \
      > "$WORK/triage-issues.json"
    ```
@@ -140,9 +147,10 @@ verbatim, plus its batch:
 >
 > Do not edit any file in this phase. Read-only.
 >
-> Return one record per issue: `number`, `verdict`, `type`, `confidence`
+> Return one record per issue: `number`, `verdict`, `kind`, `confidence`
 > (high/medium/low), `evidence` (file + symbol list), `areas` (paths touched, for
-> area-label mapping), `fix_difficulty` (trivial/small/medium/large/unknown),
+> area-label mapping), `minutes` (agent minutes to a merge-ready pull request),
+> `hardest_step` (one line), `fix_difficulty` (trivial/small/medium/large/unknown),
 > `fix_sketch` (if trivial or small: the exact change), `pain` (the concrete
 > cost this imposes today, or `none`), `dup_of` (issue number, if visible in
 > your batch), and `notes`.
@@ -208,49 +216,58 @@ takes the **highest** priority among its members — never an average.
 For each issue, build an **ordered** list:
 
 ```
-<priority> → <area>[, <area>…] → <type> → <descriptors…>
+<priority> → <tier> → <size> → <kind> → <area> → <signals…>
 ```
 
-1. **Priority — exactly one.** Never zero, never two.
-2. **Area — one to three.** Map the file-and-symbol evidence from Phase 1 onto the
-   repo's real `area:*` names. Multi-area is expected for cross-cutting work;
-   more than three means the issue is too broad — say so in the comment. Where
-   the repo also uses `@package/*` / `@app/*`, add the matching one.
-3. **Type — exactly one**, drawn from the vocabulary the repo actually has:
-   `bug`, `feature`, `chore`, `documentation`, `tech-debt`, `epic`. Taxonomies
-   differ — `tech-debt` exists in some of these repos and not others. Where the
-   closest type label is missing, use the nearest one that exists (`chore` for
-   `tech-debt`) and say so in the rationale comment. Never create a type label.
-4. **Descriptors — zero or more.** `pain:*`, `goal:*`, `blocked`, `good first issue`.
+1. **Priority: exactly one.** Never zero, never two.
+2. **Tier: exactly one `MODEL:` label**, picked by the record's `hardest_step`.
+   `MODEL:T1` is mechanical, fully specified work. `MODEL:T2` is routine work
+   from a clear spec. `MODEL:T3` is judgment across packages, rules, security,
+   or migrations. `MODEL:T4` is architecture-critical or novel design.
+3. **Size: exactly one `SIZE:` label**, from the record's `minutes`.
+   `SIZE:EXTRA-SMALL` is 30 or fewer. `SIZE:SMALL` is 31 to 90. `SIZE:MEDIUM`
+   is 91 to 240. `SIZE:LARGE` is 241 to 480. `SIZE:EXTRA-LARGE` is more than 480.
+4. **Kind: exactly one**, drawn from the vocabulary the repo actually has:
+   `KIND:BUG`, `KIND:FEATURE`, `KIND:IMPROVEMENT`, `KIND:CHORE`,
+   `KIND:DOCUMENTATION`, `KIND:DEVOPS`. `EPIC` marks a container and is not a
+   kind. Where the closest kind label is missing, use the nearest one that
+   exists and say so in the rationale comment. Never create a kind label.
+5. **Area: exactly one.** Map the file-and-symbol evidence from Phase 1 onto the
+   repo's real `AREA:*` names. For cross-cutting work, pick the area the change
+   touches most and name the others in the comment. Where the repo also uses
+   `@package/*` / `@app/*`, add the matching one.
+6. **Signals: zero or more.** `PAIN:*`, `GOAL:*`, `BLOCKED`, `GOOD FIRST ISSUE`.
 
-**The pain label.** Add a `pain:*` label only when you can state the cost in one
+Skip a family the repo has no labels for, and say so in the report.
+
+**The pain label.** Add a `PAIN:*` label only when you can state the cost in one
 concrete sentence in the rationale comment. Canonical vocabulary:
 
 | Label | The cost it names |
 |---|---|
-| `pain:token-efficiency` | Burns context or tokens on every run. |
-| `pain:token-cache` | Busts the prompt cache. |
-| `pain:wall-clock` | Makes runs or builds slower. |
-| `pain:resolve-rate` | Makes the agent fail tasks it should solve. |
-| `pain:test-invalidator` | Makes a green suite untrustworthy. |
-| `pain:false-positive` | Reports problems that are not real. |
-| `pain:false-negative` | Misses problems that are real. |
+| `PAIN:TOKEN-EFFICIENCY` | Burns context or tokens on every run. |
+| `PAIN:TOKEN-CACHE` | Busts the prompt cache. |
+| `PAIN:WALL-CLOCK` | Makes runs or builds slower. |
+| `PAIN:RESOLVE-RATE` | Makes the agent fail tasks it should solve. |
+| `PAIN:TEST-INVALIDATOR` | Makes a green suite untrustworthy. |
+| `PAIN:FALSE-POSITIVE` | Reports problems that are not real. |
+| `PAIN:FALSE-NEGATIVE` | Misses problems that are real. |
 
-If the target repo has no `pain:*` labels, create **only** the ones this run
+If the target repo has no `PAIN:*` labels, create **only** the ones this run
 actually assigns (`gh label create` with the description above), and list every
 created label in the final report. Never invent a pain label outside this
 vocabulary — label sprawl is the failure mode this rule exists to prevent.
 
 **No duplicate labels — compute a delta, never a blind add.** For every issue,
 diff your composed set against the labels already on it. Add only what is
-missing, drop `triage` in the same call, and leave everything else alone. Do not
+missing, drop `TRIAGE` in the same call, and leave everything else alone. Do not
 re-add a label that is already present, and do not strip a human's existing label
-just because your set did not include it — `triage` is the only label you remove.
+just because your set did not include it — `TRIAGE` is the only label you remove.
 
 ```sh
 gh issue edit <n> -R "$REPO" \
-  --add-label "P1,area:api,bug,pain:resolve-rate" \
-  --remove-label "triage"
+  --add-label "P1,MODEL:T2,SIZE:SMALL,KIND:BUG,AREA:API,PAIN:RESOLVE-RATE" \
+  --remove-label "TRIAGE"
 ```
 
 > **Ordering caveat — state it once in the report.** GitHub renders an issue's
@@ -261,7 +278,7 @@ gh issue edit <n> -R "$REPO" \
 **Rationale comment.** Post exactly one per issue, and keep it short:
 
 ```
-**Triage:** `P1` · `area:api` · `bug` · `pain:resolve-rate`
+**Triage:** `P1` · `MODEL:T2` · `SIZE:SMALL` · `KIND:BUG` · `AREA:API` · `PAIN:RESOLVE-RATE`
 
 Confirmed against `routes/v1/foo.ts`'s `handleFoo` — <one line on what reproduces>.
 Pain: <one concrete sentence, or omit this line entirely>.
@@ -322,8 +339,8 @@ half-fix buried in a cleanup PR is worse than a ticket that says what remains.
 For each cluster that survived Phase 2's four tests:
 
 - **Reuse first.** Search open epics before creating one.
-- Create it with the `epic` label plus the **union** of its members' area labels,
-  the **max** of their priorities, and any descriptor shared by a majority of them.
+- Create it with the `EPIC` label plus the area label most of its members share,
+  the **max** of their priorities, and any signal shared by a majority of them.
 - Body: one paragraph on why these are one body of work, a checklist of members
   (`- [ ] #123 — title`), the pain the epic retires, and what "done" means.
 - Link members as sub-issues where the repo supports it; otherwise put the epic
@@ -342,19 +359,19 @@ where the repo uses a `verifications/` convention, and summarize in the terminal
 - **Labeled** — count, plus the priority distribution (`P0:2 P1:9 P2:20 P3:14`).
 - **Epics** — created vs reused; each with number, title, priority, members.
 - **Closed** — every closure with the one-line evidence that justified it.
-- **Labels created** — any `pain:*` or other label this run added to the repo.
-- **Left in `triage`** — every issue you could not settle, and what would settle it.
+- **Labels created** — any `PAIN:*` or other label this run added to the repo.
+- **Left in `TRIAGE`** — every issue you could not settle, and what would settle it.
 - **Guard status** — whether the identity was whitelisted, and whether any
   P-label was stripped and re-queued.
 
 Then file follow-ups: anything you noticed and did not fix becomes a new issue
-carrying only the `triage` label, per the repo's own residue rule.
+carrying only the `TRIAGE` label, per the repo's own residue rule.
 
 ---
 
 ## Rules
 
-- **Every open issue ends with a priority label or `triage` — never neither, never both.**
+- **Every open issue ends with a priority label or `TRIAGE` — never neither, never both.**
 - **Never blind-add a label.** Always diff against what is already on the issue.
 - **Never close on low confidence.** `NEEDS-INFO` is always available.
 - **Never run a whole-repo suite, gate, or build.** Narrowest command only.

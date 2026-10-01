@@ -361,7 +361,7 @@ every `main` run 24 to 27 minutes behind a runner on 2026-09-05, and eleven
 commits went unanswered while a repaired tree still read as broken. So the
 script reports three states rather than two. `pending` names the commits whose run has not
 concluded, counts how many of the repository's 100 most recent runs are
-unfinished, exits 0, and closes no open `main-unverified` issue — a recovery
+unfinished, exits 0, and closes no open `MAIN-UNVERIFIED` issue — a recovery
 is claimed off an answer, never off the absence of one.
 
 **A commit missing from that list gets one more read before it counts as
@@ -389,12 +389,12 @@ opened an issue; the second printed its finding into a step log and
 exited 1, and the composition job can pass on the same run — so the
 finding never reached anything a person reads. That happened twice, both
 times on a `chore(release): sync versions` commit whose run concluded
-`failure` with no `main-red` issue open either day.
+`failure` with no `MAIN-RED` issue open either day.
 `check-main-verified.sh --announce` now files on the same shape — one issue
 found by label, a comment while the condition recurs, closed on the next run
-that answers clean — under its own `main-unverified` label rather than
-`main-red`. "Nothing verified this commit" is a different state from "a check
-said no about this commit," and `main-red-hold.yml` reads only `main-red`, so
+that answers clean — under its own `MAIN-UNVERIFIED` label rather than
+`MAIN-RED`. "Nothing verified this commit" is a different state from "a check
+said no about this commit," and `main-red-hold.yml` reads only `MAIN-RED`, so
 an unverified-main issue never blocks a merge on an absence of information the
 way a known-broken `main` does.
 
@@ -412,7 +412,7 @@ finished run. It answers "nothing to say" — not red — on a queued run, a
 cancelled one, a `startup_failure`, or a run it does not know. That is the
 fail-open rule `check-main-verified.sh` uses for the question above. It is a
 row of the canary's `checks` array, not a fourth workflow step, so a green
-suite closes the same `main-red` issue a red one opened, through the
+suite closes the same `MAIN-RED` issue a red one opened, through the
 one-issue code the other four rows already share. No second actor races the
 canary to open or close it.
 
@@ -437,7 +437,7 @@ request and no author. When one fails, it shows only in the Actions tab. The
 triage sweep failed on every run that way. `scheduled-red.yml` starts on
 `workflow_run` after each workflow with an `on: schedule` trigger. It acts
 only when that run's event was `schedule`. It runs `scripts/scheduled-red.sh`,
-which keeps one open issue per workflow, labelled `scheduled-red` and titled
+which keeps one open issue per workflow, labelled `SCHEDULED-RED` and titled
 with the workflow's name. A second red run adds a comment, and the next green
 run closes the issue. A cancelled or skipped run changes nothing. The script
 fails open, with a `::warning::` line, when `gh` is missing, the tracker
@@ -450,7 +450,7 @@ it runs the coverage check on this tree.
 A seventh, `main-red-hold.yml`, is the canary's other half: the canary *detects*,
 and this is what consumes the detection at the point a merge is still a
 decision. It runs on `pull_request`. Each run asks the tracker whether a
-`main-red` issue is open at that moment, and fails if one is — naming it. That
+`MAIN-RED` issue is open at that moment, and fails if one is — naming it. That
 answer is a snapshot, and the paragraph below is how it gets re-taken when
 `main` moves under a pull request that is finished and waiting.
 On 2026-08-19 the canary
@@ -459,15 +459,15 @@ and four more PRs merged onto the non-compiling tree over the next 35 minutes,
 the first of them **twelve seconds later** (#3917). Once `main` is red every
 PR's checks are red too, so red stops distinguishing "your change is broken"
 from "the base is" — which is how one composition break became four breaks in
-three crates, each hiding the next. The `unblocks-main` label is the designed
+three crates, each hiding the next. The `UNBLOCKS-MAIN` label is the designed
 way through, so the hold never blocks its own repair, and an unreachable
 tracker fails **open** because this is the second line of defence and the
 canary's issue is the first. Compiles nothing. `make main-red-hold` asks by
 hand; `make main-red-hold-test` covers it, blocking branch included. Reporting
 became holding on 2026-09-02, when `main is not known-broken` joined `main`'s
 required status checks: a throwaway PR went red and unmergeable while a
-hand-filed, `main-red`-labelled issue stood, and green again once
-`unblocks-main` landed on it.
+hand-filed, `MAIN-RED`-labelled issue stood, and green again once
+`UNBLOCKS-MAIN` landed on it.
 
 **A hold goes stale in both directions unless something re-asks it.** Branch
 protection reads the last check run for that name on that commit, and the hold
@@ -477,7 +477,7 @@ event left to correct it, while `main` breaks and gets fixed underneath.
 The stale failure blocks work that should land. On 2026-09-05 `main` broke, a
 repair landed, the canary closed the issue, and ten open pull requests stayed
 unmergeable on a check whose own question now answered the other way. The stale
-pass is the dangerous one: `#5928`'s hold ran at 09:41, the `main-red` issue
+pass is the dangerous one: `#5928`'s hold ran at 09:41, the `MAIN-RED` issue
 for that outage was filed at 10:07, and it merged onto the broken tree during
 the red window with that 26-minute-old green as its required check. Both are
 one bug — the hold is a point-in-time answer that branch protection reads as a
@@ -486,7 +486,7 @@ reaches for first, an empty commit and close-and-reopen, are the two this
 repository forbids.
 
 `scripts/refresh-main-red-holds.sh` re-asks for them. One tracker query decides
-what every hold should be saying — failing while a `main-red` issue is open,
+what every hold should be saying — failing while a `MAIN-RED` issue is open,
 passing while none is — and it re-runs the hold on each open pull request whose
 last run says the other thing, which reports under the same name on the same
 commit. One sweep rather than two, because it is one question: a second script
@@ -535,7 +535,7 @@ A claim is a comment, so it carries an author and a timestamp, and it lapses
 after twenty minutes — an assignee would never lapse, and a crashed session
 would then hold the repair of a red `main` shut. Every unknown proceeds
 loudly: no `gh`, an unreachable tracker, an unreadable identity, two open
-`main-red` issues at once. That direction is the whole safety argument, since
+`MAIN-RED` issues at once. That direction is the whole safety argument, since
 a claim check that can block a repair is worse than the duplication it
 prevents. `make main-red-claim` asks by hand; `make main-red-claim-test`
 covers it, standing-down branch included.
@@ -2022,7 +2022,7 @@ macanderson org repos.
   does not close, so the merge gate does not hold that PR against the
   issue's DoD. A PR may carry both, and is gated only on what it closes. A
   PR that closes nothing is waived by a label, and which one is a claim:
-  `no-issue` for a trivial change, `closes-nothing` for a substantial one
+  `NO-ISSUE` for a trivial change, `CLOSES-NOTHING` for a substantial one
   that closes no issue by design.
 - **[SCR-004](docs/scr/SCR-004-residue-becomes-issues.md) — Fix over
   file:** Fix what you notice in the PR you are making; two unrelated fixes
@@ -2030,14 +2030,14 @@ macanderson org repos.
   the PR (a maintainer decision, a rig or spend, or work larger than the
   session), and only when fixing it moves stability, reliability,
   maintainability, innovation, efficiency, or performance. Apply ONLY the
-  `triage` label.
+  `TRIAGE` label.
 - **[SCR-005](docs/scr/SCR-005-triage-separation-of-duties.md) — Triage
-  separation of duties:** Never apply a priority or size label —
-  a dedicated triage agent owns sizing and priority; a guard workflow
-  strips creator-applied priorities.
+  separation of duties:** Never apply a priority, `MODEL:`, `SIZE:`,
+  `KIND:`, or `AREA:` label. A dedicated triage agent owns them, and a
+  guard workflow strips creator-applied priorities.
 - **[SCR-006](docs/scr/SCR-006-schema-changes-are-labelled.md) — A schema change is labelled, and its migration is
   applied before or with its deploy:** A pull request that changes a schema carries
-  `migration-required`, and the migration reaches production before or with
+  `MIGRATION-REQUIRED`, and the migration reaches production before or with
   the deploy of that change, never after. Say in the PR which store changed
   and what must be applied. Where a repo has no automation to apply the label
   from the diff, apply it by hand. Do not add an automatic apply to a deploy

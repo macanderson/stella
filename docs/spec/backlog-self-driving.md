@@ -107,7 +107,7 @@ larger than §11.1 implied. §11.1 and §4.5 now say so (#3600).
 | **PR management of any kind** — open, watch CI, answer a review, resolve a conflict, merge. | No `gh pr` and no `create_pull_request` anywhere under `crates/` or `scripts/` outside TUI test fixtures. |
 | **Autonomous release.** `scripts/release.sh` is a human-driven script that refuses a tag that already exists. | `scripts/release.sh:143` |
 | **Structural self-curation.** Tools, context records, and skills are curated by a human or by a prompt, never proposed from loop evidence. | `/self-driving:evolve` is `scripts/self-driving/commands/self-driving/evolve.md` — prose. |
-| **A work generator** — the backlog half has since landed. `drive --backlog` seeds the loop from the ready backlog and records each issue it ships as a ledger cycle (`crates/stella-autonomy/src/ready.rs`, `crates/stella-cli/src/self_driving_cmd/ready.rs`). Ready means `status:ready`, or every `Blocked by: #N` line names a closed issue. The ladder half is unchanged. `advance` still ends *into* `watch`, and nothing makes the next audit question. | `advance` returns `WATCH` once `LENSES` is exhausted (`crates/stella-autonomy/src/lib.rs:340`). |
+| **A work generator** — the backlog half has since landed. `drive --backlog` seeds the loop from the ready backlog and records each issue it ships as a ledger cycle (`crates/stella-autonomy/src/ready.rs`, `crates/stella-cli/src/self_driving_cmd/ready.rs`). Ready means `STATUS:READY`, or every `Blocked by: #N` line names a closed issue. The ladder half is unchanged. `advance` still ends *into* `watch`, and nothing makes the next audit question. | `advance` returns `WATCH` once `LENSES` is exhausted (`crates/stella-autonomy/src/lib.rs:340`). |
 | **Any way for the self-driving plugin to ask the host for a capability.** The host-call channel exists and carries exactly the right capability (`child_turn`), and self-driving is structurally excluded from it. | `LoopGrant::permits_call` (`crates/stella-plugin/src/manifest.rs:213`) requires `participation >= Steering`; `plugins/stella-selfdriving/plugin.toml` declares `participation = "none"`. §2.1. |
 
 ### 1.4 The verdict
@@ -323,13 +323,14 @@ wrongly is worse than not filing at all** — the queue the loop ranks is the
 queue the loop just polluted.
 
 **The defect is a feedback loop, and it is live in this repository today.**
-`priority::triage` counts an issue as a defect if it carries `bug` **or** `triage` —
+`priority::triage` counts an issue as a defect if it carries `KIND:BUG` **or** `TRIAGE` —
 an untriaged issue is a defect nobody has classified yet. Meanwhile
-`.github/workflows/issue-triage.yml` adds `triage` to any issue opened without
-one of its `TYPE_LABELS`, and the comment above that rule names the exact case:
+`.github/workflows/issue-triage.yml` adds `TRIAGE` to any issue opened without
+one of its `TYPE_LABELS` (the six `KIND:*` labels and `EPIC`, in any case),
+and the comment above that rule names the exact case:
 *"Issues opened outside the template (`gh issue create`, the API) carry no labels
 at all — those are exactly the ones this catches."* A loop filing through the API
-**is** that case. So an unlabelled filing is stamped `triage` by the workflow and
+**is** that case. So an unlabelled filing is stamped `TRIAGE` by the workflow and
 read back next cycle as an untriaged defect the loop is responsible for
 triaging. The loop manufactures its own queue, and every measure of whether it is
 gaining or losing ground on the backlog silently includes its own exhaust.
@@ -339,7 +340,7 @@ tie has to break the same way every time:
 
 | Source | What it is | Why it ranks here |
 |---|---|---|
-| **Enforced** | Automation acts on it — `issue-triage.yml`'s `TYPE_LABELS`, the `triage` lifecycle | The only source that is a *fact* rather than a claim. A workflow that stamps an untyped issue is not describing a convention, it **is** one — it will do that to the loop's filings whatever any document says. |
+| **Enforced** | Automation acts on it — `issue-triage.yml`'s `TYPE_LABELS`, the `TRIAGE` lifecycle | The only source that is a *fact* rather than a claim. A workflow that stamps an untyped issue is not describing a convention, it **is** one — it will do that to the loop's filings whatever any document says. |
 | **Declared** | Issue templates, the label set, a `CONTRIBUTING` section, the handoff format in `scripts/self-driving/commands/self-driving/tickets.md` | Authoritative about intent, silent about practice. It may describe a rule nothing enforces and everyone ignores. |
 | **Observed** | The distribution over recent issues | The only source that is a guess. Fills an axis the two above leave undefined; never overrides either. Recorded as `Observed` precisely so a human can see which parts nobody actually stated. |
 
@@ -365,7 +366,7 @@ it stays one.
 The model is portable and this repository's vocabulary is not baked into it:
 axes (`type`, `priority`, `area` here), each with membership, a requirement
 (`ExactlyOne` / `AtMostOne` / `Any`) and its source; plus **reserved** labels the
-loop may never apply itself. `triage` is this repository's one reserved label —
+loop may never apply itself. `TRIAGE` is this repository's one reserved label —
 it marks an issue that arrived from outside without a type, and the loop knows
 what it found, so applying it would be claiming to be a stranger to its own
 filing. Note the interesting failure is not "missing" but **ambiguous**: two
@@ -378,12 +379,19 @@ no-workspace-dependency property that lets the Observatory link its folds. That
 is the same trade `priority::triage` already makes, and the one mapping from a
 tracker's shape into this one lives in the caller.
 
+**One comparator decides whether two names are one label.** It is
+`stella_autonomy::labels::same`, and every label test in the loop goes through
+it. It ignores case. It also reads the names ADR 0046 renamed as their new
+names: `bug`, `feature`, `chore`, `tech-debt`, `documentation`, `docs`,
+`size/*`, `use-model:*`, and `area:ocp`. So an issue labelled before the
+rename still ranks. The loop writes and creates only the new names.
+
 ### 3.1b Sizing, readiness, and the guard's logins
 
 A passing assessment answers three axes, not two: kind, priority, and a size.
-The size scale is `XS`/`S`/`M`/`L`/`XL`, judged on the largest of risk, blast
-radius and effort. It lands on the tracker as exactly one `size/<answer>`
-label. The size is an estimate for a human reader, not an input to the
+The size scale is `XS`/`S`/`M`/`L`/`XL`, judged in agent minutes to a pull
+request ready to merge. It lands on the tracker as exactly one `SIZE:*`
+label, such as `SIZE:MEDIUM` for `M`. The size is an estimate for a human reader, not an input to the
 ranker, so the scale is fixed in code rather than declared per workspace.
 The drive loop's own label pass installs the labels, so a fresh repository
 needs no preparation.
@@ -391,16 +399,21 @@ needs no preparation.
 The same pass decides readiness. An issue body may declare
 `Blocked by: #<key>` lines. After an assessment lands, each declared blocker
 is resolved through the issue port. When none is still open, the loop flips
-`status:blocked` to `status:ready` in one relabel. A blocker the tracker
+`STATUS:BLOCKED` to `STATUS:READY` in one relabel. A blocker the tracker
 cannot answer for holds the flip — an outage must not mark work ready.
+
+`STATUS:BLOCKED` belongs to the loop. A person's hold is `BLOCKED`, a
+different label, and it may wait on something no `Blocked by:` line names.
+The loop never lifts it. `STATUS:BLOCKED` is not in the label manifest yet.
+Whether it joins is the maintainer's call.
 
 **The expected login story.** `triage-guard.yml` enforces separation of
 duties. A priority set by a login outside its `TRIAGE_LOGINS` list is
-stripped, and the issue is re-queued as `triage`. So the drive runner must
+stripped, and the issue is re-queued as `TRIAGE`. So the drive runner must
 authenticate `gh` as a login on that list — the triage identity, or the
 maintainer holding interim triage authority. A runner on any other login
 still judges correctly, but the guard undoes its priority writes. The loop
-detects that shape — an issue carrying its own `size/` label with no rung —
+detects that shape — an issue carrying a `SIZE:` label with no rung —
 as *placed, then stripped*. It escalates the issue once to a human instead
 of re-triaging forever. The fix is operational, not code: add the runner's
 login to `TRIAGE_LOGINS`, or run the loop under a login already there.
@@ -450,8 +463,8 @@ rather than one turn wide.
 **The deploy watch.** Beside the base watch, each poll may also read the
 release workflow's latest completed run, through the same forge pathway. On
 a red conclusion with no open report, the loop files one and adopts it. The
-`release-red` label dedups it, exactly as base breakage dedups on
-`main-red`. `deploy_watch = "off"` under `[self_driving]` in `stella.toml`
+`RELEASE-RED` label dedups it, exactly as base breakage dedups on
+`MAIN-RED`. `deploy_watch = "off"` under `[self_driving]` in `stella.toml`
 stands the watch down. This is only the watch half of shipping. The
 autonomous release verb stays deferred, as §6.4 argues it should.
 
