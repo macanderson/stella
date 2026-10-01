@@ -12,10 +12,9 @@
  * dot inside a table where shape is too small to read, never the only
  * signal. destructive is the failed red lifted until it clears AA on ink.
  *
- * Geist sets every heading and everything read. Monaspace Neon sets code,
- * logs, digests, and the numbers in tables. Space Grotesk sets the
- * wordmarks and line 1 of a marketing hero, and no other heading.
- * tokens/house-fonts.css carries the @font-face rules.
+ * Space Grotesk sets the wordmarks and h1 to h3. Geist sets h4 to h6 and
+ * everything read. Monaspace Neon sets code, logs, digests, and the numbers
+ * in tables. tokens/house-fonts.css carries the @font-face rules.
  */
 
 :root {
@@ -60,8 +59,8 @@
 
   --ox-gold-sheen: linear-gradient(45deg, #8A7223 0%, #D4AF37 38%, #F1CE65 56%, #D4AF37 74%, #8A7223 100%);
 
-  --ox-font-display: "Space Grotesk", "Helvetica Neue", Arial, sans-serif; /* the wordmarks, Stella's icon, and line 1 of a marketing hero */
-  --ox-font: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif; /* every heading, body, labels, buttons, tables, navigation */
+  --ox-font-display: "Space Grotesk", "Helvetica Neue", Arial, sans-serif; /* wordmarks, h1, h2, h3 */
+  --ox-font: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif; /* h4 to h6, body, labels, buttons, tables, navigation */
   --ox-font-mono: "Monaspace Neon", ui-monospace, "SF Mono", Menlo, Consolas, monospace; /* code, terminal output, logs, digests, paths, ids, and numbers in tables */
   --ox-font-mono-features: "calt", "liga"; /* texture healing and code ligatures */
 
