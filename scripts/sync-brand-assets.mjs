@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Copy the Oxagen house kit (oxageninc/brand) into this repository.
+ * Copy the Oxagen house kit (macanderson/oxagen-brand) into this repository.
  *
  *   node scripts/sync-brand-assets.mjs [--brand <dir>] [--check]
  *
@@ -161,7 +161,7 @@ function copy(from, ...targets) {
 if (!isKit(BRAND)) {
   console.error(`brand: no kit at ${BRAND}, so nothing was ${CHECK ? "checked" : "synced"}.`);
   console.error(
-    "Clone oxageninc/brand to ~/Projects/oxagen-brand, set OXAGEN_BRAND_KIT, or pass --brand <dir>.",
+    "Clone macanderson/oxagen-brand to ~/Projects/oxagen-brand, set OXAGEN_BRAND_KIT, or pass --brand <dir>.",
   );
   process.exit(2);
 }

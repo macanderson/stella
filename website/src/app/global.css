@@ -2,7 +2,7 @@
  * stella docs — the semantic layer.
  *
  * Brand system: the marks, the faces, and every house colour come from the
- * Oxagen house kit (oxageninc/brand), copied in by
+ * Oxagen house kit (macanderson/oxagen-brand), copied in by
  * scripts/sync-brand-assets.mjs. tokens.css carries the palette, and
  * src/brand/house-tokens.css is the kit's own token sheet, which this file
  * reads for the font stacks.
