@@ -24,16 +24,19 @@ use crate::priority::{PriorityLadder, by_age, rank_of};
 
 /// The label a human applies to say: work this now, whatever its
 /// `Blocked by:` lines say. That call outranks the parsed lines.
-pub const READY_LABEL: &str = "status:ready";
+///
+/// Matched through [`crate::labels::same`], so `status:ready` counts too.
+pub const READY_LABEL: &str = "STATUS:READY";
 
 /// Labels marking a tracking issue — a checklist of other issues, kept
 /// open as bookkeeping rather than as work. [`ready_queue`] excludes any
 /// item carrying one of these when the caller configures nothing else.
 ///
 /// GitHub's common word for this shape is `epic`, so that is the one
-/// default entry. An operator whose tracker spells it differently
-/// (`tracking`, say) declares their own set instead of this one.
-pub const DEFAULT_CONTAINER_LABELS: &[&str] = &["epic"];
+/// default entry, in the uppercase this repository spells it. Case does
+/// not matter to the match. An operator whose tracker spells it
+/// differently (`tracking`, say) declares their own set instead of this one.
+pub const DEFAULT_CONTAINER_LABELS: &[&str] = &["EPIC"];
 
 /// One backlog issue with the blockers parsed out of its body.
 #[derive(Debug, Clone, PartialEq)]
@@ -244,7 +247,7 @@ mod tests {
     /// Nobody edits the body. Nobody applies a label.
     #[test]
     fn an_issue_blocked_by_an_open_issue_waits_and_a_closed_blocker_frees_it() {
-        let blocked = item(41, &["feature", "P1"], &[40]);
+        let blocked = item(41, &["KIND:FEATURE", "P1"], &[40]);
 
         assert_eq!(
             readiness(&blocked, &open(&[40, 41])),
@@ -258,13 +261,29 @@ mod tests {
         );
     }
 
-    /// A human's `status:ready` label outranks the parsed lines. They
+    /// A human's `STATUS:READY` label outranks the parsed lines. They
     /// read the blockers and judged them stale. Re-parsing prose must
     /// not overrule that.
     #[test]
     fn the_ready_label_marks_an_issue_ready_even_while_a_blocker_is_open() {
-        let overridden = item(41, &["feature", READY_LABEL], &[40]);
+        let overridden = item(41, &["KIND:FEATURE", READY_LABEL], &[40]);
         assert_eq!(readiness(&overridden, &open(&[40, 41])), Readiness::Ready);
+    }
+
+    /// **The spelling witness.** The tracker stores whichever spelling a
+    /// person typed, and the issue the loop reads carries that one. An
+    /// exact test missed `STATUS:READY` while the code said `status:ready`,
+    /// and the human's call was lost. Both spellings must count.
+    #[test]
+    fn the_ready_label_counts_in_either_spelling() {
+        for label in ["STATUS:READY", "status:ready", "Status:Ready"] {
+            let overridden = item(41, &[label], &[40]);
+            assert_eq!(
+                readiness(&overridden, &open(&[40, 41])),
+                Readiness::Ready,
+                "{label} must mark the issue ready"
+            );
+        }
     }
 
     /// The line format is greppable, and this is the grep. Plain,
@@ -287,7 +306,7 @@ mod tests {
     /// An issue cannot block itself by citing its own number.
     #[test]
     fn a_self_reference_does_not_block() {
-        let looped = item(41, &["bug", "P1"], &[41]);
+        let looped = item(41, &["KIND:BUG", "P1"], &[41]);
         assert_eq!(readiness(&looped, &open(&[41])), Readiness::Ready);
     }
 
@@ -384,6 +403,9 @@ mod tests {
     /// `rainforest#2` reproduced the defect this guards: the loop claimed
     /// an epic the instant its last child closed, found nothing left to
     /// do under it, and re-built files a child issue had already merged.
+    ///
+    /// The issue carries `epic` and the default names `EPIC`, so this also
+    /// holds that case does not matter to the match.
     #[test]
     fn an_epic_with_no_open_blocker_is_absent_from_the_ready_queue() {
         let items = vec![bare(issue(2, "2026-08-01T00:00:00Z", &["P0", "epic"]))];

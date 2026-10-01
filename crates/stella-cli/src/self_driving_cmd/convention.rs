@@ -5,7 +5,7 @@
 //!
 //! # Precedence, and why the enforced source wins
 //!
-//! **Enforced > declared > observed.** A workflow that adds `triage` to an
+//! **Enforced > declared > observed.** A workflow that adds `TRIAGE` to an
 //! untyped issue is not *describing* a convention — it **is** one, and it will
 //! do that to the loop's filings whatever any document says. So the enforced
 //! source is read first and is the only one that can be wrong about itself in
@@ -14,7 +14,7 @@
 //! # Why this scans rather than parses
 //!
 //! It reads two declared facts out of `.github/workflows/issue-triage.yml` — the
-//! `TYPE_LABELS` list and whether `triage` is applied by automation — and it
+//! `TYPE_LABELS` list and whether `TRIAGE` is applied by automation — and it
 //! does **not** parse the workflow. That is a deliberate trade against adding a
 //! YAML dependency to the workspace for two lines (AGENTS.md: no new
 //! dependencies casually), and it is safe only because of how it fails:
@@ -102,9 +102,10 @@ fn discover(root: &Path) -> Option<BacklogConvention> {
 
     // A label the automation applies is a label the loop must not: it means
     // "arrived from outside without a type", and the loop knows what it found.
+    // GitHub ignores case when it adds a label by name, so the scan does too.
     let mut reserved = Vec::new();
-    if workflow.contains("--add-label triage") {
-        reserved.push("triage".to_owned());
+    if workflow.to_ascii_lowercase().contains("--add-label triage") {
+        reserved.push("TRIAGE".to_owned());
     }
 
     Some(BacklogConvention {
@@ -190,11 +191,11 @@ mod tests {
 env:
   GH_TOKEN: ${{ github.token }}
   # Space-separated; adding any of these counts as typing the issue.
-  TYPE_LABELS: bug feature chore documentation epic
+  TYPE_LABELS: KIND:BUG KIND:FEATURE KIND:IMPROVEMENT KIND:CHORE KIND:DOCUMENTATION KIND:DEVOPS EPIC
 jobs:
   triage:
     steps:
-      - run: gh issue edit "$ISSUE" --repo "$REPO" --add-label triage
+      - run: gh issue edit "$ISSUE" --repo "$REPO" --add-label TRIAGE
 "#;
 
     /// **The discovery witness.** The convention is learned from the automation
@@ -213,9 +214,17 @@ jobs:
         assert_eq!(axis.source, ConventionSource::Enforced);
         assert_eq!(
             axis.members,
-            vec!["bug", "feature", "chore", "documentation", "epic"]
+            vec![
+                "KIND:BUG",
+                "KIND:FEATURE",
+                "KIND:IMPROVEMENT",
+                "KIND:CHORE",
+                "KIND:DOCUMENTATION",
+                "KIND:DEVOPS",
+                "EPIC",
+            ]
         );
-        assert_eq!(bound.convention.reserved, vec!["triage".to_owned()]);
+        assert_eq!(bound.convention.reserved, vec!["TRIAGE".to_owned()]);
     }
 
     /// A different repository, a different vocabulary. Nothing about Stella's
@@ -235,7 +244,7 @@ jobs:
             bound.convention.axes[0].members,
             vec!["defect", "enhancement", "chore"]
         );
-        // No `--add-label triage` in this one, so nothing is reserved.
+        // No `--add-label TRIAGE` in this one, so nothing is reserved.
         assert!(bound.convention.reserved.is_empty());
     }
 
@@ -287,11 +296,11 @@ jobs:
 
     /// Reads this repository's own checked-in
     /// `.github/workflows/issue-triage.yml` — not a fixture — and checks
-    /// `TYPE_LABELS` against `/backlog-triage`'s five valid types
-    /// (`bug feature chore documentation epic`), no more and no less: a
-    /// `question` entry or a missing `chore` fails this test.
+    /// `TYPE_LABELS` against the six kind labels ADR 0046 sets and `EPIC`,
+    /// no more and no less: a `QUESTION` entry or a missing `KIND:CHORE`
+    /// fails this test.
     #[test]
-    fn the_real_workflow_type_labels_match_the_five_valid_types() {
+    fn the_real_workflow_type_labels_match_the_valid_types() {
         // crates/stella-cli -> repository root.
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
 
@@ -306,7 +315,15 @@ jobs:
         members.sort();
         assert_eq!(
             members,
-            vec!["bug", "chore", "documentation", "epic", "feature"]
+            vec![
+                "EPIC",
+                "KIND:BUG",
+                "KIND:CHORE",
+                "KIND:DEVOPS",
+                "KIND:DOCUMENTATION",
+                "KIND:FEATURE",
+                "KIND:IMPROVEMENT",
+            ]
         );
     }
 
@@ -343,7 +360,14 @@ jobs:
         let members: Vec<&str> = declared.split_whitespace().collect();
         assert!(!members.is_empty(), "TYPE_LABELS names no type");
 
-        // The one spelling every Rust copy uses: `["bug", "feature", ...]`.
+        // The one spelling every Rust copy uses: `["KIND:BUG", ...]`.
+        // rustfmt lays a long array out one member per line with a
+        // trailing comma, so both sides are compared with the whitespace and
+        // that comma taken out. A layout change is not drift.
+        let squeeze = |text: &str| -> String {
+            let bare: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+            bare.replace(",]", "]")
+        };
         let rust_literal = format!(
             "[{}]",
             members
@@ -358,7 +382,7 @@ jobs:
             ("crates/stella-cli/src/self_driving_cmd/residue.rs", RESIDUE),
         ] {
             assert!(
-                text.contains(&rust_literal),
+                squeeze(text).contains(&squeeze(&rust_literal)),
                 "{path} does not carry {rust_literal}, which is what \
                  .github/workflows/issue-triage.yml's TYPE_LABELS says today"
             );

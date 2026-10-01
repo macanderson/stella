@@ -215,9 +215,9 @@ pub fn rearm(aperture: &str, base: &Baseline, policy: &SupplyPolicy) -> Rearm {
 /// The label a lens finding carries.
 ///
 /// The same word `regress` and `meta` file under. A defect a lens found is a
-/// defect, and the type axis of a backlog convention spells that `bug`. A
-/// convention with no such member refuses the draft, and the refusal stands.
-pub const DEFECT_LABEL: &str = "bug";
+/// defect, and the type axis of a backlog convention spells that `KIND:BUG`.
+/// A convention with no such member refuses the draft, and the refusal stands.
+pub const DEFECT_LABEL: &str = "KIND:BUG";
 
 /// How many findings one lens pass offers at most.
 ///

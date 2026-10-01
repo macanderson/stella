@@ -532,7 +532,12 @@ impl IssueProvider for GhIssueProvider {
 /// Already-exists is success, not an error: two sessions starting at once must
 /// not race each other into a failure, and `gh` reports the collision on
 /// stderr rather than distinguishing it in an exit code worth branching on.
-pub(crate) fn ensure_label(name: &str, description: &str) -> Result<(), IssueError> {
+///
+/// No `--force`. GitHub treats label names without regard to case, so a
+/// label the tracker carries in another case already exists, and its color
+/// and description stay as a person set them. `color` is six hex digits
+/// with no `#`.
+pub(crate) fn ensure_label(name: &str, color: &str, description: &str) -> Result<(), IssueError> {
     match gh_json(&[
         "label",
         "create",
@@ -540,7 +545,7 @@ pub(crate) fn ensure_label(name: &str, description: &str) -> Result<(), IssueErr
         "--description",
         description,
         "--color",
-        "B60205",
+        color,
     ]) {
         Ok(_) => Ok(()),
         Err(IssueError::Failed { reason, .. }) if reason.contains("already exists") => Ok(()),

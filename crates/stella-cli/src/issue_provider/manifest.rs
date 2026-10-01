@@ -46,6 +46,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::Deserialize;
+use stella_autonomy::labels::same as same_label;
 use stella_protocol::issue::{IssueClass, Vocabulary};
 
 use crate::settings::toml_config::{IssuesSection, TomlConfig};
@@ -118,8 +119,12 @@ impl ClassMap {
     ///
     /// Labels in none of the lists give [`IssueClass::Other`], not `Task`. A
     /// class that says "not mapped" can be seen. A wrong class hides.
+    ///
+    /// A label matches in any case, and an old name matches its new one, as
+    /// [`stella_autonomy::labels::same`] reads them. GitHub hands back the
+    /// spelling it stores, which need not be the one this file wrote.
     pub(crate) fn class_of(&self, labels: &[&str]) -> IssueClass {
-        let has = |declared: &[String]| declared.iter().any(|name| labels.contains(&name.as_str()));
+        let has = |declared: &[String]| carries_any(labels, declared);
         if has(&self.bug) {
             IssueClass::Bug
         } else if has(&self.feature) {
@@ -135,11 +140,22 @@ impl ClassMap {
     /// parse. A test below holds it equal to `github.toml`.
     fn compiled_github() -> Self {
         Self {
-            bug: vec!["bug".to_owned()],
-            feature: vec!["feature".to_owned()],
-            task: vec!["chore".to_owned(), "task".to_owned(), "refactor".to_owned()],
+            bug: ["KIND:BUG", "bug"].map(str::to_owned).to_vec(),
+            feature: ["KIND:FEATURE", "KIND:IMPROVEMENT", "feature"]
+                .map(str::to_owned)
+                .to_vec(),
+            task: ["KIND:CHORE", "KIND:DEVOPS", "chore", "task", "refactor"]
+                .map(str::to_owned)
+                .to_vec(),
         }
     }
+}
+
+/// Whether any of `labels` is a name in `declared`, in any spelling.
+fn carries_any(labels: &[&str], declared: &[String]) -> bool {
+    declared
+        .iter()
+        .any(|name| labels.iter().any(|l| same_label(l, name)))
 }
 
 /// Which vocabulary keys a file actually wrote.
@@ -634,6 +650,21 @@ feature = ["kind/enhancement"]
             IssueClass::Other,
             "the shipped label must not survive a mapping that replaced it"
         );
+    }
+
+    /// **The rename witness.** The shipped map reads the uppercase kind
+    /// labels, in whatever case the tracker stores them. Under an exact test
+    /// over the old map, `KIND:BUG` classed as `Other`, and every defect the
+    /// scheme labelled read as unmapped.
+    #[test]
+    fn the_shipped_map_reads_the_kind_labels_in_any_case() {
+        let classes = ClassMap::compiled_github();
+        let class = |label: &str| classes.class_of(&[label]);
+        assert_eq!(class("KIND:BUG"), IssueClass::Bug);
+        assert_eq!(class("Kind:Bug"), IssueClass::Bug);
+        assert_eq!(class("KIND:IMPROVEMENT"), IssueClass::Feature);
+        assert_eq!(class("KIND:DEVOPS"), IssueClass::Task);
+        assert_eq!(class("KIND:DOCUMENTATION"), IssueClass::Other);
     }
 
     /// A defect that also carries a feature label is a defect. The strict

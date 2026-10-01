@@ -151,12 +151,12 @@ pub(super) fn render_queue(
             .ladder
             .rungs
             .iter()
-            .find(|rung| i.labels.iter().any(|l| &l.name == *rung))
+            .find(|rung| i.has_label(rung))
             .map_or("--", String::as_str);
         let area = i
             .labels
             .iter()
-            .find(|l| l.name.starts_with("area:"))
+            .find(|l| stella_autonomy::labels::in_family(&l.name, "AREA:"))
             .map(|l| l.name.as_str())
             .unwrap_or("");
         println!("{prio:>2}  #{:<6} {area:<18} {}", i.number, i.title);
@@ -207,7 +207,7 @@ pub(super) fn demand_from(
     let p0 = queue
         .ranked
         .iter()
-        .filter(|issue| issue.labels.iter().any(|label| label.name == urgent))
+        .filter(|issue| issue.has_label(urgent))
         .count();
     Ok(Demand {
         open_defects: u32::try_from(queue.ranked.len()).unwrap_or(u32::MAX),
@@ -341,7 +341,7 @@ pub(super) fn unassessed(
 /// may rewrite and the label is the thing both this loop and the next one
 /// match on. It is how a restarted process — or a second process entirely —
 /// discovers that the emergency is already filed instead of filing it again.
-pub(super) const BASE_BREAKAGE_LABEL: &str = "main-red";
+pub(super) const BASE_BREAKAGE_LABEL: &str = "MAIN-RED";
 
 /// File the report that the base branch is broken.
 ///
@@ -394,7 +394,7 @@ pub(super) fn file_base_breakage(
         body,
         labels: vec![
             IssueLabel::from(BASE_BREAKAGE_LABEL),
-            IssueLabel::from("bug"),
+            IssueLabel::from(stella_autonomy::supply::DEFECT_LABEL),
             IssueLabel::from("P0"),
         ],
         parent: None,
@@ -412,7 +412,7 @@ pub(super) fn file_base_breakage(
 /// A sibling of [`BASE_BREAKAGE_LABEL`] with the same contract. The label
 /// is the dedup key. A restarted process — or a second one — finds the
 /// emergency already filed instead of filing it again.
-pub(super) const DEPLOY_BREAKAGE_LABEL: &str = "release-red";
+pub(super) const DEPLOY_BREAKAGE_LABEL: &str = "RELEASE-RED";
 
 /// File the report that the release workflow is red — once.
 ///
@@ -467,7 +467,7 @@ pub(super) fn file_deploy_breakage(
         body,
         labels: vec![
             IssueLabel::from(DEPLOY_BREAKAGE_LABEL),
-            IssueLabel::from("bug"),
+            IssueLabel::from(stella_autonomy::supply::DEFECT_LABEL),
             IssueLabel::from("P0"),
         ],
         parent: None,
@@ -942,14 +942,22 @@ mod tests {
         BacklogConvention {
             axes: vec![LabelAxis {
                 name: "type".into(),
-                members: ["bug", "feature", "chore", "documentation", "epic"]
-                    .iter()
-                    .map(|s| (*s).to_owned())
-                    .collect(),
+                members: [
+                    "KIND:BUG",
+                    "KIND:FEATURE",
+                    "KIND:IMPROVEMENT",
+                    "KIND:CHORE",
+                    "KIND:DOCUMENTATION",
+                    "KIND:DEVOPS",
+                    "EPIC",
+                ]
+                .iter()
+                .map(|s| (*s).to_owned())
+                .collect(),
                 requirement: AxisRequirement::ExactlyOne,
                 source: ConventionSource::Enforced,
             }],
-            reserved: vec!["triage".into()],
+            reserved: vec!["TRIAGE".into()],
             acceptance: Acceptance::Bound,
         }
     }
@@ -1250,8 +1258,9 @@ mod tests {
         assert_eq!(open_deploy_breakage(&none), EmergencyRead::NotFiled);
 
         let filed = FixtureProvider::with(vec![
-            issue("42", &[BASE_BREAKAGE_LABEL], "2026-08-02T00:00:00Z"),
-            issue("43", &[DEPLOY_BREAKAGE_LABEL], "2026-08-02T00:00:00Z"),
+            // Each in a case its constant does not use: the read ignores case.
+            issue("42", &["main-red"], "2026-08-02T00:00:00Z"),
+            issue("43", &["Release-Red"], "2026-08-02T00:00:00Z"),
         ]);
         assert_eq!(open_base_breakage(&filed).filed().as_deref(), Some("42"));
         assert_eq!(open_deploy_breakage(&filed).filed().as_deref(), Some("43"));

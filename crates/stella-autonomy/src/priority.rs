@@ -211,21 +211,37 @@ pub struct TriagePolicy {
     pub excluded_kinds: Vec<String>,
 }
 
+/// The kind labels name the scheme ADR 0046 set. Each list holds new names
+/// only. [`crate::labels::same`] matches an old spelling such as `bug` to its
+/// new name, so an issue labelled the old way still ranks. A list entry is
+/// also a word the triage turn may answer with, and one the drive loop
+/// creates on the tracker, so an old spelling here would bring it back.
+///
+/// `KIND:CHORE` and `KIND:DEVOPS` are in neither list, the way `chore` was
+/// in neither before them. An issue of either kind with a rung is a question
+/// for a person, not work this loop takes on its own.
 impl Default for TriagePolicy {
     fn default() -> Self {
         Self {
             ladder: PriorityLadder::default(),
-            defect_kinds: ["bug", "triage"].into_iter().map(str::to_owned).collect(),
+            defect_kinds: ["KIND:BUG", "TRIAGE"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
             excluded_kinds: [
+                "KIND:FEATURE",
+                "KIND:IMPROVEMENT",
+                "KIND:DOCUMENTATION",
+                "QUESTION",
+                // GitHub's stock word for a feature request. The scheme
+                // has no such label, and a repository that never adopted
+                // the scheme still carries it.
                 "enhancement",
-                "feature",
-                "documentation",
-                "question",
                 // A tracking issue — a checklist of other issues — is
                 // bookkeeping, not a defect the loop can fix. See
                 // `crate::ready::DEFAULT_CONTAINER_LABELS`, the same
                 // default for the backlog reader's own queue.
-                "epic",
+                "EPIC",
             ]
             .into_iter()
             .map(str::to_owned)
@@ -553,6 +569,91 @@ mod tests {
             &policy,
         );
         assert!(queue.is_empty(), "an epic is bookkeeping, not a defect");
+    }
+
+    /// **The rename witness.** The default policy names the kinds in the
+    /// scheme ADR 0046 set, and an issue labelled that way ranks. One
+    /// labelled the old way, or in another case, still ranks. Under the
+    /// exact test and the old defaults, `KIND:BUG` was no kind at all, and
+    /// every defect triage labelled that way sat in the queue as a question.
+    #[test]
+    fn a_defect_ranks_under_its_new_name_and_its_old_one() {
+        let policy = TriagePolicy::default();
+        let queue = split(
+            vec![
+                issue(1, "2026-01-01T00:00:00Z", &["KIND:BUG", "P1"]),
+                issue(2, "2026-01-02T00:00:00Z", &["bug", "P1"]),
+                issue(3, "2026-01-03T00:00:00Z", &["Kind:Bug", "P1"]),
+            ],
+            &policy,
+        );
+        assert_eq!(
+            queue.ranked.iter().map(|i| i.number).collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert!(queue.unassessed.is_empty());
+    }
+
+    /// A kind someone judged out of the loop's work is dropped under its new
+    /// name, the same as under its old one.
+    #[test]
+    fn a_judged_kind_is_dropped_under_its_new_name() {
+        let policy = TriagePolicy::default();
+        for kind in [
+            "KIND:FEATURE",
+            "KIND:IMPROVEMENT",
+            "KIND:DOCUMENTATION",
+            "EPIC",
+            "feature",
+            "docs",
+        ] {
+            let queue = split(
+                vec![issue(1, "2026-01-01T00:00:00Z", &[kind, "P0"])],
+                &policy,
+            );
+            assert!(queue.is_empty(), "{kind} is judged, so it is not asked about");
+        }
+    }
+
+    /// `KIND:CHORE` and `KIND:DEVOPS` sit in neither list, as `chore` did.
+    /// With a rung, each is a question for a person.
+    #[test]
+    fn a_chore_or_devops_issue_is_a_question_for_a_person() {
+        let policy = TriagePolicy::default();
+        let queue = split(
+            vec![
+                issue(1, "2026-01-01T00:00:00Z", &["KIND:CHORE", "P1"]),
+                issue(2, "2026-01-01T00:00:00Z", &["KIND:DEVOPS", "P1"]),
+                issue(3, "2026-01-01T00:00:00Z", &["chore", "P1"]),
+            ],
+            &policy,
+        );
+        assert!(queue.ranked.is_empty());
+        assert_eq!(queue.unassessed.len(), 3);
+    }
+
+    /// The escalation label holds an issue out in either case. The tracker
+    /// returns the stored spelling, and an exact test against the old
+    /// constant let an uppercase `AGENT-ESCALATED` issue back into the queue.
+    #[test]
+    fn an_escalation_in_either_case_holds_the_issue() {
+        let policy = TriagePolicy::default();
+        let queue = split(
+            vec![
+                issue(
+                    1,
+                    "2026-01-01T00:00:00Z",
+                    &["KIND:BUG", "P0", "AGENT-ESCALATED"],
+                ),
+                issue(
+                    2,
+                    "2026-01-01T00:00:00Z",
+                    &["KIND:BUG", "P0", "agent-escalated"],
+                ),
+            ],
+            &policy,
+        );
+        assert!(queue.is_empty(), "an escalated issue must stay out");
     }
 
     /// An escalated issue with no record leaves the queue on either axis.

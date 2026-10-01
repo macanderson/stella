@@ -410,7 +410,7 @@ pub(crate) fn observe(
     let verified_locally = view
         .labels
         .iter()
-        .any(|label| label == VERIFIED_LOCALLY_LABEL);
+        .any(|label| stella_autonomy::labels::same(label, VERIFIED_LOCALLY_LABEL));
     view.checks = only_required(std::mem::take(&mut view.checks), &blocking);
 
     let settled = view.state.settled();
@@ -454,8 +454,9 @@ pub(crate) fn observe(
 ///
 /// On the pull request rather than in the process, so it survives a restart
 /// and so a human can see exactly which pull requests were merged on local
-/// evidence rather than on a clean CI run.
-pub(super) const VERIFIED_LOCALLY_LABEL: &str = "stella-verified-locally";
+/// evidence rather than on a clean CI run. Read in any case, so a pull
+/// request labelled before the uppercase rename still counts.
+pub(super) const VERIFIED_LOCALLY_LABEL: &str = "STELLA-VERIFIED-LOCALLY";
 
 /// Record that a pull request was proved on this machine.
 pub(super) fn mark_verified_locally(

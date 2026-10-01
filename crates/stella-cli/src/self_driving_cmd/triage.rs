@@ -36,24 +36,38 @@
 //! An unparseable answer is therefore a refusal, and the caller escalates. That
 //! costs one issue a human glance. Guessing costs an unbounded number of turns.
 
+use stella_autonomy::labels;
 use stella_autonomy::priority::{TriagePolicy, Unassessed};
 use stella_protocol::issue::{IssueKey, IssueProvider, IssueState};
 
-/// The size vocabulary a triage turn answers in, smallest first.
+/// The size scale a triage turn answers in, smallest first: the answer, the
+/// tracker label it becomes, and that label's description.
 ///
 /// Fixed rather than declared in [`TriagePolicy`]. A size is an effort
 /// estimate for a human reader, not a rung the ranker consumes, so no
 /// operator needs to respell it. If a workspace ever wants its own scale,
-/// this graduates into the policy the way the ladder did.
-pub(super) const SIZES: [&str; 5] = ["XS", "S", "M", "L", "XL"];
+/// this graduates into the policy the way the ladder did. The bands are
+/// agent minutes to a pull request ready to merge, as ADR 0046 sets them.
+pub(super) const SIZE_SCALE: [(&str, &str, &str); 5] = [
+    ("XS", "SIZE:EXTRA-SMALL", "30 agent minutes or fewer"),
+    ("S", "SIZE:SMALL", "31 to 90 agent minutes"),
+    ("M", "SIZE:MEDIUM", "91 to 240 agent minutes"),
+    ("L", "SIZE:LARGE", "241 to 480 agent minutes"),
+    (
+        "XL",
+        "SIZE:EXTRA-LARGE",
+        "More than 480 agent minutes: a multi-session lane",
+    ),
+];
 
-/// Prefix a size answer wears as a tracker label — `M` becomes `size/M`.
+/// The family every size label belongs to.
 ///
-/// The prefix is also the durable mark that this loop placed the issue.
-/// No other actor writes `size/` labels here. That is what lets
+/// A size label is also the durable mark that this loop placed the issue.
+/// The guard strips only priorities, so a size with no rung is what lets
 /// [`assessment_stripped`] tell "placed, then stripped by the triage
-/// guard" from "never placed at all".
-pub(super) const SIZE_LABEL_PREFIX: &str = "size/";
+/// guard" from "never placed at all". [`labels::in_family`] reads an old
+/// `size/M` as `SIZE:MEDIUM`, so a placement from before the rename counts.
+pub(super) const SIZE_FAMILY: &str = "SIZE:";
 
 /// The label meaning an assessed issue has no open blockers left.
 ///
@@ -62,12 +76,23 @@ pub(super) const SIZE_LABEL_PREFIX: &str = "size/";
 pub(super) const READY_LABEL: &str = stella_autonomy::ready::READY_LABEL;
 
 /// The label meaning an issue waits on another issue named in its body.
-pub(super) const BLOCKED_LABEL: &str = "status:blocked";
+///
+/// Owned by the loop: [`flip_ready`] lifts it once every named blocker has
+/// closed. It is a different label from `BLOCKED`, which a person applies
+/// to hold work for a reason no `Blocked by:` line names. The loop must
+/// never lift that hold, so the two do not share a name.
+pub(super) const BLOCKED_LABEL: &str = "STATUS:BLOCKED";
 
-/// The tracker spelling of a size answer.
+/// The tracker spelling of a size answer, such as `SIZE:MEDIUM` for `M`.
+///
+/// An answer outside the scale has no label. [`parse`] refuses one before
+/// it gets here, so the fallback is never written.
 #[must_use]
 pub(super) fn size_label(size: &str) -> String {
-    format!("{SIZE_LABEL_PREFIX}{size}")
+    SIZE_SCALE
+        .iter()
+        .find(|(answer, ..)| *answer == size)
+        .map_or_else(|| size.to_owned(), |(_, label, _)| (*label).to_owned())
 }
 
 /// Where a turn decided an issue belongs.
@@ -131,7 +156,10 @@ pub(super) fn prompt(issue: &Unassessed, body: &str, policy: &TriagePolicy) -> S
     let rungs = policy.ladder.rungs.join(", ");
     let defects = policy.defect_kinds.join(", ");
     let excluded = policy.excluded_kinds.join(", ");
-    let sizes = SIZES.join(", ");
+    let sizes = SIZE_SCALE.map(|(answer, ..)| answer).join(", ");
+    let bands = SIZE_SCALE
+        .map(|(answer, _, band)| format!("{answer} is {}", band.to_lowercase()))
+        .join("; ");
 
     format!(
         "Triage one issue for this repository. Do not change any code.\n\n\
@@ -142,8 +170,8 @@ pub(super) fn prompt(issue: &Unassessed, body: &str, policy: &TriagePolicy) -> S
          1. Is this a defect this repository's self-driving loop should work, \
          or is it something else?\n\
          2. If it is work, how urgent is it?\n\
-         3. If it is work, how large is it — judged on the largest of risk, \
-         blast radius and effort?\n\n\
+         3. If it is work, how large is it, in agent minutes to a pull request \
+         ready to merge? {bands}.\n\n\
          Answer on a single final line, in exactly one of these two forms, using \
          only the words listed:\n\n\
          {MARKER} kind=<one of: {defects}>; priority=<one of: {rungs}>; \
@@ -204,6 +232,10 @@ fn collect_strings(value: &serde_json::Value, out: &mut String) {
 ///
 /// The last `ASSESSMENT:` line wins, so a turn that thinks out loud and then
 /// commits does not trip over its own reasoning.
+///
+/// A word is matched through [`labels::same`] and written back in the
+/// policy's own spelling. So `kind=bug` places the issue as `KIND:BUG`, and
+/// the loop never writes a label the rename retired.
 #[must_use]
 pub(super) fn parse(output: &str, policy: &TriagePolicy) -> Option<Assessment> {
     let text = answer_text(output);
@@ -235,26 +267,30 @@ pub(super) fn parse(output: &str, policy: &TriagePolicy) -> Option<Assessment> {
     // Checked against the policy, never merely non-empty. A label the ranker
     // cannot read would send the issue straight back round as unassessed.
     if let Some(kind) = exclude {
-        return policy
-            .excluded_kinds
-            .contains(&kind)
-            .then_some(Assessment::Exclude { kind });
+        let kind = declared(&policy.excluded_kinds, &kind)?;
+        return Some(Assessment::Exclude { kind });
     }
 
-    let kind = kind?;
-    let priority = priority?;
+    let kind = declared(&policy.defect_kinds, &kind?)?;
+    let priority = declared(&policy.ladder.rungs, &priority?)?;
     // A placement without a size is half an answer, and a half answer is
     // a refusal. Accepting it would ship an issue with no size label, and
     // the caller promises exactly one size per assessed issue.
     let size = size?;
-    (policy.defect_kinds.contains(&kind)
-        && policy.ladder.rungs.contains(&priority)
-        && SIZES.contains(&size.as_str()))
-    .then_some(Assessment::Place {
+    let size = SIZE_SCALE
+        .iter()
+        .find(|(answer, ..)| answer.eq_ignore_ascii_case(&size))
+        .map(|(answer, ..)| (*answer).to_owned())?;
+    Some(Assessment::Place {
         kind,
         priority,
         size,
     })
+}
+
+/// The policy's spelling of `answer`, if the policy declares that label.
+fn declared(words: &[String], answer: &str) -> Option<String> {
+    words.iter().find(|w| labels::same(w, answer)).cloned()
 }
 
 /// Write an assessment onto the issue.
@@ -304,11 +340,11 @@ pub(super) fn apply(
 /// disallowed login would re-triage it, get stripped again, and pay for
 /// the same turn forever.
 ///
-/// The size label is the tell. Only this loop writes `size/` labels, the
-/// guard strips only priorities, and every placement writes both. So
-/// "sized with no rung" can only mean the placement landed and its
-/// priority was removed. The caller escalates once instead of re-asking,
-/// and the escalation label keeps the issue out of the queue.
+/// The size label is the tell. The guard strips only priorities, and every
+/// placement writes both. So "sized with no rung" can only mean the
+/// placement landed and its priority was removed. The caller escalates once
+/// instead of re-asking, and the escalation label keeps the issue out of
+/// the queue.
 #[must_use]
 pub(super) fn assessment_stripped(
     issue: &stella_protocol::issue::Issue,
@@ -317,13 +353,17 @@ pub(super) fn assessment_stripped(
     let sized = issue
         .labels
         .iter()
-        .any(|label| label.name.starts_with(SIZE_LABEL_PREFIX));
-    let runged = policy
-        .ladder
-        .rungs
-        .iter()
-        .any(|rung| issue.labels.iter().any(|label| &label.name == rung));
+        .any(|label| labels::in_family(&label.name, SIZE_FAMILY));
+    let runged = policy.ladder.rungs.iter().any(|rung| carries(issue, rung));
     sized && !runged
+}
+
+/// Whether `issue` carries `name`, in any spelling.
+fn carries(issue: &stella_protocol::issue::Issue, name: &str) -> bool {
+    issue
+        .labels
+        .iter()
+        .any(|label| labels::same(&label.name, name))
 }
 
 /// Flip a placed issue from blocked to ready, if nothing blocks it.
@@ -396,32 +436,60 @@ mod tests {
     #[test]
     fn a_declared_answer_places_the_issue() {
         assert_eq!(
-            parse("ASSESSMENT: kind=bug; priority=P0; size=M", &policy()),
+            parse("ASSESSMENT: kind=KIND:BUG; priority=P0; size=M", &policy()),
             Some(Assessment::Place {
-                kind: "bug".into(),
+                kind: "KIND:BUG".into(),
                 priority: "P0".into(),
                 size: "M".into()
             })
         );
     }
 
+    /// **The rename witness.** A turn that answers in an old spelling, or in
+    /// another case, places the issue under the policy's own spelling. The
+    /// loop must never write `bug` or `size/M` back onto the tracker once
+    /// those labels are renamed.
+    #[test]
+    fn an_old_spelling_is_written_back_in_the_policys_spelling() {
+        let assessment =
+            parse("ASSESSMENT: kind=bug; priority=p1; size=m", &policy()).expect("a placement");
+        let written = assessment.labels();
+        assert_eq!(written, ["KIND:BUG", "P1", "SIZE:MEDIUM"]);
+        assert_eq!(
+            parse("ASSESSMENT: exclude=feature", &policy()),
+            Some(Assessment::Exclude {
+                kind: "KIND:FEATURE".into()
+            })
+        );
+    }
+
     /// **The sizing witness.** A sized placement parses, and its labels carry
-    /// exactly one `size/` label alongside the kind and the rung — the shape
+    /// exactly one `SIZE:` label alongside the kind and the rung — the shape
     /// the tracker convention asks for.
     #[test]
     fn a_sized_assessment_parses_and_writes_exactly_one_size_label() {
         let assessment =
-            parse("ASSESSMENT: kind=bug; priority=P1; size=XL", &policy()).expect("a placement");
+            parse("ASSESSMENT: kind=KIND:BUG; priority=P1; size=L", &policy()).expect("placed");
         let labels = assessment.labels();
-        assert_eq!(labels, vec!["bug", "P1", "size/XL"]);
+        assert_eq!(labels, vec!["KIND:BUG", "P1", "SIZE:LARGE"]);
         assert_eq!(
             labels
                 .iter()
-                .filter(|label| label.starts_with(SIZE_LABEL_PREFIX))
+                .filter(|label| labels::in_family(label, SIZE_FAMILY))
                 .count(),
             1,
             "exactly one size label per assessed issue"
         );
+    }
+
+    /// Every size answer has its own label, and the prompt states each band.
+    #[test]
+    fn every_size_answer_has_a_label_and_a_band() {
+        let text = prompt(&unassessed(), "it broke", &policy());
+        for (answer, label, band) in SIZE_SCALE {
+            assert_eq!(size_label(answer), label);
+            assert!(text.contains(&band.to_lowercase()), "{band}");
+        }
     }
 
     /// A placement that names no size is half an answer, and half an answer
@@ -449,7 +517,7 @@ mod tests {
     fn an_answer_inside_the_json_envelope_is_still_an_answer() {
         let envelope = serde_json::json!({
             "status": "ok",
-            "result": "Looking at the context records, this blocks a release.\nASSESSMENT: kind=bug; priority=P0; size=S",
+            "result": "Looking at the context records, this blocks a release.\nASSESSMENT: kind=KIND:BUG; priority=P0; size=S",
         })
         .to_string();
 
@@ -462,7 +530,7 @@ mod tests {
         assert_eq!(
             parse(&envelope, &policy()),
             Some(Assessment::Place {
-                kind: "bug".into(),
+                kind: "KIND:BUG".into(),
                 priority: "P0".into(),
                 size: "S".into()
             })
@@ -473,9 +541,9 @@ mod tests {
     #[test]
     fn a_plain_text_answer_still_parses() {
         assert_eq!(
-            parse("ASSESSMENT: exclude=documentation", &policy()),
+            parse("ASSESSMENT: exclude=KIND:DOCUMENTATION", &policy()),
             Some(Assessment::Exclude {
-                kind: "documentation".into()
+                kind: "KIND:DOCUMENTATION".into()
             })
         );
     }
@@ -502,13 +570,13 @@ mod tests {
     /// Thinking out loud before committing is fine — the last line wins.
     #[test]
     fn the_last_assessment_line_wins() {
-        let output = "ASSESSMENT: kind=bug; priority=P2; size=S\n\
+        let output = "ASSESSMENT: kind=KIND:BUG; priority=P2; size=S\n\
                       on reflection this blocks a release\n\
-                      ASSESSMENT: kind=bug; priority=P0; size=S";
+                      ASSESSMENT: kind=KIND:BUG; priority=P0; size=S";
         assert_eq!(
             parse(output, &policy()),
             Some(Assessment::Place {
-                kind: "bug".into(),
+                kind: "KIND:BUG".into(),
                 priority: "P0".into(),
                 size: "S".into()
             })
@@ -733,6 +801,10 @@ mod tests {
             assessment_stripped(&stripped, &policy),
             "sized with no rung — only the guard produces this shape"
         );
+        // The same shape under the new names. A `size/` prefix test missed
+        // it, and the loop re-triaged a stripped issue on every cycle.
+        let renamed = issue("45", IssueState::Open, &["KIND:BUG", "SIZE:MEDIUM"], "");
+        assert!(assessment_stripped(&renamed, &policy), "SIZE: is a size");
         assert!(
             !assessment_stripped(
                 &issue("43", IssueState::Open, &["bug", "size/M", "P1"], ""),

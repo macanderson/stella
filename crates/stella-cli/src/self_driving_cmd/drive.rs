@@ -75,6 +75,7 @@ mod ending;
 mod notify;
 mod settlement;
 mod triage;
+mod vocabulary;
 
 use ending::{Tally, budget_reached, report, stopped_by_signal};
 use settlement::{Settlement, issue_finished_by};
@@ -206,8 +207,9 @@ pub(super) fn drive(
     // that stops the next run repeating the attempt.
     crate::issue_provider::ensure_label(
         stella_autonomy::ESCALATION_LABEL,
+        vocabulary::ALARM,
         // Under 100 characters, which is GitHub's cap on a label description.
-        "Attempted by the self-driving loop and unresolved. Still wanted — remove to requeue.",
+        "Stella's backlog loop tried it and could not resolve it. Remove to requeue",
     )
     .map_err(|error| format!("could not install the escalation label: {error}"))?;
 
@@ -301,7 +303,8 @@ pub(super) fn drive(
     // of local verification, which is worth a warning and not a refusal to run.
     if let Err(error) = crate::issue_provider::ensure_label(
         super::deliver::VERIFIED_LOCALLY_LABEL,
-        "Proved by running this project's own checks locally, not by remote CI.",
+        vocabulary::AUTOMATION,
+        "Owned by Stella, applied to its own PRs after a local verification run",
     ) {
         audit::record(
             durable,
@@ -311,40 +314,9 @@ pub(super) fn drive(
         );
     }
 
-    // The loop's own vocabulary, installed before it needs it.
-    //
-    // Triage answers in the configured ladder and then writes that label; a
-    // tracker that does not carry the label rejects the write, and the issue
-    // comes back unassessed forever. A fresh repository has GitHub's stock
-    // labels and nothing else, so this is the ordinary case rather than the
-    // exotic one — it is what lets the loop be pointed at a repository nobody
-    // prepared for it.
-    for (index, rung) in cfg.triage.ladder.rungs.iter().enumerate() {
-        let _ = crate::issue_provider::ensure_label(
-            rung,
-            &format!("Priority {index} — installed by the self-driving loop."),
-        );
-    }
-    for kind in &cfg.triage.defect_kinds {
-        let _ = crate::issue_provider::ensure_label(kind, "Work the self-driving loop may take.");
-    }
-    // The size scale and the readiness pair ride the same install pass as
-    // the rungs. Triage writes them, and a tracker that lacks a label
-    // rejects the write. The rung loop above holds the full argument.
-    for size in super::triage::SIZES {
-        let _ = crate::issue_provider::ensure_label(
-            &super::triage::size_label(size),
-            "Effort estimate written by the self-driving loop's triage.",
-        );
-    }
-    let _ = crate::issue_provider::ensure_label(
-        super::triage::READY_LABEL,
-        "Assessed, with no open blocker remaining — ready to take.",
-    );
-    let _ = crate::issue_provider::ensure_label(
-        super::triage::BLOCKED_LABEL,
-        "Waiting on another issue named in the body as `Blocked by`.",
-    );
+    // The loop's own vocabulary, installed before it needs it. The
+    // module holds why.
+    vocabulary::install(&cfg.triage);
 
     // The run's USD ceiling, and the accounting that makes `--spend-limit`
     // mean what its help says (#4353). Every child turn is spawned through

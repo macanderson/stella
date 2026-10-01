@@ -1,6 +1,6 @@
 name: Issue triage
 
-# Every issue starts life as a request in `triage`. That label is the triage
+# Every issue starts life as a request in `TRIAGE`. That label is the triage
 # queue's membership marker, not a status: it comes off last, when all six of
 # /backlog-triage's facets hold, and the sweep removes it itself as its own
 # final write.
@@ -26,11 +26,12 @@ env:
   GH_TOKEN: ${{ github.token }}
   ISSUE: ${{ github.event.issue.number }}
   REPO: ${{ github.repository }}
-  # Space-separated; adding any of these counts as typing the issue. Must
-  # match /backlog-triage's five valid types exactly (#2825): `question` is
-  # not one of them and `chore` was missing, so a `chore`-typed issue never
-  # counted as typed here.
-  TYPE_LABELS: bug feature chore documentation epic
+  # Space-separated; adding any of these counts as typing the issue. They are
+  # the six kind labels the label scheme names (ADR 0046) and `EPIC`, which
+  # sits outside the kind axis. `QUESTION` is not a type. The loop reads this
+  # line to learn the type axis (`self_driving_cmd/convention.rs`), and a test
+  # there holds three Rust copies of it to this list.
+  TYPE_LABELS: KIND:BUG KIND:FEATURE KIND:IMPROVEMENT KIND:CHORE KIND:DOCUMENTATION KIND:DEVOPS EPIC
 
 jobs:
   triage:
@@ -40,11 +41,17 @@ jobs:
         run: |
           # Issues opened outside the template (gh issue create, the API) carry
           # no labels at all — those are exactly the ones this catches.
+          #
+          # Both sides are lowercased before they are compared. The event
+          # carries the label in the case the repository stores it, which
+          # need not be the case written above.
           typed=$(jq -r --arg types "$TYPE_LABELS" \
-            '[.issue.labels[].name] | map(select(. as $l | $types | split(" ") | index($l))) | length' \
+            '($types | ascii_downcase | split(" ")) as $t
+             | [.issue.labels[].name | ascii_downcase]
+             | map(select(. as $l | $t | index($l))) | length' \
             "$GITHUB_EVENT_PATH")
           if [ "$typed" -gt 0 ]; then
             echo "already typed, skipping triage"
           else
-            gh issue edit "$ISSUE" --repo "$REPO" --add-label triage
+            gh issue edit "$ISSUE" --repo "$REPO" --add-label TRIAGE
           fi

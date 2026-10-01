@@ -1,8 +1,9 @@
 //! Is this emergency already filed?
 //!
-//! The label on a `main-red` or `release-red` issue is the dedup key. It is
+//! The label on a `MAIN-RED` or `RELEASE-RED` issue is the dedup key. It is
 //! how a restarted loop, or a second one, finds the emergency already
-//! filed. Without it, each pass files a new one. This is that read.
+//! filed. Without it, each pass files a new one. This is that read. It
+//! ignores case, since the tracker returns whichever spelling it stores.
 //!
 //! Its own file because `backlog.rs` is at the size ceiling.
 
@@ -64,14 +65,19 @@ fn emergency_labelled(provider: &dyn IssueProvider, label: &str) -> EmergencyRea
     };
 
     let filled = read_filled_the_page(issues.len());
-    match issues
-        .into_iter()
-        .find(|issue| issue.labels.iter().any(|carried| carried.name == label))
-    {
+    match issues.into_iter().find(|issue| carries(issue, label)) {
         Some(issue) => EmergencyRead::Filed(issue.key.as_str().to_owned()),
         None if filled => EmergencyRead::Unknown("the read filled its page"),
         None => EmergencyRead::NotFiled,
     }
+}
+
+/// Whether `issue` carries `label`, in any spelling.
+fn carries(issue: &stella_protocol::issue::Issue, label: &str) -> bool {
+    issue
+        .labels
+        .iter()
+        .any(|carried| stella_autonomy::labels::same(&carried.name, label))
 }
 
 /// The open base-breakage issue, if one exists.

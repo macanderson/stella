@@ -53,7 +53,7 @@ pub struct SessionStats {
     pub issues_no_change: u32,
     /// Attempts whose turn did not complete.
     pub issues_failed: u32,
-    /// Issues marked `agent-escalated` — tried, unresolved, handed back.
+    /// Issues marked `AGENT-ESCALATED` — tried, unresolved, handed back.
     pub issues_escalated: u32,
     /// Escalations that used up the last attempt, so the issue is parked
     /// and the loop will not take it again.

@@ -11,15 +11,15 @@
 //!
 //! It is a feedback loop, and it is specific to *this* repository's
 //! automation. [`crate::priority::triage`] counts an issue as a defect if it
-//! carries `bug` **or** `triage` — an untriaged issue is a defect nobody has
-//! classified yet. Meanwhile `.github/workflows/issue-triage.yml` adds
-//! `triage` to any issue opened without one of its `TYPE_LABELS`
-//! (`bug feature chore documentation epic`), and the comment above that
+//! carries `KIND:BUG` **or** `TRIAGE` — an untriaged issue is a defect nobody
+//! has classified yet. Meanwhile `.github/workflows/issue-triage.yml` adds
+//! `TRIAGE` to any issue opened without one of its `TYPE_LABELS` (the six
+//! `KIND:*` labels and `EPIC`), and the comment above that
 //! rule says why: "Issues opened outside the template (`gh issue create`, the
 //! API) carry no labels at all — those are exactly the ones this catches."
 //!
 //! A loop filing through the API is exactly that case. So an unlabelled
-//! filing is stamped `triage` by the workflow, and the loop's own next cycle
+//! filing is stamped `TRIAGE` by the workflow, and the loop's own next cycle
 //! reads it back as an untriaged defect it is responsible for triaging. The
 //! loop manufactures its own queue, and every measure of whether it is
 //! gaining or losing ground against the backlog silently includes its own
@@ -61,7 +61,7 @@ use serde::{Deserialize, Serialize};
 /// A session installs it if the tracker does not already carry it, because a
 /// label that does not exist cannot be applied and the loop would fail at the
 /// first escalation rather than at setup.
-pub const ESCALATION_LABEL: &str = "agent-escalated";
+pub const ESCALATION_LABEL: &str = "AGENT-ESCALATED";
 
 /// Where a rule about how issues are written came from.
 ///
@@ -75,7 +75,7 @@ pub enum ConventionSource {
     /// Automation acts on it.
     ///
     /// The only source that is a fact rather than a claim. A workflow that
-    /// adds `triage` to an untyped issue is not *describing* a convention, it
+    /// adds `TRIAGE` to an untyped issue is not *describing* a convention, it
     /// **is** one — it will do that to the loop's filings whatever any
     /// document says. Read this first and let it win, because it is the only
     /// source that can be wrong about itself in no way at all.
@@ -130,14 +130,26 @@ pub struct LabelAxis {
 }
 
 impl LabelAxis {
-    /// Which members of this axis appear in `labels`.
+    /// Which members of this axis appear in `labels`, one entry per label.
+    ///
+    /// Read through [`crate::labels::same`], so `bug` on a filing meets a
+    /// `KIND:BUG` member. Two spellings of one label count once, or a filing
+    /// that carried both would read as two members of one axis.
     fn present<'a>(&self, labels: &[&'a str]) -> Vec<&'a str> {
-        labels
-            .iter()
-            .filter(|l| self.members.iter().any(|m| m == *l))
-            .copied()
-            .collect()
+        let mut found: Vec<&'a str> = Vec::new();
+        for label in labels {
+            let member = self.members.iter().any(|m| crate::labels::same(m, label));
+            if member && !found.iter().any(|f| crate::labels::same(f, label)) {
+                found.push(label);
+            }
+        }
+        found
     }
+}
+
+/// Whether `labels` carries `reserved`, in any spelling.
+fn carries(labels: &[&str], reserved: &str) -> bool {
+    labels.iter().any(|l| crate::labels::same(l, reserved))
 }
 
 /// Whether a discovered convention may steer a filing yet.
@@ -172,7 +184,7 @@ pub struct BacklogConvention {
     pub axes: Vec<LabelAxis>,
     /// Labels the loop must never apply itself.
     ///
-    /// `triage` is this repository's: it marks an issue that arrived from
+    /// `TRIAGE` is this repository's: it marks an issue that arrived from
     /// outside without a type, and the loop knows what it found — applying it
     /// would be claiming to be a stranger to its own filing. Reserved is not
     /// the same as unknown: a reserved label is one the loop is *forbidden*
@@ -306,7 +318,7 @@ pub fn conform(convention: &BacklogConvention, labels: &[&str]) -> Conformance {
     }
 
     for label in &convention.reserved {
-        if labels.contains(&label.as_str()) {
+        if carries(labels, label) {
             violations.push(Violation::ReservedApplied {
                 label: label.clone(),
             });
@@ -356,7 +368,7 @@ pub struct Repair {
     pub remove: Vec<String>,
     /// Axes something with judgement must settle.
     ///
-    /// **Never auto-filled.** Choosing between `bug` and `feature`, or between
+    /// **Never auto-filled.** Choosing between `KIND:BUG` and `KIND:FEATURE`, or between
     /// `P0` and `P2`, is a reading of what the issue says; a loop that guessed
     /// would be manufacturing the very classification the queue is ranked by,
     /// and the ranking would then be measuring its own invention.
@@ -388,7 +400,7 @@ pub fn repair(convention: &BacklogConvention, labels: &[&str]) -> Repair {
     let mut out = Repair::default();
 
     for label in &convention.reserved {
-        if labels.contains(&label.as_str()) {
+        if carries(labels, label) {
             out.remove.push(label.clone());
         }
     }
@@ -425,12 +437,12 @@ mod tests {
     use super::*;
 
     /// **The authority witness.** A missing type axis is reported as something
-    /// to *decide*, never filled in. A loop that guessed `bug` would be
+    /// to *decide*, never filled in. A loop that guessed `KIND:BUG` would be
     /// manufacturing the classification the queue is ranked by, and the
     /// ranking would then be measuring the loop's own invention.
     #[test]
     fn a_missing_axis_is_a_choice_never_a_guess() {
-        let r = repair(&stella(), &["P1", "area:core"]);
+        let r = repair(&stella(), &["P1", "AREA:CORE"]);
 
         assert!(r.remove.is_empty(), "nothing to remove: {r:?}");
         assert_eq!(r.choose.len(), 1, "{r:?}");
@@ -443,9 +455,9 @@ mod tests {
     /// removable without judgement, so triage can do it unattended.
     #[test]
     fn a_reserved_label_is_removed_mechanically() {
-        let r = repair(&stella(), &["bug", "triage"]);
+        let r = repair(&stella(), &["KIND:BUG", "TRIAGE"]);
 
-        assert_eq!(r.remove, vec!["triage".to_owned()]);
+        assert_eq!(r.remove, vec!["TRIAGE".to_owned()]);
         assert!(r.choose.is_empty(), "{r:?}");
         assert!(r.is_mechanical(), "a machine can finish this alone");
     }
@@ -454,7 +466,7 @@ mod tests {
     /// is a choice rather than a removal.
     #[test]
     fn an_ambiguous_axis_is_a_choice_not_an_arbitrary_removal() {
-        let r = repair(&stella(), &["bug", "P0", "P2"]);
+        let r = repair(&stella(), &["KIND:BUG", "P0", "P2"]);
 
         assert!(r.remove.is_empty(), "must not drop one at random: {r:?}");
         assert_eq!(
@@ -468,7 +480,7 @@ mod tests {
     /// A conformant issue needs nothing, so triage leaves it alone.
     #[test]
     fn a_conformant_issue_needs_no_repair() {
-        assert!(repair(&stella(), &["bug", "P1", "area:core"]).is_empty());
+        assert!(repair(&stella(), &["KIND:BUG", "P1", "AREA:CORE"]).is_empty());
     }
 
     /// `repair` and `conform` are the same rule pointed in two directions: an
@@ -476,11 +488,13 @@ mod tests {
     #[test]
     fn repair_and_conform_agree_on_every_case() {
         for labels in [
-            vec!["bug", "P1", "area:core"],
+            vec!["KIND:BUG", "P1", "AREA:CORE"],
             vec!["P1"],
+            vec!["KIND:BUG", "TRIAGE"],
+            vec!["KIND:BUG", "P0", "P2"],
+            vec!["KIND:BUG"],
             vec!["bug", "triage"],
-            vec!["bug", "P0", "P2"],
-            vec!["bug"],
+            vec!["bug", "KIND:BUG"],
         ] {
             let convention = stella();
             assert_eq!(
@@ -499,10 +513,18 @@ mod tests {
             axes: vec![
                 LabelAxis {
                     name: "type".into(),
-                    members: ["bug", "feature", "chore", "documentation", "epic"]
-                        .iter()
-                        .map(|s| (*s).to_owned())
-                        .collect(),
+                    members: [
+                        "KIND:BUG",
+                        "KIND:FEATURE",
+                        "KIND:IMPROVEMENT",
+                        "KIND:CHORE",
+                        "KIND:DOCUMENTATION",
+                        "KIND:DEVOPS",
+                        "EPIC",
+                    ]
+                    .iter()
+                    .map(|s| (*s).to_owned())
+                    .collect(),
                     requirement: AxisRequirement::ExactlyOne,
                     source: ConventionSource::Enforced,
                 },
@@ -514,7 +536,7 @@ mod tests {
                 },
                 LabelAxis {
                     name: "area".into(),
-                    members: ["area:core", "area:cli", "area:protocol"]
+                    members: ["AREA:CORE", "AREA:CLI", "AREA:PROTOCOL"]
                         .iter()
                         .map(|s| (*s).to_owned())
                         .collect(),
@@ -522,18 +544,18 @@ mod tests {
                     source: ConventionSource::Declared,
                 },
             ],
-            reserved: vec!["triage".into()],
+            reserved: vec!["TRIAGE".into()],
             acceptance: Acceptance::Bound,
         }
     }
 
     /// The witness. A filing with no type label is refused *before* it reaches
-    /// the tracker, rather than being filed, stamped `triage` by
+    /// the tracker, rather than being filed, stamped `TRIAGE` by
     /// `issue-triage.yml`, and read back by `priority::triage` as an untriaged
     /// defect the loop must now triage.
     #[test]
     fn a_filing_that_omits_the_type_axis_is_refused() {
-        let verdict = conform(&stella(), &["P1", "area:core"]);
+        let verdict = conform(&stella(), &["P1", "AREA:CORE"]);
 
         let Conformance::Refused { violations } = verdict else {
             panic!("an untyped filing must not reach the tracker: {verdict:?}");
@@ -543,11 +565,13 @@ mod tests {
             vec![Violation::AxisMissing {
                 axis: "type".into(),
                 candidates: vec![
-                    "bug".into(),
-                    "feature".into(),
-                    "chore".into(),
-                    "documentation".into(),
-                    "epic".into(),
+                    "KIND:BUG".into(),
+                    "KIND:FEATURE".into(),
+                    "KIND:IMPROVEMENT".into(),
+                    "KIND:CHORE".into(),
+                    "KIND:DOCUMENTATION".into(),
+                    "KIND:DEVOPS".into(),
+                    "EPIC".into(),
                 ],
             }]
         );
@@ -555,7 +579,18 @@ mod tests {
 
     #[test]
     fn a_fully_classified_filing_is_conformant() {
+        assert!(conform(&stella(), &["KIND:BUG", "P1", "AREA:CORE"]).is_conformant());
+    }
+
+    /// **The rename witness.** A filing in the old spelling, or in another
+    /// case, still meets the axis. Under an exact test `bug` met no member of
+    /// the `KIND:*` axis, so every filing the loop drafted before the rename
+    /// was refused as untyped. Two spellings of one label count once.
+    #[test]
+    fn an_old_or_recased_spelling_still_meets_the_axis() {
         assert!(conform(&stella(), &["bug", "P1", "area:core"]).is_conformant());
+        assert!(conform(&stella(), &["kind:bug", "p1"]).is_conformant());
+        assert!(conform(&stella(), &["bug", "KIND:BUG"]).is_conformant());
     }
 
     /// The priority axis admits at most one member, and two is not a stricter
@@ -563,7 +598,7 @@ mod tests {
     /// first.
     #[test]
     fn two_members_of_a_single_valued_axis_are_ambiguous_not_stricter() {
-        let verdict = conform(&stella(), &["bug", "P0", "P2"]);
+        let verdict = conform(&stella(), &["KIND:BUG", "P0", "P2"]);
 
         let Conformance::Refused { violations } = verdict else {
             panic!("two priorities must not pass: {verdict:?}");
@@ -580,16 +615,16 @@ mod tests {
     /// An axis whose requirement is `Any` never fails, in either direction.
     #[test]
     fn an_any_axis_accepts_none_and_several() {
-        assert!(conform(&stella(), &["bug"]).is_conformant());
-        assert!(conform(&stella(), &["bug", "area:core", "area:cli"]).is_conformant());
+        assert!(conform(&stella(), &["KIND:BUG"]).is_conformant());
+        assert!(conform(&stella(), &["KIND:BUG", "AREA:CORE", "AREA:CLI"]).is_conformant());
     }
 
-    /// `triage` marks an issue that arrived from outside without a type. The
+    /// `TRIAGE` marks an issue that arrived from outside without a type. The
     /// loop knows what it found, so applying it would be claiming to be a
-    /// stranger to its own filing.
+    /// stranger to its own filing. The lowercase spelling is the same label.
     #[test]
     fn the_loop_may_not_apply_a_reserved_label() {
-        let verdict = conform(&stella(), &["bug", "triage"]);
+        let verdict = conform(&stella(), &["KIND:BUG", "triage"]);
 
         let Conformance::Refused { violations } = verdict else {
             panic!("the loop must not triage its own filing: {verdict:?}");
@@ -597,7 +632,7 @@ mod tests {
         assert_eq!(
             violations,
             vec![Violation::ReservedApplied {
-                label: "triage".into(),
+                label: "TRIAGE".into(),
             }]
         );
     }
@@ -606,7 +641,7 @@ mod tests {
     /// refused four times.
     #[test]
     fn a_refusal_carries_every_violation_not_the_first() {
-        let verdict = conform(&stella(), &["P0", "P1", "triage"]);
+        let verdict = conform(&stella(), &["P0", "P1", "TRIAGE"]);
 
         let Conformance::Refused { violations } = verdict else {
             panic!("expected a refusal: {verdict:?}");
@@ -620,7 +655,7 @@ mod tests {
     /// A label applied twice is one label, not an ambiguity.
     #[test]
     fn a_duplicated_label_is_counted_once() {
-        assert!(conform(&stella(), &["bug", "P1", "P1"]).is_conformant());
+        assert!(conform(&stella(), &["KIND:BUG", "P1", "P1"]).is_conformant());
     }
 
     /// The structural half of "the loop may propose any convention and grant
@@ -632,7 +667,7 @@ mod tests {
         let mut proposed = stella();
         proposed.acceptance = Acceptance::Proposed;
 
-        let verdict = conform(&proposed, &["bug", "P1", "area:core"]);
+        let verdict = conform(&proposed, &["KIND:BUG", "P1", "AREA:CORE"]);
 
         assert_eq!(
             verdict,

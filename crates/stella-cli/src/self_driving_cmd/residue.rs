@@ -55,9 +55,10 @@ const TITLE_CHARS: usize = 90;
 /// The label every residue filing carries.
 ///
 /// A residue statement names behavior the turn knows is missing. The type
-/// axis spells that `bug`. A convention without that member refuses the
-/// draft, and the refusal stands. The gate never invents a vocabulary.
-const RESIDUE_LABEL: &str = "bug";
+/// axis spells that `KIND:BUG`, the one defect word every supply files
+/// under. A convention without that member refuses the draft, and the
+/// refusal stands. The gate never invents a vocabulary.
+const RESIDUE_LABEL: &str = stella_autonomy::supply::DEFECT_LABEL;
 
 /// Statements of leftover work in a turn's prose.
 ///
@@ -303,14 +304,22 @@ mod tests {
         BacklogConvention {
             axes: vec![LabelAxis {
                 name: "type".into(),
-                members: ["bug", "feature", "chore", "documentation", "epic"]
-                    .iter()
-                    .map(|s| (*s).to_owned())
-                    .collect(),
+                members: [
+                    "KIND:BUG",
+                    "KIND:FEATURE",
+                    "KIND:IMPROVEMENT",
+                    "KIND:CHORE",
+                    "KIND:DOCUMENTATION",
+                    "KIND:DEVOPS",
+                    "EPIC",
+                ]
+                .iter()
+                .map(|s| (*s).to_owned())
+                .collect(),
                 requirement: AxisRequirement::ExactlyOne,
                 source: ConventionSource::Enforced,
             }],
-            reserved: vec!["triage".into()],
+            reserved: vec!["TRIAGE".into()],
             acceptance: Acceptance::Bound,
         }
     }
