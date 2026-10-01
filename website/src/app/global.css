@@ -1,13 +1,11 @@
 /**
  * stella docs — the semantic layer.
  *
- * Brand system: the mark comes from brand kit v4.0, "the comet" (docs/brand/
- * is the normative source for it); the site's CHROME comes from the product
- * palette, the ramp the terminal and the Observatory render — see the
- * product-palette block in tokens.css for what that split is and why it is
- * bounded the way it is. JetBrains Mono is the one and only face either way:
- * the product lives in a terminal, so the brand speaks in monospace, and
- * there is no second family to fall back to, on purpose.
+ * Brand system: the marks, the faces, and every house colour come from the
+ * Oxagen house kit (macanderson/oxagen-brand), copied in by
+ * scripts/sync-brand-assets.mjs. tokens.css carries the palette, and
+ * src/brand/house-tokens.css is the kit's own token sheet, which this file
+ * reads for the font stacks.
  *
  * Three rules the rest of the file obeys:
  *
@@ -31,17 +29,18 @@
 @import "fumadocs-ui/css/neutral.css";
 @import "fumadocs-ui/css/preset.css";
 @import "./tokens.css";
+@import "../brand/house-tokens.css";
 
 /* Let Tailwind see Fumadocs' compiled utility classes. */
 @source "../../node_modules/fumadocs-ui/dist/**/*.js";
 
-/* Three faces, loaded by src/app/layout.tsx. Space Grotesk sets h1 to h3,
- * Geist everything read, Monaspace Neon code and terminal transcripts. */
+/* Three faces, loaded by src/brand/next-fonts.ts. Space Grotesk sets h1 to
+ * h3, Geist everything read, Monaspace Neon code and terminal transcripts.
+ * Each fallback stack is the kit's, from src/brand/house-tokens.css. */
 @theme {
-  --font-display: var(--font-stella-display), "Helvetica Neue", Arial, sans-serif;
-  --font-sans: var(--font-stella-sans), system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: var(--font-stella-mono), ui-monospace, "SF Mono", Menlo,
-    Consolas, "Liberation Mono", monospace;
+  --font-display: var(--font-space-grotesk), var(--ox-font-display);
+  --font-sans: var(--font-geist), var(--ox-font);
+  --font-mono: var(--font-monaspace-neon), var(--ox-font-mono);
 
   /* The kit's type scale, unchanged. It was cut one notch small because mono
    * runs wide; Space Grotesk does not, so the scale now reads a little tighter
@@ -174,11 +173,11 @@ figure.shiki ::selection,
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
- * Typography — one face, one scale, one rhythm, one measure
+ * Typography: three faces, one scale, one rhythm, one measure
  *
- * Everything is JetBrains Mono, so hierarchy comes from weight (800/700/500/
- * 400) and size, never from a family change. Headings are 700 per the kit;
- * only the hero display steps up to 800.
+ * Space Grotesk sets h1 to h3 and Geist sets h4 to h6, so hierarchy comes
+ * from the face, the weight, and the size. Headings are 700 per the kit.
+ * Only the hero display steps up to 800.
  * ═════════════════════════════════════════════════════════════════════════ */
 
 .prose {
@@ -343,11 +342,11 @@ figure.shiki ::selection,
 
 #nd-sidebar {
   font-size: var(--stella-type-sm);
-  --color-fd-card: #ffffff;
+  --color-fd-card: var(--stella-paper-3);
   --color-fd-accent: var(--stella-paper-row); /* hover/selected chip */
   --color-fd-secondary: var(--stella-paper-row);
   --color-fd-muted: var(--stella-paper-2);
-  background-color: #ffffff;
+  background-color: var(--stella-paper-3);
 }
 
 .dark #nd-sidebar {
@@ -1282,7 +1281,7 @@ figure.shiki > div:has(figcaption) {
  * on paper the ground is warm cream, which reads as a muted smudge on the accent
  * rather than as a legible number. */
 .sdg .sdg-dot-numeral {
-  fill: #ffffff;
+  fill: var(--stella-text);
   font-weight: 600;
 }
 /* Line-art glyphs, drawn in a 20×20 local box and placed with a transform.

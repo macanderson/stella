@@ -7,12 +7,20 @@ status: living
 # docs/brand — the house kit, mirrored
 
 **This directory is a copy. The source is
-[macanderson/oxagen-house-brand](https://github.com/macanderson/oxagen-house-brand),
+[macanderson/oxagen-brand](https://github.com/macanderson/oxagen-brand),
 and nothing here is edited by hand.**
 
 ```sh
 make brand-sync                              # pull the kit into this repo
 node scripts/sync-brand-assets.mjs --check   # fail if a copy has drifted
+```
+
+Both read the kit from `$OXAGEN_BRAND_KIT`, else `../oxagen-brand`. Pass
+`--brand <dir>` to the script to name another checkout.
+`.github/workflows/brand-drift.yml` runs the check against the kit's `main`.
+
+```sh
+node scripts/sync-brand-assets.mjs --brand ~/Projects/oxagen-brand
 ```
 
 ## Why a copy exists at all
@@ -39,13 +47,15 @@ separate Stella lockup, which is why there is none here.
 
 **The palette is the house palette.** One table for Stella and Oxagen, so a
 reader crossing between the two sites does not watch the brand change hue. The
-normative copy for this repo is `design/tokens/stella-tokens.json`; `css/tokens.css`
-is generated from it and `css/house-tokens.css` is the kit's own file, verbatim.
+normative copy for this repo is `design/tokens/stella-tokens.json`, and
+`css/tokens.css` mirrors it. The sync writes the kit's value into each Stella
+token the house palette owns, in both files. `css/house-tokens.css` and
+`css/house-tokens.json` are the kit's own files, verbatim.
 
-**The face is Space Grotesk**, which is what both wordmarks are cut from.
-JetBrains Mono covers code and terminal transcripts only — the house rule is
-that Space Grotesk is not a code face, and a transcript needs its columns to
-line up.
+**The faces are the house's three.** Space Grotesk sets the wordmarks and h1
+to h3, Geist sets the text, and Monaspace Neon sets code and terminal
+transcripts. JetBrains Mono is not a house face, and nothing on the site loads
+the copy in `fonts/`.
 
 ## What is here
 
@@ -54,8 +64,8 @@ logo/svg/     the wordmark and the asterisk: adaptive · dark · light · mono �
 pwa/          favicons, app icons, maskables, the ICO, the manifest snippet
 spinners/     the house motion — animated SVG, no script
 social/       avatar · x · linkedin · youtube · open graph
-fonts/        Space Grotesk (the brand face) and JetBrains Mono (code), with licences
-css/          tokens.css (generated from the JSON) · globals.css
+fonts/        the three house faces and JetBrains Mono, with licences
+css/          tokens.css (mirrors the JSON) · house-tokens.css · house-tokens.json · globals.css
 prompts/      the design-system prompts
 site/         static page mocks
 brand-guidelines.html

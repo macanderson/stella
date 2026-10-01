@@ -53,7 +53,7 @@ are two products from one company, and neither duplicates the other:
   engine over a wire protocol and holds no key and runs no tool itself, so
   every completion and tool call comes back to Oxagen's gates.
 
-Both products share the [Oxagen house brand system](https://github.com/macanderson/oxagen-house-brand):
+Both products share the [Oxagen house brand system](https://github.com/macanderson/oxagen-brand):
 one typeface, one gold, and one glyph in that gold per wordmark. Stella's mark
 is the asterisk in `stella*`, and nothing is ever set to its left.
 
@@ -674,9 +674,11 @@ palette, and it adopts the Oxagen house table. `scripts/gen-tokens.py` emits
 the terminal tokens (`stella-tui-theme`) and `design/tokens/stella-tokens.css`
 from it, which the site's `tokens.css` carries verbatim under a checker
 (`make tokens-update` regenerates, `make tokens` checks), and
-`scripts/sync-brand-assets.mjs` vendors the marks, icons, and spinner from the
-house kit into `docs/brand/` (`--check` runs in CI). Edit the JSON or rebuild
-the kit; never the generated files.
+`scripts/sync-brand-assets.mjs` copies the marks, icons, fonts, and spinners
+from the house kit into `docs/brand/` and `website/`. It also writes the kit's
+value into each token the house palette owns. `brand-drift.yml` runs its
+`--check` against the kit's `main` in CI. Edit the JSON or rebuild the kit;
+never the generated files.
 
 ## Development
 

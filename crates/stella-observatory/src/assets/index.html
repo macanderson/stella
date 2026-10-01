@@ -387,23 +387,12 @@ header .bword{height:45px;width:auto;display:block;align-self:center}
    reason arenabench/ui/components/topbar.tsx gives for doing it the same
    way: the artwork's own text fill is baked per cut (Paper on the dark cut,
    Ink on the light one), so an OS-media-query-only adaptive mark would track
-   the OS and ignore this page's own explicit toggle. Taken from
-   docs/brand/logo/svg/wordmark-color-{dark,light}.svg, served at
-   /assets/wordmark{,-light}.svg (src/lib.rs). They were byte copies until
-   the 2026-08-11 rebrand; the v3.0 ion recolour brought them back into step,
-   so both halves of each cut carry the current kit values (Obsidian #09090B,
-   Paper #FFFFFF) rather than only the brand hue (#2921).
-
-   These are the *color* cuts. The comet star is the gold `brand-500` #D4AF37
-   on the dark cut and `brand-700` #09090B on the light one. The two-stop rule
-   arrived with v3.0 — the rule before it was "shapes and marks stay full
-   brand on both grounds" — and v4.0's return to gold keeps it rather than
-   reverting it, because the rule was never really about ion: brand-500 holds
-   2.98:1 against #FFFFFF, which is under the 3:1 graphical floor even though
-   it is well clear of ion's 1.83:1. WCAG 1.4.11 exempts logotypes from
-   contrast minima, but a logotype nobody can see is a design defect whether
-   or not a standard forbids it. The deep stop measures 5.65:1 on white. The
-   *text* half of the lockup is baked Obsidian and carries the legibility. */
+   the OS and ignore this page's own explicit toggle. The two cuts are the
+   house kit's stella-wordmark-dark.svg and stella-wordmark-light.svg, served
+   at /assets/wordmark{,-light}.svg (src/lib.rs). scripts/sync-brand-assets.mjs
+   writes them, and the favicon at /assets/mark.svg, from the kit. Each cut
+   bakes its letters for its ground, white on the dark cut and ink on the
+   light one, and keeps the asterisk gold on both. */
 /* `.bword-light` alone (one class, specificity 0,1,0) loses to `header
    .bword` above (element+class, 0,1,1), so a bare `display:none` here never
    actually applied — the light cut rendered unconditionally on every theme,

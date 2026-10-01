@@ -1,47 +1,19 @@
 import "./global.css";
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
-import localFont from "next/font/local";
 import { RootProvider } from "fumadocs-ui/provider/next";
 import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
-import { SITE_NAME, SITE_URL } from "@/lib/site";
-
-/**
- * Three faces, each doing the job it exists for, vendored from the Oxagen house
- * kit by `scripts/sync-brand-assets.mjs`.
- *
- * SPACE GROTESK is the display face: h1 to h3 and the `stella*` wordmark, which
- * is this font's own outlines at weight 600. Never below 20px.
- *
- * GEIST is the text face: body, h4 to h6, UI, navigation.
- *
- * MONASPACE NEON is the code face: code and terminal transcripts, where column
- * alignment is required, with texture healing on.
+/*
+ * The three house faces load through the kit's own `next/font` loader, which
+ * `scripts/sync-brand-assets.mjs` copies to `src/brand/next-fonts.ts` with the
+ * font files beside it in `src/fonts/`. Space Grotesk sets h1 to h3 and the
+ * wordmark, Geist sets everything read, and Monaspace Neon sets code.
+ * `global.css` maps the three variables onto the site's font roles.
  */
-const display = localFont({
-  src: [
-    { path: "../fonts/space-grotesk-latin-500.woff2", weight: "500", style: "normal" },
-    { path: "../fonts/space-grotesk-latin-600.woff2", weight: "600", style: "normal" },
-    { path: "../fonts/space-grotesk-latin-700.woff2", weight: "700", style: "normal" },
-  ],
-  variable: "--font-stella-display",
-  display: "swap",
-});
-
-const sans = localFont({
-  src: "../fonts/geist-latin-wght.woff2",
-  weight: "100 900",
-  variable: "--font-stella-sans",
-  display: "swap",
-});
-
-const mono = localFont({
-  src: "../fonts/monaspace-neon-latin-wght.woff2",
-  weight: "200 800",
-  variable: "--font-stella-mono",
-  display: "swap",
-});
+import { fontVariables } from "@/brand/next-fonts";
+import { HOUSE_COLORS } from "@/components/brand-marks.generated";
+import { SITE_NAME, SITE_URL } from "@/lib/site";
 
 const SITE_DESCRIPTION =
   "Documentation for stella — the terminal agent. Fast, BYOK, model-agnostic, and it proves its work finished.";
@@ -81,14 +53,14 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#09090b" }, // --st-bg
-    { media: "(prefers-color-scheme: light)", color: "#ffffff" }, // --st-paper-ground
+    { media: "(prefers-color-scheme: dark)", color: HOUSE_COLORS.ink },
+    { media: "(prefers-color-scheme: light)", color: HOUSE_COLORS.paper },
   ],
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning className={`${display.variable} ${sans.variable} ${mono.variable}`}>
+    <html lang="en" suppressHydrationWarning className={fontVariables}>
       <body className="flex min-h-screen flex-col">
         {/* First focusable node in the document, ahead of the Fumadocs header
          * and (on /docs) a ~90-link sidebar. Both route groups expose a

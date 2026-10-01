@@ -7,6 +7,14 @@
  * the gate on any hex here that is not a live token — so "this file mirrors the
  * system" is a checked property rather than a promise in a comment.
  *
+ * The Oxagen house kit (macanderson/oxagen-brand) owns the value of most of
+ * these tokens: the grounds, the greys, the text stops, and the golds.
+ * scripts/sync-brand-assets.mjs writes the kit's value into each one here, in
+ * the token JSON, and in docs/brand/css/tokens.css, so a kit colour change
+ * reaches this file on the next sync. `PALETTE` in that script names them.
+ * The status hues, the diff grounds, `--st-hl`, and `--st-muted` have no house
+ * value and stay Stella's own.
+ *
  * It had to become one. This file sat on the v1.0 phosphor ramp for the whole
  * life of the v4.0 bronze rebrand while carrying a paragraph claiming it was
  * copied verbatim from the kit, and the logo SVGs under public/brand/ were

@@ -37,10 +37,12 @@ anywhere, and a `--rl-`-style prefix so the selectors cannot collide.
 `public/brand/` mirrors `docs/brand/logo/svg/`; `public/icons/*`,
 `src/app/favicon.ico`, `src/app/icon.svg`, and `src/app/apple-icon.png` mirror
 `docs/brand/pwa/`; the woff2 files under `src/fonts/` mirror
-`docs/brand/fonts/`. When the kit regenerates, re-copy — never hand-edit the
-site's copies. The one rendered-from-geometry surface is the `next/og` card in
+`docs/brand/fonts/`. `src/brand/` holds the kit's font loader and token sheet,
+verbatim. `scripts/sync-brand-assets.mjs` writes every one of these files from
+the kit, so run it when the kit changes and never hand-edit the site's copies.
+The one rendered-from-geometry surface is the `next/og` card in
 `src/app/opengraph-image.tsx`, which draws the lockup from the constants in
-`src/components/brand.tsx`.
+`src/components/brand-marks.generated.ts`.
 
 ## Develop
 

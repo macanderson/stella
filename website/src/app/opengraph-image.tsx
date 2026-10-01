@@ -1,6 +1,7 @@
 import { ImageResponse } from "next/og";
 import {
   BRAND_GOLD,
+  HOUSE_COLORS,
   MARK_BOX_FLAT,
   MARK_PATH_FLAT,
   WORDMARK_LETTERS_PATH,
@@ -27,16 +28,16 @@ import {
  * icon: its outline, a field of it, or simply a much bigger one. No stock
  * illustration, no gradient mesh.
  *
- * Colours are literals or imported constants rather than CSS vars because
- * Satori resolves no cascade: the canvas #09090b, text #ffffff, gold #d4af37
- * (7.5:1 on ink), muted #a1a1aa (5.0:1 on ink). Keep the markup inside Satori's
- * supported subset — plain <path>/<rect> fills only, no gradients, masks, or
- * filters — and every element with children carries an explicit `display`.
+ * Colours come from `HOUSE_COLORS`, the kit's palette as data, because Satori
+ * reads no stylesheet and cannot resolve a CSS variable. Keep the markup
+ * inside Satori's supported subset: plain <path>/<rect> fills only, with no
+ * gradients, masks, or filters. Every element with children carries an
+ * explicit `display`.
  * `MARK_PATH_FLAT` exists for that subset: it is the asterisk with its placing
  * transform already solved into the coordinates, so it needs no enclosing <g>.
  *
  * The install line is NOT monospaced, and that is a constraint rather than a
- * choice: Satori decodes ttf/otf/woff and the brand kit ships JetBrains Mono
+ * choice: Satori decodes ttf/otf/woff and the brand kit ships Monaspace Neon
  * as woff2 only, so asking for the face here would silently fall back. The
  * terminal therefore has to read as a terminal from its chrome — title bar,
  * dots, prompt, resting cursor — which is why those are drawn rather than
@@ -47,12 +48,14 @@ export const alt =
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
-const INK = "#09090b";
-const PAPER = "#ffffff";
-const MUTED = "#a1a1aa";
-const SURFACE = "#18181B";
-const SURFACE_TOP = "#27272a";
-const BORDER = "#27272A";
+const INK = HOUSE_COLORS.ink;
+const PAPER = HOUSE_COLORS.text;
+const MUTED = HOUSE_COLORS.muted;
+const SURFACE = HOUSE_COLORS.panel;
+const SURFACE_TOP = HOUSE_COLORS.hl;
+const BORDER = HOUSE_COLORS.border;
+/** The gold at 12% opacity: the wash behind the one call to action. */
+const GOLD_WASH = `rgba(${[1, 3, 5].map((i) => parseInt(BRAND_GOLD.slice(i, i + 2), 16)).join(",")},0.12)`;
 
 /** The repo this card advertises, and the one command that installs it. */
 const REPO_SLUG = "macanderson/stella";
@@ -98,7 +101,7 @@ function Sweeps() {
       <path
         d={MARK_PATH_FLAT}
         transform="translate(-4867.8 -3803.2) scale(54.5455)"
-        fill="#000000"
+        fill={HOUSE_COLORS.void}
         fillOpacity={0.38}
       />
       <path
@@ -169,7 +172,7 @@ export default function OpengraphImage() {
             }}
           >
             {/* One dot gold: gold is the signal, so exactly one thing gets it. */}
-            {[BRAND_GOLD, "#52525b", "#3f3f46"].map((c, i) => (
+            {[BRAND_GOLD, "#52525b", HOUSE_COLORS.rule].map((c, i) => (
               <div
                 key={c}
                 style={{
@@ -244,10 +247,8 @@ export default function OpengraphImage() {
               padding: "12px 26px",
               borderRadius: "34px",
               border: `2px solid ${BRAND_GOLD}`,
-              // The one thing on the card a reader is meant to act on. The
-              // wash is the accent at 12%, written out because Satori has no
-              // cascade and cannot resolve a custom property.
-              background: "rgba(212,175,55,0.12)",
+              // The one thing on the card a reader is meant to act on.
+              background: GOLD_WASH,
               color: BRAND_GOLD,
             }}
           >

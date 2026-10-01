@@ -28,11 +28,13 @@
 
 :root {
   /* ---- brand core ------------------------------------------------------ */
-  --stella-brand: #D4AF37;       /* gold — the brand metal */
-  --stella-brand-deep: #09090B;  /* ink — brand *text* on light is never gold */
-  --stella-ink: #09090B;         /* bg — the canvas */
-  --stella-paper: #FFFFFF;       /* text — primary text on dark */
-  --stella-paper-bg: #FFFFFF;    /* paper — light-mode surface */
+  /* Roles, pointed at the ramp below. scripts/sync-brand-assets.mjs writes
+     the house value of each `--st-*` it owns, so the roles follow the kit. */
+  --stella-brand: var(--st-gold);      /* the brand metal */
+  --stella-brand-deep: var(--st-ink);  /* brand *text* on light is never gold */
+  --stella-ink: var(--st-bg);          /* the canvas */
+  --stella-paper: var(--st-text);      /* primary text on dark */
+  --stella-paper-bg: var(--st-paper);  /* light-mode surface */
 
   /* ---- brand ramp ------------------------------------------------------ */
   --st-bg: #09090B;

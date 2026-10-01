@@ -635,13 +635,25 @@ test("every icon the manifest advertises exists", () => {
 });
 
 test("the manifest's theme colours are the kit's ink", () => {
-  const manifest = read(join(SITE, "app", "manifest.ts")).toLowerCase();
-  const ink = tokens(read(join(KIT, "css", "tokens.css"))).get("--stella-ink");
-  assert.ok(ink, "the kit defines --stella-ink");
+  // manifest.ts reads both colours from HOUSE_COLORS, which the sync writes
+  // from the kit. So check the reference, then check the value it reads.
+  const manifest = read(join(SITE, "app", "manifest.ts"));
   for (const key of ["background_color", "theme_color"]) {
     assert.ok(
-      manifest.includes(`${key}: "${ink}"`),
-      `manifest.ts ${key} must be the kit's ink (${ink})`,
+      manifest.includes(`${key}: HOUSE_COLORS.ink`),
+      `manifest.ts ${key} must be HOUSE_COLORS.ink`,
     );
   }
+
+  const kit = tokens(read(join(KIT, "css", "tokens.css")));
+  const ink = resolve(kit.get("--stella-ink") ?? "", kit);
+  const generated = read(join(SITE, "components", "brand-marks.generated.ts"));
+  const house = /"ink": "(#[0-9A-Fa-f]{6})"/.exec(generated)?.[1];
+  assert.ok(house, "brand-marks.generated.ts carries HOUSE_COLORS.ink");
+  assert.equal(
+    house.toLowerCase(),
+    ink,
+    `HOUSE_COLORS.ink must be the kit's ink (${ink}). Run ` +
+      `\`node scripts/sync-brand-assets.mjs\``,
+  );
 });
