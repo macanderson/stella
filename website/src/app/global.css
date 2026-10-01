@@ -31,6 +31,18 @@
 @import "./tokens.css";
 @import "../brand/house-tokens.css";
 
+/* Fumadocs declares its callout colours in `@theme static`, so the :root
+ * overrides below still left its amber warning (#F99C00) in the stylesheet,
+ * where the kit's conformance check reads it as an off-palette gold. A later
+ * @theme declaration of the same variable replaces the earlier one, so only
+ * these values reach the output. They are the paper values; .dark keeps the
+ * ink values. */
+@theme static {
+  --color-fd-warning: var(--stella-warning-ink);
+  --color-fd-error: var(--stella-danger-ink);
+  --color-fd-success: var(--stella-success-ink);
+}
+
 /* Let Tailwind see Fumadocs' compiled utility classes. */
 @source "../../node_modules/fumadocs-ui/dist/**/*.js";
 
