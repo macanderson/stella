@@ -6,7 +6,7 @@ status: living
 
 # Context Frame Specification
 
-*Normative home: the [Context Graph Protocol](https://github.com/macanderson/context-graph-protocol/tree/c5fb2fe)
+*Normative home: the [Context Graph Protocol](https://github.com/oxageninc/context-graph-protocol/tree/c5fb2fe)
 (`contextgraph/1.0-draft`).*
 
 > **Normative home — read this first.** The *atomic* Context Frame (one retrieval
@@ -17,10 +17,10 @@ status: living
 > types directly (`contextgraph-types`, pinned in the root `Cargo.toml`'s
 > `[workspace.dependencies]`; used by `stella-graph` and `stella-context`). All
 > three paths below are in the **CGP
-> repository**, not this one: `SPEC.md`, [`adr/0007-protocol-product-boundary.md`](https://github.com/macanderson/context-graph-protocol/blob/c5fb2fe/docs/adr/0007-protocol-product-boundary.md),
-> and the reconciliation delta table [`adaptive-context-reconciliation.md`](https://github.com/macanderson/context-graph-protocol/blob/c5fb2fe/docs/adaptive-context-reconciliation.md).
+> repository**, not this one: `SPEC.md`, [`adr/0007-protocol-product-boundary.md`](https://github.com/oxageninc/context-graph-protocol/blob/c5fb2fe/docs/adr/0007-protocol-product-boundary.md),
+> and the reconciliation delta table [`adaptive-context-reconciliation.md`](https://github.com/oxageninc/context-graph-protocol/blob/c5fb2fe/docs/adaptive-context-reconciliation.md).
 > The latter two are the outcome of
-> [context-graph-protocol#27](https://github.com/macanderson/context-graph-protocol/issues/27),
+> [context-graph-protocol#27](https://github.com/oxageninc/context-graph-protocol/issues/27),
 > which has **landed**: all three are published at the revision pinned above and
 > are documents you can open. (They were unpublished when this header was first
 > written, which is why it used to say so.) Do not read `docs/adr/0007-…` as this

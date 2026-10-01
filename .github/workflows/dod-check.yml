@@ -12,8 +12,12 @@
 # a moving ref both fails `action-pins` and lets another repository change
 # what runs here without a commit in this one. Re-pin when the implementation
 # changes, which is a reviewable one-line diff naming the version it moved to.
-# The decision and what it costs are recorded in macanderson/oxagen's
+# The decision and what it costs are recorded in oxageninc/product's
 # docs/adr/ADR-045-pin-cross-repo-reusable-workflows.md.
+#
+# oxageninc/product has been private since 2026-10-01. A public repository
+# cannot call a private repository's workflow, so this caller fails before it
+# starts a job. #6638 holds the decision on where the implementation moves.
 name: dod-check
 
 on:
@@ -32,4 +36,4 @@ permissions:
 
 jobs:
   dod:
-    uses: macanderson/oxagen/.github/workflows/dod-check.yml@a44c54151988534878534c8d828030b2a16432d1 # oxagen main, #2551
+    uses: oxageninc/product/.github/workflows/dod-check.yml@a44c54151988534878534c8d828030b2a16432d1 # oxagen main, #2551

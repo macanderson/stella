@@ -6,6 +6,10 @@
 # hook to veto.
 #
 # Implementation lives once in oxagen — see ADR-039.
+#
+# oxageninc/product has been private since 2026-10-01. A public repository
+# cannot call a private repository's workflow, so this caller fails before it
+# starts a job. #6638 holds the decision on where the implementation moves.
 name: dod-close-guard
 
 on:
@@ -17,4 +21,4 @@ permissions:
 
 jobs:
   guard:
-    uses: macanderson/oxagen/.github/workflows/dod-close-guard.yml@a44c54151988534878534c8d828030b2a16432d1 # oxagen main, #2643
+    uses: oxageninc/product/.github/workflows/dod-close-guard.yml@a44c54151988534878534c8d828030b2a16432d1 # oxagen main, #2643

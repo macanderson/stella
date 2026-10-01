@@ -16,7 +16,7 @@ status: living
 >
 > **Reading order.** This is the capstone paper. For domain-specific depth,
 > read alongside:
-> - [The Context Graph Protocol: Advantages and Uniqueness](https://github.com/macanderson/context-graph-protocol/blob/main/docs/protocol-advantages.md) — the
+> - [The Context Graph Protocol: Advantages and Uniqueness](https://github.com/oxageninc/context-graph-protocol/blob/main/docs/protocol-advantages.md) — the
 >   retrieval protocol's trust architecture.
 > - [`crates/stella-core/src/lib.rs`](../../crates/stella-core/src/lib.rs) and
 >   [`crates/stella-core/src/driver.rs`](../../crates/stella-core/src/driver.rs) — the engine.
@@ -473,7 +473,7 @@ reported metric, but an abort condition.
 Retrieval in Stella is designed as an open, versioned wire protocol (CGP,
 `contextgraph/1.0-draft`): the `contextgraph-types` crate (zero dependencies beyond `serde`),
 the `contextgraph-host` host runtime, and the `contextgraph-conformance` conformance suite. See
-[The Context Graph Protocol: Advantages and Uniqueness](https://github.com/macanderson/context-graph-protocol/blob/main/docs/protocol-advantages.md) for the
+[The Context Graph Protocol: Advantages and Uniqueness](https://github.com/oxageninc/context-graph-protocol/blob/main/docs/protocol-advantages.md) for the
 full analysis.
 
 ### Why it is hard to copy
@@ -496,7 +496,7 @@ prohibitive. CGP's specific defensibility comes from three properties:
    budget honesty, consent, conformance, citation, version stability,
    temporal validity) are irreducible. A competitor proposing an alternative
    retrieval protocol must match all seven or accept a weaker trust model. See
-   [The Context Graph Protocol: Advantages and Uniqueness](https://github.com/macanderson/context-graph-protocol/blob/main/docs/protocol-advantages.md) §10 for
+   [The Context Graph Protocol: Advantages and Uniqueness](https://github.com/oxageninc/context-graph-protocol/blob/main/docs/protocol-advantages.md) §10 for
    why the combination is irreducible.
 
 ### The ecosystem play
@@ -702,6 +702,6 @@ is the running code that proves it.
 
 ---
 
-*See also: [The Context Graph Protocol: Advantages and Uniqueness](https://github.com/macanderson/context-graph-protocol/blob/main/docs/protocol-advantages.md)
+*See also: [The Context Graph Protocol: Advantages and Uniqueness](https://github.com/oxageninc/context-graph-protocol/blob/main/docs/protocol-advantages.md)
 for the retrieval protocol's trust architecture, and the
 [CGP reference docs](./README.md) for implementation guides.*

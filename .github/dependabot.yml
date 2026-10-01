@@ -64,7 +64,7 @@ updates:
       interval: weekly
     # Re-pin shared governance workflows across all callers together (oxagen#2989).
     ignore:
-      - dependency-name: "macanderson/oxagen/.github/workflows/*"
+      - dependency-name: "oxageninc/product/.github/workflows/*"
     groups:
       actions:
         patterns: ["*"]

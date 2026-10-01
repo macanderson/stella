@@ -15,7 +15,7 @@
   <a href="#license"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-10100F?style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/badge/rust-1.90%2B-10100F?style=flat-square&logo=rust&logoColor=D6962C" alt="Rust 1.90+">
   <img src="https://img.shields.io/badge/providers-9%20%2B%20local-10100F?style=flat-square" alt="9 providers + local">
-  <a href="https://github.com/macanderson/context-graph-protocol"><img src="https://raw.githubusercontent.com/macanderson/context-graph-protocol/main/assets/badges/conformant.svg" alt="CGP conformant"></a>
+  <a href="https://github.com/oxageninc/context-graph-protocol"><img src="https://raw.githubusercontent.com/oxageninc/context-graph-protocol/main/assets/badges/conformant.svg" alt="CGP conformant"></a>
 </p>
 
 <p align="center">
@@ -39,7 +39,7 @@ are two products from one company, and neither duplicates the other:
 
 - **Stella is the coding agent.** It plans, runs tools, verifies, and
   records what it did. It is also the reference implementation of the
-  [Context Graph Protocol](https://github.com/macanderson/context-graph-protocol)
+  [Context Graph Protocol](https://github.com/oxageninc/context-graph-protocol)
   and of the run/turn/step trace vocabulary Oxagen reads.
 - **Oxagen is the governance plane.** It grounds, governs, explains, meters,
   and rates agents. It runs no agent loop of its own, so nothing in this
@@ -662,7 +662,7 @@ the rules it enforces, its gotchas, and the recipe for extending it.
 | [`stella-plugin`](crates/stella-plugin/README.md)           | Parses and validates a plugin's manifest and the wrapper socket's wire shapes, with no I/O                                                                  |
 | [`stella-transcript`](crates/stella-transcript/README.md)   | The shared transcript model plus its two renderers: HTML for the Observatory, a character grid for the terminal                                             |
 | [`stella-tty`](crates/stella-tty/README.md)                 | A no-dependency leaf answering whether a human is around to see and answer a prompt                                                                        |
-| Context Graph Protocol                                      | Its own project: [macanderson/context-graph-protocol](https://github.com/macanderson/context-graph-protocol) — wire types, host runtime, public conformance suite. Stella is its reference host and depends on it as exact-version registry crates. |
+| Context Graph Protocol                                      | Its own project: [oxageninc/context-graph-protocol](https://github.com/oxageninc/context-graph-protocol) — wire types, host runtime, public conformance suite. Stella is its reference host and depends on it as exact-version registry crates. |
 
 Alongside the Rust workspace, the documentation site
 ([stella.oxagen.sh](https://stella.oxagen.sh)) lives at `website/` (Next.js +
@@ -749,7 +749,7 @@ without publishing it, or your procurement process forbids AGPL code, a
 commercial license removes those obligations. Contact <licensing@oxagen.sh>.
 
 [`LICENSING.md`](LICENSING.md) explains which track you are on and why. The
-[Context Graph Protocol](https://github.com/macanderson/context-graph-protocol)
+[Context Graph Protocol](https://github.com/oxageninc/context-graph-protocol)
 is a separate project and stays permissive — **MIT OR Apache-2.0**, at your
 option — so depending on it does not put your project under the AGPL.
 

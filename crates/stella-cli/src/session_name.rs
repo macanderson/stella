@@ -294,7 +294,7 @@ mod tests {
     #[test]
     fn a_leading_pull_request_link_moves_after_the_verb_clause() {
         assert_eq!(
-            session_name("https://github.com/macanderson/oxagen/pull/123 fix conflicts"),
+            session_name("https://github.com/oxageninc/product/pull/123 fix conflicts"),
             "Fix conflicts on PR 123"
         );
     }
@@ -302,7 +302,7 @@ mod tests {
     #[test]
     fn a_link_alone_names_the_session() {
         assert_eq!(
-            session_name("https://github.com/macanderson/oxagen/pull/123"),
+            session_name("https://github.com/oxageninc/product/pull/123"),
             "PR 123"
         );
         assert_eq!(

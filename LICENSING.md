@@ -101,7 +101,7 @@ copyright** and the code stays open under the AGPL for everyone.
 
 ## Relationship to the Context Graph Protocol
 
-The [Context Graph Protocol](https://github.com/macanderson/context-graph-protocol)
+The [Context Graph Protocol](https://github.com/oxageninc/context-graph-protocol)
 is a separate project under **`MIT OR Apache-2.0`** — the Rust ecosystem's
 standard dual grant, taken at the recipient's option — and stays that way.
 

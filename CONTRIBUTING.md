@@ -32,7 +32,7 @@ Every one of these is genuinely valued — pick the one that fits your energy:
 | 🧭 **Docs & examples** — fix a lie in the docs before it fools someone else | `website/content/docs/**.mdx` for anything a *user* reads, `docs/**` for contributor-facing specs, plus `README.md`, `--help` text, doc comments | Small |
 | 🔌 **A new provider adapter** — Stella is BYOK; every model provider we speak makes it more useful | `crates/stella-model/src/` — copy the shape of an existing adapter | Medium |
 | 🛠 **A new built-in tool** | `crates/stella-tools/src/` — implement the tool trait, register it in `ToolRegistry`, then declare one line in [`catalog.rs`](crates/stella-tools/src/catalog.rs) | Medium |
-| 🌐 **A Context Graph Protocol (CGP) provider** — implement it in your language and prove it green | [macanderson/context-graph-protocol](https://github.com/macanderson/context-graph-protocol) — its own repo, no Stella code required | Medium |
+| 🌐 **A Context Graph Protocol (CGP) provider** — implement it in your language and prove it green | [oxageninc/context-graph-protocol](https://github.com/oxageninc/context-graph-protocol) — its own repo, no Stella code required | Medium |
 | 🏗 **Core engine work** | `GOOD FIRST ISSUE` / `HELP WANTED` labels | Varies |
 
 If you're not sure where something fits, open an issue first — a ten-line
@@ -268,7 +268,7 @@ rule of thumb is one sentence each:
 | Compute a unified diff | `stella-diff` |
 | Strip ANSI escape sequences from tool output | `stella-ansi` (a leaf with no dependencies at all, so `stella-tui` and `stella-observatory` can share it) |
 | Turn text into a vector, or compare two vectors | `stella-embed` |
-| The Context Graph Protocol (wire types / host / conformance) | external repo: [`context-graph-protocol`](https://github.com/macanderson/context-graph-protocol) |
+| The Context Graph Protocol (wire types / host / conformance) | external repo: [`context-graph-protocol`](https://github.com/oxageninc/context-graph-protocol) |
 
 Verification is opt-in on every door via `stella run --pipeline <variant>`,
 naming an installed wrapper plugin — the built-in staged pipeline this flag
@@ -433,7 +433,7 @@ If some clause in the CLA is a blocker for you, say so in the PR or email
 
 Dependabot checks GitHub Actions weekly. What it skips is the Oxagen reusable
 workflows that the callers in `.github/workflows/` reference, excluded by the
-`macanderson/oxagen/.github/workflows/*` ignore pattern. That pattern names a
+`oxageninc/product/.github/workflows/*` ignore pattern. That pattern names a
 remote dependency, so the caller files themselves are not exempt: every other
 action they pin is still updated automatically. The Oxagen pins are the
 exception because they are maintained together across Stella, ArenaBench,
@@ -449,5 +449,12 @@ files pass.
 The pin is a commit SHA rather than `@main` so that no repository can change
 a required check in another without a commit to review there. The cost is a
 re-pin in every caller, and the failure mode is paying it in three of four.
-[Oxagen ADR-045](https://github.com/macanderson/oxagen/blob/main/docs/adr/ADR-045-pin-cross-repo-reusable-workflows.md)
+[Oxagen ADR-045](https://github.com/oxageninc/product/blob/main/docs/adr/ADR-045-pin-cross-repo-reusable-workflows.md)
 records that decision.
+
+The shared workflows live in `oxageninc/product`. That repo has been private
+since 2026-10-01. A public repo cannot call a workflow in a private one. So
+`dod-check` and `dod-close-guard` fail here before they start a job. The
+maintainer has to pick where they move, and
+[the issue for that call](https://github.com/macanderson/stella/issues/6638)
+lists the options.

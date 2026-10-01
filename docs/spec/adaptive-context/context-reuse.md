@@ -6,13 +6,13 @@ status: vendored
 
 # Context reuse: identity, accounting, consent, and verification
 
-*Normative home: the [Context Graph Protocol](https://github.com/macanderson/context-graph-protocol/tree/c5fb2fe)
+*Normative home: the [Context Graph Protocol](https://github.com/oxageninc/context-graph-protocol/tree/c5fb2fe)
 (`contextgraph/1.0-draft`).*
 
 <!--
   VENDORED — do not edit this copy.
 
-  Source: macanderson/context-graph-protocol, docs/spec/adaptive-context/context-reuse.md
+  Source: oxageninc/context-graph-protocol, docs/spec/adaptive-context/context-reuse.md
   Rev:    c5fb2fec5820494ab6921dc088c03d7f43301fa7
 
   This is the normative contract cited by 23 rustdoc comments across five
@@ -28,7 +28,7 @@ status: vendored
   whether the body matches the rev the header claims. That half stays a review
   responsibility. To re-sync, bump the manifests and re-fetch:
 
-      gh api "repos/macanderson/context-graph-protocol/contents/docs/spec/adaptive-context/context-reuse.md?ref=<rev>" \
+      gh api "repos/oxageninc/context-graph-protocol/contents/docs/spec/adaptive-context/context-reuse.md?ref=<rev>" \
         --jq .content | base64 -d
 
   Upstream is dual-licensed MIT OR Apache-2.0 (LICENSE-MIT / LICENSE-APACHE in
@@ -41,7 +41,7 @@ status: vendored
   1. Sibling links (`./protocol-surface.md`, `./stability.md`, and their
      anchors) are CGP-repo-relative and have no counterpart in this workspace,
      because only this one document is vendored. Read them at
-     https://github.com/macanderson/context-graph-protocol/blob/c5fb2fe/docs/
+     https://github.com/oxageninc/context-graph-protocol/blob/c5fb2fe/docs/
      — e.g. .../docs/protocol-surface.md. <!-- doc-links:ignore -->
 
   A second caveat used to live here and is now resolved: the intro numbered four
