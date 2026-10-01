@@ -110,7 +110,7 @@ jobs:
   #   including with the URL's own authorization disabled, which should serve.
   #   The Stella stack still holds that Lambda; nothing is served from it.
   #
-  #   The instance is a t4g.medium, which is arm64. This job therefore builds
+  #   The node (tag Name=oxagen-app) is a Graviton instance, so arm64. This job builds
   #   on an arm runner. An x86 build produces an artifact that installs and
   #   tests green and then fails to load a native module on the node, at first
   #   request rather than at build.
@@ -227,8 +227,20 @@ jobs:
             s3://oxagen-deploy-916294258235/_deploy/stella-standalone.tgz \
             --only-show-errors
 
+          # The node is found by its Name tag, the way the platform's deploys find
+          # it, because a rebuild gives it a new instance id. A hardcoded id sent
+          # every deploy since 2026-09-08 to an instance that no longer exists.
+          node=$(aws ec2 describe-instances \
+            --filters Name=tag:Name,Values=oxagen-app Name=instance-state-name,Values=running \
+            --query 'Reservations[].Instances[].InstanceId' --output text)
+          if [ -z "$node" ] || [ "$(wc -w <<<"$node")" -ne 1 ]; then
+            echo "::error::expected one running instance tagged Name=oxagen-app, found: '${node}'"
+            exit 1
+          fi
+          echo "node $node"
+
           command_id=$(aws ssm send-command \
-            --instance-ids i-094fcb34c7e715cf8 \
+            --instance-ids "$node" \
             --document-name oxagen-deploy-service \
             --parameters 'service=stella' \
             --query 'Command.CommandId' --output text)
@@ -240,15 +252,15 @@ jobs:
           status=Pending
           for _ in $(seq 1 60); do
             status=$(aws ssm get-command-invocation \
-              --command-id "$command_id" --instance-id i-094fcb34c7e715cf8 \
+              --command-id "$command_id" --instance-id "$node" \
               --query Status --output text 2>/dev/null || echo Pending)
             case "$status" in InProgress|Pending|Delayed) sleep 10 ;; *) break ;; esac
           done
 
           aws ssm get-command-invocation --command-id "$command_id" \
-            --instance-id i-094fcb34c7e715cf8 --query StandardOutputContent --output text || true
+            --instance-id "$node" --query StandardOutputContent --output text || true
           aws ssm get-command-invocation --command-id "$command_id" \
-            --instance-id i-094fcb34c7e715cf8 --query StandardErrorContent --output text || true
+            --instance-id "$node" --query StandardErrorContent --output text || true
 
           if [ "$status" != "Success" ]; then
             echo "::error::deploy finished as $status — the node rolls back to the previous release on a failed health check, so stella.oxagen.sh should still be serving the last good build."
