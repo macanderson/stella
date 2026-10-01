@@ -555,6 +555,74 @@ mod tests {
         assert!(queue.is_empty(), "an epic is bookkeeping, not a defect");
     }
 
+    /// **The rename witness.** The default policy names the kinds in the
+    /// scheme ADR 0046 set, and an issue labelled that way ranks. One
+    /// labelled the old way, or in another case, still ranks. Under the
+    /// exact test and the old defaults, `KIND:BUG` was no kind at all, and
+    /// every defect triage labelled that way sat in the queue as a question.
+    #[test]
+    fn a_defect_ranks_under_its_new_name_and_its_old_one() {
+        let policy = TriagePolicy::default();
+        let queue = split(
+            vec![
+                issue(1, "2026-01-01T00:00:00Z", &["KIND:BUG", "P1"]),
+                issue(2, "2026-01-02T00:00:00Z", &["bug", "P1"]),
+                issue(3, "2026-01-03T00:00:00Z", &["Kind:Bug", "P1"]),
+            ],
+            &policy,
+        );
+        assert_eq!(
+            queue.ranked.iter().map(|i| i.number).collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert!(queue.unassessed.is_empty());
+    }
+
+    /// A kind someone judged out of the loop's work is dropped under its new
+    /// name, the same as under its old one.
+    #[test]
+    fn a_judged_kind_is_dropped_under_its_new_name() {
+        let policy = TriagePolicy::default();
+        for kind in [
+            "KIND:FEATURE",
+            "KIND:IMPROVEMENT",
+            "KIND:DOCUMENTATION",
+            "EPIC",
+            "feature",
+            "docs",
+        ] {
+            let queue = split(
+                vec![issue(1, "2026-01-01T00:00:00Z", &[kind, "P0"])],
+                &policy,
+            );
+            assert!(queue.is_empty(), "{kind} is judged, so it is not asked about");
+        }
+    }
+
+    /// The escalation label holds an issue out in either case. The tracker
+    /// returns the stored spelling, and an exact test against the old
+    /// constant let an uppercase `AGENT-ESCALATED` issue back into the queue.
+    #[test]
+    fn an_escalation_in_either_case_holds_the_issue() {
+        let policy = TriagePolicy::default();
+        let queue = split(
+            vec![
+                issue(
+                    1,
+                    "2026-01-01T00:00:00Z",
+                    &["KIND:BUG", "P0", "AGENT-ESCALATED"],
+                ),
+                issue(
+                    2,
+                    "2026-01-01T00:00:00Z",
+                    &["KIND:BUG", "P0", "agent-escalated"],
+                ),
+            ],
+            &policy,
+        );
+        assert!(queue.is_empty(), "an escalated issue must stay out");
+    }
+
     /// An escalated issue with no record leaves the queue on either axis.
     /// The label alone says nothing about what broke or when. A person who
     /// set it by hand meant it.

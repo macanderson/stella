@@ -558,6 +558,17 @@ mod tests {
         assert!(conform(&stella(), &["bug", "P1", "area:core"]).is_conformant());
     }
 
+    /// **The rename witness.** A filing in the old spelling, or in another
+    /// case, still meets the axis. Under an exact test `bug` met no member of
+    /// the `KIND:*` axis, so every filing the loop drafted before the rename
+    /// was refused as untyped. Two spellings of one label count once.
+    #[test]
+    fn an_old_or_recased_spelling_still_meets_the_axis() {
+        assert!(conform(&stella(), &["bug", "P1", "area:core"]).is_conformant());
+        assert!(conform(&stella(), &["kind:bug", "p1"]).is_conformant());
+        assert!(conform(&stella(), &["bug", "KIND:BUG"]).is_conformant());
+    }
+
     /// The priority axis admits at most one member, and two is not a stricter
     /// filing — it is one whose rank depends on which label the ranker tests
     /// first.

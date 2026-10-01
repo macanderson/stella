@@ -636,6 +636,21 @@ feature = ["kind/enhancement"]
         );
     }
 
+    /// **The rename witness.** The shipped map reads the uppercase kind
+    /// labels, in whatever case the tracker stores them. Under an exact test
+    /// over the old map, `KIND:BUG` classed as `Other`, and every defect the
+    /// scheme labelled read as unmapped.
+    #[test]
+    fn the_shipped_map_reads_the_kind_labels_in_any_case() {
+        let classes = ClassMap::compiled_github();
+        let class = |label: &str| classes.class_of(&[label]);
+        assert_eq!(class("KIND:BUG"), IssueClass::Bug);
+        assert_eq!(class("Kind:Bug"), IssueClass::Bug);
+        assert_eq!(class("KIND:IMPROVEMENT"), IssueClass::Feature);
+        assert_eq!(class("KIND:DEVOPS"), IssueClass::Task);
+        assert_eq!(class("KIND:DOCUMENTATION"), IssueClass::Other);
+    }
+
     /// A defect that also carries a feature label is a defect. The strict
     /// rule is the safe one.
     #[test]

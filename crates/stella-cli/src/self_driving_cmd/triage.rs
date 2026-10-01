@@ -405,6 +405,24 @@ mod tests {
         );
     }
 
+    /// **The rename witness.** A turn that answers in an old spelling, or in
+    /// another case, places the issue under the policy's own spelling. The
+    /// loop must never write `bug` or `size/M` back onto the tracker once
+    /// those labels are renamed.
+    #[test]
+    fn an_old_spelling_is_written_back_in_the_policys_spelling() {
+        let assessment =
+            parse("ASSESSMENT: kind=bug; priority=p1; size=m", &policy()).expect("a placement");
+        let written = assessment.labels();
+        assert_eq!(written, ["KIND:BUG", "P1", "SIZE:MEDIUM"]);
+        assert_eq!(
+            parse("ASSESSMENT: exclude=feature", &policy()),
+            Some(Assessment::Exclude {
+                kind: "KIND:FEATURE".into()
+            })
+        );
+    }
+
     /// **The sizing witness.** A sized placement parses, and its labels carry
     /// exactly one `size/` label alongside the kind and the rung — the shape
     /// the tracker convention asks for.
@@ -733,6 +751,10 @@ mod tests {
             assessment_stripped(&stripped, &policy),
             "sized with no rung — only the guard produces this shape"
         );
+        // The same shape under the new names. A `size/` prefix test missed
+        // it, and the loop re-triaged a stripped issue on every cycle.
+        let renamed = issue("45", IssueState::Open, &["KIND:BUG", "SIZE:MEDIUM"], "");
+        assert!(assessment_stripped(&renamed, &policy), "SIZE: is a size");
         assert!(
             !assessment_stripped(
                 &issue("43", IssueState::Open, &["bug", "size/M", "P1"], ""),

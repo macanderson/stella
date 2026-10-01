@@ -1250,8 +1250,9 @@ mod tests {
         assert_eq!(open_deploy_breakage(&none), EmergencyRead::NotFiled);
 
         let filed = FixtureProvider::with(vec![
-            issue("42", &[BASE_BREAKAGE_LABEL], "2026-08-02T00:00:00Z"),
-            issue("43", &[DEPLOY_BREAKAGE_LABEL], "2026-08-02T00:00:00Z"),
+            // Each in a case its constant does not use: the read ignores case.
+            issue("42", &["main-red"], "2026-08-02T00:00:00Z"),
+            issue("43", &["Release-Red"], "2026-08-02T00:00:00Z"),
         ]);
         assert_eq!(open_base_breakage(&filed).filed().as_deref(), Some("42"));
         assert_eq!(open_deploy_breakage(&filed).filed().as_deref(), Some("43"));

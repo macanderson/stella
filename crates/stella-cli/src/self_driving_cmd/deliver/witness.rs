@@ -272,6 +272,29 @@ fn a_locally_verified_change_carries_its_label_into_the_next_read() {
     assert_eq!(reading.observation.ci, CiConclusion::Green);
 }
 
+/// The mark counts in any case. A pull request marked before the rename
+/// has the old lower case name, and a person may type either one. An exact
+/// test read the new name as no mark at all.
+#[test]
+fn the_local_proof_label_counts_in_either_case() {
+    for label in ["stella-verified-locally", "STELLA-VERIFIED-LOCALLY"] {
+        let forge = FixtureForge::new();
+        let draft = stella_protocol::pull_request::PullRequestDraft {
+            head_ref: "fix/9".to_owned(),
+            title: "t".to_owned(),
+            body: "b".to_owned(),
+            draft: true,
+        };
+        let key = forge.open(&draft).expect("the fixture opens it");
+        forge.set_checks("fix/9", Vec::new());
+        forge.add_label(&key, label).expect("the label lands");
+
+        let reading = super::observe(&forge, key.as_str(), &BlockingPolicy::default())
+            .expect("the forge answers");
+        assert!(reading.verified_locally, "{label}");
+    }
+}
+
 /// An unreadable forge reports a healthy base rather than an emergency.
 #[test]
 fn a_base_nobody_can_read_is_not_reported_broken() {

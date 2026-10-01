@@ -267,6 +267,22 @@ mod tests {
         assert_eq!(readiness(&overridden, &open(&[40, 41])), Readiness::Ready);
     }
 
+    /// **The spelling witness.** The tracker stores whichever spelling a
+    /// person typed, and the issue the loop reads carries that one. An
+    /// exact test missed `STATUS:READY` while the code said `status:ready`,
+    /// and the human's call was lost. Both spellings must count.
+    #[test]
+    fn the_ready_label_counts_in_either_spelling() {
+        for label in ["STATUS:READY", "status:ready", "Status:Ready"] {
+            let overridden = item(41, &[label], &[40]);
+            assert_eq!(
+                readiness(&overridden, &open(&[40, 41])),
+                Readiness::Ready,
+                "{label} must mark the issue ready"
+            );
+        }
+    }
+
     /// The line format is greppable, and this is the grep. Plain,
     /// lower-case, bold, bulleted, and shared-line spellings all parse.
     /// Prose that merely mentions blocking does not.
