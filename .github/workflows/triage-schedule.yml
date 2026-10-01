@@ -1,14 +1,14 @@
 name: Scheduled triage
 
-# SCR-005 splits creating an issue from sizing one: a creator applies `triage`
+# SCR-005 splits creating an issue from sizing one: a creator applies `TRIAGE`
 # and nothing else, and a triage authority assigns the priority. Until this
 # workflow existed the second half ran only when a person remembered. It did
 # not get remembered — the queue reached 128 issues, and 29 of them were P1
 # work nobody could see because the queue label was hiding it.
 #
 # This is the sizing half, on a clock. It reads the issues carrying the bare
-# `triage` label, asks a model to size each one against the repository's own
-# label taxonomy, applies the labels it validated, and takes `triage` off as
+# `TRIAGE` label, asks a model to size each one against the repository's own
+# label taxonomy, applies the labels it validated, and takes `TRIAGE` off as
 # its last write per issue — the ordering `issue-triage.yml` explains, so an
 # interrupted run leaves an issue in the queue rather than half-sized and
 # invisible.
@@ -88,7 +88,7 @@ jobs:
             exit 1
           fi
 
-          queue=$(gh issue list --repo "$REPO" --state open --label triage \
+          queue=$(gh issue list --repo "$REPO" --state open --label TRIAGE \
             --limit "$MAX_ISSUES" --json number --jq '[.[].number] | join(" ")')
 
           if [ -z "$queue" ]; then
@@ -99,10 +99,28 @@ jobs:
           # The taxonomy is read from the repository rather than written here,
           # so a label added or renamed upstream reaches this sweep without an
           # edit, and a label the model invents fails validation below.
+          #
+          # Each axis is read without regard to case, under its new prefix and
+          # its older one. GitHub keeps one spelling per label, and the rename
+          # from `use-model:` to `MODEL:` and from `size/` to `SIZE:` happens
+          # after this file merges. The sweep reads whichever spelling the
+          # repository holds on the day it runs.
           gh label list --repo "$REPO" --limit 300 --json name --jq '.[].name' > /tmp/labels.txt
-          areas=$(grep '^area:' /tmp/labels.txt | paste -sd, -)
-          models=$(grep '^use-model:' /tmp/labels.txt | paste -sd, -)
-          pains=$(grep '^pain:' /tmp/labels.txt | paste -sd, -)
+          #
+          # `grep` exits 1 when nothing matches, and under `pipefail` that
+          # ended the sweep with no message. An empty axis is now named. Pain
+          # may be empty, since an issue may carry none.
+          axis() { { grep -i "$@" /tmp/labels.txt || true; } | paste -sd, -; }
+          areas=$(axis '^area:')
+          models=$(axis -e '^model:' -e '^use-model:')
+          sizes=$(axis -e '^size:' -e '^size/')
+          pains=$(axis '^pain:')
+          for required in areas models sizes; do
+            if [ -z "${!required}" ]; then
+              echo "the repository has no $required labels, so THIS SWEEP DID NOT RUN" >&2
+              exit 1
+            fi
+          done
 
           sized=0
           for n in $queue; do
@@ -119,6 +137,7 @@ jobs:
               --arg scheme "$scheme" \
               --arg areas "$areas" \
               --arg models "$models" \
+              --arg sizes "$sizes" \
               --arg pains "$pains" \
               '{
                 model: $model,
@@ -127,15 +146,23 @@ jobs:
                   role: "user",
                   content: (
                     "Size this GitHub issue for the stella repository. Reply with JSON only, no prose.\n\n" +
-                    "priority — pick exactly one level from this scheme, which is quoted from the " +
+                    "priority: exactly one level from this scheme, quoted from the " +
                     "repository policy that defines it:\n" + $scheme + "\n\n" +
-                    "area — one or more, from exactly this list: " + $areas + "\n" +
-                    "use-model — exactly one, from: " + $models + ". Judge by the hardest step the issue implies: " +
-                    "cheap for mechanical work, balanced for routine work against a clear spec, pro for cross-crate " +
-                    "design or subtle correctness, ultra for architecture-critical or novel design.\n" +
-                    "pain — one or more, from exactly this list: " + $pains + "\n\n" +
-                    "Reply as {\"priority\":\"<one level from the scheme>\",\"area\":[\"area:cli\"]," +
-                    "\"use_model\":\"use-model:balanced\",\"pain\":[\"pain:maintainability\"]," +
+                    "model: exactly one tier, from exactly this list: " + $models + "\n" +
+                    "Pick the tier by the hardest step in the issue. " +
+                    "T1 is the Haiku tier, for mechanical, fully specified work. " +
+                    "T2 is the Sonnet tier, for routine implementation from a clear spec. " +
+                    "T3 is the Opus tier, for judgment across crates, invariants, security, or migrations. " +
+                    "T4 is the Fable tier, for architecture-critical or novel design. " +
+                    "If the list holds older names, cheap is T1, balanced is T2, pro is T3, and ultra is T4.\n" +
+                    "size: exactly one, from exactly this list: " + $sizes + "\n" +
+                    "Size is the agent minutes to a merge-ready pull request. " +
+                    "XS (extra small) is 30 or fewer. S (small) is 31 to 90. M (medium) is 91 to 240. " +
+                    "L (large) is 241 to 480. XL (extra large) is more than 480.\n" +
+                    "area: exactly one, from exactly this list: " + $areas + "\n" +
+                    "pain: zero or more, from exactly this list: " + $pains + "\n\n" +
+                    "Reply as {\"priority\":\"<one level from the scheme>\",\"model\":\"MODEL:T2\"," +
+                    "\"size\":\"SIZE:SMALL\",\"area\":\"AREA:CLI\",\"pain\":[\"PAIN:MAINTAINABILITY\"]," +
                     "\"why\":\"one short sentence\"}\n\n" +
                     "TITLE: " + $title + "\n\nBODY:\n" + $body
                   )
@@ -166,16 +193,27 @@ jobs:
               continue
             fi
 
-            labels=$(echo "$verdict" | jq -r '[.priority, .use_model] + (.area // []) + (.pain // []) | join("\n")')
+            # Area may come back as one string or as a list. A list of one is
+            # the same answer. A longer list fails the count below. A missing
+            # or non-string value is dropped, and the count below then finds
+            # that axis short.
+            labels=$(echo "$verdict" | jq -r '
+              [.priority, .model, .size]
+              + (.area // [] | if type == "array" then . else [.] end)
+              + (.pain // [] | if type == "array" then . else [.] end)
+              | map(select(type == "string" and . != ""))
+              | join("\n")')
 
             # Every label is checked against the live list before it is written.
             # A name the model invented is dropped here rather than failing the
-            # `gh` call halfway through a partial edit.
+            # `gh` call halfway through a partial edit. The match ignores case,
+            # because GitHub does too: a label added by name in any case lands
+            # in the spelling the repository stores.
             valid=""
             : > /tmp/valid.txt
             while IFS= read -r label; do
               [ -z "$label" ] && continue
-              if grep -qxF "$label" /tmp/labels.txt; then
+              if grep -qixF "$label" /tmp/labels.txt; then
                 valid="${valid:+$valid,}$label"
                 printf '%s\n' "$label" >> /tmp/valid.txt
               else
@@ -195,31 +233,39 @@ jobs:
               continue
             fi
 
-            # A sizing is four axes, and the taxonomy names all four: the
-            # priority above, at least one `area:`, exactly one `use-model:`,
-            # at least one `pain:`. Gating on the priority alone let a reply
-            # that lost its other three to validation still pass, and the
-            # write that follows is the one unrecoverable step here — `triage`
-            # comes off, the issue leaves the queue, and no later sweep
-            # reconsiders it, so a half-sized issue is as unfindable as the
-            # unsized one this workflow exists to rescue.
-            n_area=$(grep -c '^area:' /tmp/valid.txt || true)
-            n_model=$(grep -c '^use-model:' /tmp/valid.txt || true)
-            n_pain=$(grep -c '^pain:' /tmp/valid.txt || true)
-            if [ "$n_area" -lt 1 ] || [ "$n_model" -ne 1 ] || [ "$n_pain" -lt 1 ]; then
-              echo "issue $n: sized $n_area area / $n_model use-model / $n_pain pain," \
-                "which is not a complete sizing — skipping, queue label kept" >&2
+            # A sizing is five axes, and the label manifest sets the count for
+            # each. The priority above is exactly one. The model tier, the
+            # size, and the area are exactly one each. Pain labels are signals.
+            # An issue may carry any number of them, or none.
+            #
+            # Each count ignores case and reads both prefixes, `MODEL:` and
+            # `use-model:`, `SIZE:` and `size/`, so a sizing counts the same on
+            # either side of the rename.
+            #
+            # Gating on the priority alone let a reply that lost its other
+            # axes to validation still pass. The write that follows is the one
+            # step here that cannot be undone. `TRIAGE` comes off, the issue
+            # leaves the queue, and no later sweep looks at it again. A
+            # half-sized issue is as hard to find as the unsized one this
+            # workflow exists to rescue.
+            n_model=$(grep -ci -e '^model:' -e '^use-model:' /tmp/valid.txt || true)
+            n_size=$(grep -ci -e '^size:' -e '^size/' /tmp/valid.txt || true)
+            n_area=$(grep -ci '^area:' /tmp/valid.txt || true)
+            n_pain=$(grep -ci '^pain:' /tmp/valid.txt || true)
+            if [ "$n_model" -ne 1 ] || [ "$n_size" -ne 1 ] || [ "$n_area" -ne 1 ]; then
+              echo "issue $n: sized $n_model model / $n_size size / $n_area area / $n_pain pain." \
+                "That is not a complete sizing. Skipping, queue label kept." >&2
               continue
             fi
 
             why=$(echo "$verdict" | jq -r '.why // "sized by the scheduled triage sweep"')
 
-            # `triage` comes off last, as its own write: an interrupted run
+            # `TRIAGE` comes off last, as its own write: an interrupted run
             # leaves the issue in the queue for the next sweep rather than
             # sized-but-unfindable.
             gh issue edit "$n" --repo "$REPO" --add-label "$valid"
             gh issue comment "$n" --repo "$REPO" --body "Triage (scheduled sweep): $valid — $why"
-            gh issue edit "$n" --repo "$REPO" --remove-label triage
+            gh issue edit "$n" --repo "$REPO" --remove-label TRIAGE
             sized=$((sized + 1))
             echo "issue $n: $valid"
           done

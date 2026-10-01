@@ -1,7 +1,11 @@
 # Triage separation of duties (SCR-005): issue creators get exactly one
-# label — `triage`. Priority labels come only from the triage identity.
-# Invariant: every open issue carries a P-label or `triage`, never neither,
+# label, `TRIAGE`. Priority labels come only from the triage identity.
+# Invariant: every open issue carries a P-label or `TRIAGE`, never neither,
 # never both.
+#
+# Label names compare without regard to case. An issue and an event carry
+# each label in its stored spelling, so the guard must read `triage` and
+# `TRIAGE` as one label while the labels are renamed.
 name: triage-guard
 on:
   issues:
@@ -32,7 +36,7 @@ jobs:
           # so the sweep's writes never reach this guard and the entry is inert
           # today. It starts mattering the day the sweep needs a PAT or an App
           # token, whose writes do raise events: without the entry the guard
-          # would strip each priority the sweep wrote and put `triage` back,
+          # would strip each priority the sweep wrote and put `TRIAGE` back,
           # and the next sweep would size the same issue again.
           TRIAGE_LOGINS: triage-bot macanderson github-actions[bot]
         with:
@@ -52,11 +56,12 @@ jobs:
             const P = /^P[0-4]$/;
             const allowed = process.env.TRIAGE_LOGINS.split(/\s+/);
             const names = issue.labels.map(l => (typeof l === 'string' ? l : l.name));
+            const isTriage = n => n.toLowerCase() === 'triage';
             if (context.payload.action === 'opened'
-                && !names.includes('triage')
+                && !names.some(isTriage)
                 && !names.some(n => P.test(n))) {
               await github.rest.issues.addLabels({
-                ...context.repo, issue_number: issue.number, labels: ['triage'] });
+                ...context.repo, issue_number: issue.number, labels: ['TRIAGE'] });
             }
             if (context.payload.action === 'labeled'
                 && P.test(context.payload.label.name)
@@ -65,8 +70,8 @@ jobs:
                 ...context.repo, issue_number: issue.number,
                 name: context.payload.label.name });
               await github.rest.issues.addLabels({
-                ...context.repo, issue_number: issue.number, labels: ['triage'] });
+                ...context.repo, issue_number: issue.number, labels: ['TRIAGE'] });
               await github.rest.issues.createComment({
                 ...context.repo, issue_number: issue.number,
-                body: 'Priority labels are assigned only by the triage agent (SCR-005). Re-queued as `triage`.' });
+                body: 'Priority labels are assigned only by the triage agent (SCR-005). Re-queued as `TRIAGE`.' });
             }
