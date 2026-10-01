@@ -137,7 +137,7 @@ impl LabelAxis {
     /// that carried both would read as two members of one axis.
     fn present<'a>(&self, labels: &[&'a str]) -> Vec<&'a str> {
         let mut found: Vec<&'a str> = Vec::new();
-        for label in labels {
+        for &label in labels {
             let member = self.members.iter().any(|m| crate::labels::same(m, label));
             if member && !found.iter().any(|f| crate::labels::same(f, label)) {
                 found.push(label);
