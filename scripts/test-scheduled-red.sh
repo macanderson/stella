@@ -107,6 +107,7 @@ export GH_STUB_JQ="$jq_path"
 
 # One issue as JSON, in the shape `gh issue list --json` gives.
 issue() { # issue <number> <title> [body]
+  # shellcheck disable=SC2016 # `$number` and the rest are jq variables, not shell ones
   "$jq_path" -cn --argjson number "$1" --arg title "$2" --arg body "${3:-}" \
     '{number: $number, title: $title, body: $body}'
 }
@@ -123,6 +124,7 @@ open_issues() { # open_issues [<issue json>...]
 # A body like the one the reporter writes. The tabs and the line breaks are
 # there on purpose: the listing must survive them.
 marked_body() { # marked_body <workflow>
+  # shellcheck disable=SC2016 # the backticks are literal markdown
   printf 'The scheduled run of `%s` failed.\n\n\tcol one\tcol two\n<!-- scheduled-red -->\n<!-- scheduled-red: workflow=%s -->' \
     "$1" "$1"
 }

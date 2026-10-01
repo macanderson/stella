@@ -104,7 +104,7 @@ pub(super) enum Assessment {
         kind: String,
         /// The rung label to add, from the ladder.
         priority: String,
-        /// The size answer, from [`SIZES`] — written as [`size_label`].
+        /// The size answer, from [`SIZE_SCALE`] — written as [`size_label`].
         size: String,
     },
     /// Not this loop's work: a kind from `excluded_kinds`.

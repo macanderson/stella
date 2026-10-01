@@ -611,7 +611,10 @@ mod tests {
                 vec![issue(1, "2026-01-01T00:00:00Z", &[kind, "P0"])],
                 &policy,
             );
-            assert!(queue.is_empty(), "{kind} is judged, so it is not asked about");
+            assert!(
+                queue.is_empty(),
+                "{kind} is judged, so it is not asked about"
+            );
         }
     }
 
