@@ -5,7 +5,9 @@
  *   node scripts/sync-brand-assets.mjs [--brand <dir>] [--check]
  *
  * --brand   the kit checkout. Without it the script reads $OXAGEN_BRAND_KIT,
- *           then a checkout at ../oxagen-brand beside this repository.
+ *           then takes the first checkout it finds at ../oxagen-brand beside
+ *           this repository or at ~/Projects/oxagen-brand. The second covers a
+ *           worktree under ~/Projects/.worktrees/.
  * --check   write nothing. Exit 1 and list every file that differs from the
  *           kit or is missing. Exit 0 when the repository matches the kit.
  *
@@ -45,6 +47,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -53,10 +56,19 @@ const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const argv = process.argv.slice(2);
 const CHECK = argv.includes("--check");
 const brandArg = argv.indexOf("--brand");
+/** Where a kit checkout sits when neither --brand nor the variable names one. */
+const DEFAULT_KITS = [join(REPO, "../oxagen-brand"), join(homedir(), "Projects/oxagen-brand")];
+const isKit = (dir) => {
+  try {
+    return statSync(join(dir, "tokens/house-tokens.json")).isFile();
+  } catch {
+    return false;
+  }
+};
 const BRAND = resolve(
   brandArg >= 0 && argv[brandArg + 1]
     ? argv[brandArg + 1]
-    : process.env.OXAGEN_BRAND_KIT || join(REPO, "../oxagen-brand"),
+    : process.env.OXAGEN_BRAND_KIT || DEFAULT_KITS.find(isKit) || DEFAULT_KITS[0],
 );
 
 const WEB = "website";
@@ -146,11 +158,11 @@ function copy(from, ...targets) {
 
 // The kit is a separate repository. Without it there is nothing to copy and
 // nothing to compare, so both modes stop here.
-try {
-  statSync(join(BRAND, "tokens/house-tokens.json"));
-} catch {
+if (!isKit(BRAND)) {
   console.error(`brand: no kit at ${BRAND}, so nothing was ${CHECK ? "checked" : "synced"}.`);
-  console.error("Clone oxageninc/brand to ../oxagen-brand beside this repository, set OXAGEN_BRAND_KIT, or pass --brand <dir>.");
+  console.error(
+    "Clone oxageninc/brand to ~/Projects/oxagen-brand, set OXAGEN_BRAND_KIT, or pass --brand <dir>.",
+  );
   process.exit(2);
 }
 
