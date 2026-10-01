@@ -1,42 +1,51 @@
 #!/usr/bin/env node
 /**
- * Pull the Oxagen house brand system into this repository.
- *
- * The house kit (macanderson/oxagen-house-brand) generates every mark, icon,
- * social card and spinner for BOTH brands from `build/`. Nothing in it is drawn
- * by hand, so nothing here is copied by hand either: this script is the one seam
- * between the kit and the site, and re-running it after a kit rebuild re-flows
- * every asset.
+ * Copy the Oxagen house kit (macanderson/oxagen-brand) into this repository.
  *
  *   node scripts/sync-brand-assets.mjs [--brand <dir>] [--check]
  *
- * --brand   where the kit is checked out. Defaults to $OXAGEN_HOUSE_BRAND, then
- *           ../oxagen-house-brand beside this repo.
- * --check   verify the vendored files match what the kit would emit, write
- *           nothing, exit non-zero on drift. This is what the gate runs.
+ * --brand   the kit checkout. Without it the script reads $OXAGEN_BRAND_KIT,
+ *           then ../oxagen-brand beside this repository.
+ * --check   write nothing. Exit 1 and list every file that differs from the
+ *           kit or is missing. Exit 0 when the repository matches the kit.
  *
- * It replaces `scripts/mirror-brand-icons.py`, which mirrored `docs/brand/` —
- * this repo's own kit, retired with the house system. The failure that script
- * was written against is unchanged and so is the answer to it: a step that
- * exists only as a sentence ("re-copy it when the kit regenerates") is a step
- * that gets skipped, and the way v5.0 shipped the site on v4.0 icons.
+ * The kit generates every mark, icon, social card, spinner, font file, and
+ * colour value for both brands. This script is the one path from the kit into
+ * Stella. Each file it writes is a byte copy of a file the kit commits, or text
+ * derived from one the same way on every run. It renders nothing and needs
+ * Node's standard library and nothing else, so the kit's fan-out workflow can
+ * run it on a bare runner with no network.
  *
- * ## What Stella's marks are now
+ * `.github/workflows/brand-drift.yml` runs the check against the kit's `main`
+ * on every pull request, on every push to `main`, and once a day.
  *
- * The comet is retired. Stella's mark is the ASTERISK, and it already lives
- * inside the word: `stella*`, set in Space Grotesk at the kit's logo weight with
- * the asterisk in gold. That combined form IS the Stella lockup, and it is the
- * only one there is — nothing is ever placed to the left of the word. The kit
- * emits no separate Stella lockup, which is why this script writes none.
+ * What it writes:
  *
- * The icon is the asterisk alone. Unlike Oxagen's one-colour `Ox` lettermark it
- * ships gold, because a lone asterisk in ink reads as punctuation.
+ *  - the Stella marks (`logo/svg/`) under `docs/brand/logo/svg/`,
+ *    `website/public/brand/`, and `website/src/app/icon.svg`;
+ *  - the favicons and app icons (`icons/`) under `docs/brand/pwa/`,
+ *    `website/public/icons/`, and the `website/src/app/` file conventions;
+ *  - the spinners, the social art, and the three house faces with their
+ *    licences;
+ *  - the kit's token files under `docs/brand/css/`, and its font loader and
+ *    token sheet under `website/src/brand/`;
+ *  - the Observatory's favicon and wordmark cuts, which the binary embeds;
+ *  - the branding skill stub, removing any other file under its folder;
+ *  - `website/src/components/brand-marks.generated.ts`, the mark geometry and
+ *    the house colours as data;
+ *  - the hex value of every Stella token the house palette owns (`PALETTE`)
+ *    in `design/tokens/stella-tokens.json` and its two hand-kept mirrors.
  */
 
-import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import {
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -47,92 +56,67 @@ const brandArg = argv.indexOf("--brand");
 const BRAND = resolve(
   brandArg >= 0 && argv[brandArg + 1]
     ? argv[brandArg + 1]
-    : process.env.OXAGEN_HOUSE_BRAND || join(REPO, "../oxagen-house-brand"),
+    : process.env.OXAGEN_BRAND_KIT || join(REPO, "../oxagen-brand"),
 );
 
 const WEB = "website";
 /**
- * The in-repo mirror of the house kit.
+ * The in-repo mirror of what the kit emits for Stella.
  *
- * `docs/brand/` used to be Stella's OWN kit — a generator (`build_marks.py`,
- * `cometkit.py`) that drew the comet and everything around it. The house system
- * retires that, and this directory becomes a vendored copy of what the house kit
- * emits for Stella instead.
- *
- * It is kept rather than deleted for two reasons. It is what a designer is
- * handed, and it is what `website/src/lib/brand-parity.test.ts` compares the
- * site against — a check that has to run in CI, where the house kit is not
- * checked out. So the kit lands here first, offline, and the site is held to
- * this copy.
+ * `website/src/lib/brand-parity.test.ts` holds the site to this copy, and CI
+ * runs that test with no kit checked out. The kit lands here first, and the
+ * site is held to it offline.
  */
 const KIT = "docs/brand";
-const FAVICON_PNG = [16, 32, 48];
-const ICO_SIZES = [16, 32, 48];
-const APP_ICONS = [192, 512];
-const MASKABLE = [192, 512];
-
-/** Rasterise an SVG at an exact square size. rsvg-convert ships with librsvg. */
-function raster(svgPath, size) {
-  return execFileSync(
-    "rsvg-convert",
-    ["-w", String(size), "-h", String(size), "-f", "png", svgPath],
-    { maxBuffer: 64 * 1024 * 1024 },
-  );
-}
+/** The Observatory embeds these with `include_str!` in its `lib.rs`. */
+const OBSERVATORY = "crates/stella-observatory/src/assets";
+const SKILL_DIR = ".claude/skills/oxagen-branding";
 
 /**
- * A maskable icon is the tile with its corners let out and the mark pulled into
- * the 80% safe circle Android masks against. 0.72 keeps the asterisk inside
- * that circle with room to spare.
+ * The Stella tokens whose value the house palette owns, each with the kit
+ * token it takes (`tokens` in the kit's `tokens/house-tokens.json`).
+ *
+ * The sync writes these values into the token JSON and into the two
+ * stylesheets that mirror it, so a kit colour change reaches the website on
+ * the next sync. Every other Stella token (the status hues, the diff grounds,
+ * `--st-hl`, and `--st-muted`) has no house value and stays Stella's own.
+ *
+ * After a sync changes a value here, `make tokens-update` rewrites the files
+ * generated from the JSON, the terminal theme among them. `make tokens` fails
+ * until it runs.
  */
-function maskableSvg(tileSvgPath) {
-  const src = readFileSync(tileSvgPath, "utf8");
-  const inset = (96 * (1 - 0.72)) / 2;
-  return src
-    .replace(/(<rect width="96" height="96")\s+rx="20"/, "$1")
-    .replace(/<g transform=/, `<g transform="translate(${inset} ${inset}) scale(0.72)"><g transform=`)
-    .replace(/<\/g><\/svg>$/, "</g></g></svg>");
-}
+const PALETTE = [
+  ["--st-bg", "ink"],
+  ["--st-panel", "panel"],
+  ["--st-border", "border"],
+  ["--st-rule", "rule"],
+  ["--st-gold", "gold"],
+  ["--st-gold-bright", "gold-bright"],
+  ["--st-silver", "muted"],
+  ["--st-silver-type", "text-body"],
+  ["--st-text", "text"],
+  ["--st-dim", "dim"],
+  ["--st-ink", "text-ink"],
+  ["--st-paper", "paper"],
+  ["--st-paper-panel", "paper-panel"],
+  ["--st-paper-border", "paper-border"],
+  ["--st-void", "void"],
+  ["--st-gold-ink", "gold-deep"],
+  ["--st-paper-ground", "paper"],
+  ["--st-paper-raised", "paper-panel"],
+  ["--st-paper-row", "paper-hl"],
+  ["--st-paper-seam", "paper-border"],
+  ["--st-ink-muted", "muted-ink"],
+];
+const TOKENS_JSON = "design/tokens/stella-tokens.json";
+const TOKEN_SHEETS = [`${WEB}/src/app/tokens.css`, `${KIT}/css/tokens.css`];
 
-/**
- * An .ico is a 6-byte header, a 16-byte directory entry per image, then the
- * payloads.
- *
- * The payloads are PNG, and they are re-encoded to RGBA rather than passed
- * through. The kit renders its favicons opaque, so its own ICO embeds RGB PNGs
- * (colour type 2); Next's image pipeline decodes this file through the `ico`
- * crate, which accepts only RGBA and fails the production build outright:
- *
- *     Caused by: Format error decoding Ico: The PNG is not in RGBA format!
- *
- * rsvg-convert already emits RGBA, so rasterising here rather than copying the
- * kit's ICO gets that for free — which is the whole reason this script
- * rasterises the favicon sizes instead of copying `icons/stella-icon-16.png`.
- */
-function ico(pngs) {
-  const head = Buffer.alloc(6);
-  head.writeUInt16LE(0, 0);
-  head.writeUInt16LE(1, 2);
-  head.writeUInt16LE(pngs.length, 4);
-  let offset = 6 + 16 * pngs.length;
-  const dir = [];
-  for (const { size, data } of pngs) {
-    const e = Buffer.alloc(16);
-    e.writeUInt8(size >= 256 ? 0 : size, 0);
-    e.writeUInt8(size >= 256 ? 0 : size, 1);
-    e.writeUInt16LE(1, 4);
-    e.writeUInt16LE(32, 6);
-    e.writeUInt32LE(data.length, 8);
-    e.writeUInt32LE(offset, 12);
-    offset += data.length;
-    dir.push(e);
-  }
-  return Buffer.concat([head, ...dir, ...pngs.map((p) => p.data)]);
-}
-
-const written = [];
+/** Paths a check found different from the kit, each with an optional note. */
 const drifted = [];
+/** Paths a sync wrote or removed. */
+const written = [];
 
+/** Write `data` to `relPath`, or record a difference under `--check`. */
 function emit(relPath, data) {
   const abs = join(REPO, relPath);
   const buf = Buffer.isBuffer(data) ? data : Buffer.from(data, "utf8");
@@ -140,51 +124,62 @@ function emit(relPath, data) {
   try {
     current = readFileSync(abs);
   } catch {
-    /* new file */
+    // The file does not exist yet.
   }
-  const same = current && current.equals(buf);
+  if (current && current.equals(buf)) return;
   if (CHECK) {
-    if (!same) drifted.push(relPath);
+    drifted.push(current ? relPath : `${relPath} (missing)`);
     return;
   }
-  if (same) return;
   mkdirSync(dirname(abs), { recursive: true });
   writeFileSync(abs, buf);
   written.push(relPath);
 }
 
+const kitFile = (path) => readFileSync(join(BRAND, path));
 const svg = (name) => join(BRAND, "logo/svg", name);
-const copy = (from, to) => emit(to, readFileSync(join(BRAND, from)));
+/** Copy one kit file, byte for byte, to each of `targets`. */
+function copy(from, ...targets) {
+  const data = kitFile(from);
+  for (const to of targets) emit(to, data);
+}
+
+// The kit is a separate repository. Without it there is nothing to copy and
+// nothing to compare, so both modes stop here.
+try {
+  statSync(join(BRAND, "tokens/house-tokens.json"));
+} catch {
+  console.error(`brand: no kit at ${BRAND}, so nothing was ${CHECK ? "checked" : "synced"}.`);
+  console.error("Clone macanderson/oxagen-brand beside this repository, set OXAGEN_BRAND_KIT, or pass --brand <dir>.");
+  process.exit(2);
+}
+
+const house = JSON.parse(kitFile("tokens/house-tokens.json").toString("utf8"));
 
 /**
- * The marks, as data, for the React components.
+ * The marks and the house colours, as data for the React components and the
+ * OG card.
  *
- * `<img>` cannot follow the site theme, and hand-copying path data into a .tsx
- * is exactly the drift this script exists to prevent — so the geometry is
- * extracted from the kit's adaptive SVGs and written to a generated module the
- * components import.
+ * An `<img>` cannot follow the site theme, and Satori, which draws the OG
+ * card, reads no stylesheet. So the geometry comes out of the kit's adaptive
+ * SVGs, and the colours out of its token file, into a module the site imports.
  */
 function marks() {
   const src = readFileSync(svg("stella-wordmark-adaptive.svg"), "utf8");
   const icon = readFileSync(svg("stella-icon-adaptive.svg"), "utf8");
   const viewBox = (s) => s.match(/viewBox="([^"]+)"/)[1];
   const path = (s, cls) => s.match(new RegExp(`<path class="${cls}" d="([^"]+)"`))[1];
-  const gold = JSON.parse(readFileSync(join(BRAND, "tokens/house-tokens.json"), "utf8")).gold.hex;
+  const transform = icon.match(/<g transform="([^"]+)"/)[1];
 
   /**
-   * The asterisk with its placing transform baked into the coordinates.
+   * The asterisk with its placing transform applied to the coordinates.
    *
-   * `MARK_PATH` needs a `<g transform>` around it to land in the kit's 96-unit
-   * box, and some renderers have no group transform to give it — Satori, which
-   * builds the OG card, is the one this repo actually hits. Rather than teach
-   * every such caller to pre-solve the transform by hand (which is how a mark
-   * ends up subtly misplaced on one surface), it is solved once, here.
-   *
-   * The path uses only absolute M/L/H/V/Z, so applying `translate(tx,ty)
-   * scale(k)` is arithmetic on the numbers with no curve maths involved. If the
-   * kit ever emits a curve command in this mark, the throw below is the handoff.
+   * `MARK_PATH` needs a `<g transform>` to land in the kit's 96-unit box, and
+   * Satori has no group transform. The path uses only absolute M, L, H, V, and
+   * Z, so `translate(tx,ty) scale(k)` is arithmetic on each number. A curve
+   * command in the kit's mark throws below.
    */
-  function flatten(d, transform) {
+  function flatten(d) {
     const [, tx, ty, k] = transform
       .match(/translate\(([-\d.]+),([-\d.]+)\) scale\(([\d.]+)\)/)
       .map(Number);
@@ -201,15 +196,32 @@ function marks() {
         for (let i = 0; i < nums.length; i += 2) out.push(X(nums[i]), Y(nums[i + 1]));
         return cmd + out.join(" ");
       }
-      throw new Error(`mark path carries an unsupported command "${cmd}" — flatten() needs curve support`);
+      throw new Error(`the kit's mark path carries "${cmd}", and flatten() handles only M, L, H, V, and Z`);
     });
   }
+  const flat = flatten(path(icon, "mark"));
+
+  /** The tight box around the flattened mark, with no padding. */
+  function box(d) {
+    const xs = [];
+    const ys = [];
+    for (const [, cmd, rest] of d.matchAll(/([MLHVZ])([^MLHVZ]*)/gi)) {
+      const v = rest.trim() ? rest.trim().split(/[\s,]+/).map(Number) : [];
+      if (cmd === "H") xs.push(...v);
+      else if (cmd === "V") ys.push(...v);
+      else for (let j = 0; j < v.length; j += 2) { xs.push(v[j]); ys.push(v[j + 1]); }
+    }
+    const r = (n) => Number(n.toFixed(2));
+    const x0 = Math.min(...xs);
+    const y0 = Math.min(...ys);
+    return `${r(x0)} ${r(y0)} ${r(Math.max(...xs) - x0)} ${r(Math.max(...ys) - y0)}`;
+  }
+
   const [, , w, h] = viewBox(src).split(/\s+/).map(Number);
 
-  // The house motion: a skewed band of gold-bright swept across the letters,
-  // clipped to them. Pulled out of the kit's own spinner rather than re-timed
-  // here, so the shimmer on this site and the shimmer in every other surface
-  // the kit renders are one animation.
+  // The house motion: a skewed band of gold-bright swept across the letters.
+  // Every number comes from the kit's own spinner, so the shimmer here and on
+  // every other surface the kit renders is one animation.
   const spin = readFileSync(join(BRAND, "spinners/stella-spinner-wordmark.svg"), "utf8");
   const rect = spin.match(/<rect class="sweep-[^"]+"([^>]+)\/>/)[1];
   const attr = (name) => rect.match(new RegExp(`${name}="([^"]+)"`))[1];
@@ -226,25 +238,35 @@ function marks() {
     highlight: spin.match(/stop-color="(#[0-9A-Fa-f]{6})" stop-opacity="0.95"/)[1],
   };
 
+  const colours = Object.entries(house.tokens)
+    .map(([name, hex]) => `  ${JSON.stringify(name)}: ${JSON.stringify(hex)},`)
+    .join("\n");
+
   emit(
     `${WEB}/src/components/brand-marks.generated.ts`,
     `/**
- * GENERATED by scripts/sync-brand-assets.mjs from the Oxagen house brand kit.
- * Do not edit — run the sync instead.
+ * GENERATED by scripts/sync-brand-assets.mjs from the Oxagen house kit.
+ * Do not edit. Run the sync instead.
  *
- * The kit reproduces the wordmark from Space Grotesk itself (weight 600, one em,
- * HarfBuzz spacing including kerning), so the mark and this site's running text
- * are the same outlines. Editing a path here would break that; changing the mark
- * means changing the kit.
+ * The kit sets the wordmark in Space Grotesk at weight 600, so the mark and
+ * this site's headings share their outlines. To change a mark, change the kit.
  *
- * ONE GLYPH IS GOLD: the asterisk. \`letters\` renders in currentColor and flips
- * with the theme; \`accent\` keeps the metal in BOTH themes, which is what the
- * kit's own light and dark files do — the "gold becomes its deep shade on paper"
- * rule governs gold WORDS, not the mark.
+ * One glyph is gold: the asterisk. \`letters\` renders in currentColor and
+ * follows the theme. \`accent\` keeps the gold in both themes, as the kit's own
+ * light and dark files do.
  */
 
-/** The kit's gold, pinned. Identity only — never a surface, never a state. */
-export const BRAND_GOLD = "${gold}";
+/** The kit's gold. It marks identity, never a surface or a state. */
+export const BRAND_GOLD = "${house.gold.hex}";
+
+/**
+ * The house palette, from \`tokens\` in the kit's \`tokens/house-tokens.json\`.
+ * For renderers with no stylesheet, such as the OG card. A page styled with
+ * CSS takes these values from \`src/app/tokens.css\` instead.
+ */
+export const HOUSE_COLORS = {
+${colours}
+} as const;
 
 /** The kit's own viewBox for the wordmark. Never re-fit it. */
 export const WORDMARK_VIEW_BOX = "${viewBox(src)}";
@@ -254,52 +276,32 @@ export const WORDMARK_HEIGHT = ${h};
 /** Every glyph but the asterisk. Renders in currentColor. */
 export const WORDMARK_LETTERS_PATH =
   "${path(src, "letters")}";
-/** The asterisk — the one gold glyph, and Stella's whole mark. */
+/** The asterisk: the one gold glyph, and Stella's whole mark. */
 export const WORDMARK_SPARKLE_PATH =
   "${path(src, "accent")}";
 
 /** The asterisk on its own, in the kit's 96-unit box. */
 export const MARK_VIEW_BOX = "${viewBox(icon)}";
 /** Places the glyph in that box. */
-export const MARK_TRANSFORM = "${icon.match(/<g transform="([^"]+)"/)[1]}";
+export const MARK_TRANSFORM = "${transform}";
 export const MARK_PATH =
   "${path(icon, "mark")}";
 
 /**
- * The same mark with MARK_TRANSFORM already applied, so it draws correctly with
- * no enclosing group. For renderers with no group transform — Satori, which
- * builds the OG card. Identical geometry, solved once instead of per caller.
+ * The same mark with MARK_TRANSFORM already applied, so it draws with no
+ * enclosing group. Satori, which builds the OG card, has no group transform.
  */
 export const MARK_PATH_FLAT =
-  "${flatten(path(icon, "mark"), icon.match(/<g transform="([^"]+)"/)[1])}";
+  "${flat}";
 
 /** The tight box around MARK_PATH_FLAT: the mark's own ink, with no padding. */
-export const MARK_BOX_FLAT = "${(() => {
-  const flat = flatten(path(icon, "mark"), icon.match(/<g transform="([^"]+)"/)[1]);
-  const nums = flat.match(/-?[\d.]+/g).map(Number);
-  // M/L pairs, H on x, V on y — walk the commands to keep the axes straight.
-  const xs = [], ys = [];
-  let i = 0;
-  for (const [, cmd, rest] of flat.matchAll(/([MLHVZ])([^MLHVZ]*)/gi)) {
-    const v = rest.trim() ? rest.trim().split(/[\s,]+/).map(Number) : [];
-    if (cmd === "H") xs.push(...v);
-    else if (cmd === "V") ys.push(...v);
-    else for (let j = 0; j < v.length; j += 2) { xs.push(v[j]); ys.push(v[j + 1]); }
-    i++;
-  }
-  void nums; void i;
-  const r = (n) => Number(n.toFixed(2));
-  const x0 = Math.min(...xs), y0 = Math.min(...ys);
-  return `${r(x0)} ${r(y0)} ${r(Math.max(...xs) - x0)} ${r(Math.max(...ys) - y0)}`;
-})()}";
+export const MARK_BOX_FLAT = "${box(flat)}";
 
 /**
- * The house motion — the metal sweeping across the letters.
+ * The house motion: the gold sweeping across the letters.
  *
- * Every number is the kit's, read out of spinners/stella-spinner-wordmark.svg,
- * so the shimmer here and the shimmer on every other surface the kit renders
- * are one animation. Do not re-time it: the period is the kit's own shimmer
- * rhythm, and a faster sweep reads as a different brand.
+ * Every number is the kit's, read out of spinners/stella-spinner-wordmark.svg.
+ * Do not re-time it. The period is the kit's shimmer rhythm.
  */
 export const SWEEP = {
   /** The band, before the skew. */
@@ -307,7 +309,7 @@ export const SWEEP = {
   y: ${sweep.y},
   width: ${sweep.width},
   height: ${sweep.height},
-  /** Degrees. The band is a parallelogram, not a rectangle. */
+  /** Degrees. The band is a parallelogram. */
   skewDeg: ${sweep.skewDeg},
   /** How far it travels, in viewBox units. */
   travelPx: ${sweep.travelPx},
@@ -323,12 +325,10 @@ export const SWEEP = {
   );
 }
 
-/** The site's public assets. */
-function site() {
-  const tileDark = svg("stella-icon-tile-dark.svg");
-  const tileLight = svg("stella-icon-tile-light.svg");
-
-  const svgSet = [
+/** The marks, icons, spinners, and social art. */
+function assets() {
+  // The marks. The site and docs/brand/ carry the same set.
+  for (const name of [
     "stella-wordmark-adaptive.svg",
     "stella-wordmark-dark.svg",
     "stella-wordmark-light.svg",
@@ -339,62 +339,44 @@ function site() {
     "stella-icon-mono-white.svg",
     "stella-icon-tile-dark.svg",
     "stella-icon-tile-light.svg",
-  ];
-  for (const name of svgSet) {
-    const body = readFileSync(svg(name));
-    emit(`${KIT}/logo/svg/${name}`, body);
-    emit(`${WEB}/public/brand/${name}`, body);
+  ]) {
+    copy(`logo/svg/${name}`, `${KIT}/logo/svg/${name}`, `${WEB}/public/brand/${name}`);
   }
 
-  // Favicons. The SVG is adaptive; the rasters come off the dark tile, opaque,
-  // so they stay legible whatever colour the tab is painted.
-  const favicon = readFileSync(svg("stella-favicon.svg"));
-  emit(`${KIT}/logo/svg/stella-favicon.svg`, favicon);
-  emit(`${WEB}/src/app/icon.svg`, favicon);
+  // The tab icon. Next takes it from src/app/icon.svg by file convention.
+  copy("logo/svg/stella-favicon.svg", `${KIT}/logo/svg/stella-favicon.svg`, `${WEB}/src/app/icon.svg`);
 
-  const icoParts = [];
-  for (const size of FAVICON_PNG) {
-    const data = raster(tileDark, size);
-    emit(`${KIT}/pwa/favicon-${size}.png`, data);
-    emit(`${WEB}/public/icons/favicon-${size}.png`, data);
-    if (ICO_SIZES.includes(size)) icoParts.push({ size, data });
+  // The kit's rasters, as it rendered them. Its ICO embeds RGBA PNGs, which
+  // is the only encoding Next's ICO decoder accepts.
+  copy("icons/stella-favicon.ico", `${KIT}/pwa/favicon.ico`, `${WEB}/src/app/favicon.ico`);
+  for (const size of [16, 32, 48]) {
+    copy(
+      `icons/stella-icon-${size}.png`,
+      `${KIT}/pwa/favicon-${size}.png`,
+      `${WEB}/public/icons/favicon-${size}.png`,
+    );
   }
-  const favIco = ico(icoParts);
-  emit(`${KIT}/pwa/favicon.ico`, favIco);
-  emit(`${WEB}/src/app/favicon.ico`, favIco);
-
-  const apple = raster(tileDark, 180);
-  emit(`${KIT}/pwa/apple-touch-icon.png`, apple);
-  emit(`${WEB}/src/app/apple-icon.png`, apple);
-
-  for (const size of APP_ICONS) {
-    const data = raster(tileDark, size);
-    emit(`${KIT}/pwa/icon-${size}.png`, data);
-    emit(`${WEB}/public/icons/icon-${size}.png`, data);
-  }
-  const scratch = mkdtempSync(join(tmpdir(), "stella-brand-"));
-  const maskDark = join(scratch, "maskable-dark.svg");
-  const maskLight = join(scratch, "maskable-light.svg");
-  writeFileSync(maskDark, maskableSvg(tileDark));
-  writeFileSync(maskLight, maskableSvg(tileLight));
-  for (const size of MASKABLE) {
-    const dark = raster(maskDark, size);
-    emit(`${KIT}/pwa/icon-maskable-${size}.png`, dark);
-    emit(`${WEB}/public/icons/maskable-${size}.png`, dark);
-    emit(`${WEB}/public/icons/maskable-light-${size}.png`, raster(maskLight, size));
+  copy("icons/stella-icon-180.png", `${KIT}/pwa/apple-touch-icon.png`, `${WEB}/src/app/apple-icon.png`);
+  for (const size of [192, 512]) {
+    copy(`icons/stella-icon-${size}.png`, `${KIT}/pwa/icon-${size}.png`, `${WEB}/public/icons/icon-${size}.png`);
+    copy(
+      `icons/stella-icon-maskable-${size}.png`,
+      `${KIT}/pwa/icon-maskable-${size}.png`,
+      `${WEB}/public/icons/maskable-${size}.png`,
+    );
+    copy(`icons/stella-icon-maskable-light-${size}.png`, `${WEB}/public/icons/maskable-light-${size}.png`);
   }
 
-  // Safari's pinned tab wants one flat path on a transparent ground.
-  const pinned = readFileSync(svg("stella-icon-mono-black.svg"));
-  emit(`${KIT}/pwa/safari-pinned-tab.svg`, pinned);
-  emit(`${WEB}/public/icons/safari-pinned-tab.svg`, pinned);
+  // Safari's pinned tab wants one flat shape on a transparent ground.
+  copy(
+    "logo/svg/stella-icon-mono-black.svg",
+    `${KIT}/pwa/safari-pinned-tab.svg`,
+    `${WEB}/public/icons/safari-pinned-tab.svg`,
+  );
 
-  const spinner = readFileSync(join(BRAND, "spinners/stella-spinner.svg"));
-  emit(`${KIT}/spinners/stella-spinner.svg`, spinner);
-  emit(`${WEB}/public/brand/stella-spinner.svg`, spinner);
+  copy("spinners/stella-spinner.svg", `${KIT}/spinners/stella-spinner.svg`, `${WEB}/public/brand/stella-spinner.svg`);
   copy("spinners/stella-spinner-wordmark.svg", `${KIT}/spinners/stella-spinner-wordmark.svg`);
 
-  // The kit's own social art, so docs/brand/social/ stops carrying the comet.
   for (const scheme of ["dark", "light"]) {
     for (const [from, to] of [
       [`stella-og-1200x630-${scheme}.png`, `stella-og-image-${scheme}.png`],
@@ -406,71 +388,141 @@ function site() {
       copy(`social/${from}`, `${KIT}/social/${to}`);
     }
   }
+
+  // The Observatory's favicon and the two wordmark cuts its header swaps by
+  // theme. The binary embeds these files, so a kit change reaches it on the
+  // next build.
+  copy("logo/svg/stella-favicon.svg", `${OBSERVATORY}/mark.svg`);
+  copy("logo/svg/stella-wordmark-dark.svg", `${OBSERVATORY}/wordmark.svg`);
+  copy("logo/svg/stella-wordmark-light.svg", `${OBSERVATORY}/wordmark-light.svg`);
 }
 
 /**
- * The three house faces: Space Grotesk (display, and the wordmark is cut from
- * it), Geist (text) and Monaspace Neon (code), each with its licence.
+ * The three house faces with their licences, the kit's token files, and the
+ * kit's `next/font` loader.
+ *
+ * `next-fonts.ts` loads its faces from `../fonts/`, so it sits in
+ * `website/src/brand/`, beside `website/src/fonts/`.
  */
-function fonts() {
-  for (const f of readdirSync(join(BRAND, "fonts"))) {
-    if (f.endsWith(".woff2")) {
-      copy(`fonts/${f}`, `${WEB}/src/fonts/${f}`);
-      copy(`fonts/${f}`, `${KIT}/fonts/${f}`);
+function typeAndTokens() {
+  for (const f of readdirSync(join(BRAND, "fonts")).sort()) {
+    if (f.endsWith(".woff2") || f.startsWith("LICENSE")) {
+      copy(`fonts/${f}`, `${WEB}/src/fonts/${f}`, `${KIT}/fonts/${f}`);
     }
-    if (f.startsWith("LICENSE")) {
-      copy(`fonts/${f}`, `${WEB}/src/fonts/${f}`);
-      copy(`fonts/${f}`, `${KIT}/fonts/${f}`);
+  }
+  copy("tokens/house-tokens.css", `${KIT}/css/house-tokens.css`, `${WEB}/src/brand/house-tokens.css`);
+  copy("tokens/house-tokens.json", `${KIT}/css/house-tokens.json`);
+  copy("tokens/next-fonts.ts", `${WEB}/src/brand/next-fonts.ts`);
+}
+
+/**
+ * Write the kit's value into every Stella token the house palette owns.
+ *
+ * Each value is replaced in place, so the rest of each file keeps its bytes.
+ * Values compare without regard to case, and a replacement keeps the case the
+ * file already writes.
+ */
+function palette() {
+  const want = new Map(
+    PALETTE.map(([css, name]) => {
+      const hex = house.tokens[name];
+      if (!/^#[0-9A-Fa-f]{6}$/.test(hex ?? "")) {
+        throw new Error(`the kit's tokens/house-tokens.json has no colour "${name}" (PALETTE maps ${css} to it)`);
+      }
+      return [css, hex];
+    }),
+  );
+  const same = (a, b) => a.toLowerCase() === b.toLowerCase();
+  const cased = (old, hex) => (old === old.toLowerCase() ? hex.toLowerCase() : hex.toUpperCase());
+
+  // The JSON: the "hex" of the object whose "css" names the token. "hex"
+  // comes before "css" in each object, with no brace between them.
+  let json = readFileSync(join(REPO, TOKENS_JSON), "utf8");
+  for (const [css, hex] of want) {
+    const at = json.indexOf(`"css": "${css}"`);
+    if (at < 0) throw new Error(`${TOKENS_JSON} has no token ${css}`);
+    const head = json.slice(0, at);
+    const m = [...head.matchAll(/"hex": "(#[0-9A-Fa-f]{6})"/g)].pop();
+    if (!m || /[{}]/.test(head.slice(m.index))) {
+      throw new Error(`${TOKENS_JSON}: ${css} has no "hex" in its own object`);
     }
+    if (same(m[1], hex)) continue;
+    const start = m.index + m[0].indexOf("#");
+    json = json.slice(0, start) + cased(m[1], hex) + json.slice(start + 7);
+  }
+  emit(TOKENS_JSON, json);
+
+  // The two stylesheets that mirror the JSON. A name may be declared more
+  // than once, and every declaration takes the value.
+  for (const sheet of TOKEN_SHEETS) {
+    let css = readFileSync(join(REPO, sheet), "utf8");
+    for (const [name, hex] of want) {
+      let found = false;
+      css = css.replace(new RegExp(`(${name}\\s*:\\s*)(#[0-9A-Fa-f]{6})\\b`, "g"), (_, lead, old) => {
+        found = true;
+        return lead + (same(old, hex) ? old : cased(old, hex));
+      });
+      if (!found) throw new Error(`${sheet} declares no ${name} with a hex value`);
+    }
+    emit(sheet, css);
   }
 }
 
 /**
- * The kit is a separate repository, so it is not always present — CI checks out
- * this repo alone.
+ * The branding skill: the kit's stub, and nothing else in its folder.
  *
- * A WRITE without it is an error: there is nothing to copy from. A `--check`
- * without it says so and exits 0, because the alternative is a gate that fails
- * on every machine that has not cloned a second repo, and a gate everyone
- * learns to ignore is worse than no gate. It says it LOUDLY rather than
- * skipping quietly — the one line names what was not checked, so a green run
- * carrying it cannot be read as "the assets were verified".
- *
- * What is lost here is smaller than it looks: `brand-parity.test.ts` still
- * holds the site to `docs/brand/` on every run, offline, and that is the check
- * that has actually caught this repo shipping a stale brand. This one adds the
- * outer link — that `docs/brand/` is still the kit.
+ * The stub fetches the full skill from the kit's `main` on every run, so a
+ * vendored copy beside it would only drift.
  */
-try {
-  readFileSync(join(BRAND, "tokens/house-tokens.json"));
-} catch {
-  const where = `clone macanderson/oxagen-house-brand beside this repo, or set OXAGEN_HOUSE_BRAND.`;
-  if (CHECK) {
-    console.log(`brand: SKIPPED — no house kit at ${BRAND}, so no asset was verified. ${where}`);
-    process.exit(0);
+function skill() {
+  copy("skills/stub/oxagen-branding/SKILL.md", `${SKILL_DIR}/SKILL.md`);
+  const root = join(REPO, SKILL_DIR);
+  const walk = (dir) =>
+    readdirSync(dir).flatMap((name) => {
+      const abs = join(dir, name);
+      return statSync(abs).isDirectory() ? [abs, ...walk(abs)] : [abs];
+    });
+  let extra = [];
+  try {
+    extra = walk(root).filter((abs) => relative(root, abs) !== "SKILL.md");
+  } catch {
+    // No folder yet: a sync creates it with the stub, and a check has already
+    // reported the stub missing.
   }
-  console.error(`brand kit not found at ${BRAND}\n${where}`);
-  process.exit(2);
+  for (const abs of extra.sort().reverse()) {
+    const rel = relative(REPO, abs);
+    if (statSync(abs).isDirectory()) {
+      if (!CHECK) rmSync(abs, { recursive: true, force: true });
+      continue;
+    }
+    if (CHECK) {
+      drifted.push(`${rel} (not in the kit's stub)`);
+    } else {
+      rmSync(abs, { force: true });
+      written.push(`${rel} (removed)`);
+    }
+  }
 }
 
 marks();
-site();
-fonts();
+assets();
+typeAndTokens();
+palette();
+skill();
 
-const version = JSON.parse(readFileSync(join(BRAND, "tokens/house-tokens.json"), "utf8")).version;
-
+const kit = `oxagen-brand ${house.version}`;
 if (CHECK) {
   if (drifted.length) {
-    console.error(`brand assets are stale against house kit ${version}:`);
+    console.error(`brand: ${drifted.length} file(s) differ from ${kit} at ${BRAND}:`);
     for (const f of drifted) console.error(`  ${f}`);
-    console.error(`\nrun: node scripts/sync-brand-assets.mjs`);
     process.exit(1);
   }
-  console.log(`brand: every vendored asset matches house kit ${version}`);
+  console.log(`brand: every synced file matches ${kit}.`);
 } else {
   console.log(
     written.length
-      ? `brand: synced ${written.length} file(s) from house kit ${version}`
-      : `brand: already current with house kit ${version}`,
+      ? `brand: synced ${written.length} file(s) from ${kit}.`
+      : `brand: already current with ${kit}.`,
   );
+  for (const f of written) console.log(`  ${f}`);
 }

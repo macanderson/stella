@@ -1,0 +1,445 @@
+{
+  "version": "2.3.0",
+  "name": "oxagen house system",
+  "built_on": "oxagen brand kit (Space Grotesk), on obsidian and white with one gold",
+  "icons": {
+    "oxagen": {
+      "kind": "hive",
+      "cells": [
+        {
+          "col": 0,
+          "row": 0,
+          "kind": "ink"
+        },
+        {
+          "col": 1,
+          "row": 0,
+          "kind": "ink"
+        },
+        {
+          "col": 0,
+          "row": 1,
+          "kind": "ink"
+        },
+        {
+          "col": 1,
+          "row": 1,
+          "kind": "gold"
+        },
+        {
+          "col": 0,
+          "row": 2,
+          "kind": "gold-half"
+        },
+        {
+          "col": 1,
+          "row": 2,
+          "kind": "ink"
+        }
+      ],
+      "cell": {
+        "r": 6.08,
+        "w": 5.8,
+        "px": 13.08,
+        "py": 10.24,
+        "stroke": 1.0
+      },
+      "half": 0.55,
+      "colours": 2,
+      "note": "outlines take the surface's ink; the two lit cells take the metal"
+    },
+    "stella": {
+      "kind": "glyph",
+      "text": "*",
+      "family": "Space Grotesk",
+      "weight": 600,
+      "colours": 1,
+      "note": "the metal"
+    }
+  },
+  "gold": {
+    "hex": "#D4AF37",
+    "oklch": {
+      "L": 0.7665,
+      "C": 0.1387,
+      "H": 91.06
+    },
+    "bright_oklch": {
+      "L": 0.86,
+      "C": 0.13,
+      "H": 91.0
+    },
+    "deep_oklch": {
+      "L": 0.56,
+      "C": 0.1,
+      "H": 91.0
+    },
+    "bright": "#F1CE65",
+    "deep": "#8A7223",
+    "on_ink": 9.46,
+    "deep_on_paper": 4.65
+  },
+  "tokens": {
+    "gold": "#D4AF37",
+    "gold-bright": "#F1CE65",
+    "gold-deep": "#8A7223",
+    "ink": "#09090B",
+    "void": "#000000",
+    "panel": "#18181B",
+    "hl": "#27272A",
+    "border": "#27272A",
+    "rule": "#3F3F46",
+    "paper": "#FFFFFF",
+    "paper-void": "#F4F4F5",
+    "paper-panel": "#FFFFFF",
+    "paper-hl": "#F4F4F5",
+    "paper-border": "#E4E4E7",
+    "paper-rule": "#D4D4D8",
+    "text": "#FFFFFF",
+    "text-body": "#E4E4E7",
+    "muted": "#A1A1AA",
+    "dim": "#71717A",
+    "text-ink": "#09090B",
+    "text-ink-body": "#27272A",
+    "muted-ink": "#71717A",
+    "dim-ink": "#A1A1AA"
+  },
+  "states": {
+    "allowed": {
+      "ink": "#57A97C",
+      "paper": "#2F7D52",
+      "use": "a request a rule allowed"
+    },
+    "approval": {
+      "ink": "#5B93D6",
+      "paper": "#2E6BA8",
+      "use": "a request routed to a person"
+    },
+    "denied": {
+      "ink": "#C66A4A",
+      "paper": "#9B4526",
+      "use": "a request a rule denied"
+    },
+    "proven": {
+      "ink": "#3FA2A2",
+      "paper": "#1F7676",
+      "use": "the witness's word, beside a witness flip"
+    },
+    "failed": {
+      "ink": "#C0453C",
+      "paper": "#992F28",
+      "use": "a check that did not hold"
+    },
+    "critical": {
+      "ink": "#D6455E",
+      "paper": "#AE2540",
+      "use": "a run that needs a person now"
+    }
+  },
+  "destructive": {
+    "ink": "#D5584D",
+    "paper": "#992F28",
+    "lift": 0.06
+  },
+  "semantic": {
+    "light": {
+      "background": "var(--ox-paper)",
+      "foreground": "var(--ox-text-ink)",
+      "card": "var(--ox-paper-panel)",
+      "card-foreground": "var(--ox-text-ink)",
+      "popover": "var(--ox-paper-panel)",
+      "popover-foreground": "var(--ox-text-ink)",
+      "primary": "var(--ox-ink)",
+      "primary-foreground": "var(--ox-paper)",
+      "secondary": "var(--ox-paper-hl)",
+      "secondary-foreground": "var(--ox-text-ink)",
+      "muted": "var(--ox-paper-hl)",
+      "muted-foreground": "var(--ox-muted-ink)",
+      "accent": "var(--ox-paper-hl)",
+      "accent-foreground": "var(--ox-text-ink)",
+      "destructive": "var(--ox-destructive-ink)",
+      "destructive-foreground": "var(--ox-paper)",
+      "border": "var(--ox-paper-border)",
+      "input": "var(--ox-paper-border)",
+      "ring": "var(--ox-gold-deep)",
+      "gold": "var(--ox-gold)",
+      "gold-foreground": "var(--ox-ink)",
+      "gold-text": "var(--ox-gold-deep)",
+      "sidebar": "var(--ox-paper-panel)",
+      "sidebar-foreground": "var(--ox-text-ink-body)",
+      "sidebar-primary": "var(--ox-ink)",
+      "sidebar-primary-foreground": "var(--ox-paper)",
+      "sidebar-accent": "var(--ox-paper-hl)",
+      "sidebar-accent-foreground": "var(--ox-text-ink)",
+      "sidebar-border": "var(--ox-paper-border)",
+      "sidebar-ring": "var(--ox-gold-deep)"
+    },
+    "dark": {
+      "background": "var(--ox-ink)",
+      "foreground": "var(--ox-text)",
+      "card": "var(--ox-panel)",
+      "card-foreground": "var(--ox-text)",
+      "popover": "var(--ox-panel)",
+      "popover-foreground": "var(--ox-text)",
+      "primary": "var(--ox-text)",
+      "primary-foreground": "var(--ox-ink)",
+      "secondary": "var(--ox-hl)",
+      "secondary-foreground": "var(--ox-text)",
+      "muted": "var(--ox-hl)",
+      "muted-foreground": "var(--ox-muted)",
+      "accent": "var(--ox-hl)",
+      "accent-foreground": "var(--ox-text)",
+      "destructive": "var(--ox-destructive)",
+      "destructive-foreground": "var(--ox-ink)",
+      "border": "var(--ox-border)",
+      "input": "var(--ox-border)",
+      "ring": "var(--ox-gold)",
+      "gold": "var(--ox-gold)",
+      "gold-foreground": "var(--ox-ink)",
+      "gold-text": "var(--ox-gold)",
+      "sidebar": "var(--ox-panel)",
+      "sidebar-foreground": "var(--ox-text-body)",
+      "sidebar-primary": "var(--ox-text)",
+      "sidebar-primary-foreground": "var(--ox-ink)",
+      "sidebar-accent": "var(--ox-hl)",
+      "sidebar-accent-foreground": "var(--ox-text)",
+      "sidebar-border": "var(--ox-border)",
+      "sidebar-ring": "var(--ox-gold)"
+    }
+  },
+  "type": {
+    "family": "Geist",
+    "display_family": "Space Grotesk",
+    "mono_family": "Monaspace Neon",
+    "weights": {
+      "display": 700,
+      "logo": 600,
+      "heading": 600,
+      "subheading": 500,
+      "ui": 500,
+      "body": 400
+    },
+    "logo_weight": 600,
+    "logo_em": 131.657,
+    "faces": {
+      "display": {
+        "family": "Space Grotesk",
+        "job": "wordmarks, h1, h2, h3",
+        "stack": "\"Space Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "next_var": "--font-space-grotesk",
+        "files": [
+          {
+            "file": "space-grotesk-latin-400.woff2",
+            "weight": "400"
+          },
+          {
+            "file": "space-grotesk-latin-500.woff2",
+            "weight": "500"
+          },
+          {
+            "file": "space-grotesk-latin-600.woff2",
+            "weight": "600"
+          },
+          {
+            "file": "space-grotesk-latin-700.woff2",
+            "weight": "700"
+          }
+        ],
+        "features": "normal"
+      },
+      "sans": {
+        "family": "Geist",
+        "job": "h4 to h6, body, labels, buttons, tables, navigation",
+        "stack": "\"Geist\", system-ui, -apple-system, \"Segoe UI\", sans-serif",
+        "next_var": "--font-geist",
+        "files": [
+          {
+            "file": "geist-latin-wght.woff2",
+            "weight": "100 900"
+          }
+        ],
+        "features": "normal"
+      },
+      "mono": {
+        "family": "Monaspace Neon",
+        "job": "code, terminal output, logs, digests, paths, ids, and numbers in tables",
+        "stack": "\"Monaspace Neon\", ui-monospace, \"SF Mono\", Menlo, Consolas, monospace",
+        "next_var": "--font-monaspace-neon",
+        "files": [
+          {
+            "file": "monaspace-neon-latin-wght.woff2",
+            "weight": "200 800"
+          }
+        ],
+        "features": "\"calt\", \"liga\""
+      }
+    },
+    "tracking": {
+      "hero": "-0.03em",
+      "display": "-0.02em",
+      "heading": "-0.01em",
+      "none": "0"
+    },
+    "routing": [
+      {
+        "elements": "h1, h2, h3",
+        "face": "display"
+      },
+      {
+        "elements": "h4, h5, h6",
+        "face": "sans"
+      },
+      {
+        "elements": "body, button, input, select, textarea, label, nav",
+        "face": "sans"
+      },
+      {
+        "elements": "pre, code, kbd, samp, [data-mono]",
+        "face": "mono"
+      }
+    ],
+    "display_floor_px": 20,
+    "scales": {
+      "marketing": {
+        "utility_prefix": "text-m-",
+        "use": "landing pages, posts, docs read once: large and spaced",
+        "steps": [
+          {
+            "step": "h1",
+            "face": "display",
+            "size": "4.5rem",
+            "px": 72,
+            "line_height": 1.05,
+            "weight": 700,
+            "tracking": "-0.03em"
+          },
+          {
+            "step": "h2",
+            "face": "display",
+            "size": "2.5rem",
+            "px": 40,
+            "line_height": 1.2,
+            "weight": 700,
+            "tracking": "-0.01em"
+          },
+          {
+            "step": "h3",
+            "face": "display",
+            "size": "1.75rem",
+            "px": 28,
+            "line_height": 1.3,
+            "weight": 600,
+            "tracking": "0"
+          },
+          {
+            "step": "h4",
+            "face": "sans",
+            "size": "1.25rem",
+            "px": 20,
+            "line_height": 1.4,
+            "weight": 500,
+            "tracking": "0"
+          },
+          {
+            "step": "body",
+            "face": "sans",
+            "size": "1.125rem",
+            "px": 18,
+            "line_height": 1.65,
+            "weight": 400,
+            "tracking": "0"
+          },
+          {
+            "step": "micro",
+            "face": "mono",
+            "size": "0.875rem",
+            "px": 14,
+            "line_height": 1.5,
+            "weight": 400,
+            "tracking": "0"
+          }
+        ]
+      },
+      "app": {
+        "utility_prefix": "text-a-",
+        "use": "dashboards, panels, tables, terminals, logs read all day: dense",
+        "steps": [
+          {
+            "step": "h1",
+            "face": "display",
+            "size": "1.875rem",
+            "px": 30,
+            "line_height": 1.15,
+            "weight": 700,
+            "tracking": "-0.02em"
+          },
+          {
+            "step": "h2",
+            "face": "display",
+            "size": "1.5rem",
+            "px": 24,
+            "line_height": 1.2,
+            "weight": 600,
+            "tracking": "0"
+          },
+          {
+            "step": "h3",
+            "face": "display",
+            "size": "1.25rem",
+            "px": 20,
+            "line_height": 1.25,
+            "weight": 600,
+            "tracking": "0"
+          },
+          {
+            "step": "h4",
+            "face": "sans",
+            "size": "1rem",
+            "px": 16,
+            "line_height": 1.4,
+            "weight": 600,
+            "tracking": "0"
+          },
+          {
+            "step": "body",
+            "face": "sans",
+            "size": "0.875rem",
+            "px": 14,
+            "line_height": 1.5,
+            "weight": 400,
+            "tracking": "0"
+          },
+          {
+            "step": "micro",
+            "face": "mono",
+            "size": "0.75rem",
+            "px": 12,
+            "line_height": 1.4,
+            "weight": 400,
+            "tracking": "0"
+          }
+        ]
+      }
+    }
+  },
+  "wordmarks": {
+    "oxagen": {
+      "text": "oxagen",
+      "accent": "x",
+      "box": [
+        453.868,
+        93.246
+      ],
+      "baseline": 66.915
+    },
+    "stella": {
+      "text": "stella*",
+      "accent": "*",
+      "box": [
+        405.544,
+        94.003
+      ],
+      "baseline": 92.16
+    }
+  }
+}
