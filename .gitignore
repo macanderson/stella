@@ -107,6 +107,8 @@ Thumbs.db
 !.claude/skills/
 .claude/skills/*
 !.claude/skills/oxagen-branding/
+# The house kit checkout brand-drift.yml compares the synced files against.
+.brand-kit/
 .claude/settings.local.json
 .agents/
 .agents.d/

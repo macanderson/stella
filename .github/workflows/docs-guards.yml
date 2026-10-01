@@ -60,21 +60,7 @@ name: docs-guards
 #     diff ci.yml's Rust job is skipped for, which is why the filter above
 #     widened from `website/content/docs/**` to `website/**`.
 #
-#  9. the brand assets against the house kit (scripts/sync-brand-assets.mjs
-#     --check). It replaces the social-art check that used to sit here, which
-#     held a banner's install line to README.md and its tagline to the kit page
-#     -- claims a render baked into a PNG a platform then cached, so drift was
-#     unfixable after the fact. The banners are no longer composed in this repo;
-#     they are the house kit's, vendored. So the claim to check moved with them:
-#     that every vendored file still matches what the kit emits.
-#
-#     The kit is a separate repository and this job checks out one, so --check
-#     says so and exits 0 when it is absent. It says it in a line naming what
-#     was not verified, and website/src/lib/brand-parity.test.ts still holds the
-#     site to docs/brand/ offline on every run -- which is the check that has
-#     actually caught this repo shipping a stale brand.
-#
-# 10. the five colour rulers (scripts/check-tokens.py with gen-tokens.py
+#  9. the five colour rulers (scripts/check-tokens.py with gen-tokens.py
 #     --check, check-hue-separation.py, check-contrast.py, check-css-vars.py,
 #     check-light-clamp.py): what kind of colour a value is, whether two of
 #     them can be told apart, whether one can be read on its ground, whether a
@@ -87,7 +73,7 @@ name: docs-guards
 #     subject is the brand kit, the standalone HTML documents, the two
 #     hand-maintained token mirrors and the decks (#3653).
 #
-# 11. diagnostic-codes (scripts/check-diagnostic-codes.sh): every emitted
+# 10. diagnostic-codes (scripts/check-diagnostic-codes.sh): every emitted
 #     diagnostic code has a section in docs/reference/diagnostics.md, and every
 #     code the website's curated table surfaces is still emitted at the level
 #     that table claims (#3045). It runs in ci.yml too, and has to run here for
@@ -95,7 +81,7 @@ name: docs-guards
 #     PR that edits only it is the diff ci.yml's Rust job is skipped for. The
 #     in-repo reference is generated and could not drift; the website copy is
 #     hand-picked prose and could, which is the whole gap this closes.
-# 12. priority-scheme (scripts/check-priority-scheme.py): the issue priority
+# 11. priority-scheme (scripts/check-priority-scheme.py): the issue priority
 #     scheme is stated once, in SCR-005, and the regex in triage-guard.yml
 #     covers exactly the levels it names (#5216). Four documents each named a
 #     scheme of their own and no two agreed. The regex is code, so the gap had
@@ -305,14 +291,6 @@ jobs:
 
       - name: No v2 rendering draws a fact the SPEC retired
         run: ./scripts/check-rendering-facts.sh
-
-      # The brand kit's two cross-file strings: the install line against
-      # README.md, and now the tagline against the kit (#3631). `--check`
-      # copies nothing and needs no renderer -- it compares bytes -- so it costs
-      # a second here.
-      - name: the vendored brand assets still match the house kit
-        if: ${{ !cancelled() }}
-        run: node scripts/sync-brand-assets.mjs --check
 
       # The `.mdx` half. ci.yml runs this guard for the tree's own reference,
       # which is generated and cannot drift; the website's curated table is

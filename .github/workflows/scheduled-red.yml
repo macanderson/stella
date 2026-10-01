@@ -30,6 +30,7 @@ name: scheduled-red
 on:
   workflow_run:
     workflows:
+      - brand-drift
       - CodeQL
       - live-smoke
       - main-canary
