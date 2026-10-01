@@ -59,7 +59,7 @@ export function HeroTerminal() {
       <Dim>{"  ▶ read_file(path=src/parser.rs)\n"}</Dim>
       <Dim>{"  ± modified src/parser.rs +3 −1\n"}</Dim>
       <Dim>{"  ▶ bash(command=cargo test -p parser)\n"}</Dim>
-      <Ok>{"    ✓ ok in 1174ms — test result: ok. 12 passed; 0 failed\n"}</Ok>
+      <Ok>{"    ✓ ok in 1174ms, test result: ok. 12 passed; 0 failed\n"}</Ok>
       <Dim>{"\n  ◆ claude-sonnet-5 · $0.0413 · 18.6s\n"}</Dim>
     </Terminal>
   );
