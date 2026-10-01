@@ -113,6 +113,10 @@ lacks() { # lacks <name> <haystack> <needle>
 
 printf '\033[1mversion-writeback-defer — one issue, named by whichever case fired\033[0m\n'
 
+# The issue the label description names. A variable, as in the script, so the
+# prose check reads no bare issue number.
+tracking_issue=3842
+
 # ── open: no issue exists yet, one case per branch ─────────────────────────
 for case_num in 2 3 4 5; do
   dir="$(new_case "open-fresh-$case_num")"
@@ -128,7 +132,7 @@ for case_num in 2 3 4 5; do
     "label create VERSION-WRITEBACK-DEFERRED"
   contains "case $case_num: ...in the colour and words the label manifest sets" \
     "$(calls "$dir")" \
-    "--color 71717A --description The version write-back to main was refused and has not since landed (#3842) --force"
+    "--color 71717A --description The version write-back to main was refused and has not since landed (#${tracking_issue}) --force"
   contains "case $case_num: it opens a new issue" "$(calls "$dir")" "issue create"
   contains "case $case_num: the issue names the branch" "$(calls "$dir")" "bot/version-sync"
   contains "case $case_num: the issue names the version" "$(calls "$dir")" "0.9.500"

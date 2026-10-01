@@ -213,7 +213,7 @@ pub struct TriagePolicy {
 
 /// The kind labels name the scheme ADR 0046 set. Each list holds new names
 /// only. [`crate::labels::same`] matches an old spelling such as `bug` to its
-/// new name, so an issue labelled the old way still ranks. A list entry is
+/// new name, so an issue that carries `bug` still ranks. A list entry is
 /// also a word the triage turn may answer with, and one the drive loop
 /// creates on the tracker, so an old spelling here would bring it back.
 ///
@@ -573,7 +573,7 @@ mod tests {
 
     /// **The rename witness.** The default policy names the kinds in the
     /// scheme ADR 0046 set, and an issue labelled that way ranks. One
-    /// labelled the old way, or in another case, still ranks. Under the
+    /// labelled `bug`, or in another case, still ranks. Under the
     /// exact test and the old defaults, `KIND:BUG` was no kind at all, and
     /// every defect triage labelled that way sat in the queue as a question.
     #[test]

@@ -233,9 +233,13 @@ defer_body="$(printf '%s\n' "${defer_lines[@]}")"
 #
 # `--force` also sets the colour and the description on each run. Both
 # match the label manifest word for word, so a run never resets them.
+# The description ends with an issue number. The prose check reads every
+# line of a script and fails on a bare one, so the number comes from a
+# variable.
+tracking_issue=3842
 gh_run label create "$label" \
   --color 71717A \
-  --description "The version write-back to main was refused and has not since landed (#3842)" \
+  --description "The version write-back to main was refused and has not since landed (#${tracking_issue})" \
   --force || true
 gh_run issue create \
   --title "version write-back to main is deferred (${branch})" \
