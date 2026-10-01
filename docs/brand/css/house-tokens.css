@@ -11,10 +11,13 @@
  * State is carried by border shape. The st-* colours are for the badge or
  * dot inside a table where shape is too small to read, never the only
  * signal. destructive is the failed red lifted until it clears AA on ink.
+ * A word in a state's colour takes its text stop, st-*-text on ink and
+ * st-*-text-ink on paper, which clears 4.5:1 on every surface of its theme.
  *
- * Space Grotesk sets the wordmarks and h1 to h3. Geist sets h4 to h6 and
- * everything read. Monaspace Neon sets code, logs, digests, and the numbers
- * in tables. tokens/house-fonts.css carries the @font-face rules.
+ * Geist sets every heading and everything read. Monaspace Neon sets code,
+ * logs, digests, and the numbers in tables. Space Grotesk sets the
+ * wordmarks and line 1 of a marketing hero, and no other heading.
+ * tokens/house-fonts.css carries the @font-face rules.
  */
 
 :root {
@@ -40,6 +43,7 @@
   --ox-text-ink: #09090B; /* primary text on paper */
   --ox-text-ink-body: #27272A; /* body text on paper */
   --ox-muted-ink: #71717A; /* secondary text on paper */
+  --ox-muted-text-ink: #6E6E77; /* secondary text on paper and on a lifted row there */
   --ox-dim-ink: #A1A1AA; /* the quietest text on paper */
 
   --ox-st-allowed: #57A97C; /* a request a rule allowed, on ink */
@@ -57,10 +61,25 @@
   --ox-destructive: #D5584D; /* a destructive action, on ink: text and fill */
   --ox-destructive-ink: #992F28; /* the same, on paper */
 
+  --ox-st-allowed-text: #57A97C; /* allowed as words, on ink, panel, and hl */
+  --ox-st-allowed-text-ink: #2F7D52; /* allowed as words, on paper and paper-hl */
+  --ox-st-approval-text: #6098DB; /* approval as words, on ink, panel, and hl */
+  --ox-st-approval-text-ink: #2E6BA8; /* approval as words, on paper and paper-hl */
+  --ox-st-denied-text: #D67858; /* denied as words, on ink, panel, and hl */
+  --ox-st-denied-text-ink: #9B4526; /* denied as words, on paper and paper-hl */
+  --ox-st-proven-text: #44A7A7; /* proven as words, on ink, panel, and hl */
+  --ox-st-proven-text-ink: #1F7676; /* proven as words, on paper and paper-hl */
+  --ox-st-failed-text: #E7685C; /* failed as words, on ink, panel, and hl */
+  --ox-st-failed-text-ink: #992F28; /* failed as words, on paper and paper-hl */
+  --ox-st-critical-text: #EF5C72; /* critical as words, on ink, panel, and hl */
+  --ox-st-critical-text-ink: #AE2540; /* critical as words, on paper and paper-hl */
+  --ox-destructive-text: #E7685C; /* destructive as words, on ink, panel, and hl */
+  --ox-destructive-text-ink: #992F28; /* destructive as words, on paper and paper-hl */
+
   --ox-gold-sheen: linear-gradient(45deg, #8A7223 0%, #D4AF37 38%, #F1CE65 56%, #D4AF37 74%, #8A7223 100%);
 
-  --ox-font-display: "Space Grotesk", "Helvetica Neue", Arial, sans-serif; /* wordmarks, h1, h2, h3 */
-  --ox-font: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif; /* h4 to h6, body, labels, buttons, tables, navigation */
+  --ox-font-display: "Space Grotesk", "Helvetica Neue", Arial, sans-serif; /* the wordmarks, Stella's icon, and line 1 of a marketing hero */
+  --ox-font: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif; /* every heading, body, labels, buttons, tables, navigation */
   --ox-font-mono: "Monaspace Neon", ui-monospace, "SF Mono", Menlo, Consolas, monospace; /* code, terminal output, logs, digests, paths, ids, and numbers in tables */
   --ox-font-mono-features: "calt", "liga"; /* texture healing and code ligatures */
 

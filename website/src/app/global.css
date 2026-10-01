@@ -2,7 +2,7 @@
  * stella docs — the semantic layer.
  *
  * Brand system: the marks, the faces, and every house colour come from the
- * Oxagen house kit (oxageninc/brand), copied in by
+ * Oxagen house kit (macanderson/oxagen-brand), copied in by
  * scripts/sync-brand-assets.mjs. tokens.css carries the palette, and
  * src/brand/house-tokens.css is the kit's own token sheet, which this file
  * reads for the font stacks.
@@ -34,11 +34,14 @@
 /* Let Tailwind see Fumadocs' compiled utility classes. */
 @source "../../node_modules/fumadocs-ui/dist/**/*.js";
 
-/* Three faces, loaded by src/brand/next-fonts.ts. Space Grotesk sets h1 to
- * h3, Geist everything read, Monaspace Neon code and terminal transcripts.
- * Each fallback stack is the kit's, from src/brand/house-tokens.css. */
+/* Three faces, loaded by src/brand/next-fonts.ts. Geist sets every heading and
+ * everything read, Monaspace Neon sets code and terminal transcripts, and Space
+ * Grotesk sets only a wordmark typed as text (--font-wordmark), per the house
+ * rule of 2026-09-29. Each fallback stack is the kit's, from
+ * src/brand/house-tokens.css. */
 @theme {
-  --font-display: var(--font-space-grotesk), var(--ox-font-display);
+  --font-display: var(--font-geist), var(--ox-font);
+  --font-wordmark: var(--font-space-grotesk), var(--ox-font-display);
   --font-sans: var(--font-geist), var(--ox-font);
   --font-mono: var(--font-monaspace-neon), var(--ox-font-mono);
 
@@ -193,12 +196,8 @@ figure.shiki ::selection,
   line-height: 1.65;
 }
 
-.prose :is(h1, h2, h3) {
+.prose :is(h1, h2, h3, h4, h5, h6) {
   font-family: var(--font-display);
-}
-
-.prose :is(h4, h5, h6) {
-  font-family: var(--font-sans);
 }
 
 .prose :is(h1, h2, h3, h4, h5, h6) {

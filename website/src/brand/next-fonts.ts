@@ -7,12 +7,13 @@
 //   import { fontVariables } from "@/styles/next-fonts";
 //   <html lang="en" className={fontVariables}>
 //
-// Each loader sets one CSS variable on <html>; tokens/house-tailwind.css
-// reads them into --font-display, --font-sans and --font-mono.
+// Each loader sets one CSS variable on <html>. tokens/house-tailwind.css
+// reads Geist into --font-sans and --font-display, Monaspace Neon into
+// --font-mono, and Space Grotesk into --font-wordmark and a marketing hero.
 
 import localFont from "next/font/local";
 
-/** Space Grotesk: wordmarks, h1, h2, h3. */
+/** Space Grotesk: the wordmarks, Stella's icon, and line 1 of a marketing hero. */
 export const spaceGrotesk = localFont({
   src: [
     { path: "../fonts/space-grotesk-latin-400.woff2", weight: "400", style: "normal" },
@@ -25,7 +26,7 @@ export const spaceGrotesk = localFont({
   fallback: ["Helvetica Neue", "Arial"],
 });
 
-/** Geist: h4 to h6, body, labels, buttons, tables, navigation. */
+/** Geist: every heading, body, labels, buttons, tables, navigation. */
 export const geist = localFont({
   src: "../fonts/geist-latin-wght.woff2",
   weight: "100 900",

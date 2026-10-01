@@ -41,6 +41,7 @@ export const HOUSE_COLORS = {
   "text-ink": "#09090B",
   "text-ink-body": "#27272A",
   "muted-ink": "#71717A",
+  "muted-text-ink": "#6E6E77",
   "dim-ink": "#A1A1AA",
 } as const;
 

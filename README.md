@@ -53,7 +53,7 @@ are two products from one company, and neither duplicates the other:
   engine over a wire protocol and holds no key and runs no tool itself, so
   every completion and tool call comes back to Oxagen's gates.
 
-Both products share the [Oxagen house brand system](https://github.com/oxageninc/brand):
+Both products share the [Oxagen house brand system](https://github.com/macanderson/oxagen-brand):
 one typeface, one gold, and one glyph in that gold per wordmark. Stella's mark
 is the asterisk in `stella*`, and nothing is ever set to its left.
 
