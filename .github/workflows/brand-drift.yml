@@ -10,6 +10,12 @@ name: brand-drift
 #
 # The job checks out the kit's `main`, never a pinned commit, so the daily run
 # goes red on the first day the kit moves ahead of this repository.
+#
+# oxageninc/brand is private, and this workflow's own token reads only this
+# repository. The kit checkout takes the repository secret BRAND_READ_TOKEN, a
+# fine-grained token with contents read on oxageninc/brand. Without it the
+# checkout fails and the job says which secret to add, so a missing token
+# reads as red, never as a pass.
 # `scheduled-red.yml` turns that red run into an issue. The kit's fan-out
 # workflow opens the pull request that runs the sync here.
 
@@ -39,12 +45,20 @@ jobs:
           persist-credentials: false
 
       - name: Check out the house kit at main
+        id: kit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: oxageninc/brand
           ref: main
           path: .brand-kit
+          token: ${{ secrets.BRAND_READ_TOKEN || github.token }}
           persist-credentials: false
+
+      - name: Name the missing token
+        if: failure() && steps.kit.outcome == 'failure'
+        run: |
+          echo "::error::This job cannot read oxageninc/brand. Add the repository secret BRAND_READ_TOKEN, a fine-grained token with contents read on oxageninc/brand."
+          exit 1
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
