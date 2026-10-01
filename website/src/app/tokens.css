@@ -7,7 +7,7 @@
  * the gate on any hex here that is not a live token — so "this file mirrors the
  * system" is a checked property rather than a promise in a comment.
  *
- * The Oxagen house kit (macanderson/oxagen-brand) owns the value of most of
+ * The Oxagen house kit (oxageninc/brand) owns the value of most of
  * these tokens: the grounds, the greys, the text stops, and the golds.
  * scripts/sync-brand-assets.mjs writes the kit's value into each one here, in
  * the token JSON, and in docs/brand/css/tokens.css, so a kit colour change
