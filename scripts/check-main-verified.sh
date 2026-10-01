@@ -13,7 +13,7 @@
 #   main-canary.yml   files only when its job RUNS and FAILS. A
 #                     `startup_failure`, a cancellation, or a run that is never
 #                     created produces no issue at all.
-#   main-red-hold.yml asks the tracker whether a `main-red` issue is open. With
+#   main-red-hold.yml asks the tracker whether a `MAIN-RED` issue is open. With
 #                     none filed it passes, so merges keep flowing onto a tree
 #                     nothing has checked.
 #   gh run list       reads GREEN to a human skimming it, because a run that
@@ -56,7 +56,7 @@
 #   unverified the absences listed above
 #
 # `pending` exits 0, like every other unknown here, and says what it is. It
-# closes no open `main-unverified` issue. A recovery is read off an answer,
+# closes no open `MAIN-UNVERIFIED` issue. A recovery is read off an answer,
 # never off the lack of one.
 #
 # ── It fails OPEN, at every unknown ──────────────────────────────────────────
@@ -78,11 +78,11 @@
 #
 # `--announce` is the same shape `codeql-canary.sh` already uses: one open
 # issue found by label, a comment while the condition recurs, closed on the
-# next run that answers clean. Its label is its own (`main-unverified`, not
-# `main-red`). "Nothing verified this commit" is a different state from "a
+# next run that answers clean. Its label is its own (`MAIN-UNVERIFIED`, not
+# `MAIN-RED`). "Nothing verified this commit" is a different state from "a
 # check said no about this commit." The header above already draws that line
 # for the console output, and the label carries the same line.
-# `main-red-hold.yml` reads only `main-red`, so an unverified-main issue never
+# `main-red-hold.yml` reads only `MAIN-RED`, so an unverified-main issue never
 # arms it; blocking every open PR on an absence of information would fight the
 # fail-open discipline this whole file argues for. AGENTS.md's canary section
 # names which of `main-canary.yml`'s two jobs files under which label.
@@ -102,7 +102,7 @@ fixture_direct_fails=0
 use_fixture=0
 announce=0
 dry_run=0
-label="main-unverified"
+label="MAIN-UNVERIFIED"
 fixture_open_issue=""
 
 while [ $# -gt 0 ]; do
@@ -451,7 +451,7 @@ pending_report() {
 # Same shape as main-canary.sh and codeql-canary.sh: one open issue found by
 # label, a comment on every run that still cannot answer, closed on the next
 # run that can. See the header for why this is its own label rather than
-# `main-red`.
+# `MAIN-RED`.
 
 gh_run() {
   if [ "$dry_run" -eq 1 ]; then
@@ -503,7 +503,7 @@ Closing automatically — reopen if you disagree.
       printf 'check-main-verified: green, nothing open to close\n' || true
     fi
   else
-    # A `main-unverified` issue filed during a forty-run backlog reads very
+    # A `MAIN-UNVERIFIED` issue filed during a forty-run backlog reads very
     # differently once the reader can see the backlog, and nothing else on the
     # issue says it.
     pending_block=""
@@ -563,11 +563,13 @@ ${unverified}\`\`\`"
     else
       # `gh issue create --label` fails outright on a label that does not
       # exist, which would break this at the exact moment it has something to
-      # say. `--force` makes this idempotent, so it is a no-op on every run
-      # after the first.
+      # say. `--force` makes this idempotent.
+      #
+      # `--force` also sets the colour and the description on each run. Both
+      # match the label manifest word for word, so a run never resets them.
       gh_run label create "$label" \
-        --color B60205 \
-        --description "main carries a commit nothing verified — filed by check-main-verified.sh" \
+        --color D5584D \
+        --description "Main carries a commit nothing verified. A workflow opens and closes it" \
         --force
       gh_run issue create \
         --title "main carries a commit nothing verified" \

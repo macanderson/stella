@@ -38,7 +38,7 @@
 # bash 3.2 compatible.
 set -euo pipefail
 
-label="version-writeback-deferred"
+label="VERSION-WRITEBACK-DEFERRED"
 
 mode="${1:-}"
 case "$mode" in
@@ -230,9 +230,12 @@ defer_body="$(printf '%s\n' "${defer_lines[@]}")"
 
 # `--force` makes label creation safe to repeat. `main-canary.sh` does
 # the same before its first issue.
+#
+# `--force` also sets the colour and the description on each run. Both
+# match the label manifest word for word, so a run never resets them.
 gh_run label create "$label" \
-  --color FBCA04 \
-  --description "the version write-back to main was refused and has not since landed (\`#3842\`)" \
+  --color 71717A \
+  --description "The version write-back to main was refused and has not since landed (#3842)" \
   --force || true
 gh_run issue create \
   --title "version write-back to main is deferred (${branch})" \

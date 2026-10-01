@@ -47,10 +47,13 @@
 # ## The escape hatch, which is the whole design
 #
 # A hold that also blocks the repair is a deadlock, so the PR that unblocks
-# `main` carries the `unblocks-main` label and passes. The label is deliberate
+# `main` carries the `UNBLOCKS-MAIN` label and passes. The label is deliberate
 # rather than inferred: parsing a body for a closing keyword would guess, and
 # a human labelling a PR "this is the fix" is a statement someone made on
 # purpose and a reviewer can audit afterwards.
+#
+# The label match ignores case. GitHub hands back each label in the spelling
+# it stores. So `unblocks-main` still counts while the labels are renamed.
 #
 # ## Fail-open,, and said out loud
 #
@@ -64,13 +67,13 @@
 # Usage:
 #   scripts/check-main-red-hold.sh [--pr <number>]
 #   scripts/check-main-red-hold.sh --fixture-open-issues "3904" \
-#                                  --fixture-labels "bug,area:ci"
+#                                  --fixture-labels "KIND:BUG,AREA:CI"
 #
 # Uses portable POSIX tools plus `gh` so it runs on a bare CI runner.
 set -uo pipefail
 
-label="main-red"
-escape_label="unblocks-main"
+label="MAIN-RED"
+escape_label="UNBLOCKS-MAIN"
 pr=""
 fixture_open_issues=""
 fixture_labels=""
@@ -165,7 +168,7 @@ else
   labels=""
 fi
 
-if printf '%s\n' "$labels" | tr ',' '\n' | grep -qx "$escape_label"; then
+if printf '%s\n' "$labels" | tr ',' '\n' | grep -qix "$escape_label"; then
   trap '' PIPE
   echo "ok  main is red ($open_issues), and this PR is labelled \`$escape_label\`." || true
   exit 0

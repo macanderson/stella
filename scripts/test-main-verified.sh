@@ -295,13 +295,15 @@ else
   esac
 fi
 
-# Unverified, nothing open yet: opens one, labelled `main-unverified` rather
-# than `main-red`. "Nothing verified this commit" is not "this commit is
+# Unverified, nothing open yet: opens one, labelled `MAIN-UNVERIFIED` rather
+# than `MAIN-RED`. "Nothing verified this commit" is not "this commit is
 # broken." main-red-hold.yml must not arm on an absence of information.
 want_announce "an unverified commit with nothing open creates an issue" expect-fail \
   "$unverified_commits" "$unverified_runs" "gh issue create"
-want_announce "...labelled main-unverified, not main-red" expect-fail \
-  "$unverified_commits" "$unverified_runs" "main-unverified"
+want_announce "...labelled MAIN-UNVERIFIED, not MAIN-RED" expect-fail \
+  "$unverified_commits" "$unverified_runs" "--label MAIN-UNVERIFIED"
+want_announce "...after it makes the label in the manifest's colour" expect-fail \
+  "$unverified_commits" "$unverified_runs" "gh label create MAIN-UNVERIFIED --color D5584D"
 want_announce "...naming the commit nothing verified" expect-fail \
   "$unverified_commits" "$unverified_runs" "${A:0:8}"
 want_announce "...with a Definition of done section" expect-fail \

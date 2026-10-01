@@ -125,7 +125,10 @@ for case_num in 2 3 4 5; do
     bad "case $case_num: open exited $rc: $out"
   fi
   contains "case $case_num: it ensures the label first" "$(calls "$dir")" \
-    "label create version-writeback-deferred"
+    "label create VERSION-WRITEBACK-DEFERRED"
+  contains "case $case_num: ...in the colour and words the label manifest sets" \
+    "$(calls "$dir")" \
+    "--color 71717A --description The version write-back to main was refused and has not since landed (#3842) --force"
   contains "case $case_num: it opens a new issue" "$(calls "$dir")" "issue create"
   contains "case $case_num: the issue names the branch" "$(calls "$dir")" "bot/version-sync"
   contains "case $case_num: the issue names the version" "$(calls "$dir")" "0.9.500"

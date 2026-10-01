@@ -15,10 +15,18 @@
 # sweep failed on every run, and no issue said so.
 #
 # So a red run gets an issue. There is one issue per workflow. It carries the
-# `scheduled-red` label, and its title names the workflow. A second red run
-# adds a comment to it. The next green run closes it. Any other conclusion,
-# such as `cancelled` or `skipped`, says nothing about the code. It changes
-# no issue.
+# `SCHEDULED-RED` label. A second red run adds a comment to it. The next green
+# run closes it. Any other conclusion, such as `cancelled` or `skipped`, says
+# nothing about the code. It changes no issue.
+#
+# The script finds the issue by its label and a marker line in its body:
+# `<!-- scheduled-red: workflow=<name> -->`. The triage agent may change the
+# title. The marker still finds the issue.
+#
+# An open issue with the label and no marker still counts when its title is
+# exactly `Scheduled workflow failing: <name>`. That was the title before the
+# marker. Two issues filed under it are open today, issues 6599 and 6594.
+# Their bodies carry no marker, so the title is the only way to find them.
 #
 # This script only reports. So it fails open: every unknown exits 0 with a
 # loud `::warning::` line. No `gh`, a tracker error, and two matching issues
@@ -39,7 +47,7 @@ trap '' PIPE
 workflow="${SCHEDULED_RED_WORKFLOW:-}"
 conclusion="${SCHEDULED_RED_CONCLUSION:-}"
 run_url="${SCHEDULED_RED_RUN_URL:-<no run URL given>}"
-label="scheduled-red"
+label="SCHEDULED-RED"
 
 need_value() {
   if [ "$2" -lt 2 ]; then
@@ -110,13 +118,39 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 0
 fi
 
-title="Scheduled workflow failing: $workflow"
+# A new issue's title has the form
+# `<Priority> <Tier> <Size> <Kind> (<Area>): <Statement>`.
+# This script cannot judge the first five tokens. They are fixed defaults,
+# and the triage agent may change them.
+title="P1 T2 S DevOps (CI): The scheduled workflow $workflow is failing"
+# The title an issue had before the marker. See the header.
+old_title="Scheduled workflow failing: $workflow"
+marker="<!-- scheduled-red: workflow=$workflow -->"
 
-# One `<number><TAB><title>` line per open issue with the label. The title is
-# compared here, in the shell. Putting the workflow name into a jq program
-# would need quoting, and a name with a quote in it would break the query.
+# Each open issue with the label gives one line. The line holds three
+# fields, split by tabs: the number, the title, and the name in the marker.
+# The marker field comes last, since it may be empty. `read` folds two tabs
+# in a row into one. An empty field in the middle would shift the title.
+#
+# jq reads each body one line at a time. It keeps a line only when the
+# whole line is a marker. Then it prints the name inside. The rest of the
+# body never reaches the shell, so its tabs and line breaks do no harm.
+# Tabs in a title or a name become spaces.
+#
+# The name is compared here, in the shell. Putting it into a jq program
+# would need quoting. A name with a quote in it would break the query. So
+# the jq program holds only fixed text.
+listing_jq='.[] | [
+  (.number | tostring),
+  ((.title // "") | split("\t") | join(" ")),
+  ([(.body // "") | split("\n")[] | rtrimstr("\r")
+    | select(startswith("<!-- scheduled-red: workflow=") and endswith(" -->"))
+    | ltrimstr("<!-- scheduled-red: workflow=") | rtrimstr(" -->")
+    | split("\t") | join(" ")] | .[0] // "")
+] | join("\t")'
+
 if ! listing="$(gh issue list --label "$label" --state open --limit 100 \
-  --json number,title --jq '.[] | "\(.number)\t\(.title)"')"; then
+  --json number,title,body --jq "$listing_jq")"; then
   warn "the tracker could not be read (gh issue list failed). No issue was opened, updated or closed for '$workflow' ($conclusion)."
   exit 0
 fi
@@ -124,9 +158,9 @@ fi
 matches=""
 open_issue=""
 count=0
-while IFS=$'\t' read -r number issue_title; do
+while IFS=$'\t' read -r number issue_title marked; do
   [ -n "$number" ] || continue
-  if [ "$issue_title" = "$title" ]; then
+  if [ "$marked" = "$workflow" ] || [ "$issue_title" = "$old_title" ]; then
     matches="${matches:+$matches }#$number"
     open_issue="$number"
     count=$((count + 1))
@@ -136,7 +170,7 @@ $listing
 EOF
 
 if [ "$count" -gt 1 ]; then
-  warn "$count open '$label' issues are titled '$title' ($matches). Which one to keep is a question for a person, so none was written to. Close all but one."
+  warn "$count open '$label' issues are for '$workflow' ($matches). Which one to keep is a question for a person, so none was written to. Close all but one."
   exit 0
 fi
 
@@ -198,12 +232,15 @@ gh run view <run id> --log-failed
 The next green scheduled run closes this issue, so the box can be ticked by
 the pull request that fixes the cause.
 
-<!-- scheduled-red -->"
+<!-- scheduled-red -->
+$marker"
 
 # `gh issue create --label` fails when the label does not exist yet.
-# `--force` makes the create safe to repeat.
+# `--force` makes the create safe to repeat. It also sets the colour and the
+# description on each run. Both match the label manifest word for word, so a
+# run never resets them.
 gh_write label create "$label" \
-  --color B60205 \
+  --color D5584D \
   --description "A scheduled workflow is failing. Filed by scheduled-red.yml." \
   --force || true
 if gh_write issue create --title "$title" --label "$label" --body "$body"; then

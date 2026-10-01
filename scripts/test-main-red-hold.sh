@@ -76,15 +76,23 @@ want "the block names the issue so the reader can go read it" \
 
 # The escape hatch: the repair must be able to land, or the hold is a deadlock.
 want "the labelled repair PR is let through" \
-  expect-pass "labelled \`unblocks-main\`" "3904" "unblocks-main"
+  expect-pass "labelled \`UNBLOCKS-MAIN\`" "3904" "UNBLOCKS-MAIN"
+
+# GitHub hands back the stored spelling. Until the label is renamed, that is
+# the lowercase one, and it must still open the gate.
+want "the lowercase spelling of the label still lets the repair through" \
+  expect-pass "labelled \`UNBLOCKS-MAIN\`" "3904" "unblocks-main"
 
 # A near-miss label must NOT open the gate — the check is exact, not a
 # substring, or `unblocks-main-later` would silently be a bypass.
 want "a label that merely contains the escape name does not bypass" \
   expect-block "merging onto it" "3904" "unblocks-main-later"
 
+want "...in either case" \
+  expect-block "merging onto it" "3904" "UNBLOCKS-MAIN-LATER"
+
 want "an unrelated label does not bypass" \
-  expect-block "merging onto it" "3904" "bug,area:ci"
+  expect-block "merging onto it" "3904" "KIND:BUG,AREA:CI"
 
 # Several open issues are one state, not several: main is red, once.
 want "multiple open issues still name them all" \
@@ -93,7 +101,7 @@ want "multiple open issues still name them all" \
 
 want "the escape hatch works with several issues open too" \
   expect-pass "labelled" "3904
-3905" "area:ci,unblocks-main"
+3905" "AREA:CI,UNBLOCKS-MAIN"
 
 # Argument handling: a caller mistake must be a loud exit 2, never a silent
 # pass that looks like a green check.
@@ -201,7 +209,7 @@ sweep_says "the summary counts what it swept" \
 # ── A broken main turns the passing holds red (`#5949`) ──────────────────────
 #
 # The other direction, and the one that lets a bad merge through rather than
-# blocking a good one. `#5928`'s hold ran at 09:41 and passed. The `main-red`
+# blocking a good one. `#5928`'s hold ran at 09:41 and passed. The `MAIN-RED`
 # issue for that outage was filed at 10:07. Nothing re-ran the hold, so
 # `#5928` merged onto the broken tree with a 26-minute-old green as its
 # required check. PR 5899 below is that pull request: its hold passed, and
@@ -398,7 +406,7 @@ holds_text() { # holds_text <name> <file> <pattern>
 }
 
 # The canary is the caller for both transitions: the push run that files the
-# `main-red` issue is the same shape as the one that closes it.
+# `MAIN-RED` issue is the same shape as the one that closes it.
 holds_text "the canary sweeps on the run that files or closes the issue" \
   main-canary.yml "refresh-main-red-holds.sh"
 

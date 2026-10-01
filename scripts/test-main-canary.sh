@@ -109,7 +109,7 @@ refute "and not the lockfile recipe that fixes nothing here" "git add Cargo.lock
   --announce --dry-run --manifest-dir "$tmp/nocompile"
 expect "the issue explains the pre-merge blind spot" 1 "shared cell" \
   --announce --dry-run --manifest-dir "$tmp/red"
-expect "the issue is labelled so only one stays open" 1 "main-red" \
+expect "the issue is labelled so only one stays open" 1 "--label MAIN-RED" \
   --announce --dry-run --manifest-dir "$tmp/red"
 
 # The body must not assert that the break STARTED at the commit it tested
@@ -160,7 +160,11 @@ expect "the section still says who closes the issue" 1 \
 # The label does not exist in this repository yet, and `gh issue create
 # --label` fails outright on an unknown label — the canary would have broken at
 # the exact moment it first had something to say. Creating it is idempotent.
-expect "the label is provisioned before the issue" 1 "gh label create main-red" \
+expect "the label is provisioned before the issue" 1 "gh label create MAIN-RED" \
+  --announce --dry-run --manifest-dir "$tmp/red"
+# `--force` writes the colour over the live label each run, so it must be the
+# manifest's colour.
+expect "...in the colour the label manifest sets" 1 "--color D5584D" \
   --announce --dry-run --manifest-dir "$tmp/red"
 
 # ── a red main that stays red is ONE issue, not one per merge ─────────────
