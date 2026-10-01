@@ -1,5 +1,5 @@
 {
-  "version": "2.4.0",
+  "version": "2.5.0",
   "name": "oxagen house system",
   "built_on": "oxagen brand kit (Space Grotesk), on obsidian and white with one gold",
   "icons": {
@@ -102,44 +102,160 @@
     "text-ink": "#09090B",
     "text-ink-body": "#27272A",
     "muted-ink": "#71717A",
+    "muted-text-ink": "#6E6E77",
     "dim-ink": "#A1A1AA"
   },
   "states": {
     "allowed": {
       "ink": "#57A97C",
       "paper": "#2F7D52",
-      "use": "a request a rule allowed"
+      "use": "a request a rule allowed",
+      "text_ink": "#57A97C",
+      "text_paper": "#2F7D52"
     },
     "approval": {
       "ink": "#5B93D6",
       "paper": "#2E6BA8",
-      "use": "a request routed to a person"
+      "use": "a request routed to a person",
+      "text_ink": "#6098DB",
+      "text_paper": "#2E6BA8"
     },
     "denied": {
       "ink": "#C66A4A",
       "paper": "#9B4526",
-      "use": "a request a rule denied"
+      "use": "a request a rule denied",
+      "text_ink": "#D67858",
+      "text_paper": "#9B4526"
     },
     "proven": {
       "ink": "#3FA2A2",
       "paper": "#1F7676",
-      "use": "the witness's word, beside a witness flip"
+      "use": "the witness's word, beside a witness flip",
+      "text_ink": "#44A7A7",
+      "text_paper": "#1F7676"
     },
     "failed": {
       "ink": "#C0453C",
       "paper": "#992F28",
-      "use": "a check that did not hold"
+      "use": "a check that did not hold",
+      "text_ink": "#E7685C",
+      "text_paper": "#992F28"
     },
     "critical": {
       "ink": "#D6455E",
       "paper": "#AE2540",
-      "use": "a run that needs a person now"
+      "use": "a run that needs a person now",
+      "text_ink": "#EF5C72",
+      "text_paper": "#AE2540"
     }
   },
   "destructive": {
     "ink": "#D5584D",
     "paper": "#992F28",
-    "lift": 0.06
+    "lift": 0.06,
+    "text_ink": "#E7685C",
+    "text_paper": "#992F28"
+  },
+  "state_text": {
+    "rule": "a word in a state's colour takes its text stop; a badge or a dot takes the bare stop",
+    "l_on_ink": 0.67,
+    "oklch": {
+      "allowed": {
+        "dark": {
+          "L": 0.67,
+          "C": 0.106,
+          "H": 157.8
+        },
+        "light": {
+          "L": 0.53,
+          "C": 0.103,
+          "H": 156.0
+        }
+      },
+      "approval": {
+        "dark": {
+          "L": 0.67,
+          "C": 0.117,
+          "H": 253.8
+        },
+        "light": {
+          "L": 0.518,
+          "C": 0.115,
+          "H": 251.1
+        }
+      },
+      "denied": {
+        "dark": {
+          "L": 0.67,
+          "C": 0.126,
+          "H": 39.7
+        },
+        "light": {
+          "L": 0.497,
+          "C": 0.123,
+          "H": 39.7
+        }
+      },
+      "proven": {
+        "dark": {
+          "L": 0.67,
+          "C": 0.091,
+          "H": 195.2
+        },
+        "light": {
+          "L": 0.517,
+          "C": 0.079,
+          "H": 195.0
+        }
+      },
+      "failed": {
+        "dark": {
+          "L": 0.67,
+          "C": 0.16,
+          "H": 27.6
+        },
+        "light": {
+          "L": 0.464,
+          "C": 0.142,
+          "H": 27.8
+        }
+      },
+      "critical": {
+        "dark": {
+          "L": 0.67,
+          "C": 0.181,
+          "H": 14.5
+        },
+        "light": {
+          "L": 0.496,
+          "C": 0.172,
+          "H": 15.7
+        }
+      },
+      "destructive": {
+        "dark": {
+          "L": 0.67,
+          "C": 0.16,
+          "H": 27.7
+        },
+        "light": {
+          "L": 0.464,
+          "C": 0.142,
+          "H": 27.8
+        }
+      }
+    },
+    "surfaces": {
+      "dark": {
+        "ink": "#09090B",
+        "panel": "#18181B",
+        "hl": "#27272A"
+      },
+      "light": {
+        "paper": "#FFFFFF",
+        "paper-hl": "#F4F4F5"
+      }
+    }
   },
   "semantic": {
     "light": {
@@ -154,7 +270,7 @@
       "secondary": "var(--ox-paper-hl)",
       "secondary-foreground": "var(--ox-text-ink)",
       "muted": "var(--ox-paper-hl)",
-      "muted-foreground": "var(--ox-muted-ink)",
+      "muted-foreground": "var(--ox-muted-text-ink)",
       "accent": "var(--ox-paper-hl)",
       "accent-foreground": "var(--ox-text-ink)",
       "destructive": "var(--ox-destructive-ink)",
