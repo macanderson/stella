@@ -1,7 +1,7 @@
 name: brand-drift
 
 # Fails when a file this repository copies from the Oxagen house kit
-# (macanderson/oxagen-brand) differs from the kit's `main`.
+# (oxageninc/brand) differs from the kit's `main`.
 #
 # `scripts/sync-brand-assets.mjs --check` compares every file the sync writes:
 # the marks, icons, spinners, social art, fonts, token files, the Observatory's
@@ -41,7 +41,7 @@ jobs:
       - name: Check out the house kit at main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          repository: macanderson/oxagen-brand
+          repository: oxageninc/brand
           ref: main
           path: .brand-kit
           persist-credentials: false
@@ -53,6 +53,6 @@ jobs:
       - name: Every synced file matches the kit
         run: |
           if ! node scripts/sync-brand-assets.mjs --brand .brand-kit --check; then
-            echo "::error::This repository has drifted from oxagen-brand main. Run: node scripts/sync-brand-assets.mjs --brand <oxagen-brand checkout>"
+            echo "::error::This repository has drifted from oxageninc/brand main. Run: node scripts/sync-brand-assets.mjs --brand <oxageninc/brand checkout>"
             exit 1
           fi

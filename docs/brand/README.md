@@ -7,7 +7,7 @@ status: living
 # docs/brand — the house kit, mirrored
 
 **This directory is a copy. The source is
-[macanderson/oxagen-brand](https://github.com/macanderson/oxagen-brand),
+[oxageninc/brand](https://github.com/oxageninc/brand),
 and nothing here is edited by hand.**
 
 ```sh

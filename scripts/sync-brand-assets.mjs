@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * Copy the Oxagen house kit (macanderson/oxagen-brand) into this repository.
+ * Copy the Oxagen house kit (oxageninc/brand) into this repository.
  *
  *   node scripts/sync-brand-assets.mjs [--brand <dir>] [--check]
  *
  * --brand   the kit checkout. Without it the script reads $OXAGEN_BRAND_KIT,
- *           then ../oxagen-brand beside this repository.
+ *           then a checkout at ../oxagen-brand beside this repository.
  * --check   write nothing. Exit 1 and list every file that differs from the
  *           kit or is missing. Exit 0 when the repository matches the kit.
  *
@@ -150,7 +150,7 @@ try {
   statSync(join(BRAND, "tokens/house-tokens.json"));
 } catch {
   console.error(`brand: no kit at ${BRAND}, so nothing was ${CHECK ? "checked" : "synced"}.`);
-  console.error("Clone macanderson/oxagen-brand beside this repository, set OXAGEN_BRAND_KIT, or pass --brand <dir>.");
+  console.error("Clone oxageninc/brand to ../oxagen-brand beside this repository, set OXAGEN_BRAND_KIT, or pass --brand <dir>.");
   process.exit(2);
 }
 
@@ -510,7 +510,7 @@ typeAndTokens();
 palette();
 skill();
 
-const kit = `oxagen-brand ${house.version}`;
+const kit = `the house kit ${house.version}`;
 if (CHECK) {
   if (drifted.length) {
     console.error(`brand: ${drifted.length} file(s) differ from ${kit} at ${BRAND}:`);

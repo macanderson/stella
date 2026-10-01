@@ -55,11 +55,11 @@
     "brand_hex": "#D6962C",
     "ground_hex": "#10100F",
     "reason": [
-      "The house system moved to obsidian and white (macanderson/oxagen-brand#5,",
+      "The house system moved to obsidian and white (oxageninc/brand#5,",
       "September 2026), and this file follows it so the two brands stay one palette.",
       "The ground is obsidian #09090B, the light ground is white #FFFFFF, and every",
       "grey between them is neutral zinc. The gold is #D4AF37, with its bright and",
-      "deep neighbours derived from it on its own OKLCH hue (oxagen-brand#7).",
+      "deep neighbours derived from it on its own OKLCH hue (oxageninc/brand#7).",
       "",
       "v6.0 is superseded rather than tuned because its neutral law was warm by",
       "construction: `warm-neutral` required r >= g >= b, and the zinc ramp leans a",
