@@ -6,8 +6,8 @@ name: scheduled-red
 #
 # This workflow turns a red scheduled run into an issue.
 # `scripts/scheduled-red.sh` keeps one open issue per workflow, labelled
-# `scheduled-red` and titled with the workflow's name. A second red run adds
-# a comment. The next green scheduled run closes the issue. A cancelled or
+# `SCHEDULED-RED` and marked in its body with the workflow's name. A second
+# red run adds a comment. The next green scheduled run closes the issue. A cancelled or
 # skipped run changes nothing. The script fails open, with a `::warning::`
 # line, when it cannot ask the tracker or finds two issues for one workflow.
 #

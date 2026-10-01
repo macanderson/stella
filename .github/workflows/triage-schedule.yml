@@ -104,23 +104,49 @@ jobs:
           # its older one. GitHub keeps one spelling per label, and the rename
           # from `use-model:` to `MODEL:` and from `size/` to `SIZE:` happens
           # after this file merges. The sweep reads whichever spelling the
-          # repository holds on the day it runs.
-          gh label list --repo "$REPO" --limit 300 --json name --jq '.[].name' > /tmp/labels.txt
+          # repository holds on the day it runs. Before the rename the kinds
+          # are the plain `bug`, `feature`, `chore`, and `documentation`.
+          #
+          # Each axis gets its own file, and an answer is checked against the
+          # file for its own axis. Checking it against the whole label list let
+          # a reply apply any label the repository carries, such as `MAIN-RED`,
+          # which holds every open pull request. An issue body is public text,
+          # and it can steer the model.
           #
           # `grep` exits 1 when nothing matches, and under `pipefail` that
           # ended the sweep with no message. An empty axis is now named. Pain
           # may be empty, since an issue may carry none.
-          axis() { { grep -i "$@" /tmp/labels.txt || true; } | paste -sd, -; }
-          areas=$(axis '^area:')
-          models=$(axis -e '^model:' -e '^use-model:')
-          sizes=$(axis -e '^size:' -e '^size/')
-          pains=$(axis '^pain:')
-          for required in areas models sizes; do
-            if [ -z "${!required}" ]; then
+          gh label list --repo "$REPO" --limit 300 --json name --jq '.[].name' > /tmp/labels.txt
+          axis() { # axis <name> <grep arguments...>
+            local name=$1
+            shift
+            { grep -i "$@" /tmp/labels.txt || true; } > "/tmp/axis-$name.txt"
+          }
+          axis area '^area:'
+          axis model -e '^model:' -e '^use-model:'
+          axis size -e '^size:' -e '^size/'
+          axis kind -e '^kind:' -e '^bug$' -e '^feature$' -e '^chore$' -e '^documentation$'
+          axis pain '^pain:'
+          for required in area model size kind; do
+            if [ ! -s "/tmp/axis-$required.txt" ]; then
               echo "the repository has no $required labels, so THIS SWEEP DID NOT RUN" >&2
               exit 1
             fi
           done
+          joined() { paste -sd, - < "/tmp/axis-$1.txt"; }
+          areas=$(joined area)
+          models=$(joined model)
+          sizes=$(joined size)
+          kinds=$(joined kind)
+          pains=$(joined pain)
+          # The reply example names labels the repository holds today, so a
+          # reply that copies its shape still passes validation.
+          first() { head -n 1 "/tmp/axis-$1.txt"; }
+          ex_model=$(first model)
+          ex_size=$(first size)
+          ex_kind=$(first kind)
+          ex_area=$(first area)
+          ex_pain=$(first pain)
 
           sized=0
           for n in $queue; do
@@ -138,7 +164,13 @@ jobs:
               --arg areas "$areas" \
               --arg models "$models" \
               --arg sizes "$sizes" \
+              --arg kinds "$kinds" \
               --arg pains "$pains" \
+              --arg ex_model "$ex_model" \
+              --arg ex_size "$ex_size" \
+              --arg ex_kind "$ex_kind" \
+              --arg ex_area "$ex_area" \
+              --arg ex_pain "$ex_pain" \
               '{
                 model: $model,
                 max_tokens: 400,
@@ -159,10 +191,19 @@ jobs:
                     "Size is the agent minutes to a merge-ready pull request. " +
                     "XS (extra small) is 30 or fewer. S (small) is 31 to 90. M (medium) is 91 to 240. " +
                     "L (large) is 241 to 480. XL (extra large) is more than 480.\n" +
+                    "kind: exactly one, from exactly this list: " + $kinds + "\n" +
+                    "A bug is something that exists and behaves wrongly. " +
+                    "A feature is a new capability a person can use, where none of it exists yet. " +
+                    "An improvement makes an existing capability better. " +
+                    "A chore is maintenance with no visible change. " +
+                    "Documentation is docs, specs, or help text as the main deliverable. " +
+                    "DevOps is CI, workflows, deploys, releases, or developer tooling. " +
+                    "If the list holds only bug, feature, chore, and documentation, pick the nearest.\n" +
                     "area: exactly one, from exactly this list: " + $areas + "\n" +
                     "pain: zero or more, from exactly this list: " + $pains + "\n\n" +
-                    "Reply as {\"priority\":\"<one level from the scheme>\",\"model\":\"MODEL:T2\"," +
-                    "\"size\":\"SIZE:SMALL\",\"area\":\"AREA:CLI\",\"pain\":[\"PAIN:MAINTAINABILITY\"]," +
+                    "Reply as {\"priority\":\"<one level from the scheme>\",\"model\":\"" + $ex_model + "\"," +
+                    "\"size\":\"" + $ex_size + "\",\"kind\":\"" + $ex_kind + "\",\"area\":\"" + $ex_area + "\"," +
+                    "\"pain\":" + (if $ex_pain == "" then "[]" else "[\"" + $ex_pain + "\"]" end) + "," +
                     "\"why\":\"one short sentence\"}\n\n" +
                     "TITLE: " + $title + "\n\nBODY:\n" + $body
                   )
@@ -188,59 +229,53 @@ jobs:
             verdict=$(jq -r '.content[0].text' /tmp/resp.json \
               | sed -e 's/^```json//' -e 's/^```//' -e 's/```$//')
 
-            if ! echo "$verdict" | jq -e . >/dev/null 2>&1; then
-              echo "issue $n: the reply was not JSON — skipping, queue label kept" >&2
+            # The reply must be a JSON object. Other JSON, such as a bare
+            # string, made the reads below fail, and `set -e` then ended the
+            # whole sweep.
+            if ! echo "$verdict" | jq -e 'type == "object"' >/dev/null 2>&1; then
+              echo "issue $n: the reply was not a JSON object. Skipping, queue label kept." >&2
               continue
             fi
 
-            # Area may come back as one string or as a list. A list of one is
-            # the same answer. A longer list fails the count below. A missing
-            # or non-string value is dropped, and the count below then finds
-            # that axis short.
-            labels=$(echo "$verdict" | jq -r '
-              [.priority, .model, .size]
-              + (.area // [] | if type == "array" then . else [.] end)
-              + (.pain // [] | if type == "array" then . else [.] end)
-              | map(select(type == "string" and . != ""))
-              | join("\n")')
-
-            # Every label is checked against the live list before it is written.
-            # A name the model invented is dropped here rather than failing the
-            # `gh` call halfway through a partial edit. The match ignores case,
-            # because GitHub does too: a label added by name in any case lands
-            # in the spelling the repository stores.
-            valid=""
+            # Each answer is checked against the file for its own axis, and the
+            # match ignores case, as GitHub does when it adds a label by name.
+            # An answer may be one string or a list. A name not on its axis's
+            # list is dropped here, before any write. Each kept label is one
+            # `<axis><TAB><label>` line in /tmp/valid.txt.
             : > /tmp/valid.txt
-            while IFS= read -r label; do
-              [ -z "$label" ] && continue
-              if grep -qixF "$label" /tmp/labels.txt; then
-                valid="${valid:+$valid,}$label"
-                printf '%s\n' "$label" >> /tmp/valid.txt
-              else
-                echo "issue $n: dropping unknown label '$label'" >&2
-              fi
-            done <<< "$labels"
+            pick() { # pick <axis> <jq path>
+              echo "$verdict" \
+                | jq -r "($2) // [] | if type == \"array\" then .[] else . end | select(type == \"string\" and . != \"\")" \
+                | while IFS= read -r label; do
+                    if grep -qixF -- "$label" "/tmp/axis-$1.txt"; then
+                      printf '%s\t%s\n' "$1" "$label" >> /tmp/valid.txt
+                    else
+                      echo "issue $n: dropping '$label', which is not a $1 label" >&2
+                    fi
+                  done
+            }
+            pick model .model
+            pick size .size
+            pick kind .kind
+            pick area .area
+            pick pain .pain
 
-            # A priority has to have survived validation, and the levels come
-            # from the scheme read above rather than from a pattern spelled
-            # here. A reply naming a level the scheme does not carry lands in
-            # neither list and the issue stays queued.
-            priority=$(echo "$verdict" | jq -r '.priority // ""')
+            # A priority has to be a level the scheme names and a label the
+            # repository carries. The levels come from the scheme read above
+            # rather than from a pattern spelled here. A reply naming a level
+            # the scheme does not carry fails here and the issue stays queued.
+            priority=$(echo "$verdict" | jq -r '.priority // "" | strings')
             if [ -z "$priority" ] \
               || ! echo "$scheme" | grep -qF "\`$priority\`" \
-              || ! echo ",$valid," | grep -qF ",$priority,"; then
-              echo "issue $n: no priority the scheme recognises — skipping, queue label kept" >&2
+              || ! grep -qixF -- "$priority" /tmp/labels.txt; then
+              echo "issue $n: no priority the scheme recognises. Skipping, queue label kept." >&2
               continue
             fi
 
-            # A sizing is five axes, and the label manifest sets the count for
+            # A sizing is six axes, and the label manifest sets the count for
             # each. The priority above is exactly one. The model tier, the
-            # size, and the area are exactly one each. Pain labels are signals.
-            # An issue may carry any number of them, or none.
-            #
-            # Each count ignores case and reads both prefixes, `MODEL:` and
-            # `use-model:`, `SIZE:` and `size/`, so a sizing counts the same on
-            # either side of the rename.
+            # size, the kind, and the area are exactly one each. Pain labels
+            # are signals. An issue may carry any number of them, or none.
             #
             # Gating on the priority alone let a reply that lost its other
             # axes to validation still pass. The write that follows is the one
@@ -248,15 +283,19 @@ jobs:
             # leaves the queue, and no later sweep looks at it again. A
             # half-sized issue is as hard to find as the unsized one this
             # workflow exists to rescue.
-            n_model=$(grep -ci -e '^model:' -e '^use-model:' /tmp/valid.txt || true)
-            n_size=$(grep -ci -e '^size:' -e '^size/' /tmp/valid.txt || true)
-            n_area=$(grep -ci '^area:' /tmp/valid.txt || true)
-            n_pain=$(grep -ci '^pain:' /tmp/valid.txt || true)
-            if [ "$n_model" -ne 1 ] || [ "$n_size" -ne 1 ] || [ "$n_area" -ne 1 ]; then
-              echo "issue $n: sized $n_model model / $n_size size / $n_area area / $n_pain pain." \
+            count() { grep -c "^$1"$'\t' /tmp/valid.txt || true; }
+            n_model=$(count model)
+            n_size=$(count size)
+            n_kind=$(count kind)
+            n_area=$(count area)
+            n_pain=$(count pain)
+            if [ "$n_model" -ne 1 ] || [ "$n_size" -ne 1 ] || [ "$n_kind" -ne 1 ] \
+              || [ "$n_area" -ne 1 ]; then
+              echo "issue $n: sized $n_model model / $n_size size / $n_kind kind / $n_area area / $n_pain pain." \
                 "That is not a complete sizing. Skipping, queue label kept." >&2
               continue
             fi
+            valid=$( { printf '%s\n' "$priority"; cut -f2 /tmp/valid.txt; } | paste -sd, -)
 
             why=$(echo "$verdict" | jq -r '.why // "sized by the scheduled triage sweep"')
 

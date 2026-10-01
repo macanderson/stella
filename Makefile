@@ -1082,7 +1082,7 @@ version-writeback-defer-test: ## Test the version write-back's deferred-issue re
 	./scripts/test-version-writeback-defer.sh
 
 .PHONY: main-red-hold
-main-red-hold: ## Ask whether an open `main-red` issue should hold a PR (reads the tracker)
+main-red-hold: ## Ask whether an open `MAIN-RED` issue should hold a PR (reads the tracker)
 	@./scripts/check-main-red-hold.sh
 
 .PHONY: main-red-hold-test

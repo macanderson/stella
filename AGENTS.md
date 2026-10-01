@@ -437,8 +437,8 @@ request and no author. When one fails, it shows only in the Actions tab. The
 triage sweep failed on every run that way. `scheduled-red.yml` starts on
 `workflow_run` after each workflow with an `on: schedule` trigger. It acts
 only when that run's event was `schedule`. It runs `scripts/scheduled-red.sh`,
-which keeps one open issue per workflow, labelled `SCHEDULED-RED` and titled
-with the workflow's name. A second red run adds a comment, and the next green
+which keeps one open issue per workflow, labelled `SCHEDULED-RED` and marked
+in its body with the workflow's name. A second red run adds a comment, and the next green
 run closes the issue. A cancelled or skipped run changes nothing. The script
 fails open, with a `::warning::` line, when `gh` is missing, the tracker
 errors, or two issues match one workflow. `workflow_run` finds a workflow by

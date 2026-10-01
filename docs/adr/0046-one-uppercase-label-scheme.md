@@ -79,10 +79,19 @@ part stands.
   but it hands back the spelling it stores. A plain string test would miss a
   label whose case changed.
 - The same function reads each old name in the table above as its new name.
-  An issue labelled before the switch still ranks. The loop writes and makes
-  only the new names.
+  An issue labelled before the switch still ranks. GitHub's stock
+  `enhancement` reads as `KIND:FEATURE`, so a repository that kept its stock
+  labels still fits.
+- The loop names labels in the new scheme. When it writes one, it sends the
+  spelling the repository stores, so it writes `bug` where only `bug`
+  exists. It makes a label only when the repository holds none under any
+  spelling, so it never makes `KIND:BUG` beside `bug`. A second label there
+  would split the issues and make the later rename fail.
 - A separate session renames the labels on GitHub once this change merges.
   Until then the tracker holds the old names, and the code still reads them.
+- The DoD check that stella calls from oxagen compares `no-issue` and
+  `closes-nothing` by exact name. Rename those two only after that check
+  ignores case.
 - The loop keeps `STATUS:BLOCKED` next to `STATUS:READY`. It lifts
   `STATUS:BLOCKED` once each `Blocked by:` line names a closed issue. It
   never lifts `BLOCKED`, the hold a person sets. `STATUS:BLOCKED` is not in

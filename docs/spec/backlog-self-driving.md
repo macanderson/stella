@@ -413,8 +413,8 @@ stripped, and the issue is re-queued as `TRIAGE`. So the drive runner must
 authenticate `gh` as a login on that list — the triage identity, or the
 maintainer holding interim triage authority. A runner on any other login
 still judges correctly, but the guard undoes its priority writes. The loop
-detects that shape — an issue carrying a `SIZE:` label with no rung —
-as *placed, then stripped*. It escalates the issue once to a human instead
+detects that shape — an issue carrying a `SIZE:` label and `TRIAGE`, with
+no rung — as *placed, then stripped*. It escalates the issue once to a human instead
 of re-triaging forever. The fix is operational, not code: add the runner's
 login to `TRIAGE_LOGINS`, or run the loop under a login already there.
 
