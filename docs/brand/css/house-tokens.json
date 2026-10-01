@@ -1,5 +1,5 @@
 {
-  "version": "2.3.0",
+  "version": "2.4.0",
   "name": "oxagen house system",
   "built_on": "oxagen brand kit (Space Grotesk), on obsidian and white with one gold",
   "icons": {
@@ -224,7 +224,7 @@
     "faces": {
       "display": {
         "family": "Space Grotesk",
-        "job": "wordmarks, h1, h2, h3",
+        "job": "the wordmarks, Stella's icon, and line 1 of a marketing hero",
         "stack": "\"Space Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
         "next_var": "--font-space-grotesk",
         "files": [
@@ -249,7 +249,7 @@
       },
       "sans": {
         "family": "Geist",
-        "job": "h4 to h6, body, labels, buttons, tables, navigation",
+        "job": "every heading, body, labels, buttons, tables, navigation",
         "stack": "\"Geist\", system-ui, -apple-system, \"Segoe UI\", sans-serif",
         "next_var": "--font-geist",
         "files": [
@@ -274,6 +274,46 @@
         "features": "\"calt\", \"liga\""
       }
     },
+    "roles": {
+      "sans": {
+        "css_var": "--font-sans",
+        "face": "sans",
+        "family": "Geist",
+        "job": "body, labels, buttons, tables, navigation"
+      },
+      "display": {
+        "css_var": "--font-display",
+        "face": "sans",
+        "family": "Geist",
+        "job": "every heading, h1 to h6"
+      },
+      "mono": {
+        "css_var": "--font-mono",
+        "face": "mono",
+        "family": "Monaspace Neon",
+        "job": "code, logs, ids, and numbers in tables"
+      },
+      "wordmark": {
+        "css_var": "--font-wordmark",
+        "face": "display",
+        "family": "Space Grotesk",
+        "job": "a wordmark set as text rather than drawn"
+      },
+      "hero": {
+        "css_var": "--font-hero",
+        "face": "sans",
+        "family": "Geist",
+        "job": "line 1 of a hero, in Space Grotesk only inside a step that admits a hero"
+      }
+    },
+    "hero": {
+      "class": "hero-line-1",
+      "family_inside": "Space Grotesk",
+      "family_outside": "Geist",
+      "admitted_by": [
+        "text-m-h1"
+      ]
+    },
     "tracking": {
       "hero": "-0.03em",
       "display": "-0.02em",
@@ -283,19 +323,23 @@
     "routing": [
       {
         "elements": "h1, h2, h3",
-        "face": "display"
+        "role": "display",
+        "family": "Geist"
       },
       {
         "elements": "h4, h5, h6",
-        "face": "sans"
+        "role": "display",
+        "family": "Geist"
       },
       {
         "elements": "body, button, input, select, textarea, label, nav",
-        "face": "sans"
+        "role": "sans",
+        "family": "Geist"
       },
       {
         "elements": "pre, code, kbd, samp, [data-mono]",
-        "face": "mono"
+        "role": "mono",
+        "family": "Monaspace Neon"
       }
     ],
     "display_floor_px": 20,
@@ -306,57 +350,69 @@
         "steps": [
           {
             "step": "h1",
-            "face": "display",
+            "role": "display",
+            "family": "Geist",
             "size": "4.5rem",
             "px": 72,
             "line_height": 1.05,
             "weight": 700,
-            "tracking": "-0.03em"
+            "tracking": "-0.03em",
+            "hero": true
           },
           {
             "step": "h2",
-            "face": "display",
+            "role": "display",
+            "family": "Geist",
             "size": "2.5rem",
             "px": 40,
             "line_height": 1.2,
             "weight": 700,
-            "tracking": "-0.01em"
+            "tracking": "-0.01em",
+            "hero": false
           },
           {
             "step": "h3",
-            "face": "display",
+            "role": "display",
+            "family": "Geist",
             "size": "1.75rem",
             "px": 28,
             "line_height": 1.3,
             "weight": 600,
-            "tracking": "0"
+            "tracking": "0",
+            "hero": false
           },
           {
             "step": "h4",
-            "face": "sans",
+            "role": "display",
+            "family": "Geist",
             "size": "1.25rem",
             "px": 20,
             "line_height": 1.4,
             "weight": 500,
-            "tracking": "0"
+            "tracking": "0",
+            "hero": false
           },
           {
             "step": "body",
-            "face": "sans",
+            "role": "sans",
+            "family": "Geist",
             "size": "1.125rem",
             "px": 18,
             "line_height": 1.65,
             "weight": 400,
-            "tracking": "0"
+            "tracking": "0",
+            "hero": false
           },
           {
             "step": "micro",
-            "face": "mono",
+            "role": "mono",
+            "family": "Monaspace Neon",
             "size": "0.875rem",
             "px": 14,
             "line_height": 1.5,
             "weight": 400,
-            "tracking": "0"
+            "tracking": "0",
+            "hero": false
           }
         ]
       },
@@ -366,57 +422,69 @@
         "steps": [
           {
             "step": "h1",
-            "face": "display",
+            "role": "display",
+            "family": "Geist",
             "size": "1.875rem",
             "px": 30,
             "line_height": 1.15,
             "weight": 700,
-            "tracking": "-0.02em"
+            "tracking": "-0.02em",
+            "hero": false
           },
           {
             "step": "h2",
-            "face": "display",
+            "role": "display",
+            "family": "Geist",
             "size": "1.5rem",
             "px": 24,
             "line_height": 1.2,
             "weight": 600,
-            "tracking": "0"
+            "tracking": "0",
+            "hero": false
           },
           {
             "step": "h3",
-            "face": "display",
+            "role": "display",
+            "family": "Geist",
             "size": "1.25rem",
             "px": 20,
             "line_height": 1.25,
             "weight": 600,
-            "tracking": "0"
+            "tracking": "0",
+            "hero": false
           },
           {
             "step": "h4",
-            "face": "sans",
+            "role": "display",
+            "family": "Geist",
             "size": "1rem",
             "px": 16,
             "line_height": 1.4,
             "weight": 600,
-            "tracking": "0"
+            "tracking": "0",
+            "hero": false
           },
           {
             "step": "body",
-            "face": "sans",
+            "role": "sans",
+            "family": "Geist",
             "size": "0.875rem",
             "px": 14,
             "line_height": 1.5,
             "weight": 400,
-            "tracking": "0"
+            "tracking": "0",
+            "hero": false
           },
           {
             "step": "micro",
-            "face": "mono",
+            "role": "mono",
+            "family": "Monaspace Neon",
             "size": "0.75rem",
             "px": 12,
             "line_height": 1.4,
             "weight": 400,
-            "tracking": "0"
+            "tracking": "0",
+            "hero": false
           }
         ]
       }
