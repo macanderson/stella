@@ -338,9 +338,38 @@
     "logo_weight": 600,
     "logo_em": 131.657,
     "faces": {
+      "wordmark": {
+        "family": "Space Grotesk",
+        "job": "the oxagen and stella wordmarks and Stella's asterisk, set as text. It is fixed",
+        "stack": "\"Space Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "next_var": "--font-space-grotesk",
+        "files": [
+          {
+            "file": "space-grotesk-latin-400.woff2",
+            "weight": "400",
+            "style": "normal"
+          },
+          {
+            "file": "space-grotesk-latin-500.woff2",
+            "weight": "500",
+            "style": "normal"
+          },
+          {
+            "file": "space-grotesk-latin-600.woff2",
+            "weight": "600",
+            "style": "normal"
+          },
+          {
+            "file": "space-grotesk-latin-700.woff2",
+            "weight": "700",
+            "style": "normal"
+          }
+        ],
+        "features": "normal"
+      },
       "display": {
         "family": "Space Grotesk",
-        "job": "the wordmarks, Stella's icon, and line 1 of a marketing hero",
+        "job": "h1 to h3 on a marketing or customer site",
         "stack": "\"Space Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
         "next_var": "--font-space-grotesk",
         "files": [
@@ -369,7 +398,7 @@
       },
       "sans": {
         "family": "Aeonik",
-        "job": "every heading, body, labels, buttons, tables, navigation",
+        "job": "body, labels, buttons, tables, navigation, every app heading, and every h4 to h6",
         "stack": "\"Aeonik\", system-ui, -apple-system, \"Segoe UI\", sans-serif",
         "next_var": "--font-aeonik",
         "files": [
@@ -436,13 +465,20 @@
         "css_var": "--font-sans",
         "face": "sans",
         "family": "Aeonik",
-        "job": "body, labels, buttons, tables, navigation"
+        "job": "body, labels, buttons, tables, navigation, every app heading, and every h4 to h6"
       },
       "display": {
         "css_var": "--font-display",
+        "face": "display",
+        "family": "Space Grotesk",
+        "job": "h1 to h3 on a marketing or customer site"
+      },
+      "heading": {
+        "css_var": "--font-heading",
         "face": "sans",
         "family": "Aeonik",
-        "job": "every heading, h1 to h6"
+        "job": "h1 to h3 on this surface. A marketing or docs site points it at --font-display",
+        "reads": "--font-sans"
       },
       "mono": {
         "css_var": "--font-mono",
@@ -452,25 +488,12 @@
       },
       "wordmark": {
         "css_var": "--font-wordmark",
-        "face": "display",
+        "face": "wordmark",
         "family": "Space Grotesk",
-        "job": "a wordmark set as text rather than drawn"
-      },
-      "hero": {
-        "css_var": "--font-hero",
-        "face": "sans",
-        "family": "Aeonik",
-        "job": "line 1 of a hero, in Space Grotesk only inside a step that admits a hero"
+        "job": "a wordmark set as text rather than drawn. It is fixed"
       }
     },
-    "hero": {
-      "class": "hero-line-1",
-      "family_inside": "Space Grotesk",
-      "family_outside": "Aeonik",
-      "admitted_by": [
-        "text-m-h1"
-      ]
-    },
+    "marketing_headings": "--font-heading: var(--font-display)",
     "tracking": {
       "hero": "-0.03em",
       "display": "-0.02em",
@@ -480,12 +503,12 @@
     "routing": [
       {
         "elements": "h1, h2, h3",
-        "role": "display",
+        "role": "heading",
         "family": "Aeonik"
       },
       {
         "elements": "h4, h5, h6",
-        "role": "display",
+        "role": "sans",
         "family": "Aeonik"
       },
       {
@@ -500,6 +523,7 @@
       }
     ],
     "display_floor_px": 20,
+    "type_floor_px": 14,
     "scales": {
       "marketing": {
         "utility_prefix": "text-m-",
@@ -508,57 +532,52 @@
           {
             "step": "h1",
             "role": "display",
-            "family": "Aeonik",
+            "family": "Space Grotesk",
             "size": "4.5rem",
             "px": 72,
             "line_height": 1.05,
             "weight": 700,
-            "tracking": "-0.03em",
-            "hero": true
+            "tracking": "-0.03em"
           },
           {
             "step": "h2",
             "role": "display",
-            "family": "Aeonik",
+            "family": "Space Grotesk",
             "size": "2.5rem",
             "px": 40,
             "line_height": 1.2,
             "weight": 700,
-            "tracking": "-0.01em",
-            "hero": false
+            "tracking": "-0.01em"
           },
           {
             "step": "h3",
             "role": "display",
-            "family": "Aeonik",
+            "family": "Space Grotesk",
             "size": "1.75rem",
             "px": 28,
             "line_height": 1.3,
             "weight": 600,
-            "tracking": "0",
-            "hero": false
+            "tracking": "0"
           },
           {
             "step": "h4",
-            "role": "display",
+            "role": "sans",
             "family": "Aeonik",
             "size": "1.25rem",
             "px": 20,
             "line_height": 1.4,
             "weight": 500,
-            "tracking": "0",
-            "hero": false
+            "tracking": "0"
           },
           {
             "step": "body",
             "role": "sans",
             "family": "Aeonik",
-            "size": "1.125rem",
-            "px": 18,
-            "line_height": 1.65,
+            "size": "1rem",
+            "px": 16,
+            "line_height": 1.625,
             "weight": 400,
-            "tracking": "0",
-            "hero": false
+            "tracking": "0"
           },
           {
             "step": "micro",
@@ -568,58 +587,53 @@
             "px": 14,
             "line_height": 1.5,
             "weight": 400,
-            "tracking": "0",
-            "hero": false
+            "tracking": "0"
           }
         ]
       },
       "app": {
         "utility_prefix": "text-a-",
-        "use": "dashboards, docs, panels, tables, terminals, logs: dense",
+        "use": "dashboards, panels, tables, terminals, logs: dense",
         "steps": [
           {
             "step": "h1",
-            "role": "display",
+            "role": "heading",
             "family": "Aeonik",
             "size": "1.875rem",
             "px": 30,
             "line_height": 1.15,
             "weight": 700,
-            "tracking": "-0.02em",
-            "hero": false
+            "tracking": "-0.02em"
           },
           {
             "step": "h2",
-            "role": "display",
+            "role": "heading",
             "family": "Aeonik",
             "size": "1.5rem",
             "px": 24,
             "line_height": 1.2,
             "weight": 600,
-            "tracking": "0",
-            "hero": false
+            "tracking": "0"
           },
           {
             "step": "h3",
-            "role": "display",
+            "role": "heading",
             "family": "Aeonik",
             "size": "1.25rem",
             "px": 20,
             "line_height": 1.25,
             "weight": 600,
-            "tracking": "0",
-            "hero": false
+            "tracking": "0"
           },
           {
             "step": "h4",
-            "role": "display",
+            "role": "sans",
             "family": "Aeonik",
             "size": "1rem",
             "px": 16,
             "line_height": 1.4,
             "weight": 600,
-            "tracking": "0",
-            "hero": false
+            "tracking": "0"
           },
           {
             "step": "body",
@@ -629,19 +643,17 @@
             "px": 14,
             "line_height": 1.5,
             "weight": 400,
-            "tracking": "0",
-            "hero": false
+            "tracking": "0"
           },
           {
             "step": "micro",
             "role": "mono",
             "family": "Monaspace Neon",
-            "size": "0.75rem",
-            "px": 12,
-            "line_height": 1.4,
+            "size": "0.875rem",
+            "px": 14,
+            "line_height": 1.5,
             "weight": 400,
-            "tracking": "0",
-            "hero": false
+            "tracking": "0"
           }
         ]
       }

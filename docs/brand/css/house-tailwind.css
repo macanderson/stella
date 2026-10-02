@@ -18,22 +18,22 @@
  * below resolve to its @font-face.
  *
  * Type: text-m-* is the marketing scale, text-a-* the app scale. A surface
- * picks one. Every heading and all text take Aeonik, and code takes
- * Monaspace Neon with texture healing on, whichever scale is in use.
+ * picks one. Aeonik sets the default text everywhere, and Monaspace Neon
+ * sets code with texture healing on. No step on either scale is below 14px,
+ * and text-xs and text-sm read the app body step, so they cannot go below
+ * it either.
  *
- * Space Grotesk reaches a page two ways. --font-wordmark sets a wordmark
- * that is text rather than an SVG. The hero-line-1 class sets line 1 of
- * a marketing hero, inside a text-m-h1 heading:
+ * Headings: text-m-h1 to text-m-h3 set Space Grotesk (--font-display), for
+ * a marketing or customer site. text-a-h1 to text-a-h3, and bare h1 to h3,
+ * read --font-heading, which is Aeonik (--font-sans) for an app. A
+ * marketing or docs site sets its h1 to h3 in the display face with one
+ * line in its own stylesheet:
  *
- *     <h1 class="text-m-h1"><span class="hero-line-1">Line one</span><br>Line two</h1>
+ *     :root { --font-heading: var(--font-display); }
  *
- * text-m-h1 points --font-hero at the wordmark face for its own contents.
- * Everywhere else --font-hero is the heading face, so hero-line-1 in the
- * app, in a text-a-h1, or on any other heading draws in Aeonik.
- *
- * On the website, Space Grotesk also sets every h1, h2, and h3. The site's
- * own stylesheet points those headings at --font-wordmark. The text-m-*
- * steps here still read --font-display.
+ * Every h4 to h6, and text-m-h4 and text-a-h4, take Aeonik. --font-wordmark
+ * sets a wordmark that is text rather than an SVG, in Space Grotesk,
+ * whatever face --font-display takes.
  */
 
 @import "./house-tokens.css";
@@ -92,10 +92,16 @@
   --color-ox-destructive-text: var(--ox-destructive-text);
   --color-ox-destructive-text-ink: var(--ox-destructive-text-ink);
 
-  --font-sans: var(--font-aeonik, "Aeonik"), system-ui, -apple-system, "Segoe UI", sans-serif; /* body, labels, buttons, tables, navigation */
-  --font-display: var(--font-aeonik, "Aeonik"), system-ui, -apple-system, "Segoe UI", sans-serif; /* every heading, h1 to h6 */
+  --font-sans: var(--font-aeonik, "Aeonik"), system-ui, -apple-system, "Segoe UI", sans-serif; /* body, labels, buttons, tables, navigation, every app heading, and every h4 to h6 */
+  --font-display: var(--font-space-grotesk, "Space Grotesk"), "Helvetica Neue", Arial, sans-serif; /* h1 to h3 on a marketing or customer site */
+  --font-heading: var(--font-sans); /* h1 to h3 on this surface. A marketing or docs site points it at --font-display */
   --font-mono: var(--font-monaspace-neon, "Monaspace Neon"), ui-monospace, "SF Mono", Menlo, Consolas, monospace; /* code, logs, ids, and numbers in tables */
-  --font-wordmark: var(--font-space-grotesk, "Space Grotesk"), "Helvetica Neue", Arial, sans-serif; /* a wordmark set as text rather than drawn */
+  --font-wordmark: var(--font-space-grotesk, "Space Grotesk"), "Helvetica Neue", Arial, sans-serif; /* a wordmark set as text rather than drawn. It is fixed */
+
+  --text-xs: var(--ox-a-body); /* 14px, the app body step */
+  --text-xs--line-height: var(--ox-a-body-leading);
+  --text-sm: var(--ox-a-body); /* 14px, the app body step */
+  --text-sm--line-height: var(--ox-a-body-leading);
 
   --tracking-hero: -0.03em;
   --tracking-display: -0.02em;
@@ -214,10 +220,8 @@
     }
   }
 
-  /* line 1 of a hero, in Space Grotesk only inside a step that admits a hero */
-  :root { --font-hero: var(--font-display); }
-  h1, h2, h3 { font-family: var(--font-display); letter-spacing: var(--tracking-display); }
-  h4, h5, h6 { font-family: var(--font-display); font-weight: 500; }
+  h1, h2, h3 { font-family: var(--font-heading); letter-spacing: var(--tracking-display); }
+  h4, h5, h6 { font-family: var(--font-sans); font-weight: 500; }
   body, button, input, select, textarea, label, nav { font-family: var(--font-sans); }
   pre, code, kbd, samp, [data-mono] { font-family: var(--font-mono); font-feature-settings: "calt", "liga"; }
   body { -webkit-font-smoothing: antialiased; }
@@ -262,23 +266,20 @@
 }
 
 /* marketing scale: landing pages and posts read once: large and spaced */
-@utility text-m-h1 { font-size: var(--ox-m-h1); line-height: var(--ox-m-h1-leading); font-family: var(--font-display); font-weight: 700; letter-spacing: -0.03em; --font-hero: var(--font-wordmark); }
+@utility text-m-h1 { font-size: var(--ox-m-h1); line-height: var(--ox-m-h1-leading); font-family: var(--font-display); font-weight: 700; letter-spacing: -0.03em; }
 @utility text-m-h2 { font-size: var(--ox-m-h2); line-height: var(--ox-m-h2-leading); font-family: var(--font-display); font-weight: 700; letter-spacing: -0.01em; }
 @utility text-m-h3 { font-size: var(--ox-m-h3); line-height: var(--ox-m-h3-leading); font-family: var(--font-display); font-weight: 600; }
-@utility text-m-h4 { font-size: var(--ox-m-h4); line-height: var(--ox-m-h4-leading); font-family: var(--font-display); font-weight: 500; }
+@utility text-m-h4 { font-size: var(--ox-m-h4); line-height: var(--ox-m-h4-leading); font-family: var(--font-sans); font-weight: 500; }
 @utility text-m-body { font-size: var(--ox-m-body); line-height: var(--ox-m-body-leading); font-family: var(--font-sans); font-weight: 400; }
 @utility text-m-micro { font-size: var(--ox-m-micro); line-height: var(--ox-m-micro-leading); font-family: var(--font-mono); font-weight: 400; font-feature-settings: "calt", "liga"; }
 
-/* app scale: dashboards, docs, panels, tables, terminals, logs: dense */
-@utility text-a-h1 { font-size: var(--ox-a-h1); line-height: var(--ox-a-h1-leading); font-family: var(--font-display); font-weight: 700; letter-spacing: -0.02em; }
-@utility text-a-h2 { font-size: var(--ox-a-h2); line-height: var(--ox-a-h2-leading); font-family: var(--font-display); font-weight: 600; }
-@utility text-a-h3 { font-size: var(--ox-a-h3); line-height: var(--ox-a-h3-leading); font-family: var(--font-display); font-weight: 600; }
-@utility text-a-h4 { font-size: var(--ox-a-h4); line-height: var(--ox-a-h4-leading); font-family: var(--font-display); font-weight: 600; }
+/* app scale: dashboards, panels, tables, terminals, logs: dense */
+@utility text-a-h1 { font-size: var(--ox-a-h1); line-height: var(--ox-a-h1-leading); font-family: var(--font-heading); font-weight: 700; letter-spacing: -0.02em; }
+@utility text-a-h2 { font-size: var(--ox-a-h2); line-height: var(--ox-a-h2-leading); font-family: var(--font-heading); font-weight: 600; }
+@utility text-a-h3 { font-size: var(--ox-a-h3); line-height: var(--ox-a-h3-leading); font-family: var(--font-heading); font-weight: 600; }
+@utility text-a-h4 { font-size: var(--ox-a-h4); line-height: var(--ox-a-h4-leading); font-family: var(--font-sans); font-weight: 600; }
 @utility text-a-body { font-size: var(--ox-a-body); line-height: var(--ox-a-body-leading); font-family: var(--font-sans); font-weight: 400; }
 @utility text-a-micro { font-size: var(--ox-a-micro); line-height: var(--ox-a-micro-leading); font-family: var(--font-mono); font-weight: 400; font-feature-settings: "calt", "liga"; }
-
-/* line 1 of a hero: Space Grotesk inside text-m-h1, Aeonik everywhere else */
-@utility hero-line-1 { font-family: var(--font-hero); }
 
 /* the code face with texture healing, for anything not already routed */
 @utility font-code { font-family: var(--font-mono); font-feature-settings: "calt", "liga"; }

@@ -8,15 +8,15 @@
 //   <html lang="en" className={fontVariables}>
 //
 // Each loader sets one CSS variable on <html>. tokens/house-tailwind.css
-// reads Aeonik into --font-sans and --font-display, Monaspace Neon into
-// --font-mono, and Space Grotesk into --font-wordmark and a marketing hero.
+// reads Aeonik into --font-sans, Space Grotesk into --font-display,
+// Monaspace Neon into --font-mono, and Space Grotesk into --font-wordmark.
 //
 // Aeonik Mono and Aeonik Fono load too, with preload off, so a page pays
 // for one only when it names the family. No role token reads them yet.
 
 import localFont from "next/font/local";
 
-/** Space Grotesk: the wordmarks, Stella's icon, and line 1 of a marketing hero. */
+/** Space Grotesk: the oxagen and stella wordmarks and Stella's asterisk, set as text. It is fixed. It also sets h1 to h3 on a marketing or customer site. */
 export const spaceGrotesk = localFont({
   src: [
     { path: "../fonts/space-grotesk-latin-400.woff2", weight: "400", style: "normal" },
@@ -29,7 +29,7 @@ export const spaceGrotesk = localFont({
   fallback: ["Helvetica Neue", "Arial"],
 });
 
-/** Aeonik: every heading, body, labels, buttons, tables, navigation. */
+/** Aeonik: body, labels, buttons, tables, navigation, every app heading, and every h4 to h6. */
 export const aeonik = localFont({
   src: [
     { path: "../fonts/aeonik-wght.woff2", weight: "100 900", style: "normal" },
