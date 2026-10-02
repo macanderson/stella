@@ -71,6 +71,13 @@ const softwareJsonLd = {
  * Brand notes (docs/brand): the name is lowercase always; the comet flies
  * left→right into the wordmark; gold is the signal (the lockup, the prompt,
  * the CTA) and never the surface.
+ *
+ * Type: this is a marketing page, so every size comes from the kit's
+ * marketing scale. Paragraphs take text-m-body and small text takes
+ * text-m-micro, both from src/brand/house-type.css. text-m-micro sets the
+ * code face, so small text that people read adds font-sans. The brand check
+ * (`scripts/sync-brand-assets.mjs --check`) fails on a Tailwind size class
+ * such as text-sm here.
  */
 
 /**
@@ -138,14 +145,14 @@ export default function HomePage() {
           {/* Install and "read the docs" are the same decision — try it now,
               or read first — so they sit side by side instead of stacked. */}
           <div className="mt-12">
-            <p className="mb-2 text-sm text-fd-muted-foreground">Install it:</p>
+            <p className="mb-2 text-m-micro font-sans text-fd-muted-foreground">Install it:</p>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-stretch">
               <div className="min-w-0 flex-1">
                 <InstallBlock command={INSTALL} />
               </div>
               <Link
                 href="/docs"
-                className="lp-cta flex shrink-0 items-center justify-center rounded-md px-6 text-sm"
+                className="lp-cta flex shrink-0 items-center justify-center rounded-md px-6 text-m-micro font-sans"
               >
                 Read the docs
               </Link>
@@ -155,7 +162,7 @@ export default function HomePage() {
           <div className="mt-6">
             <a
               href={REPO_URL}
-              className="text-sm text-fd-muted-foreground underline underline-offset-4 hover:text-fd-foreground"
+              className="text-m-micro font-sans text-fd-muted-foreground underline underline-offset-4 hover:text-fd-foreground"
             >
               Source on GitHub
             </a>
@@ -166,7 +173,7 @@ export default function HomePage() {
               and the two follow-ups that keep a reader connected (the star,
               the follow). "star stella on GitHub" doubles as the source link
               the old "Source on GitHub" line carried. */}
-          <p className="mt-6 flex flex-wrap items-center gap-x-2 text-sm text-fd-muted-foreground">
+          <p className="mt-6 flex flex-wrap items-center gap-x-2 text-m-micro font-sans text-fd-muted-foreground">
             <Mark className="h-3.5 w-auto shrink-0" />
             <span>
               created by{" "}
@@ -201,7 +208,7 @@ export default function HomePage() {
         <div className="mx-auto w-full max-w-3xl px-4 py-16">
           <h2 className="lp-eyebrow mb-5">One run, start to finish</h2>
           <HeroTerminal />
-          <p className="mt-4 max-w-prose text-sm text-fd-muted-foreground">
+          <p className="mt-4 max-w-prose text-m-micro font-sans text-fd-muted-foreground">
             A plain <code>stella run</code> is the raw step loop: it reports
             what it changed and what the turn cost, and claims nothing about
             proof. The rows and the metering are
@@ -223,7 +230,7 @@ export default function HomePage() {
       <section className="lp-section">
         <div className="mx-auto w-full max-w-3xl px-4 py-16">
           <h2 className="lp-eyebrow mb-5">The deck</h2>
-          <p className="max-w-prose text-base">
+          <p className="max-w-prose text-m-body">
             Two moments decide whether you can trust an agent with a branch:
             what it does before it starts, and what it does when a check goes
             red. Running <span className="lp-brand-face">stella</span> with no
@@ -251,7 +258,7 @@ export default function HomePage() {
       <section className="lp-section lp-band">
         <div className="mx-auto w-full max-w-3xl px-4 py-16">
           <h2 className="lp-eyebrow mb-5">Step inside</h2>
-          <p className="max-w-prose text-base">
+          <p className="max-w-prose text-m-body">
             The rest of this page tells you what{" "}
             <span className="lp-brand-face">stella</span> is.{" "}
             <Link href="/engine" className="underline underline-offset-4">
@@ -266,7 +273,7 @@ export default function HomePage() {
           <div className="mt-6">
             <Link
               href="/engine"
-              className="lp-cta inline-flex items-center rounded-md px-6 py-3 text-sm"
+              className="lp-cta inline-flex items-center rounded-md px-6 py-3 text-m-micro font-sans"
             >
               Take the engine tour
             </Link>
@@ -278,7 +285,7 @@ export default function HomePage() {
       <section className="lp-section">
         <div className="mx-auto w-full max-w-3xl px-4 py-16">
           <h2 className="lp-eyebrow mb-5">Providers</h2>
-          <p className="max-w-prose text-base">
+          <p className="max-w-prose text-m-body">
             {PROVIDER_CATALOG.map((p, i) => (
               <span key={p.id}>
                 {i > 0 ? <span className="text-fd-muted-foreground"> · </span> : null}
@@ -288,7 +295,7 @@ export default function HomePage() {
               </span>
             ))}
           </p>
-          <p className="mt-4 max-w-prose text-sm text-fd-muted-foreground">
+          <p className="mt-4 max-w-prose text-m-micro font-sans text-fd-muted-foreground">
             {/* The trailing `{" "}` is required: JSX trims the leading
                 whitespace of a text node's first line when the node spans
                 more than one line, so `</span> speaks each\n vendor's…`
@@ -321,8 +328,8 @@ export default function HomePage() {
                   href={d.href}
                   className="-mx-3 block px-3 py-4 transition-colors hover:bg-fd-accent"
                 >
-                  <span className="text-base font-medium">{d.title}</span>
-                  <span className="mt-1 block max-w-prose text-sm text-fd-muted-foreground">
+                  <span className="text-m-body font-medium">{d.title}</span>
+                  <span className="mt-1 block max-w-prose text-m-micro font-sans text-fd-muted-foreground">
                     {d.body}
                   </span>
                 </Link>
@@ -333,7 +340,7 @@ export default function HomePage() {
       </section>
 
       <footer className="lp-section lp-footer">
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-10 text-sm text-fd-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-10 text-m-micro font-sans text-fd-muted-foreground sm:flex-row sm:items-center sm:justify-between">
           <span className="inline-flex items-center gap-2">
             <Mark className="h-4 w-auto" />
             <span className="lp-brand-face text-fd-foreground">stella</span>

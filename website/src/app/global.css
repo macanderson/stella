@@ -34,6 +34,9 @@
 @import "fumadocs-ui/css/preset.css";
 @import "./tokens.css";
 @import "../brand/house-tokens.css";
+/* The kit's type classes (text-m-* and text-a-*), copied out of its Tailwind
+ * sheet by the brand sync. */
+@import "../brand/house-type.css";
 
 /* Fumadocs declares its callout colours in `@theme static`, so the :root
  * overrides below still left its amber warning (#F99C00) in the stylesheet,
