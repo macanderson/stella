@@ -1,5 +1,5 @@
 {
-  "version": "2.5.0",
+  "version": "2.6.0",
   "name": "oxagen house system",
   "built_on": "oxagen brand kit (Space Grotesk), on obsidian and white with one gold",
   "icons": {
@@ -605,6 +605,35 @@
         ]
       }
     }
+  },
+  "radius": {
+    "base": "0.45rem",
+    "steps": {
+      "xs": 0.4,
+      "sm": 0.6,
+      "md": 0.8,
+      "lg": 1,
+      "xl": 1.4,
+      "2xl": 1.8,
+      "3xl": 2.2,
+      "4xl": 2.6
+    },
+    "card": "2xl",
+    "site": "0.75rem"
+  },
+  "shadow": {
+    "ui": {
+      "ink": "0 1px 2px oklch(0.15 0 0 / 0.07)",
+      "paper": "0 1px 2px oklch(0.15 0 0 / 0.07)"
+    },
+    "pop": {
+      "ink": "0 25px 50px -12px rgb(0 0 0 / 0.6)",
+      "paper": "0 25px 50px -12px color-mix(in srgb, var(--ox-ink) 25%, transparent)"
+    }
+  },
+  "spacing": {
+    "unit": "0.25rem",
+    "wrap": "1120px"
   },
   "wordmarks": {
     "oxagen": {
