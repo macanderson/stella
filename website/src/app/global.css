@@ -329,6 +329,19 @@ figure.shiki ::selection,
   color: inherit;
 }
 
+/* Inline code sizes to the line it sits in, so code in a heading, a table,
+ * a callout, or a table of contents entry keeps the same share of its text.
+ * Fumadocs' typography preset fixes it at 13px with a 5px corner. The corner
+ * takes the house scale's small step, the nearest one to 5px.
+ *
+ * `:where()` keeps this rule at one class of weight, so a card's own code
+ * style (.sc-tool-name, later in this file) still wins. Code inside a code
+ * block, and anything Fumadocs marks not-prose, is left alone. */
+.prose :where(code):not(:where(pre *, .not-prose *)) {
+  font-size: 0.9em;
+  border-radius: var(--ox-radius-sm);
+}
+
 .prose blockquote {
   font-style: normal;
   font-weight: 400;
@@ -373,10 +386,21 @@ figure.shiki ::selection,
   border-bottom: 0;
 }
 
-/* The page title/description block Fumadocs renders above the body. */
+/* The page title/description block Fumadocs renders above the body. The title
+ * takes the h1 step's line height as well as its size. Fumadocs sets only a
+ * size, so the title inherited the page's 1.5. */
 #nd-page h1:first-of-type {
   font-size: var(--stella-type-2xl);
+  line-height: var(--ox-a-h1-leading);
   letter-spacing: -0.02em;
+}
+
+/* The previous and next page links under the article are cards, so they
+ * take the house card corner. Fumadocs draws them with rounded-lg, the
+ * control step. The class is set on Fumadocs' footer in
+ * app/docs/[[...slug]]/page.tsx. */
+.stella-page-nav a {
+  border-radius: var(--ox-radius);
 }
 
 /* Constrain the docs column. Mono runs wide, so the column is a touch wider
@@ -401,9 +425,14 @@ figure.shiki ::selection,
  * border). The fd tokens are re-scoped inside the aside so hover/selected
  * chips stay neutral on white. Dark mode needs no override: the surface
  * (#18181B) already lifts off the canvas.
+ *
+ * The phone drawer (#nd-sidebar-mobile) is the same tree on a narrow screen,
+ * so every rule here names both panels. Fumadocs paints the drawer with
+ * bg-fd-background, and without these rules it showed Fumadocs' own look:
+ * medium-weight items, a tinted active item, and plain section labels.
  * ═════════════════════════════════════════════════════════════════════════ */
 
-#nd-sidebar {
+:is(#nd-sidebar, #nd-sidebar-mobile) {
   --color-fd-card: var(--stella-paper-3);
   --color-fd-accent: var(--stella-paper-row); /* hover/selected chip */
   --color-fd-secondary: var(--stella-paper-row);
@@ -411,7 +440,7 @@ figure.shiki ::selection,
   background-color: var(--stella-paper-3);
 }
 
-.dark #nd-sidebar {
+.dark :is(#nd-sidebar, #nd-sidebar-mobile) {
   --color-fd-card: var(--stella-surface);
   --color-fd-accent: var(--stella-canvas-row); /* restore the hover on dark */
   --color-fd-secondary: var(--stella-canvas-row);
@@ -419,8 +448,7 @@ figure.shiki ::selection,
   background-color: var(--stella-surface);
 }
 
-#nd-sidebar a,
-#nd-sidebar button {
+:is(#nd-sidebar, #nd-sidebar-mobile) :is(a, button) {
   font-weight: 400;
   border-radius: var(--ox-radius-md);
 }
@@ -441,7 +469,7 @@ figure.shiki ::selection,
  * than as a page, and the tracking keeps uppercase from setting tight. The gold
  * active pill still outranks all of it, which is the intended order:
  * item < category < where you are. */
-#nd-sidebar p {
+:is(#nd-sidebar, #nd-sidebar-mobile) p {
   font-size: var(--stella-type-base);
   text-transform: uppercase;
   letter-spacing: 0.075em;
@@ -452,40 +480,51 @@ figure.shiki ::selection,
 /* The active page is a solid gold pill with ink text — the one gold surface
  * in the tree, because the current location IS the signal (same law as the
  * CTA). Identical in both modes: gold on white chrome, gold on obsidian. */
-#nd-sidebar a[data-active="true"] {
+:is(#nd-sidebar, #nd-sidebar-mobile) a[data-active="true"] {
   background: var(--stella-signal);
   color: var(--stella-canvas);
   font-weight: 600;
 }
-#nd-sidebar a[data-active="true"]:hover {
+:is(#nd-sidebar, #nd-sidebar-mobile) a[data-active="true"]:hover {
   background: var(--stella-signal-live);
   color: var(--stella-canvas);
 }
 
-#nd-sidebar [data-radix-scroll-area-viewport] {
+:is(#nd-sidebar, #nd-sidebar-mobile) [data-radix-scroll-area-viewport] {
   scrollbar-width: thin;
 }
 
 /* ── chrome type: the app scale ────────────────────────────────────────────
  *
- * Fumadocs sizes the sidebar and the table of contents with Tailwind's
- * text-sm and text-xs. Those classes read Tailwind's --text-sm and --text-xs,
- * which are fixed at 14px and 12px. Inside the chrome the two read the app
- * scale's body and micro steps instead, each with its line height, so a theme
- * change reaches every entry.
+ * Fumadocs sizes its docs chrome with Tailwind's text-xs, text-sm, and
+ * text-lg. Those classes read Tailwind's --text-xs, --text-sm, and --text-lg,
+ * which are fixed at 12px, 14px, and 18px. Inside the docs they read the app
+ * scale's micro, body, and h4 steps instead, each with its line height, so a
+ * theme change reaches every entry.
+ *
+ * The app scale has no 18px step. text-lg sets two things here: the page
+ * description under the title, and the search field. h4 keeps the
+ * description reading as a lead above the 14px body. It also keeps the search
+ * field at 16px, the size under which a phone's browser zooms the page when
+ * the field takes focus.
  *
  * The hooks are the ones Fumadocs' own themes style (neutral.css, solar.css):
  * #nd-sidebar and #nd-toc on a wide screen, #nd-sidebar-mobile and
  * [data-toc-popover] on a narrow one. Its docs, notebook, and flux layouts
- * all render them. These rules name no class inside the chrome, so a
- * Fumadocs upgrade that changes the markup, or adds an entry with text-sm,
- * still sets every entry on the scale. Overriding a Fumadocs class by
- * selector would break on the first markup change. */
-:is(#nd-sidebar, #nd-sidebar-mobile, #nd-toc, [data-toc-popover]) {
-  --text-sm: var(--ox-a-body);
-  --text-sm--line-height: var(--ox-a-body-leading);
+ * all render them. #nd-page is the article, which holds the breadcrumb, the
+ * description, callouts, and the previous and next links. The search dialog
+ * renders outside the layout, so it is found by its role. These rules name
+ * no class inside the chrome, so a Fumadocs upgrade that changes the markup,
+ * or adds an entry with one of these sizes, still sets every entry on the
+ * scale. Overriding a Fumadocs class by selector would break on the first
+ * markup change. */
+:is(#nd-sidebar, #nd-sidebar-mobile, #nd-toc, [data-toc-popover], #nd-page, [role="dialog"]) {
   --text-xs: var(--ox-a-micro);
   --text-xs--line-height: var(--ox-a-micro-leading);
+  --text-sm: var(--ox-a-body);
+  --text-sm--line-height: var(--ox-a-body-leading);
+  --text-lg: var(--ox-a-h4);
+  --text-lg--line-height: var(--ox-a-h4-leading);
 }
 
 /* Each panel reads the body step itself. The phone drawer needs this most:
@@ -694,6 +733,13 @@ figure.shiki ::selection,
 .sc-tool-when-label {
   color: var(--color-fd-foreground);
   font-weight: 500;
+}
+
+/* A card's default value sits on a micro line, the smallest step of the app
+ * scale. Inline code's 0.9em would set it at 10.8px, under the 11px badges,
+ * so here the code keeps its line's size. */
+.sc-tool-when code {
+  font-size: inherit;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1158,8 +1204,8 @@ article .deck-shot {
  * block is a window into it, not a panel of the page. That means the dark
  * shiki theme renders in light mode too — the `--shiki-dark` override below
  * beats fumadocs' light-mode rule by source order (same selector, later
- * import). Inline code is untouched: it sits in running prose and stays
- * theme-aware.
+ * import). Inline code keeps the page ground, because it sits in running
+ * prose. Its size and corner are set in the typography section.
  *
  * The fd tokens are re-scoped inside the figure so line numbers, highlighted
  * lines, and focus rings resolve against ink in both modes.
@@ -1179,6 +1225,15 @@ figure.shiki {
   --color-fd-primary: var(--stella-signal);
   --color-fd-muted-foreground: var(--stella-text-2);
   --color-fd-ring: var(--stella-signal);
+}
+
+/* Code reads the app body step, the size of the `.term` transcripts above.
+ * Fumadocs sets the code at a fixed 13px (text-[0.8125rem] on the scroll
+ * area), which sits halfway between the micro and body steps, so the
+ * terminal panels break the tie. */
+figure.shiki pre {
+  font-size: var(--ox-a-body);
+  line-height: var(--ox-a-body-leading);
 }
 
 /* The title bar, when a block has one — the `.term-head` look. */
