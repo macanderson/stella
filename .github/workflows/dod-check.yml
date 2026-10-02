@@ -36,4 +36,4 @@ permissions:
 
 jobs:
   dod:
-    uses: oxageninc/product/.github/workflows/dod-check.yml@a44c54151988534878534c8d828030b2a16432d1 # oxagen main, #2551
+    uses: oxageninc/product/.github/workflows/dod-check.yml@c7226a6179e4866ea178ab8b6ba57a786ffa4dec # oxagen main, #5183

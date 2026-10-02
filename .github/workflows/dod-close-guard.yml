@@ -16,9 +16,12 @@ on:
   issues:
     types: [closed]
 
+# The shared workflow checks out its tooling, so it needs contents: read.
+# A called workflow gets no permission that this file does not grant.
 permissions:
+  contents: read
   issues: write
 
 jobs:
   guard:
-    uses: oxageninc/product/.github/workflows/dod-close-guard.yml@a44c54151988534878534c8d828030b2a16432d1 # oxagen main, #2643
+    uses: oxageninc/product/.github/workflows/dod-close-guard.yml@c7226a6179e4866ea178ab8b6ba57a786ffa4dec # oxagen main, #5183
