@@ -23,8 +23,9 @@ import { test } from "node:test";
  *
  * The brand sync now writes the roles from the kit into
  * `src/brand/house-type.css`, beside the loader it copies, so the two change
- * together. This test holds that: a role that names a variable the loader
- * does not set fails here, whichever stylesheet sets it.
+ * together. This test holds that, whichever stylesheet sets the role. A role
+ * fails here when it reads a variable the loader does not set, or when it
+ * reads no loader variable at all.
  */
 
 const SITE = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -47,7 +48,13 @@ test("every font role reads a variable the kit's next/font loader sets", () => {
     for (const m of css.matchAll(/(--font-[\w-]+)\s*:\s*([^;]+);/g)) {
       if (!ROLES.includes(m[1])) continue;
       set.add(m[1]);
-      for (const ref of m[2].matchAll(/var\(\s*(--font-[\w-]+)/g)) {
+      const refs = [...m[2].matchAll(/var\(\s*(--font-[\w-]+)/g)];
+      assert.ok(
+        refs.length > 0,
+        `src/${sheet} sets ${m[1]} to ${m[2].trim()}, which names a face without the loader's variable, ` +
+          "so the face never loads. Let the brand sync set the role in src/brand/house-type.css.",
+      );
+      for (const ref of refs) {
         assert.ok(
           loaded.has(ref[1]),
           `src/${sheet} points ${m[1]} at ${ref[1]}, which src/brand/next-fonts.ts does not set, ` +
