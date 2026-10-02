@@ -535,6 +535,15 @@ figure.shiki ::selection,
   line-height: var(--ox-a-body-leading);
 }
 
+/* The nav title link: the wordmark and "docs". Fumadocs sets it to 15px by
+ * hand in the sidebar (text-[0.9375rem]), and it inherits the page's 16px in
+ * the docs header and the landing page's nav bar. It takes the body step in
+ * all three. The class is set in lib/layout.shared.tsx. */
+.stella-nav-title {
+  font-size: var(--ox-a-body);
+  line-height: var(--ox-a-body-leading);
+}
+
 /* Fumadocs marks each table-of-contents entry `prose`, so code in a heading
  * looks the same as in the page. That also gave each entry the 1.65 line
  * height `.prose` sets for running text. An entry is a link, so it takes the
