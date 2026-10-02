@@ -38,7 +38,10 @@ anywhere, and a `--rl-`-style prefix so the selectors cannot collide.
 `src/app/favicon.ico`, `src/app/icon.svg`, and `src/app/apple-icon.png` mirror
 `docs/brand/pwa/`; the woff2 files under `src/fonts/` mirror
 `docs/brand/fonts/`. `src/brand/` holds the kit's font loader and token sheet,
-verbatim. `scripts/sync-brand-assets.mjs` writes every one of these files from
+verbatim, and `house-type.css`, the kit's `text-m-*` and `text-a-*` type
+classes taken out of its Tailwind sheet. A marketing page such as the landing
+page sizes its text with `text-m-*`, never with Tailwind's `text-sm` or
+`text-lg`. `scripts/sync-brand-assets.mjs` writes every one of these files from
 the kit, so run it when the kit changes and never hand-edit the site's copies.
 The one rendered-from-geometry surface is the `next/og` card in
 `src/app/opengraph-image.tsx`, which draws the lockup from the constants in
