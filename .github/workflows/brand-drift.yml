@@ -8,6 +8,11 @@ name: brand-drift
 # marks, the branding skill stub, and the colour of each Stella token the house
 # palette owns. It writes nothing and renders nothing.
 #
+# The same run reads the site's stylesheets (`GUARDED_CSS` in the script). It
+# fails on a corner, shadow, type size, or page wrap written as a number where
+# a house token should be, and on a token reference that no sheet declares.
+# Each line names the file, the line, and the token to use.
+#
 # The job checks out the kit's `main`, never a pinned commit, so the daily run
 # goes red on the first day the kit moves ahead of this repository. The kit is
 # a public repository, so the checkout needs no token.
@@ -58,11 +63,11 @@ jobs:
         run: |
           if out=$(node scripts/sync-brand-assets.mjs --brand .brand-kit --check 2>&1); then echo "$out"; exit 0; fi
           echo "$out"
-          # Drift fails a push to main, the daily run, and a manual run. A pull request fails only
-          # when it changes a file that differs from the kit, the sync script, or this workflow.
-          # Any other pull request passes with a warning: a kit change is not that pull request's
-          # doing, and the kit's fan-out opens the sync pull request that fixes it
-          # (oxageninc/brand#53).
+          # A finding fails a push to main, the daily run, and a manual run. A pull request fails
+          # only when it changes a file the output names (one that differs from the kit, or a
+          # stylesheet with a literal), the sync script, or this workflow. Any other pull request
+          # passes with a warning: a kit change is not that pull request's doing, and the kit's
+          # fan-out opens the sync pull request that fixes it (oxageninc/brand#53).
           if [ "$EVENT" = pull_request ]; then
             flat=" $(printf '%s' "$out" | tr '\n\t' '  ') "
             touched=""
@@ -72,10 +77,10 @@ jobs:
               case "$flat" in *" $f "*) touched="$f"; break ;; esac
             done < <(git diff --name-only HEAD^1 HEAD)
             if [ -z "$touched" ]; then
-              echo "::warning::The brand files here differ from oxageninc/brand main. This pull request changes none of them, so the check passes. The kit's fan-out opens the sync pull request."
+              echo "::warning::The brand check above names files this pull request does not change, so the check passes. For kit drift, the kit's fan-out opens the sync pull request."
               exit 0
             fi
-            echo "::error::This pull request changes $touched, and the brand files differ from oxageninc/brand main."
+            echo "::error::This pull request changes $touched, and the brand check above names a problem."
           fi
-          echo "::error::Run node scripts/sync-brand-assets.mjs --brand <oxageninc/brand checkout> and commit the result."
+          echo "::error::For a file that differs from the kit, run node scripts/sync-brand-assets.mjs --brand <oxageninc/brand checkout> and commit the result. For a stylesheet line, use the token the line names."
           exit 1

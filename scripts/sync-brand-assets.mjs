@@ -37,6 +37,11 @@
  *    the house colours as data;
  *  - the hex value of every Stella token the house palette owns (`PALETTE`)
  *    in `design/tokens/stella-tokens.json` and its two hand-kept mirrors.
+ *
+ * What `--check` also reads: the site's own stylesheets (`GUARDED_CSS`). A
+ * corner, a shadow, a type size, or a page wrap written there as a number
+ * stays put when the kit's theme changes, so the check names each one with
+ * the house token to use. `LITERALS` lists the values the house rules keep.
  */
 
 import {
@@ -122,6 +127,92 @@ const PALETTE = [
 ];
 const TOKENS_JSON = "design/tokens/stella-tokens.json";
 const TOKEN_SHEETS = [`${WEB}/src/app/tokens.css`, `${KIT}/css/tokens.css`];
+
+/**
+ * The site's stylesheets, held to the house tokens.
+ *
+ * The kit's theme editor sets the corners, the shadows, the type scale, and
+ * the page wrap in `house-tokens.css`, and this script copies that sheet into
+ * the site. A rule that writes one of those values as a number does not move
+ * when the theme does. So `--check` reads each file here and reports a
+ * `border-radius`, `box-shadow`, or `font-size` that sets a length by hand,
+ * and a `max-width` as wide as the house wrap or wider. A narrower
+ * `max-width` is a reading measure and passes.
+ *
+ * It also reports a `--stella-*`, `--st-*`, or `--ox-*` reference that no
+ * sheet declares. A missing token voids the whole declaration, so a border
+ * written with one draws no border at all.
+ *
+ * It is one regex pass over these files. It needs no build and no kit.
+ */
+const GUARDED_CSS = [
+  `${WEB}/src/app/global.css`,
+  `${WEB}/src/app/tokens.css`,
+  `${WEB}/src/app/engine/engine.css`,
+  `${WEB}/src/app/engine/engine-stations.css`,
+  `${WEB}/src/app/releases/releases.css`,
+];
+/** The kit's token sheet as the site loads it. */
+const HOUSE_CSS = `${WEB}/src/brand/house-tokens.css`;
+
+/**
+ * The literal values the house rules keep, each with its reason.
+ *
+ * A value matches after its whitespace is collapsed. An entry with a
+ * `selector` matches only in the rule with exactly that selector. A
+ * percentage never needs an entry: `50%` is a circle and passes.
+ */
+const LITERALS = [
+  { prop: "border-radius", value: "999px", why: "a pill" },
+  {
+    prop: "border-radius",
+    value: "0.125rem",
+    selector: ".eng-tour :focus-visible",
+    why: "a focus ring, which keeps its own shape",
+  },
+  {
+    prop: "border-radius",
+    value: "0.25rem",
+    selector: ".rl-disclosure:focus-visible",
+    why: "a focus ring, which keeps its own shape",
+  },
+  {
+    prop: "border-radius",
+    value: "0.5rem",
+    selector: ".deck-shot-img",
+    why: "the clip around a deck SVG, which draws its own corner (rx 6 in a 680-wide frame)",
+  },
+  {
+    prop: "box-shadow",
+    value: "0 0 0 4px var(--color-fd-background)",
+    selector: ".rl-marker",
+    why: "a ring in the page ground, so the timeline rail stops short of the dot",
+  },
+  {
+    prop: "box-shadow",
+    value: "0 0 0 3px color-mix(in srgb, var(--stella-signal) 22%, transparent)",
+    selector: ".rl-latest-dot",
+    why: "a ring around the dot that marks the latest release",
+  },
+  {
+    prop: "box-shadow",
+    value: "0 0 0 0.35rem color-mix(in srgb, var(--stella-signal) 0%, transparent)",
+    why: "the pulse ring on the intake's live dot, at its widest",
+  },
+  {
+    prop: "font-size",
+    value: "12px",
+    selector: ".sdg .sdg-label",
+    why: "SVG text in viewBox units, which scale with the drawing",
+  },
+  {
+    prop: "font-size",
+    value: "10px",
+    selector: ".sdg .sdg-sub",
+    why: "SVG text in viewBox units, which scale with the drawing",
+  },
+  { prop: "font-size", value: "0.9em", why: "inline code, sized to the line it sits in" },
+];
 
 /** Paths a check found different from the kit, each with an optional note. */
 const drifted = [];
@@ -516,6 +607,127 @@ function skill() {
   }
 }
 
+/** `css` with each comment blanked out, keeping every newline. */
+function uncomment(css) {
+  return css.replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, " "));
+}
+
+/** A length in px, from `12px`, `0.75rem`, or `0.75em` (taken at 16px). */
+function toPx(num, unit) {
+  return unit === "px" ? num : num * 16;
+}
+
+/** Every px, rem, em, or pt length in `value` outside a `var()`, in px. */
+function lengths(value) {
+  const bare = value.replace(/var\(\s*--[\w-]+\s*\)/g, "");
+  return [...bare.matchAll(/(?<![\w.#])-?(\d*\.?\d+)(px|rem|em|pt)\b/g)].map((m) =>
+    toPx(Math.abs(Number(m[1])), m[2]),
+  );
+}
+
+/**
+ * The house steps a suggestion picks from, read from the sheet the site
+ * loads: the radius scale, the two type scales, and the wrap, each in px.
+ */
+function houseSteps() {
+  const css = uncomment(readFileSync(join(REPO, HOUSE_CSS), "utf8"));
+  const decl = new Map([...css.matchAll(/(--ox-[\w-]+)\s*:\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
+  const px = (v) => {
+    const m = /^(\d*\.?\d+)(px|rem)$/.exec(v ?? "");
+    return m ? toPx(Number(m[1]), m[2]) : null;
+  };
+  const base = px(decl.get("--ox-radius-base"));
+  const radius = [];
+  for (const [name, v] of decl) {
+    const m = /^calc\(var\(--ox-radius-base\) \* ([\d.]+)\)$/.exec(v);
+    if (m && base !== null) radius.push([name, base * Number(m[1])]);
+  }
+  const scale = (prefix) =>
+    [...decl]
+      .filter(([name]) => new RegExp(`^--ox-${prefix}-(h[1-4]|body|micro)$`).test(name))
+      .map(([name, v]) => [name, px(v)]);
+  return { radius, app: scale("a"), marketing: scale("m"), wrap: px(decl.get("--ox-wrap")) };
+}
+
+/** The name in `steps` whose px value is closest to `target`. */
+function nearest(steps, target) {
+  let best = steps[0];
+  for (const s of steps) if (Math.abs(s[1] - target) < Math.abs(best[1] - target)) best = s;
+  return best[0];
+}
+
+/** What a literal in `prop` should read instead. */
+function tokenFor(prop, value, steps) {
+  const px = lengths(value)[0] ?? 0;
+  if (prop === "border-radius") {
+    return `var(--ox-radius) on a card, panel, or input, or var(${nearest(steps.radius, px)}) on a control (the nearest step of the house scale)`;
+  }
+  if (prop === "box-shadow") {
+    return "no shadow on a card or panel at rest, var(--ox-shadow-pop) under a floating surface on ink (--ox-shadow-pop-ink on paper), or var(--ox-shadow-ui) under a control";
+  }
+  if (prop === "font-size") {
+    return `var(${nearest(steps.app, px)}) on a docs or data page, or var(${nearest(steps.marketing, px)}) on a marketing page`;
+  }
+  return "var(--ox-wrap) for the page wrap; a wider wrap goes in LITERALS with its role";
+}
+
+/**
+ * Every value in `GUARDED_CSS` that should read a house token, and every
+ * token reference no sheet declares, as one line each.
+ *
+ * Each line starts with the file's path and a space. brand-drift.yml finds
+ * the files a pull request changed by that path, so keep it a separate word.
+ */
+function cssFindings() {
+  const steps = houseSteps();
+  const sheets = GUARDED_CSS.map((path) => [path, uncomment(readFileSync(join(REPO, path), "utf8"))]);
+  const declared = new Set();
+  for (const [, css] of [...sheets, [HOUSE_CSS, uncomment(readFileSync(join(REPO, HOUSE_CSS), "utf8"))]]) {
+    for (const m of css.matchAll(/(--[\w-]+)\s*:/g)) declared.add(m[1]);
+  }
+  const squash = (s) => s.replace(/\s+/g, " ").trim();
+  const lineOf = (css, at) => css.slice(0, at).split("\n").length;
+  // A property, or a custom property that carries the same kind of value:
+  // `--stella-shadow-card` and `--stella-type-xs` hide a literal behind a name.
+  const decls =
+    /(^|[{;\s])(border(?:-(?:top|bottom|start|end)-(?:left|right|start|end))?-radius|box-shadow|font-size|max-width|--[\w-]*(?:radius|shadow|type|wrap)[\w-]*)\s*:\s*([^;{}]+)/g;
+  const kindOf = (name) =>
+    /radius/.test(name)
+      ? "border-radius"
+      : /shadow/.test(name)
+        ? "box-shadow"
+        : /type|font-size/.test(name)
+          ? "font-size"
+          : "max-width";
+  const out = [];
+  for (const [path, css] of sheets) {
+    for (const m of css.matchAll(decls)) {
+      const at = m.index + m[1].length;
+      const prop = kindOf(m[2]);
+      const value = squash(m[3]);
+      const found = lengths(value);
+      const literal =
+        prop === "max-width"
+          ? steps.wrap !== null && found.some((px) => px >= steps.wrap)
+          : found.length > 0;
+      if (!literal) continue;
+      const open = css.lastIndexOf("{", at);
+      const from = Math.max(css.lastIndexOf("}", open - 1), css.lastIndexOf("{", open - 1), css.lastIndexOf(";", open - 1));
+      const selector = squash(css.slice(from + 1, open));
+      const kept = LITERALS.some(
+        (l) => l.prop === prop && l.value === value && (l.selector === undefined || l.selector === selector),
+      );
+      if (kept) continue;
+      out.push(`${path} line ${lineOf(css, at)}: ${m[2]}: ${value} in ${selector}. Use ${tokenFor(prop, value, steps)}.`);
+    }
+    for (const m of css.matchAll(/var\(\s*(--(?:stella|st|ox)-[\w-]+)/g)) {
+      if (declared.has(m[1])) continue;
+      out.push(`${path} line ${lineOf(css, m.index)}: var(${m[1]}) is declared in no stylesheet the site loads. Use a token that exists.`);
+    }
+  }
+  return out;
+}
+
 marks();
 assets();
 typeAndTokens();
@@ -524,12 +736,20 @@ skill();
 
 const kit = `the house kit ${house.version}`;
 if (CHECK) {
+  const findings = cssFindings();
   if (drifted.length) {
     console.error(`brand: ${drifted.length} file(s) differ from ${kit} at ${BRAND}:`);
     for (const f of drifted) console.error(`  ${f}`);
-    process.exit(1);
   }
-  console.log(`brand: every synced file matches ${kit}.`);
+  if (findings.length) {
+    console.error(
+      `brand: ${findings.length} value(s) in the site's stylesheets do not read a house token. ` +
+        "Use the token each line names, or add the value to LITERALS in scripts/sync-brand-assets.mjs with its reason:",
+    );
+    for (const f of findings) console.error(`  ${f}`);
+  }
+  if (drifted.length || findings.length) process.exit(1);
+  console.log(`brand: every synced file matches ${kit}, and the site's stylesheets read the house tokens.`);
 } else {
   console.log(
     written.length
