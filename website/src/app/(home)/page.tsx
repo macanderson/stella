@@ -68,16 +68,18 @@ const softwareJsonLd = {
  * providers it speaks to, and the four doors into the docs. Everything else is
  * one click away and better written there.
  *
- * Brand notes (docs/brand): the name is lowercase always; the comet flies
- * left→right into the wordmark; gold is the signal (the lockup, the prompt,
- * the CTA) and never the surface.
+ * Brand notes (docs/brand): the name is lowercase always; the asterisk in the
+ * wordmark is the only mark; gold is the signal (the lockup, the prompt, the
+ * CTA) and never the surface.
  *
  * Type: this is a marketing page, so every size comes from the kit's
  * marketing scale. Paragraphs take text-m-body and small text takes
  * text-m-micro, both from src/brand/house-type.css. text-m-micro sets the
- * code face, so small text that people read adds font-sans. The brand check
- * (`scripts/sync-brand-assets.mjs --check`) fails on a Tailwind size class
- * such as text-sm here.
+ * code face, so small text that people read adds font-sans. The h1 and each
+ * section's h2 take the display face, Space Grotesk, from the heading rule in
+ * global.css. The brand check (`scripts/sync-brand-assets.mjs --check`) fails
+ * on a Tailwind size class such as text-sm here, and on a face class on a
+ * heading.
  */
 
 /**
@@ -308,7 +310,7 @@ export default function HomePage() {
             Override any base URL, key, or model in{" "}
             <Link
               href="/docs/configuration/settings"
-              className="font-mono text-[0.9em] underline underline-offset-4"
+              className="font-mono underline underline-offset-4"
             >
               settings.json
             </Link>

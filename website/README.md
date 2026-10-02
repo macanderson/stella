@@ -9,9 +9,11 @@ Built with [Next.js](https://nextjs.org) (App Router) + [Fumadocs](https://fumad
 ## Brand
 
 House system v7.0 (`design/tokens/stella-tokens.json`): obsidian `#09090B`,
-white, neutral greys, one gold `#D4AF37` (`#8A7223` on white). Faces: Aeonik
-for every heading, body, and UI, Space Grotesk for the `stella*` wordmark, and
-Monaspace Neon for code. The kit sets the faces, and the sync carries them here. Rules: lowercase always; gold is the signal, never the surface;
+white, neutral greys, one gold `#D4AF37` (`#8A7223` on white). Faces: Space
+Grotesk for h1 to h3 and the `stella*` wordmark, Aeonik for body, UI, and h4
+to h6, and Monaspace Neon for code. The site is a customer site, so its body
+is 16px and no text is under 14px. The kit sets the faces and the sizes, and
+the sync carries them here. Rules: lowercase always; gold is the signal, never the surface;
 gold on white uses the deep shade (metal on white is 2.1:1).
 
 **`docs/brand/` is normative** (start with its `brand-guidelines.html`). Three

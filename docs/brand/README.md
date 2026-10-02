@@ -56,9 +56,8 @@ files, verbatim. `css/tokens.css` imports `css/house-tokens.css` for its
 corner scale, so keep the two files together.
 
 **The faces are the house's three.** Space Grotesk sets the wordmarks and h1
-to h3, Geist sets the text, and Monaspace Neon sets code and terminal
-transcripts. JetBrains Mono is not a house face, and nothing on the site loads
-the copy in `fonts/`.
+to h3, Aeonik sets the text and h4 to h6, and Monaspace Neon sets code and
+terminal transcripts. No text is set under 14px.
 
 ## What is here
 
@@ -67,7 +66,7 @@ logo/svg/     the wordmark and the asterisk: adaptive · dark · light · mono �
 pwa/          favicons, app icons, maskables, the ICO, the manifest snippet
 spinners/     the house motion — animated SVG, no script
 social/       avatar · x · linkedin · youtube · open graph
-fonts/        the three house faces and JetBrains Mono, with licences
+fonts/        the three house faces, with licences
 css/          tokens.css (mirrors the JSON) · house-tokens.css · house-tokens.json · house-tailwind.css
 prompts/      the design-system prompts
 site/         static page mocks

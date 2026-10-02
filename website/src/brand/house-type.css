@@ -7,7 +7,9 @@
  *
  * The @theme block points each font role at the variable that src/brand/
  * next-fonts.ts sets on <html>, so a face the kit changes reaches the site
- * with no edit here. Each class sets a size, a line height, a face, and a
+ * with no edit here. --font-heading reads the text face here, and global.css
+ * points it at the display face, because stella.oxagen.sh is a customer
+ * site. Each class sets a size, a line height, a face, and a
  * weight. The size and line height read the --ox-m-* and --ox-a-* tokens in
  * house-tokens.css, and the face reads a role below. text-m-micro and
  * text-a-micro set the code face.

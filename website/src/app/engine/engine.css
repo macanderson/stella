@@ -82,6 +82,9 @@
   min-height: 100vh;
   background: var(--eng-bg);
   color: var(--eng-fg);
+  /* The tour is a walk inside a terminal, so its text is set in the code
+   * face. Its h1 to h3 take the display face from the heading rule in
+   * global.css, as on every page of this customer site. */
   font-family: var(--font-mono);
   font-size: var(--stella-type-base);
   line-height: 1.65;
@@ -447,7 +450,7 @@
   font-size: clamp(var(--ox-m-h3), 3.6vw, var(--ox-m-h2));
   line-height: 1.1;
   letter-spacing: -0.03em;
-  font-weight: 800;
+  font-weight: 700;
   text-wrap: balance;
   max-width: 26ch;
 }

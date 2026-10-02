@@ -7,10 +7,11 @@ import { SpeedInsights } from "@vercel/speed-insights/next";
 /*
  * The house faces load through the kit's own `next/font` loader, which
  * `scripts/sync-brand-assets.mjs` copies to `src/brand/next-fonts.ts` with the
- * font files beside it in `src/fonts/`. Aeonik sets every heading and
- * everything read, Monaspace Neon sets code, and Space Grotesk sets the
- * wordmark. `src/brand/house-type.css`, which the same sync writes, maps the
- * loader's variables onto the site's font roles.
+ * font files beside it in `src/fonts/`. Space Grotesk sets h1 to h3 and the
+ * wordmark, Aeonik sets everything else read, and Monaspace Neon sets code.
+ * `src/brand/house-type.css`, which the same sync writes, maps the loader's
+ * variables onto the site's font roles, and global.css points the heading
+ * role at the display face.
  */
 import { fontVariables } from "@/brand/next-fonts";
 import { HOUSE_COLORS } from "@/components/brand-marks.generated";

@@ -76,25 +76,29 @@
   --st-red-ink: #952141;
 
   /* ---- typography ------------------------------------------------------ */
-  /* JetBrains Mono is the brand voice — the product lives in a terminal,
-     so the brand speaks in monospace. 800 for display, 700 for headings,
-     500 for UI, 400 for body & code. */
-  --stella-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo,
-      Consolas, "Liberation Mono", monospace;
-  --stella-font-display-weight: 800;
+  /* The house type rule of 2026-10-02, read from house-tokens.css. Space
+     Grotesk sets h1 to h3 on stella.oxagen.sh and its docs, a customer site.
+     Aeonik sets the text and h4 to h6, and Monaspace Neon sets code and
+     terminal transcripts. Space Grotesk ships 400 to 700, so display and
+     headings are 700. No step is under 14px: a badge or an overline stands
+     apart by case, tracking, or weight. */
+  --stella-font-display: var(--ox-font-display);
+  --stella-font-sans: var(--ox-font);
+  --stella-font-mono: var(--ox-font-mono);
+  --stella-font-display-weight: 700;
   --stella-font-heading-weight: 700;
   --stella-font-ui-weight: 500;
   --stella-font-body-weight: 400;
 
-  --stella-text-xs: 0.75rem;     /* 12 */
-  --stella-text-sm: 0.8125rem;   /* 13 */
-  --stella-text-base: 0.875rem;  /* 14 — terminal-native default */
-  --stella-text-md: 1rem;        /* 16 */
-  --stella-text-lg: 1.25rem;     /* 20 */
-  --stella-text-xl: 1.5rem;      /* 24 */
-  --stella-text-2xl: 1.875rem;   /* 30 */
-  --stella-text-3xl: 2.375rem;   /* 38 */
-  --stella-text-4xl: 3rem;       /* 48 */
+  --stella-text-xs: var(--ox-a-micro);    /* 14, the floor */
+  --stella-text-sm: var(--ox-a-body);     /* 14 */
+  --stella-text-base: var(--ox-m-body);   /* 16, a customer site's body */
+  --stella-text-md: var(--ox-a-h4);       /* 16 */
+  --stella-text-lg: var(--ox-a-h3);       /* 20 */
+  --stella-text-xl: var(--ox-a-h2);       /* 24 */
+  --stella-text-2xl: var(--ox-m-h3);      /* 28 */
+  --stella-text-3xl: var(--ox-m-h2);      /* 40 */
+  --stella-text-4xl: var(--ox-m-h1);      /* 72 */
   --stella-tracking-tight: -0.02em;   /* display & wordmark */
   --stella-tracking-wide: 0.14em;     /* overlines, tags */
   --stella-leading-tight: 1.15;

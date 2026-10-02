@@ -46,7 +46,7 @@
   font-size: clamp(var(--ox-m-h2), 8vw, var(--ox-m-h1));
   line-height: 0.95;
   letter-spacing: -0.03em;
-  font-weight: 800;
+  font-weight: 700;
   margin: 0;
 }
 
@@ -63,7 +63,7 @@
 }
 .rl-lede code,
 .rl-foot code {
-  font-size: 0.9em;
+  font-size: max(0.9em, var(--ox-a-micro));
   padding: 0.1em 0.35em;
   border-radius: var(--ox-radius-sm);
   background: var(--color-fd-muted);
@@ -380,7 +380,7 @@
   font-weight: 600;
 }
 .rl-code {
-  font-size: 0.9em;
+  font-size: max(0.9em, var(--ox-a-micro));
   padding: 0.1em 0.35em;
   border-radius: var(--ox-radius-sm);
   background: var(--color-fd-muted);

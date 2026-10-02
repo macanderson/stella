@@ -81,26 +81,48 @@
 @source "../../node_modules/fumadocs-ui/dist/**/*.js";
 
 /* The faces load through src/brand/next-fonts.ts. The font roles
- * (--font-sans, --font-display, --font-mono, and --font-wordmark) come from
- * the kit, in src/brand/house-type.css, so this file names no face. By the
- * house rule of 2026-10-02, Aeonik sets every heading and everything read,
- * Monaspace Neon sets code and terminal transcripts, and Space Grotesk sets
- * only a wordmark typed as text (--font-wordmark). */
+ * (--font-sans, --font-display, --font-heading, --font-mono, and
+ * --font-wordmark) come from the kit, in src/brand/house-type.css, so this
+ * file names no face. By the house type rule of 2026-10-02, Aeonik sets the
+ * text and every h4 to h6, Monaspace Neon sets code and terminal transcripts,
+ * and Space Grotesk sets h1 to h3 and a wordmark typed as text.
+ *
+ * stella.oxagen.sh is a customer site, the docs included, so its h1 to h3
+ * take the display face. The kit's --font-heading reads the text face, as an
+ * app's headings do, and the line below points it at the display face, as
+ * the kit says a marketing or docs site should. The brand check
+ * (scripts/sync-brand-assets.mjs --check) fails without that line, and on a
+ * rule that sets a heading in another face. */
+:root {
+  --font-heading: var(--font-display);
+
+  /* Docs pages read one step above the app scale: each size is the app step
+   * times 8/7, so the body is 16px, the size of a customer site's body. The
+   * product docs (docs.oxagen.sh) take the same step, so the two docs sites
+   * read the same sizes. */
+  --docs-step: calc(8 / 7);
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-heading);
+}
+
 @theme {
   /* The type scale for the docs, the releases timeline, and the terminal
    * panels: the kit's app scale (--ox-a-*), under the names this site's rules
    * already use. A marketing heading or lead reads the kit's marketing scale
    * (--ox-m-*) directly. The theme editor changes both, and every rule here
-   * follows.
+   * follows. A docs page multiplies its steps by --docs-step.
    *
-   * sm and base are one size now, the app body. sm was 13px, which the house
-   * scale does not have. 2xs stays 11px for badges and meta, a size the house
-   * scale also lacks, so it is set as a share of the app micro size and moves
-   * with it. */
-  --stella-type-2xs: calc(var(--ox-a-micro) * 11 / 12); /* 11px: meta, badges */
-  --stella-type-xs: var(--ox-a-micro); /* 12px: captions, overlines */
-  --stella-type-sm: var(--ox-a-body); /* 14px: secondary UI, card body */
-  --stella-type-base: var(--ox-a-body); /* 14px: prose, the terminal default */
+   * No step is under the kit's 14px floor. xs and 2xs are both the app micro
+   * step: badges, meta, and captions stand apart by case, tracking, weight,
+   * or colour, never by a smaller size. sm and base are both the app body. */
+  --stella-type-2xs: var(--ox-a-micro); /* 14px: meta, badges */
+  --stella-type-xs: var(--ox-a-micro); /* 14px: captions, overlines */
+  --stella-type-sm: var(--ox-a-body); /* 14px: secondary UI, terminal panels */
+  --stella-type-base: var(--ox-a-body); /* 14px: the terminal default */
   --stella-type-md: var(--ox-a-h4); /* 16px: h4, a card name */
   --stella-type-lg: var(--ox-a-h3); /* 20px: h3 */
   --stella-type-xl: var(--ox-a-h2); /* 24px: h2 */
@@ -238,18 +260,16 @@ figure.shiki ::selection,
 /* ═══════════════════════════════════════════════════════════════════════════
  * Typography: three faces, one scale, one rhythm, one measure
  *
- * Geist sets every heading, so hierarchy comes from the size and the weight.
- * Each docs heading takes its step of the kit's app scale and that step's
- * line height. Headings are 700. Only the hero display steps up to 800.
+ * Space Grotesk sets h1 to h3, through the bare heading rule near the top of
+ * this file, and h4 to h6 keep the Aeonik text around them. Each docs size is
+ * its step of the kit's app scale times --docs-step, with that step's line
+ * height, so the body reads 16px and the headings keep their proportions.
+ * Headings are 700, the heaviest weight the kit ships for Space Grotesk.
  * ═════════════════════════════════════════════════════════════════════════ */
 
 .prose {
-  font-size: var(--stella-type-base);
+  font-size: calc(var(--ox-a-body) * var(--docs-step));
   line-height: 1.65;
-}
-
-.prose :is(h1, h2, h3, h4, h5, h6) {
-  font-family: var(--font-display);
 }
 
 .prose :is(h1, h2, h3, h4, h5, h6) {
@@ -260,27 +280,27 @@ figure.shiki ::selection,
 }
 
 .prose h1 {
-  font-size: var(--stella-type-2xl);
+  font-size: calc(var(--ox-a-h1) * var(--docs-step));
   line-height: var(--ox-a-h1-leading);
   margin-bottom: calc(var(--stella-rhythm) * 2);
 }
 
 .prose h2 {
-  font-size: var(--stella-type-xl);
+  font-size: calc(var(--ox-a-h2) * var(--docs-step));
   line-height: var(--ox-a-h2-leading);
   margin-top: calc(var(--stella-rhythm) * 7);
   margin-bottom: calc(var(--stella-rhythm) * 2);
 }
 
 .prose h3 {
-  font-size: var(--stella-type-lg);
+  font-size: calc(var(--ox-a-h3) * var(--docs-step));
   line-height: var(--ox-a-h3-leading);
   margin-top: calc(var(--stella-rhythm) * 5);
   margin-bottom: calc(var(--stella-rhythm) * 1.5);
 }
 
 .prose h4 {
-  font-size: var(--stella-type-md);
+  font-size: calc(var(--ox-a-h4) * var(--docs-step));
   line-height: var(--ox-a-h4-leading);
   margin-top: calc(var(--stella-rhythm) * 4);
   margin-bottom: var(--stella-rhythm);
@@ -326,7 +346,8 @@ figure.shiki ::selection,
 }
 
 /* Inline code sizes to the line it sits in, so code in a heading, a table,
- * a callout, or a table of contents entry keeps the same share of its text.
+ * a callout, or a table of contents entry keeps the same share of its text,
+ * and never drops under the app micro step, the kit's 14px floor.
  * Fumadocs' typography preset fixes it at 13px with a 5px corner. The corner
  * takes the house scale's small step, the nearest one to 5px.
  *
@@ -334,7 +355,7 @@ figure.shiki ::selection,
  * style (.sc-tool-name, later in this file) still wins. Code inside a code
  * block, and anything Fumadocs marks not-prose, is left alone. */
 .prose :where(code):not(:where(pre *, .not-prose *)) {
-  font-size: 0.9em;
+  font-size: max(0.9em, var(--ox-a-micro));
   border-radius: var(--ox-radius-sm);
 }
 
@@ -357,12 +378,14 @@ figure.shiki ::selection,
 }
 
 /* A table is rows of data, not a card. Horizontal rules only — the panel,
- * radius, and vertical grid Fumadocs draws around it are all decoration. */
+ * radius, and vertical grid Fumadocs draws around it are all decoration. A
+ * table reads at the body size: Fumadocs sets 0.875em, which falls off the
+ * scale. */
 .prose table {
   border: 0;
   background: transparent;
   border-radius: 0;
-  font-size: var(--stella-type-sm);
+  font-size: calc(var(--ox-a-body) * var(--docs-step));
   border-collapse: collapse;
 }
 .prose :is(th, td) {
@@ -386,7 +409,7 @@ figure.shiki ::selection,
  * takes the h1 step's line height as well as its size. Fumadocs sets only a
  * size, so the title inherited the page's 1.5. */
 #nd-page h1:first-of-type {
-  font-size: var(--stella-type-2xl);
+  font-size: calc(var(--ox-a-h1) * var(--docs-step));
   line-height: var(--ox-a-h1-leading);
   letter-spacing: -0.02em;
 }
@@ -461,12 +484,12 @@ figure.shiki ::selection,
  * semibold, where an item is muted and regular. That inverts the usual "heading
  * is quiet" instinct on purpose — the items recede as a field, and the thing
  * that has to survive that recession is the label telling you which part of the
- * tree you are in. Uppercase at the app body size reads as a category rather
- * than as a page, and the tracking keeps uppercase from setting tight. The gold
- * active pill still outranks all of it, which is the intended order:
+ * tree you are in. Uppercase at the sidebar's own size reads as a category
+ * rather than as a page, and the tracking keeps uppercase from setting tight.
+ * The gold active pill still outranks all of it, which is the intended order:
  * item < category < where you are. */
 :is(#nd-sidebar, #nd-sidebar-mobile) p {
-  font-size: var(--stella-type-base);
+  font-size: calc(var(--ox-a-body) * 15 / 14);
   text-transform: uppercase;
   letter-spacing: 0.075em;
   font-weight: 600;
@@ -490,19 +513,19 @@ figure.shiki ::selection,
   scrollbar-width: thin;
 }
 
-/* ── chrome type: the app scale ────────────────────────────────────────────
+/* ── chrome type: the app scale, one step up ───────────────────────────────
  *
  * Fumadocs sizes its docs chrome with Tailwind's text-xs, text-sm, and
  * text-lg. Those classes read Tailwind's --text-xs, --text-sm, and --text-lg,
  * which are fixed at 12px, 14px, and 18px. Inside the docs they read the app
- * scale's micro, body, and h4 steps instead, each with its line height, so a
- * theme change reaches every entry.
+ * scale's micro, body, and h4 steps instead, each times --docs-step and with
+ * its line height, so a theme change reaches every entry. That covers the
+ * breadcrumb, callouts, the previous and next links, and the search dialog.
  *
- * The app scale has no 18px step. text-lg sets two things here: the page
- * description under the title, and the search field. h4 keeps the
- * description reading as a lead above the 14px body. It also keeps the search
- * field at 16px, the size under which a phone's browser zooms the page when
- * the field takes focus.
+ * text-lg sets two things here: the page description under the title, and
+ * the search field. The h4 step keeps the description reading as a lead
+ * above the 16px body. It also keeps the search field above 16px, the size
+ * under which a phone's browser zooms the page when the field takes focus.
  *
  * The hooks are the ones Fumadocs' own themes style (neutral.css, solar.css):
  * #nd-sidebar and #nd-toc on a wide screen, #nd-sidebar-mobile and
@@ -515,37 +538,39 @@ figure.shiki ::selection,
  * scale. Overriding a Fumadocs class by selector would break on the first
  * markup change. */
 :is(#nd-sidebar, #nd-sidebar-mobile, #nd-toc, [data-toc-popover], #nd-page, [role="dialog"]) {
-  --text-xs: var(--ox-a-micro);
+  --text-xs: calc(var(--ox-a-micro) * var(--docs-step));
   --text-xs--line-height: var(--ox-a-micro-leading);
-  --text-sm: var(--ox-a-body);
+  --text-sm: calc(var(--ox-a-body) * var(--docs-step));
   --text-sm--line-height: var(--ox-a-body-leading);
-  --text-lg: var(--ox-a-h4);
+  --text-lg: calc(var(--ox-a-h4) * var(--docs-step));
   --text-lg--line-height: var(--ox-a-h4-leading);
 }
 
-/* Each panel reads the body step itself. The phone drawer needs this most:
- * Fumadocs sets it to 15px by hand (text-[0.9375rem]), a size the house
- * scale lacks, so it takes the body step like the wide sidebar. */
-:is(#nd-sidebar, #nd-sidebar-mobile, #nd-toc, [data-toc-popover]) {
-  font-size: var(--ox-a-body);
+/* The sidebar, the phone drawer, the table of contents, and its title read
+ * 15px, the app body times 15/14, as on docs.oxagen.sh: a step under the
+ * 16px page, so the chrome recedes and stays readable. The phone drawer
+ * needs this most: Fumadocs sets it to 15px by hand (text-[0.9375rem]), so it
+ * followed no theme. */
+:is(#nd-sidebar, #nd-sidebar-mobile, #nd-toc, [data-toc-popover], #toc-title) {
+  font-size: calc(var(--ox-a-body) * 15 / 14);
   line-height: var(--ox-a-body-leading);
 }
 
 /* The nav title link: the wordmark and "docs". Fumadocs sets it to 15px by
  * hand in the sidebar (text-[0.9375rem]), and it inherits the page's 16px in
- * the docs header and the landing page's nav bar. It takes the body step in
- * all three. The class is set in components/nav-title.tsx. */
+ * the docs header and the landing page's nav bar. It takes the sidebar's
+ * size in all three. The class is set in components/nav-title.tsx. */
 .stella-nav-title {
-  font-size: var(--ox-a-body);
+  font-size: calc(var(--ox-a-body) * 15 / 14);
   line-height: var(--ox-a-body-leading);
 }
 
 /* Fumadocs marks each table-of-contents entry `prose`, so code in a heading
  * looks the same as in the page. That also gave each entry the 1.65 line
  * height `.prose` sets for running text. An entry is a link, so it takes the
- * body step's line height. */
+ * body step's line height, at the page's 16px, as on docs.oxagen.sh. */
 :is(#nd-toc, [data-toc-popover]) .prose {
-  font-size: var(--ox-a-body);
+  font-size: calc(var(--ox-a-body) * var(--docs-step));
   line-height: var(--ox-a-body-leading);
 }
 
@@ -558,6 +583,10 @@ figure.shiki ::selection,
  * rule separates it from its neighbour and the heading names it. Grouping is
  * also carried by the markup, so the rule is decorative and never the sole
  * cue.
+ *
+ * A card's title and body read the page's 16px body size, as the prose
+ * around it does. Its meta lines and badges sit at the app micro step, the
+ * kit's 14px floor, and stand apart by colour, case, and tracking.
  * ═════════════════════════════════════════════════════════════════════════ */
 
 .sc-grid {
@@ -584,7 +613,7 @@ figure.shiki ::selection,
   padding: calc(var(--stella-rhythm) * 2) calc(var(--stella-rhythm) * 2)
     calc(var(--stella-rhythm) * 2.5) 0;
   border-bottom: 1px solid var(--color-fd-border);
-  font-size: var(--stella-type-sm);
+  font-size: calc(var(--ox-a-body) * var(--docs-step));
   line-height: 1.6;
   container-type: inline-size;
 }
@@ -621,7 +650,7 @@ figure.shiki ::selection,
 
 .sc-card-title {
   font-weight: 700;
-  font-size: var(--stella-type-base);
+  font-size: calc(var(--ox-a-body) * var(--docs-step));
   letter-spacing: -0.01em;
   color: var(--color-fd-foreground);
   min-width: 0;
@@ -718,9 +747,10 @@ figure.shiki ::selection,
   border-inline-start-color: var(--stella-warning);
 }
 
+/* A tool's name is code, so it takes the code blocks' 15px. */
 .sc-tool-name {
   font-family: var(--font-mono);
-  font-size: var(--stella-type-sm);
+  font-size: calc(var(--ox-a-body) * 15 / 14);
   font-weight: 700;
   color: var(--color-fd-foreground);
   overflow-wrap: anywhere;
@@ -738,13 +768,6 @@ figure.shiki ::selection,
 .sc-tool-when-label {
   color: var(--color-fd-foreground);
   font-weight: 500;
-}
-
-/* A card's default value sits on a micro line, the smallest step of the app
- * scale. Inline code's 0.9em would set it at 10.8px, under the 11px badges,
- * so here the code keeps its line's size. */
-.sc-tool-when code {
-  font-size: inherit;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -797,12 +820,13 @@ figure.shiki ::selection,
   mask-image: linear-gradient(to bottom, black, transparent 85%);
 }
 
-/* Overline: gold star + wide-tracked uppercase micro-type, per the kit. The
- * landing page is a marketing page, so this and the two rules after it read
- * the kit's marketing scale. */
+/* Overline: gold star + wide-tracked uppercase micro-type, per the kit. Each
+ * one is a section's h2, so it takes the heading face, and its case,
+ * tracking, and size set it apart. The landing page is a marketing page, so
+ * this and the two rules after it read the kit's marketing scale. */
 .lp-eyebrow {
   display: block;
-  font-family: var(--font-mono);
+  font-family: var(--font-heading);
   font-size: var(--ox-m-micro);
   font-weight: 500;
   letter-spacing: 0.14em;
@@ -815,13 +839,14 @@ figure.shiki ::selection,
   color: var(--stella-accent-text);
 }
 
-/* Display type: 800, tight tracking. The marketing h1, eased down to the h2
- * size on a narrow screen, the same as the releases title. */
+/* Display type: Space Grotesk at 700, its heaviest weight, with tight
+ * tracking. The marketing h1, eased down to the h2 size on a narrow screen,
+ * the same as the releases title. */
 .lp-h1 {
   font-size: clamp(var(--ox-m-h2), 8vw, var(--ox-m-h1));
   line-height: var(--ox-m-h1-leading);
   letter-spacing: -0.02em;
-  font-weight: 800;
+  font-weight: 700;
   text-wrap: balance;
 }
 
@@ -1232,12 +1257,12 @@ figure.shiki {
   --color-fd-ring: var(--stella-signal);
 }
 
-/* Code reads the app body step, the size of the `.term` transcripts above.
+/* Code reads 15px, the app body step times 15/14, as on docs.oxagen.sh: a
+ * step under the 16px prose around it, so a long line still fits the column.
  * Fumadocs sets the code at a fixed 13px (text-[0.8125rem] on the scroll
- * area), which sits halfway between the micro and body steps, so the
- * terminal panels break the tie. */
+ * area). */
 figure.shiki pre {
-  font-size: var(--ox-a-body);
+  font-size: calc(var(--ox-a-body) * 15 / 14);
   line-height: var(--ox-a-body-leading);
 }
 
@@ -1366,13 +1391,25 @@ figure.shiki > div:has(figcaption) {
  * Boxes and wires, one stroke weight, no animation, no fills except the
  * single accent node each diagram is actually about — which takes the
  * ground-aware gold.
+ *
+ * The label sizes are in the drawing's own units, and every drawing is 720
+ * units wide. The frame never lets a drawing render narrower than 720px, so
+ * a label never shows smaller than its size here: on a phone the drawing
+ * scrolls sideways instead of shrinking to half size. Both sizes are under
+ * the kit's 14px floor. Each drawing is laid out around them, and at 14 units
+ * many labels overflow their boxes, so the drawings need a new layout before
+ * the text can grow.
  * ═════════════════════════════════════════════════════════════════════════ */
 
+.sdg-frame {
+  margin: calc(var(--stella-rhythm) * 4) 0;
+  overflow-x: auto;
+}
 .sdg {
   width: 100%;
+  min-width: 720px;
   height: auto;
   display: block;
-  margin: calc(var(--stella-rhythm) * 4) 0;
 }
 .sdg text {
   font-family: var(--font-mono);

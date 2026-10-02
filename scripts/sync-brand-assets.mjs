@@ -47,6 +47,14 @@
  * It reads the markup of the marketing pages (`GUARDED_TSX`) and of the docs
  * chrome (`GUARDED_APP_TSX`) too, where a Tailwind size class such as
  * `text-sm` is the same kind of fixed number.
+ *
+ * Two house type rules ride the same check. No text is set under the kit's
+ * floor (`type.type_floor_px`, 14px): each size in those stylesheets is worked
+ * out from the tokens it reads, so a token-built size under the floor fails
+ * as a number would. And stella.oxagen.sh is a customer site, so h1 to h3
+ * take the display face (Space Grotesk) through `--font-heading`, and h4 to h6
+ * take the text face. A stylesheet rule or a heading's classes that set
+ * another face fail.
  */
 
 import {
@@ -211,6 +219,14 @@ const GUARDED_APP_TSX = [
   `${WEB}/src/app/docs/[[...slug]]/page.tsx`,
 ];
 
+/**
+ * Where the site's markup lives. The heading-face check reads every TSX file
+ * here for the classes the site puts on its h1 to h6, so a stylesheet rule
+ * that styles a heading through its class is held to the same face as one
+ * that names the element.
+ */
+const SITE_TSX_DIRS = [`${WEB}/src/app`, `${WEB}/src/components`];
+
 /** The size in px of each Tailwind size class, from Tailwind's default theme. */
 const TAILWIND_TEXT_PX = {
   xs: 12,
@@ -234,6 +250,10 @@ const TAILWIND_TEXT_PX = {
  * A value matches after its whitespace is collapsed. An entry with a
  * `selector` matches only in the rule with exactly that selector. A
  * percentage never needs an entry: `50%` is a circle and passes.
+ *
+ * A kept font size is still held to the type floor. `belowFloor` exempts an
+ * entry from it, and gives the reason. Only SVG text carries one: its size is
+ * in the drawing's own units, so the floor cannot be read from the number.
  */
 const LITERALS = [
   { prop: "border-radius", value: "999px", why: "a pill" },
@@ -277,14 +297,22 @@ const LITERALS = [
     value: "12px",
     selector: ".sdg .sdg-label",
     why: "SVG text in viewBox units, which scale with the drawing",
+    belowFloor:
+      "each docs diagram is laid out around this size, and at 14 units its labels overflow their boxes, so the drawings need a new layout before the text can grow",
   },
   {
     prop: "font-size",
     value: "10px",
     selector: ".sdg .sdg-sub",
     why: "SVG text in viewBox units, which scale with the drawing",
+    belowFloor:
+      "each docs diagram is laid out around this size, and at 14 units its labels overflow their boxes, so the drawings need a new layout before the text can grow",
   },
-  { prop: "font-size", value: "0.9em", why: "inline code, sized to the line it sits in" },
+  {
+    prop: "font-size",
+    value: "max(0.9em, var(--ox-a-micro))",
+    why: "inline code, sized to the line it sits in and never under the smallest house step",
+  },
 ];
 
 /** Paths a check found different from the kit, each with an optional note. */
@@ -639,7 +667,7 @@ const TYPE_CLASSES = ["m", "a"].flatMap((scale) =>
 );
 
 /** The font roles the site's stylesheets read, which the kit's theme sets. */
-const FONT_ROLES = ["--font-sans", "--font-display", "--font-mono", "--font-wordmark"];
+const FONT_ROLES = ["--font-sans", "--font-display", "--font-heading", "--font-mono", "--font-wordmark"];
 
 /**
  * The kit's font roles and type classes, as a sheet the site imports.
@@ -691,7 +719,9 @@ function typeClasses() {
  *
  * The @theme block points each font role at the variable that src/brand/
  * next-fonts.ts sets on <html>, so a face the kit changes reaches the site
- * with no edit here. Each class sets a size, a line height, a face, and a
+ * with no edit here. --font-heading reads the text face here, and global.css
+ * points it at the display face, because stella.oxagen.sh is a customer
+ * site. Each class sets a size, a line height, a face, and a
  * weight. The size and line height read the --ox-m-* and --ox-a-* tokens in
  * house-tokens.css, and the face reads a role below. text-m-micro and
  * text-a-micro set the code face.
@@ -869,19 +899,308 @@ function tokenFor(prop, value, steps) {
   return "var(--ox-wrap) for the page wrap; a wider wrap goes in LITERALS with its role";
 }
 
+/** The kit's type floor in px. No text on a house surface is set smaller. */
+function typeFloor() {
+  const floor = house.type?.type_floor_px;
+  if (typeof floor !== "number") {
+    throw new Error("the kit's tokens/house-tokens.json names no type.type_floor_px, so the check cannot hold the type floor");
+  }
+  return floor;
+}
+
 /**
- * Every value in `GUARDED_CSS` that should read a house token, and every
- * token reference no sheet declares, as one line each.
+ * The smallest size in px that `value` can take, or null when the stylesheet
+ * alone cannot settle it: an em, a percentage, a viewport unit, or a keyword.
+ *
+ * `props` maps each custom property to every value a sheet gives it. A var()
+ * takes the smallest of those, because any of them can reach the element.
+ * calc() is worked out, clamp() takes its minimum, max() takes its largest
+ * argument that resolves, and min() resolves only when every argument does.
+ */
+function smallestPx(value, props) {
+  const q = sizeOf(value.replace(/!important/g, ""), props, new Set());
+  return q && q.px ? q.n : null;
+}
+
+/** `value` as `{ n, px }`, where `px` marks a length, or null. */
+function sizeOf(value, props, seen) {
+  const src = value;
+  let at = 0;
+  const ws = () => {
+    while (at < src.length && /\s/.test(src[at])) at += 1;
+  };
+  const fail = () => {
+    throw new SyntaxError(value);
+  };
+  const expect = (ch) => {
+    ws();
+    if (src[at] !== ch) fail();
+    at += 1;
+  };
+  const combine = (a, b, op) => {
+    if (!a || !b) return null;
+    if (op === "*") return { n: a.n * b.n, px: a.px || b.px };
+    if (op === "/") return b.n === 0 ? null : { n: a.n / b.n, px: a.px };
+    return { n: op === "+" ? a.n + b.n : a.n - b.n, px: a.px || b.px };
+  };
+  const smallest = (list) => list.reduce((a, b) => (b.n < a.n ? b : a));
+  const lookup = (name, fallback) => {
+    if (seen.has(name)) return null;
+    const inner = new Set([...seen, name]);
+    const found = (props.get(name) ?? []).map((v) => sizeOf(v, props, inner)).filter(Boolean);
+    return found.length ? smallest(found) : fallback;
+  };
+  const factor = () => {
+    ws();
+    if (src[at] === "(") {
+      at += 1;
+      const v = expr();
+      expect(")");
+      return v;
+    }
+    const num = /^-?(?:\d*\.)?\d+([a-z%]*)/i.exec(src.slice(at));
+    if (num) {
+      at += num[0].length;
+      const n = Number(num[0].slice(0, num[0].length - num[1].length));
+      const unit = num[1].toLowerCase();
+      if (unit === "") return { n, px: false };
+      if (unit === "px") return { n, px: true };
+      if (unit === "rem") return { n: n * 16, px: true };
+      return null;
+    }
+    const fn = /^([a-z-]+)\(/i.exec(src.slice(at));
+    if (fn) {
+      at += fn[0].length;
+      const name = fn[1].toLowerCase();
+      if (name === "var") {
+        ws();
+        const id = /^--[\w-]+/.exec(src.slice(at));
+        if (!id) fail();
+        at += id[0].length;
+        ws();
+        let fallback = null;
+        if (src[at] === ",") {
+          at += 1;
+          fallback = expr();
+        }
+        expect(")");
+        return lookup(id[0], fallback);
+      }
+      const list = [expr()];
+      for (ws(); src[at] === ","; ws()) {
+        at += 1;
+        list.push(expr());
+      }
+      expect(")");
+      if (name === "calc") return list.length === 1 ? list[0] : null;
+      if (name === "clamp") return list.length === 3 ? list[0] : null;
+      if (name === "max") {
+        const known = list.filter(Boolean);
+        return known.length ? known.reduce((a, b) => (b.n > a.n ? b : a)) : null;
+      }
+      if (name === "min") return list.every(Boolean) ? smallest(list) : null;
+      return null;
+    }
+    const word = /^[a-z-]+/i.exec(src.slice(at));
+    if (!word) fail();
+    at += word[0].length;
+    return null;
+  };
+  const term = () => {
+    let v = factor();
+    for (ws(); src[at] === "*" || src[at] === "/"; ws()) {
+      const op = src[at];
+      at += 1;
+      v = combine(v, factor(), op);
+    }
+    return v;
+  };
+  // A + or - in calc() is an operator only with a space after it.
+  const expr = () => {
+    let v = term();
+    for (ws(); (src[at] === "+" || src[at] === "-") && /\s/.test(src[at + 1] ?? ""); ws()) {
+      const op = src[at];
+      at += 1;
+      v = combine(v, term(), op);
+    }
+    return v;
+  };
+  try {
+    const v = expr();
+    ws();
+    return at === src.length ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** `text` split at each `sep` outside brackets. */
+function splitTop(text, sep) {
+  const parts = [];
+  let depth = 0;
+  let from = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === "(" || text[i] === "[") depth += 1;
+    else if (text[i] === ")" || text[i] === "]") depth -= 1;
+    else if (depth === 0 && text[i] === sep) {
+      parts.push(text.slice(from, i));
+      from = i + 1;
+    }
+  }
+  parts.push(text.slice(from));
+  return parts.map((p) => p.trim()).filter(Boolean);
+}
+
+/** The last compound of a selector: the part that names the element styled. */
+function lastCompound(selector) {
+  let depth = 0;
+  for (let i = selector.length - 1; i >= 0; i -= 1) {
+    const ch = selector[i];
+    if (ch === ")" || ch === "]") depth += 1;
+    else if (ch === "(" || ch === "[") depth -= 1;
+    else if (depth === 0 && /[\s>+~]/.test(ch)) return selector.slice(i + 1);
+  }
+  return selector;
+}
+
+/**
+ * The heading levels each class in the site's markup is put on, read from
+ * every TSX file under `SITE_TSX_DIRS`, and the classes on each heading as
+ * markup findings work them out.
+ */
+function siteHeadings() {
+  const classes = new Map();
+  const headings = [];
+  for (const dir of SITE_TSX_DIRS) {
+    const files = readdirSync(join(REPO, dir), { recursive: true }).filter((f) => f.endsWith(".tsx"));
+    for (const file of files.sort()) {
+      const path = `${dir}/${file}`;
+      const src = uncommentTsx(readFileSync(join(REPO, path), "utf8"));
+      for (const m of src.matchAll(/<h([1-6])\b([^>]*)>/g)) {
+        const level = Number(m[1]);
+        const names = [...m[2].matchAll(/className=(?:"([^"]*)"|\{\s*`([^`]*)`\s*\})/g)].flatMap((c) =>
+          (c[1] ?? c[2]).split(/\s+/).filter((n) => n && !n.includes("$")),
+        );
+        for (const name of names) {
+          if (!classes.has(name)) classes.set(name, new Set());
+          classes.get(name).add(level);
+        }
+        headings.push({ path, line: src.slice(0, m.index).split("\n").length, level, names });
+      }
+    }
+  }
+  return { classes, headings };
+}
+
+/** The faces a heading may take: h1 to h3 the display face, h4 to h6 the text face. */
+const HEADING_FACES = {
+  top: /^var\(--(?:font-heading|font-display|ox-font-display)\)$/,
+  low: /^var\(--(?:font-sans|ox-font|ox-font-heading)\)$/,
+};
+
+/**
+ * Every rule in `GUARDED_CSS` that sets a heading in the wrong face, as one
+ * line each, path first.
+ *
+ * A rule styles a heading when the last compound of one of its selectors
+ * names h1 to h6, or a class the site's markup puts on one. Such a rule may
+ * set h1 to h3 only in `var(--font-heading)` or the display face, and h4 to
+ * h6 only in the text face. global.css must also point `--font-heading` at the
+ * display face, in the line the kit names for a customer site, and set bare
+ * h1, h2, and h3 in `var(--font-heading)`, so a heading with no class of its
+ * own still takes it.
+ */
+function headingFindings(sheets) {
+  const { classes } = siteHeadings();
+  const squash = (s) => s.replace(/\s+/g, " ").trim();
+  const lineOf = (css, at) => css.slice(0, at).split("\n").length;
+  const optIn = squash(house.type?.marketing_headings ?? "--font-heading: var(--font-display)");
+  const out = [];
+  const bare = new Set();
+  let optedIn = false;
+  for (const [path, css] of sheets) {
+    for (const m of css.matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
+      // The selector starts after any statement before it, such as an @source.
+      const selector = squash(m[1].slice(m[1].lastIndexOf(";") + 1));
+      if (!selector || selector.startsWith("@")) continue;
+      const body = m[2];
+      if (selector === ":root" && body.split(";").some((d) => squash(d) === optIn)) optedIn = true;
+      const face = /(^|[;\s])font-family\s*:\s*([^;]+)/.exec(body);
+      if (!face) continue;
+      const value = squash(face[2]);
+      const at = m.index + m[1].length + 1 + face.index + face[1].length;
+      for (const sel of splitTop(selector, ",")) {
+        const compound = lastCompound(sel).replace(/:not\([^)]*\)/g, "");
+        const levels = new Set();
+        for (const h of compound.matchAll(/(?<![\w-])h([1-6])(?![\w-])/g)) levels.add(Number(h[1]));
+        for (const c of compound.matchAll(/\.([\w-]+)/g)) for (const l of classes.get(c[1]) ?? []) levels.add(l);
+        if (!levels.size) continue;
+        const top = [...levels].some((l) => l <= 3);
+        const low = [...levels].some((l) => l >= 4);
+        const where = `${path} line ${lineOf(css, at)}: font-family: ${value} in ${sel}`;
+        if (top && low) {
+          out.push(`${where} sets one face on h1 to h3 and on h4 to h6. Split the rule: h1 to h3 take var(--font-heading), and h4 to h6 take var(--font-sans).`);
+        } else if (top && !HEADING_FACES.top.test(value)) {
+          out.push(`${where} sets an h1 to h3 in another face. On a customer site they take var(--font-heading), the display face.`);
+        } else if (low && !HEADING_FACES.low.test(value)) {
+          out.push(`${where} sets an h4 to h6 in another face. They take var(--font-sans), the text face.`);
+        } else if (top && /^h[1-3]$/.test(sel)) {
+          bare.add(Number(sel[1]));
+        }
+      }
+    }
+  }
+  const global = GUARDED_CSS[0];
+  if (!optedIn) {
+    out.push(`${global} sets no "${optIn}" in :root. stella.oxagen.sh is a customer site, so its h1 to h3 take the display face through --font-heading.`);
+  }
+  const missing = [1, 2, 3].filter((l) => !bare.has(l));
+  if (missing.length) {
+    out.push(`${global} sets no face for a bare ${missing.map((l) => `h${l}`).join(", ")}. Set h1, h2, h3 { font-family: var(--font-heading); } so a heading with no class of its own takes the display face.`);
+  }
+  return out;
+}
+
+/**
+ * Every heading in the site's markup whose classes set the wrong face, as one
+ * line each, path first: `font-mono`, `font-sans`, or `font-wordmark` on an h1
+ * to h3, and `font-display` or `font-heading` on an h4 to h6.
+ */
+function headingTsxFindings() {
+  const out = [];
+  for (const { path, line, level, names } of siteHeadings().headings) {
+    const wrong = names.filter((n) =>
+      level <= 3 ? /^font-(?:mono|sans|wordmark)$/.test(n) : /^font-(?:display|heading)$/.test(n),
+    );
+    for (const name of wrong) {
+      out.push(
+        `${path} line ${line}: ${name} on an h${level} sets ${level <= 3 ? "another face. On a customer site h1 to h3 take the display face, from global.css" : "the display face. h4 to h6 take the text face"}. Remove the class.`,
+      );
+    }
+  }
+  return out;
+}
+
+/**
+ * Every value in `GUARDED_CSS` that should read a house token, every size
+ * under the type floor, every token reference no sheet declares, and every
+ * heading set in the wrong face, as one line each.
  *
  * Each line starts with the file's path and a space. brand-drift.yml finds
  * the files a pull request changed by that path, so keep it a separate word.
  */
 function cssFindings() {
   const steps = houseSteps();
+  const floor = typeFloor();
   const sheets = GUARDED_CSS.map((path) => [path, uncomment(readFileSync(join(REPO, path), "utf8"))]);
   const declared = new Set();
+  const props = new Map();
   for (const [, css] of [...sheets, [HOUSE_CSS, uncomment(readFileSync(join(REPO, HOUSE_CSS), "utf8"))]]) {
-    for (const m of css.matchAll(/(--[\w-]+)\s*:/g)) declared.add(m[1]);
+    for (const m of css.matchAll(/(--[\w-]+)\s*:\s*([^;{}]*)/g)) {
+      declared.add(m[1]);
+      if (!props.has(m[1])) props.set(m[1], []);
+      props.get(m[1]).push(m[2].trim());
+    }
   }
   const squash = (s) => s.replace(/\s+/g, " ").trim();
   const lineOf = (css, at) => css.slice(0, at).split("\n").length;
@@ -910,22 +1229,26 @@ function cssFindings() {
         prop === "max-width"
           ? steps.wrap !== null && found.some((px) => px >= steps.wrap)
           : found.length > 0;
-      if (!literal) continue;
       const open = css.lastIndexOf("{", at);
       const from = Math.max(css.lastIndexOf("}", open - 1), css.lastIndexOf("{", open - 1), css.lastIndexOf(";", open - 1));
       const selector = squash(css.slice(from + 1, open));
-      const kept = LITERALS.some(
+      const kept = LITERALS.find(
         (l) => l.prop === prop && l.value === value && (l.selector === undefined || l.selector === selector),
       );
-      if (kept) continue;
-      out.push(`${path} line ${lineOf(css, at)}: ${m[2]}: ${value} in ${selector}. Use ${tokenFor(prop, value, steps)}.`);
+      const where = `${path} line ${lineOf(css, at)}: ${m[2]}: ${value} in ${selector}`;
+      if (literal && !kept) out.push(`${where}. Use ${tokenFor(prop, value, steps)}.`);
+      if (prop !== "font-size" || kept?.belowFloor) continue;
+      const px = smallestPx(value, props);
+      if (px !== null && px < floor - 0.005) {
+        out.push(`${where} comes to ${Math.round(px * 100) / 100}px, under the ${floor}px type floor. Use var(--ox-a-micro) or a larger step.`);
+      }
     }
     for (const m of css.matchAll(/var\(\s*(--(?:stella|st|ox)-[\w-]+)/g)) {
       if (declared.has(m[1])) continue;
       out.push(`${path} line ${lineOf(css, m.index)}: var(${m[1]}) is declared in no stylesheet the site loads. Use a token that exists.`);
     }
   }
-  return out;
+  return [...out, ...headingFindings(sheets)];
 }
 
 /**
@@ -1013,20 +1336,24 @@ skill();
 
 const kit = `the house kit ${house.version}`;
 if (CHECK) {
-  const findings = [...cssFindings(), ...tsxFindings(houseSteps())];
+  const findings = [...cssFindings(), ...tsxFindings(houseSteps()), ...headingTsxFindings()];
   if (drifted.length) {
     console.error(`brand: ${drifted.length} file(s) differ from ${kit} at ${BRAND}:`);
     for (const f of drifted) console.error(`  ${f}`);
   }
   if (findings.length) {
     console.error(
-      `brand: ${findings.length} value(s) in the site's stylesheets, marketing pages, and docs chrome do not read a house token. ` +
-        "Use the token each line names, or add the value to LITERALS in scripts/sync-brand-assets.mjs with its reason:",
+      `brand: ${findings.length} line(s) in the site's stylesheets and markup break a house type or token rule: ` +
+        "a value that does not read a house token, a size under the type floor, or a heading in the wrong face. " +
+        "Fix each line as it says, or add a kept value to LITERALS in scripts/sync-brand-assets.mjs with its reason:",
     );
     for (const f of findings) console.error(`  ${f}`);
   }
   if (drifted.length || findings.length) process.exit(1);
-  console.log(`brand: every synced file matches ${kit}, and the site's stylesheets, marketing pages, and docs chrome read the house tokens.`);
+  console.log(
+    `brand: every synced file matches ${kit}. The site's stylesheets, marketing pages, and docs chrome read the house tokens, ` +
+      "set no text under the type floor, and set each heading in its face.",
+  );
 } else {
   console.log(
     written.length
