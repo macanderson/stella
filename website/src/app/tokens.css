@@ -211,10 +211,9 @@
   --stella-grid-opacity: 0.05; /* terminal grid lines */
   --stella-starfield-opacity: 0.16; /* max star opacity */
 
-  /* ── elevation ──────────────────────────────────────────────────────── */
-  /* Neutral only. A coloured shadow is a gradient wearing a blur, and rule 5
-     retires those everywhere. */
-  --stella-shadow-card: 0 1px 2px rgb(0 0 0 / 0.25), 0 8px 28px rgb(0 0 0 / 0.35);
+  /* No elevation token lives here. A card or panel at rest has no shadow, by
+     the house rule, and a floating surface takes the kit's --ox-shadow-pop
+     through --stella-shadow-pop in global.css. */
 }
 
 /* ── semantic aliases — light (paper) is the default ─────────────────── */

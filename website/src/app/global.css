@@ -4,8 +4,12 @@
  * Brand system: the marks, the faces, and every house colour come from the
  * Oxagen house kit (oxageninc/brand), copied in by
  * scripts/sync-brand-assets.mjs. tokens.css carries the palette, and
- * src/brand/house-tokens.css is the kit's own token sheet, which this file
- * reads for the font stacks.
+ * src/brand/house-tokens.css is the kit's own token sheet. This file reads
+ * that sheet for the font stacks, the two type scales, the corners, the
+ * floating-surface shadow, and the spacing unit, so a change in the kit's
+ * theme editor reaches the site on the next sync. The brand check
+ * (`--check` in that script) fails on a corner, shadow, type size, or page
+ * wrap written here as a number.
  *
  * Three rules the rest of the file obeys:
  *
@@ -41,6 +45,33 @@
   --color-fd-warning: var(--stella-warning-ink);
   --color-fd-error: var(--stella-danger-ink);
   --color-fd-success: var(--stella-success-ink);
+
+  /* Fumadocs draws its corners and shadows with Tailwind's rounded-* and
+   * shadow-* classes, so these theme values carry the house tokens into its
+   * components. A callout, a code block, or a card takes the website corner,
+   * 12px. A control takes the nearest step of the house scale. The house
+   * scale has no 16px step, so 2xl takes 3xl, at 15.84px. */
+  --radius-xs: var(--ox-radius-xs);
+  --radius-sm: var(--ox-radius-sm);
+  --radius-md: var(--ox-radius-md);
+  --radius-lg: var(--ox-radius-lg);
+  --radius-xl: var(--ox-radius);
+  --radius-2xl: var(--ox-radius-3xl);
+
+  /* A card or panel at rest has no shadow. Fumadocs puts shadow-sm and
+   * shadow-md on code blocks, callouts, and type tables, so those two draw
+   * nothing. shadow-lg and larger sit under its floating surfaces: the mobile
+   * sidebar, the table of contents popover, and the search dialog. */
+  --shadow-2xs: 0 0 transparent;
+  --shadow-xs: 0 0 transparent;
+  --shadow-sm: 0 0 transparent;
+  --shadow-md: 0 0 transparent;
+  --shadow-lg: var(--stella-shadow-pop);
+  --shadow-xl: var(--stella-shadow-pop);
+  --shadow-2xl: var(--stella-shadow-pop);
+
+  /* Tailwind's spacing unit: p-4 is four of it. */
+  --spacing: var(--ox-space);
 }
 
 /* Let Tailwind see Fumadocs' compiled utility classes. */
@@ -57,20 +88,24 @@
   --font-sans: var(--font-geist), var(--ox-font);
   --font-mono: var(--font-monaspace-neon), var(--ox-font-mono);
 
-  /* The kit's type scale, unchanged. It was cut one notch small because mono
-   * runs wide; Space Grotesk does not, so the scale now reads a little tighter
-   * than it did rather than a little cramped. Left as it is deliberately — the
-   * numbers are the kit's, and re-cutting a type scale is a separate decision
-   * from changing the face. */
-  --stella-type-2xs: 0.6875rem; /* 11px — meta, badges */
-  --stella-type-xs: 0.75rem; /* 12px — captions, overlines */
-  --stella-type-sm: 0.8125rem; /* 13px — secondary UI, card body */
-  --stella-type-base: 0.875rem; /* 14px — prose, the terminal default */
-  --stella-type-md: 1rem; /* 16px — lead */
-  --stella-type-lg: 1.25rem; /* 20px — h3 */
-  --stella-type-xl: 1.5rem; /* 24px — h2 */
-  --stella-type-2xl: 1.875rem; /* 30px — h1 / page title */
-  --stella-type-3xl: 2.375rem; /* 38px — hero, one place only */
+  /* The type scale for the docs, the releases timeline, and the terminal
+   * panels: the kit's app scale (--ox-a-*), under the names this site's rules
+   * already use. A marketing heading or lead reads the kit's marketing scale
+   * (--ox-m-*) directly. The theme editor changes both, and every rule here
+   * follows.
+   *
+   * sm and base are one size now, the app body. sm was 13px, which the house
+   * scale does not have. 2xs stays 11px for badges and meta, a size the house
+   * scale also lacks, so it is set as a share of the app micro size and moves
+   * with it. */
+  --stella-type-2xs: calc(var(--ox-a-micro) * 11 / 12); /* 11px: meta, badges */
+  --stella-type-xs: var(--ox-a-micro); /* 12px: captions, overlines */
+  --stella-type-sm: var(--ox-a-body); /* 14px: secondary UI, card body */
+  --stella-type-base: var(--ox-a-body); /* 14px: prose, the terminal default */
+  --stella-type-md: var(--ox-a-h4); /* 16px: h4, a card name */
+  --stella-type-lg: var(--ox-a-h3); /* 20px: h3 */
+  --stella-type-xl: var(--ox-a-h2); /* 24px: h2 */
+  --stella-type-2xl: var(--ox-a-h1); /* 30px: h1, a page title */
 
   /* Vertical rhythm. Every block margin below is a multiple of the unit. */
   --stella-rhythm: 0.5rem;
@@ -99,6 +134,10 @@
   --stella-cta-bg: var(--stella-signal);
   --stella-cta-fg: var(--stella-canvas);
   --stella-cta-bg-hover: var(--stella-signal-live);
+
+  /* The shadow under a floating surface: a menu, a popover, or a dialog.
+   * The kit's -ink twin is the one for paper. */
+  --stella-shadow-pop: var(--ox-shadow-pop-ink);
 
   --color-fd-background: var(--stella-bg);
   --color-fd-foreground: var(--stella-fg);
@@ -135,6 +174,8 @@
   --stella-cta-bg: var(--stella-signal);
   --stella-cta-fg: var(--stella-canvas);
   --stella-cta-bg-hover: var(--stella-signal-live);
+
+  --stella-shadow-pop: var(--ox-shadow-pop);
 
   --color-fd-background: var(--stella-bg);
   --color-fd-foreground: var(--stella-fg);
@@ -184,7 +225,7 @@ figure.shiki ::selection,
   left: 0.5rem;
   z-index: 100;
   padding: 0.5rem 0.9rem;
-  border-radius: 0.375rem;
+  border-radius: var(--ox-radius-md);
   background: var(--stella-cta-bg);
   color: var(--stella-cta-fg);
   font-size: var(--stella-type-sm);
@@ -198,9 +239,9 @@ figure.shiki ::selection,
 /* ═══════════════════════════════════════════════════════════════════════════
  * Typography: three faces, one scale, one rhythm, one measure
  *
- * Space Grotesk sets h1 to h3 and Geist sets h4 to h6, so hierarchy comes
- * from the face, the weight, and the size. Headings are 700 per the kit.
- * Only the hero display steps up to 800.
+ * Geist sets every heading, so hierarchy comes from the size and the weight.
+ * Each docs heading takes its step of the kit's app scale and that step's
+ * line height. Headings are 700. Only the hero display steps up to 800.
  * ═════════════════════════════════════════════════════════════════════════ */
 
 .prose {
@@ -221,27 +262,27 @@ figure.shiki ::selection,
 
 .prose h1 {
   font-size: var(--stella-type-2xl);
-  line-height: 1.15;
+  line-height: var(--ox-a-h1-leading);
   margin-bottom: calc(var(--stella-rhythm) * 2);
 }
 
 .prose h2 {
   font-size: var(--stella-type-xl);
-  line-height: 1.3;
+  line-height: var(--ox-a-h2-leading);
   margin-top: calc(var(--stella-rhythm) * 7);
   margin-bottom: calc(var(--stella-rhythm) * 2);
 }
 
 .prose h3 {
   font-size: var(--stella-type-lg);
-  line-height: 1.4;
+  line-height: var(--ox-a-h3-leading);
   margin-top: calc(var(--stella-rhythm) * 5);
   margin-bottom: calc(var(--stella-rhythm) * 1.5);
 }
 
 .prose h4 {
-  font-size: var(--stella-type-base);
-  line-height: 1.5;
+  font-size: var(--stella-type-md);
+  line-height: var(--ox-a-h4-leading);
   margin-top: calc(var(--stella-rhythm) * 4);
   margin-bottom: var(--stella-rhythm);
 }
@@ -379,7 +420,7 @@ figure.shiki ::selection,
 #nd-sidebar a,
 #nd-sidebar button {
   font-weight: 400;
-  border-radius: 0.375rem;
+  border-radius: var(--ox-radius-md);
 }
 
 /* Section headings in the tree — the `---Start---` style entries in meta.json.
@@ -394,12 +435,12 @@ figure.shiki ::selection,
  * semibold, where an item is muted and regular. That inverts the usual "heading
  * is quiet" instinct on purpose — the items recede as a field, and the thing
  * that has to survive that recession is the label telling you which part of the
- * tree you are in. Uppercase at 14.4px reads as a category rather than as a
- * page, and the tracking is what keeps uppercase from setting tight. The gold
+ * tree you are in. Uppercase at the app body size reads as a category rather
+ * than as a page, and the tracking keeps uppercase from setting tight. The gold
  * active pill still outranks all of it, which is the intended order:
  * item < category < where you are. */
 #nd-sidebar p {
-  font-size: 0.9rem;
+  font-size: var(--stella-type-base);
   text-transform: uppercase;
   letter-spacing: 0.075em;
   font-weight: 600;
@@ -670,11 +711,13 @@ figure.shiki ::selection,
   mask-image: linear-gradient(to bottom, black, transparent 85%);
 }
 
-/* Overline: gold star + wide-tracked uppercase micro-type, per the kit. */
+/* Overline: gold star + wide-tracked uppercase micro-type, per the kit. The
+ * landing page is a marketing page, so this and the two rules after it read
+ * the kit's marketing scale. */
 .lp-eyebrow {
   display: block;
   font-family: var(--font-mono);
-  font-size: var(--stella-type-xs);
+  font-size: var(--ox-m-micro);
   font-weight: 500;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -686,23 +729,19 @@ figure.shiki ::selection,
   color: var(--stella-accent-text);
 }
 
-/* Display type: 800, tight tracking — the kit's display voice. */
+/* Display type: 800, tight tracking. The marketing h1, eased down to the h2
+ * size on a narrow screen, the same as the releases title. */
 .lp-h1 {
-  font-size: var(--stella-type-2xl);
-  line-height: 1.15;
+  font-size: clamp(var(--ox-m-h2), 8vw, var(--ox-m-h1));
+  line-height: var(--ox-m-h1-leading);
   letter-spacing: -0.02em;
   font-weight: 800;
   text-wrap: balance;
 }
-@media (min-width: 640px) {
-  .lp-h1 {
-    font-size: var(--stella-type-3xl);
-  }
-}
 
 .lp-lead {
-  font-size: var(--stella-type-md);
-  line-height: 1.65;
+  font-size: var(--ox-m-body);
+  line-height: var(--ox-m-body-leading);
   max-width: var(--stella-measure);
   color: var(--color-fd-muted-foreground);
 }
@@ -742,16 +781,13 @@ html[data-home-nav="hidden"] #nd-nav {
   text-transform: lowercase;
 }
 
-/* Primary action: the one gold surface, with an ink label. On the dark
- * ground it glows — plasma, not neon: only on hover, per "gold is the
- * signal". */
+/* Primary action: the one gold surface, with an ink label. Hover lifts the
+ * fill to the bright gold. It takes no glow: the house rules retire them. */
 .lp-cta {
   background: var(--stella-cta-bg);
   color: var(--stella-cta-fg);
   font-weight: 500;
-  transition:
-    background-color var(--stella-duration-base) var(--stella-ease-arrive),
-    box-shadow var(--stella-duration-base) var(--stella-ease-arrive);
+  transition: background-color var(--stella-duration-base) var(--stella-ease-arrive);
 }
 .lp-cta:hover {
   background: var(--stella-cta-bg-hover);
@@ -771,11 +807,10 @@ html[data-home-nav="hidden"] #nd-nav {
   font-size: var(--stella-type-sm);
   line-height: 1.7;
   border: 1px solid var(--stella-canvas-edge);
-  border-radius: 0.5rem;
+  border-radius: var(--ox-radius);
   background: var(--stella-canvas);
   color: var(--stella-text);
   overflow-x: auto;
-  box-shadow: var(--stella-shadow-card);
 }
 
 .term-head {
@@ -816,11 +851,10 @@ html[data-home-nav="hidden"] #nd-nav {
 .dke {
   font-family: var(--font-mono);
   border: 1px solid var(--stella-canvas-edge);
-  border-radius: 0.5rem;
+  border-radius: var(--ox-radius);
   background: var(--stella-canvas);
   color: var(--stella-text);
   overflow: hidden;
-  box-shadow: var(--stella-shadow-card);
   margin: 1.5rem 0;
 }
 
@@ -839,7 +873,7 @@ html[data-home-nav="hidden"] #nd-nav {
   color: var(--stella-text-2); /* muted on ink, regardless of page theme */
   background: none;
   border: none;
-  border-radius: 0.35rem 0.35rem 0 0;
+  border-radius: var(--ox-radius-md) var(--ox-radius-md) 0 0;
   padding: 0.4rem 0.65rem;
   cursor: pointer;
 }
@@ -881,8 +915,9 @@ html[data-home-nav="hidden"] #nd-nav {
  *
  * The only `<img>` on this site. The SVG already draws the terminal — ink
  * ground, hairline border, rounded corners, all from the same tokens this
- * sheet reads — so the rules here add depth and a caption and nothing else.
- * A second border around it would read as a screenshot of a screenshot.
+ * sheet reads — so the rules here add a caption and nothing else. A second
+ * border around it would read as a screenshot of a screenshot, and a shadow
+ * would lift a panel that sits at rest.
  *
  * The frame keeps its ink in both themes, on the same argument as `.term`
  * above: the deck lives in a dark terminal, and the figure is a window into
@@ -899,8 +934,9 @@ html[data-home-nav="hidden"] #nd-nav {
   /* The record's intrinsic height reserves the box; once the file lands the
      aspect ratio governs, so the frame scales to whatever column holds it. */
   height: auto;
+  /* Matches the corner the SVG draws (rx 6 in its 680-wide frame), so it
+     stays a literal and does not follow the theme's radius. */
   border-radius: 0.5rem;
-  box-shadow: var(--stella-shadow-card);
   /* These load lazily, so the reserved box is on screen before the SVG is.
      Painting it the deck's own ground means what appears is an unlit terminal
      rather than a page-coloured hole — and on the light page, that hole was
@@ -925,7 +961,7 @@ html[data-home-nav="hidden"] #nd-nav {
   margin-inline-end: 0.55em;
   padding: 0.1em 0.45em;
   border: 1px solid var(--color-fd-border);
-  border-radius: 0.25rem;
+  border-radius: var(--ox-radius-sm);
   font-family: var(--font-mono);
   font-size: var(--stella-type-xs);
   font-weight: 700;
@@ -946,24 +982,17 @@ article .deck-shot {
 /* ═══════════════════════════════════════════════════════════════════════════
  * Install block — the one-liner you copy.
  *
- * A real surface, not a sticker: hovering lifts it on a spring (Motion-
- * generated linear() curve, ~6% overshoot, settles in 350ms — physical, not
- * cartoon), and a gold sheen sweeps left→right — the comet's direction —
- * once on arrival and again every 10 seconds for as long as the pointer
- * stays. The 10s cycle is one keyframe track: the sweep occupies the first
- * 14% (1.4s), the rest holds off-screen, so `infinite` re-fires it on
- * exactly the requested period with no JavaScript.
+ * Hovering lifts it on a spring: a Motion-generated linear() curve with
+ * about 6% overshoot that settles in 350ms.
  *
- * The wrapper owns overflow (to clip the sweeping pseudo-element) and
- * therefore must also own the card shadow — a shadow on the inner .term
- * would be clipped by this very overflow.
+ * The wrapper owns overflow and the corner, and the inner .term inherits the
+ * corner so the two edges meet. Like every panel at rest, it has no shadow.
  * ═════════════════════════════════════════════════════════════════════════ */
 
 .lp-install {
   position: relative;
-  border-radius: 0.5rem;
+  border-radius: var(--ox-radius);
   overflow: hidden;
-  box-shadow: var(--stella-shadow-card);
   transition: transform 350ms
     linear(
       0,
@@ -981,7 +1010,6 @@ article .deck-shot {
     );
 }
 .lp-install .term {
-  box-shadow: none;
   border-radius: inherit;
 }
 .lp-install:hover,
@@ -1023,7 +1051,7 @@ article .deck-shot {
   color: var(--stella-text-2); /* muted on ink, regardless of page theme */
   background: var(--stella-canvas-code);
   border: 1px solid var(--stella-canvas-edge);
-  border-radius: 0.375rem;
+  border-radius: var(--ox-radius-md);
   padding: 0.15rem 0.5rem;
 }
 
@@ -1034,10 +1062,6 @@ article .deck-shot {
   .lp-install:hover,
   .lp-install:focus-within {
     transform: none;
-  }
-  .lp-install:hover::after,
-  .lp-install:focus-within::after {
-    animation: none;
   }
 }
 
@@ -1114,8 +1138,7 @@ article .deck-shot {
 figure.shiki {
   background: var(--stella-canvas-code);
   border-color: var(--stella-canvas-edge);
-  border-radius: 0.5rem;
-  box-shadow: var(--stella-shadow-card);
+  border-radius: var(--ox-radius);
   color: var(--stella-text);
   cursor: copy;
   --color-fd-primary: var(--stella-signal);
@@ -1139,7 +1162,7 @@ figure.shiki > div:has(figcaption) {
   inset-inline-end: 0.6rem;
   z-index: 2;
   border: 1px solid var(--stella-canvas-edge);
-  border-radius: 0.375rem;
+  border-radius: var(--ox-radius-md);
   background: var(--stella-canvas-code);
   color: var(--stella-text-2);
   font-family: var(--font-mono);

@@ -36,7 +36,7 @@
   margin: 0 0 2rem;
   padding: 1rem 1.1rem;
   border: 1px solid var(--eng-accent-dim);
-  border-radius: 0.5rem;
+  border-radius: var(--ox-radius);
   background: var(--eng-surface-warm);
   max-width: 46rem;
 }
@@ -115,20 +115,19 @@
   display: inline-flex;
   align-items: center;
   padding: 0.65rem 1.4rem;
-  border-radius: 0.375rem;
+  border-radius: var(--ox-radius-md);
   background: var(--eng-accent);
   color: var(--stella-canvas);
   font-weight: 500;
   font-size: var(--stella-type-sm);
   text-decoration: none;
-  transition:
-    background-color var(--stella-duration-base) var(--stella-ease-arrive),
-    box-shadow var(--stella-duration-base) var(--stella-ease-arrive);
+  transition: background-color var(--stella-duration-base) var(--stella-ease-arrive);
 }
+/* Hover lifts the fill to the bright gold and adds no glow. The glow token
+ * this once named was retired and declared nowhere, so it drew nothing. */
 .eng-cta:hover {
   background: var(--stella-signal-live);
   color: var(--stella-canvas);
-  box-shadow: var(--stella-glow-brand);
   text-decoration: none;
 }
 
@@ -196,7 +195,7 @@
   margin: 0;
   padding: 0.4rem 0.7rem;
   border: 1px solid var(--eng-rule-strong);
-  border-radius: 0.375rem;
+  border-radius: var(--ox-radius-md);
   background: var(--eng-surface-high);
   font-size: var(--stella-type-2xs);
   letter-spacing: 0.08em;
@@ -378,7 +377,7 @@
 .eng-gov-layer {
   padding: 1.1rem 1.15rem;
   border: 1px solid var(--eng-rule);
-  border-radius: 0.5rem;
+  border-radius: var(--ox-radius);
   background: var(--eng-surface);
 }
 .eng-gov-path {
@@ -407,7 +406,7 @@
   margin: 0 0 1.5rem;
   padding: 1.5rem;
   border: 1px solid var(--eng-accent-dim);
-  border-radius: 0.5rem;
+  border-radius: var(--ox-radius);
   background: var(--eng-surface-warm);
 }
 .eng-egress-title {
@@ -469,7 +468,7 @@
   gap: 0.6rem;
   padding: 1.25rem;
   border: 1px solid var(--eng-rule);
-  border-radius: 0.5rem;
+  border-radius: var(--ox-radius);
   background: var(--eng-surface);
   transition:
     border-color var(--stella-duration-base) var(--stella-ease-arrive),
@@ -502,7 +501,7 @@
   flex: none;
   padding: 0.15rem 0.5rem;
   border: 1px solid currentColor;
-  border-radius: 0.25rem;
+  border-radius: var(--ox-radius-sm);
   font-size: var(--stella-type-2xs);
   font-weight: 500;
   letter-spacing: 0.1em;
@@ -580,7 +579,7 @@
   margin: 0;
   padding: 1rem 1.15rem;
   border: 1px dashed var(--eng-accent-dim);
-  border-radius: 0.5rem;
+  border-radius: var(--ox-radius);
   max-width: 60rem;
   font-size: var(--stella-type-xs);
   line-height: 1.75;
@@ -694,7 +693,7 @@
     text-align: start;
   }
   .eng-ring-core {
-    border-radius: 0.375rem;
+    border-radius: var(--ox-radius-md);
     padding: 0.7rem;
     text-align: center;
   }

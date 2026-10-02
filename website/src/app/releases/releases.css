@@ -17,11 +17,14 @@
  * and every entry also carries the kind's word.
  *
  * Every value is a token from tokens.css or a fumadocs `--color-fd-*` alias —
- * no hex literals — so the page inverts with the theme.
+ * no hex literals — so the page inverts with the theme. Sizes and corners
+ * read the kit's house tokens: the hero is on the marketing scale, and the
+ * timeline below it is on the app scale through the `--stella-type-*` names
+ * in global.css.
  */
 
 .rl-page {
-  max-width: 62rem;
+  max-width: var(--ox-wrap);
   margin: 0 auto;
   padding: 3.5rem 1.25rem 6rem;
 }
@@ -29,7 +32,7 @@
 /* ── hero ─────────────────────────────────────────────────────────────────── */
 
 .rl-eyebrow {
-  font-size: 0.75rem;
+  font-size: var(--ox-m-micro);
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--stella-muted-fg);
@@ -40,7 +43,7 @@
  * because the string is already lowercase in the markup, which keeps it
  * lowercase when it is copied, read aloud, or indexed. */
 .rl-title {
-  font-size: clamp(2.5rem, 8vw, 4.5rem);
+  font-size: clamp(var(--ox-m-h2), 8vw, var(--ox-m-h1));
   line-height: 0.95;
   letter-spacing: -0.03em;
   font-weight: 800;
@@ -50,8 +53,8 @@
 .rl-lede {
   max-width: 46rem;
   margin: 1.25rem 0 0;
-  font-size: 1.0625rem;
-  line-height: 1.65;
+  font-size: var(--ox-m-body);
+  line-height: var(--ox-m-body-leading);
   color: var(--stella-muted-fg);
 }
 .rl-lede strong {
@@ -62,7 +65,7 @@
 .rl-foot code {
   font-size: 0.9em;
   padding: 0.1em 0.35em;
-  border-radius: 0.25rem;
+  border-radius: var(--ox-radius-sm);
   background: var(--color-fd-muted);
 }
 .rl-lede a,
@@ -75,7 +78,7 @@
   align-items: center;
   gap: 0.55rem;
   margin: 1.5rem 0 0;
-  font-size: 0.8125rem;
+  font-size: var(--stella-type-sm);
   color: var(--stella-muted-fg);
 }
 .rl-latest strong {
@@ -134,11 +137,11 @@
   width: 100%;
   padding: 0.5rem 0.75rem;
   font: inherit;
-  font-size: 0.875rem;
+  font-size: var(--stella-type-base);
   color: var(--color-fd-foreground);
   background: var(--color-fd-card);
   border: 1px solid var(--color-fd-border);
-  border-radius: 0.5rem;
+  border-radius: var(--ox-radius);
 }
 .rl-search-input::placeholder {
   color: var(--stella-muted-fg);
@@ -159,7 +162,7 @@
   align-items: center;
   gap: 0.4rem;
   padding: 0.375rem 0.625rem;
-  font-size: 0.75rem;
+  font-size: var(--stella-type-xs);
   line-height: 1;
   color: var(--stella-muted-fg);
   background: transparent;
@@ -197,7 +200,7 @@
 
 .rl-count {
   margin: 0;
-  font-size: 0.75rem;
+  font-size: var(--stella-type-xs);
   color: var(--stella-muted-fg);
   font-variant-numeric: tabular-nums;
 }
@@ -282,14 +285,14 @@
 }
 
 .rl-version {
-  font-size: 1.5rem;
+  font-size: var(--stella-type-xl);
   font-weight: 700;
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
   color: var(--stella-accent-text);
 }
 .rl-date {
-  font-size: 0.8125rem;
+  font-size: var(--stella-type-sm);
   color: var(--stella-muted-fg);
   font-variant-numeric: tabular-nums;
 }
@@ -303,22 +306,22 @@
   gap: 2px;
   height: 3px;
   margin-left: auto;
-  border-radius: 2px;
+  border-radius: var(--ox-radius-xs);
   overflow: hidden;
 }
 .rl-meter-seg {
   background: var(--rl-kind);
-  border-radius: 2px;
+  border-radius: var(--ox-radius-xs);
 }
 
 .rl-toggle {
   width: 1rem;
   text-align: center;
-  font-size: 1.125rem;
+  font-size: var(--stella-type-md);
   color: var(--stella-muted-fg);
 }
 .rl-tag {
-  font-size: 0.75rem;
+  font-size: var(--stella-type-xs);
   color: var(--stella-muted-fg);
   text-decoration: none;
   border-bottom: 1px solid var(--color-fd-border);
@@ -334,7 +337,7 @@
 .rl-summary {
   max-width: 44rem;
   margin: 0 0 1.5rem;
-  font-size: 0.9375rem;
+  font-size: var(--stella-type-base);
   line-height: 1.65;
   color: var(--stella-muted-fg);
 }
@@ -360,7 +363,7 @@
 /* The colour is the supporting cue; this word is the actual label, which is
  * what keeps an entry classified with hue removed entirely. */
 .rl-kind {
-  font-size: 0.6875rem;
+  font-size: var(--stella-type-2xs);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--rl-kind);
@@ -368,7 +371,7 @@
 
 .rl-entry-text {
   max-width: 44rem;
-  font-size: 0.9375rem;
+  font-size: var(--stella-type-base);
   line-height: 1.65;
   color: var(--stella-muted-fg);
 }
@@ -379,7 +382,7 @@
 .rl-code {
   font-size: 0.9em;
   padding: 0.1em 0.35em;
-  border-radius: 0.25rem;
+  border-radius: var(--ox-radius-sm);
   background: var(--color-fd-muted);
   color: var(--color-fd-foreground);
 }
@@ -394,13 +397,13 @@
   margin-left: 0.375rem;
 }
 .rl-ref {
-  font-size: 0.75rem;
+  font-size: var(--stella-type-xs);
   font-variant-numeric: tabular-nums;
   color: var(--stella-muted-fg);
   text-decoration: none;
   padding: 0.05rem 0.35rem;
   border: 1px solid var(--color-fd-border);
-  border-radius: 0.25rem;
+  border-radius: var(--ox-radius-sm);
 }
 .rl-ref:hover {
   color: var(--stella-accent-text);
@@ -412,7 +415,7 @@
 .rl-hit {
   background: color-mix(in srgb, var(--stella-signal) 30%, transparent);
   color: inherit;
-  border-radius: 0.15rem;
+  border-radius: var(--ox-radius-xs);
   padding: 0 0.1em;
 }
 
@@ -422,7 +425,7 @@
   margin-top: 4rem;
   padding-top: 1.5rem;
   border-top: 1px solid var(--color-fd-border);
-  font-size: 0.8125rem;
+  font-size: var(--stella-type-sm);
   line-height: 1.7;
   color: var(--stella-muted-fg);
 }
