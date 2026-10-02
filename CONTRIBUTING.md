@@ -459,6 +459,4 @@ records that decision.
 
 The shared workflows lived in `oxageninc/product` until it became private on
 2026-10-01. A public repo cannot call a workflow in a private one, so they
-moved to `oxageninc/.github` on 2026-10-02
-([#6638](https://github.com/macanderson/stella/issues/6638),
-[oxageninc/product#5183](https://github.com/oxageninc/product/issues/5183)).
+moved to the public `oxageninc/.github` on 2026-10-02.
