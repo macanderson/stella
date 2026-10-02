@@ -11,6 +11,8 @@ name: brand-drift
 # The same run reads the site's stylesheets (`GUARDED_CSS` in the script). It
 # fails on a corner, shadow, type size, or page wrap written as a number where
 # a house token should be, and on a token reference that no sheet declares.
+# It reads the marketing pages' markup (`GUARDED_TSX`) too, and fails on a
+# Tailwind size class such as `text-sm`, where a `text-m-*` class should be.
 # Each line names the file, the line, and the token to use.
 #
 # The job checks out the kit's `main`, never a pinned commit, so the daily run
