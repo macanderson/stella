@@ -123,7 +123,12 @@
   outline: none;
 }
 
-.eng-tour a {
+/* The default for a link on the tour. `:where()` keeps it at one class of
+ * specificity, so any link class later in either sheet wins over it. Written
+ * as `.eng-tour a`, it beat `.eng-cta`, `.eng-cta-quiet`, and
+ * `.eng-rail-stop`: the primary button's label drew gold on its gold fill,
+ * and the rail stops drew gold and underlined. */
+.eng-tour :where(a) {
   color: var(--eng-accent);
   text-decoration: underline;
   text-decoration-thickness: 1px;
@@ -134,7 +139,7 @@
     transparent
   );
 }
-.eng-tour a:hover {
+.eng-tour :where(a):hover {
   text-decoration-color: currentColor;
 }
 .eng-tour :focus-visible {
