@@ -44,8 +44,9 @@
  * corner, a shadow, a type size, or a page wrap written there as a number
  * stays put when the kit's theme changes, so the check names each one with
  * the house token to use. `LITERALS` lists the values the house rules keep.
- * It reads the marketing pages' markup too (`GUARDED_TSX`), where a Tailwind
- * size class such as `text-sm` is the same kind of fixed number.
+ * It reads the markup of the marketing pages (`GUARDED_TSX`) and of the docs
+ * chrome (`GUARDED_APP_TSX`) too, where a Tailwind size class such as
+ * `text-sm` is the same kind of fixed number.
  */
 
 import {
@@ -143,6 +144,12 @@ const TOKEN_SHEETS = [`${WEB}/src/app/tokens.css`, `${KIT}/css/tokens.css`];
  * and a `max-width` as wide as the house wrap or wider. A narrower
  * `max-width` is a reading measure and passes.
  *
+ * A custom property counts as well when its name says it holds one of those
+ * values, such as `--stella-type-xs`, or when it is Tailwind's size for a
+ * text class, such as `--text-sm`. The docs chrome sets `--text-sm` and
+ * `--text-xs` so Fumadocs' size classes read the app scale, and a number
+ * there would stop them following the theme.
+ *
  * It also reports a `--stella-*`, `--st-*`, or `--ox-*` reference that no
  * sheet declares. A missing token voids the whole declaration, so a border
  * written with one draws no border at all.
@@ -183,6 +190,21 @@ const HOUSE_CSS = `${WEB}/src/brand/house-tokens.css`;
  * finding.
  */
 const GUARDED_TSX = [`${WEB}/src/app/(home)/page.tsx`];
+
+/**
+ * The docs chrome that Stella renders itself, held to the app type scale.
+ *
+ * The same check as `GUARDED_TSX`, with the two scales swapped. A Tailwind
+ * size class is reported with the nearest `text-a-*` class, and a
+ * marketing-scale class (`text-m-*`) is reported as the wrong scale. The nav
+ * title in `layout.shared.tsx` sits in the docs sidebar and in the landing
+ * page's nav bar, and both are chrome, so it takes the app scale on both.
+ */
+const GUARDED_APP_TSX = [
+  `${WEB}/src/lib/layout.shared.tsx`,
+  `${WEB}/src/components/page-actions.tsx`,
+  `${WEB}/src/components/page-footer.tsx`,
+];
 
 /** The size in px of each Tailwind size class, from Tailwind's default theme. */
 const TAILWIND_TEXT_PX = {
@@ -798,15 +820,17 @@ function cssFindings() {
   const squash = (s) => s.replace(/\s+/g, " ").trim();
   const lineOf = (css, at) => css.slice(0, at).split("\n").length;
   // A property, or a custom property that carries the same kind of value:
-  // `--stella-shadow-card` and `--stella-type-xs` hide a literal behind a name.
+  // `--stella-shadow-card` and `--stella-type-xs` hide a literal behind a name,
+  // and `--text-sm` is the size Tailwind's `text-sm` reads. Its line-height
+  // twin, `--text-sm--line-height`, is a ratio and is left out.
   const decls =
-    /(^|[{;\s])(border(?:-(?:top|bottom|start|end)-(?:left|right|start|end))?-radius|box-shadow|font-size|max-width|--[\w-]*(?:radius|shadow|type|wrap)[\w-]*)\s*:\s*([^;{}]+)/g;
+    /(^|[{;\s])(border(?:-(?:top|bottom|start|end)-(?:left|right|start|end))?-radius|box-shadow|font-size|max-width|--[\w-]*(?:radius|shadow|type|wrap)[\w-]*|--text-\w+(?![\w-]))\s*:\s*([^;{}]+)/g;
   const kindOf = (name) =>
     /radius/.test(name)
       ? "border-radius"
       : /shadow/.test(name)
         ? "box-shadow"
-        : /type|font-size/.test(name)
+        : /type|font-size|^--text-/.test(name)
           ? "font-size"
           : "max-width";
   const out = [];
@@ -861,36 +885,44 @@ function classAt(src, start, end) {
 }
 
 /**
- * Every class in `GUARDED_TSX` that sets a size, corner, or shadow by hand,
- * as one line each. Each line starts with the file's path, as in
- * `cssFindings`.
+ * Every class in `GUARDED_TSX` and `GUARDED_APP_TSX` that sets a size, corner,
+ * or shadow by hand, or that takes the other page's type scale, as one line
+ * each. Each line starts with the file's path, as in `cssFindings`.
  */
 function tsxFindings(steps) {
   const out = [];
-  const marketingClass = (px) => {
-    const step = nearest(steps.marketing, px, "--ox-m-<step>");
+  const scales = {
+    m: { steps: steps.marketing, name: "marketing", pages: "landing pages and posts", other: "a" },
+    a: { steps: steps.app, name: "app", pages: "docs and app pages", other: "m" },
+  };
+  const typeClass = (scale, px) => {
+    const step = nearest(scales[scale].steps, px, `--ox-${scale}-<step>`);
     const name = step.replace(/^--ox-/, "text-");
-    const face = name === "text-m-micro" ? " text-m-micro sets the code face, so add font-sans to text that is read." : "";
-    return `${name}, the nearest step of the marketing scale (${step}).${face}`;
+    const face = /^text-[am]-micro$/.test(name) ? ` ${name} sets the code face, so add font-sans to text that is read.` : "";
+    return `${name}, the nearest step of the ${scales[scale].name} scale (${step}).${face}`;
   };
-  const advice = {
-    "font-size": (px) => marketingClass(px),
-    "border-radius": () =>
-      "rounded-xl on a card or panel (the house corner, --ox-radius), or a named rounded-* step on a control.",
-    "box-shadow": () => "shadow-lg under a floating surface, and no shadow on a card or panel at rest.",
-  };
-  for (const path of GUARDED_TSX) {
+  const corner = () =>
+    "rounded-xl on a card or panel (the house corner, --ox-radius), or a named rounded-* step on a control.";
+  const shadow = () => "shadow-lg under a floating surface, and no shadow on a card or panel at rest.";
+  const files = [...GUARDED_TSX.map((path) => [path, "m"]), ...GUARDED_APP_TSX.map((path) => [path, "a"])];
+  for (const [path, scale] of files) {
     const src = uncommentTsx(readFileSync(join(REPO, path), "utf8"));
     const lineOf = (at) => src.slice(0, at).split("\n").length;
     const report = (m, why) =>
       out.push(`${path} line ${lineOf(m.index)}: ${classAt(src, m.index, m.index + m[0].length)} ${why}`);
+    const advice = { "font-size": (px) => typeClass(scale, px), "border-radius": corner, "box-shadow": shadow };
 
     for (const m of src.matchAll(/(?<![\w-])text-(xs|sm|base|lg|xl|[2-9]xl)(?![\w-])/g)) {
       const px = TAILWIND_TEXT_PX[m[1]];
-      report(m, `sets a fixed ${px}px. Use ${marketingClass(px)}`);
+      report(m, `sets a fixed ${px}px. Use ${typeClass(scale, px)}`);
     }
-    for (const m of src.matchAll(/(?<![\w-])text-a-(h[1-4]|body|micro)(?![\w-])/g)) {
-      report(m, `is on the app scale, which is for docs and app pages. Use text-m-${m[1]} on a marketing page.`);
+    const other = scales[scales[scale].other];
+    const wrongScale = new RegExp(`(?<![\\w-])text-${scales[scale].other}-(h[1-4]|body|micro)(?![\\w-])`, "g");
+    for (const m of src.matchAll(wrongScale)) {
+      report(
+        m,
+        `is on the ${other.name} scale, which is for ${other.pages}. Use text-${scale}-${m[1]} here, on the ${scales[scale].name} scale.`,
+      );
     }
     // A value in square brackets. Tailwind writes a space there as `_`.
     const bracketed = /(?<![\w-])(text|shadow|rounded(?:-(?:tl|tr|br|bl|ss|se|es|ee|[trblse]))?)-\[([^\]\s]+)\]/g;
@@ -922,13 +954,13 @@ if (CHECK) {
   }
   if (findings.length) {
     console.error(
-      `brand: ${findings.length} value(s) in the site's stylesheets and marketing pages do not read a house token. ` +
+      `brand: ${findings.length} value(s) in the site's stylesheets, marketing pages, and docs chrome do not read a house token. ` +
         "Use the token each line names, or add the value to LITERALS in scripts/sync-brand-assets.mjs with its reason:",
     );
     for (const f of findings) console.error(`  ${f}`);
   }
   if (drifted.length || findings.length) process.exit(1);
-  console.log(`brand: every synced file matches ${kit}, and the site's stylesheets and marketing pages read the house tokens.`);
+  console.log(`brand: every synced file matches ${kit}, and the site's stylesheets, marketing pages, and docs chrome read the house tokens.`);
 } else {
   console.log(
     written.length
