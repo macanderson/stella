@@ -573,17 +573,57 @@ function assets() {
   copy("logo/svg/stella-wordmark-light.svg", `${OBSERVATORY}/wordmark-light.svg`);
 }
 
+/** The two folders that hold the kit's faces and nothing else. */
+const FONT_DIRS = [`${WEB}/src/fonts`, `${KIT}/fonts`];
+
 /**
- * The three house faces with their licences, the kit's token files, and the
- * kit's `next/font` loader.
+ * The font files the kit's pages load: every face its `house-fonts.css` and
+ * its `next-fonts.ts` name under `../fonts/`, and every licence in its
+ * `fonts/`.
+ *
+ * No file name is written here. The kit's theme editor writes both files, so
+ * a face it adds or drops reaches the site on the next sync with no edit to
+ * this script.
+ */
+function fontFiles() {
+  const faces = new Set();
+  for (const sheet of ["tokens/house-fonts.css", "tokens/next-fonts.ts"]) {
+    const text = kitFile(sheet).toString("utf8");
+    const found = [...text.matchAll(/\.\.\/fonts\/([\w.-]+\.woff2)\b/g)].map((m) => m[1]);
+    if (!found.length) throw new Error(`the kit's ${sheet} loads no face from ../fonts/, so the sync cannot tell which faces to copy`);
+    for (const f of found) faces.add(f);
+  }
+  const licences = readdirSync(join(BRAND, "fonts")).filter((f) => /^LICENSE.*\.txt$/.test(f));
+  return [...faces, ...licences].sort();
+}
+
+/**
+ * The house faces with their licences, the kit's token files, and the kit's
+ * `next/font` loader.
  *
  * `next-fonts.ts` loads its faces from `../fonts/`, so it sits in
- * `website/src/brand/`, beside `website/src/fonts/`.
+ * `website/src/brand/`, beside `website/src/fonts/`. A file in either font
+ * folder that the kit no longer loads is removed, so a face the kit drops
+ * leaves the site too.
  */
 function typeAndTokens() {
-  for (const f of readdirSync(join(BRAND, "fonts")).sort()) {
-    if (f.endsWith(".woff2") || f.startsWith("LICENSE")) {
-      copy(`fonts/${f}`, `${WEB}/src/fonts/${f}`, `${KIT}/fonts/${f}`);
+  const fonts = fontFiles();
+  for (const f of fonts) copy(`fonts/${f}`, ...FONT_DIRS.map((dir) => `${dir}/${f}`));
+  for (const dir of FONT_DIRS) {
+    let names = [];
+    try {
+      names = readdirSync(join(REPO, dir));
+    } catch {
+      // No folder yet: the copies above create it.
+    }
+    for (const name of names.filter((n) => !n.startsWith(".") && !fonts.includes(n)).sort()) {
+      const rel = `${dir}/${name}`;
+      if (CHECK) {
+        drifted.push(`${rel} (not a face or licence the kit loads)`);
+      } else {
+        rmSync(join(REPO, rel), { recursive: true, force: true });
+        written.push(`${rel} (removed)`);
+      }
     }
   }
   copy("tokens/house-tokens.css", `${KIT}/css/house-tokens.css`, `${WEB}/src/brand/house-tokens.css`);
@@ -598,29 +638,44 @@ const TYPE_CLASSES = ["m", "a"].flatMap((scale) =>
   ["h1", "h2", "h3", "h4", "body", "micro"].map((step) => `text-${scale}-${step}`),
 );
 
+/** The font roles the site's stylesheets read, which the kit's theme sets. */
+const FONT_ROLES = ["--font-sans", "--font-display", "--font-mono", "--font-wordmark"];
+
 /**
- * The kit's type classes, `text-m-h1` to `text-m-micro` and `text-a-h1` to
- * `text-a-micro`, as a sheet the site imports.
+ * The kit's font roles and type classes, as a sheet the site imports.
  *
- * They live in the kit's `house-tailwind.css`, and the site cannot import
+ * Both live in the kit's `house-tailwind.css`, and the site cannot import
  * that whole file. Its base layer would restyle the site's headings and focus
- * ring, and its theme block would replace the corner and font mappings in
- * global.css. So the sync copies the `@utility` rules for type and nothing
- * else. Each rule sets a size and a line height from the house tokens, so a
- * theme change reaches every element that uses one.
+ * ring, and its theme block would replace the corner mappings in global.css.
+ * So the sync copies two parts and nothing else:
  *
- * The kit writes each rule on one line. If one of `TYPE_CLASSES` is missing
- * from that shape, the sync stops rather than write a partial sheet.
+ *  - the `--font-*` lines of its first `@theme` block, which point each role
+ *    at the variable the kit's `next-fonts.ts` sets, such as `--font-sans`
+ *    at `--font-aeonik`. The two files change together when the kit's theme
+ *    editor changes a face, so the site never names a face itself.
+ *  - the `@utility` rules for type, `text-m-h1` to `text-m-micro` and
+ *    `text-a-h1` to `text-a-micro`. Each sets a size and a line height from
+ *    the house tokens, so a theme change reaches every element that uses one.
+ *
+ * The kit writes each line whole. If a role in `FONT_ROLES` or a class in
+ * `TYPE_CLASSES` is missing from that shape, the sync stops rather than write
+ * a partial sheet.
  */
 function typeClasses() {
-  const rules = kitFile("tokens/house-tailwind.css")
-    .toString("utf8")
-    .split("\n")
-    .filter((line) => /^@utility text-[am]-[\w-]+ \{.*\}$/.test(line));
-  const missing = TYPE_CLASSES.filter((name) => !rules.some((rule) => rule.startsWith(`@utility ${name} {`)));
-  if (missing.length) {
+  const lines = kitFile("tokens/house-tailwind.css").toString("utf8").split("\n");
+  const theme = lines.slice(lines.indexOf("@theme {") + 1);
+  const roles = theme
+    .slice(0, theme.indexOf("}"))
+    .map((line) => line.trim())
+    .filter((line) => /^--font-[\w-]+:.*;( \/\*.*\*\/)?$/.test(line));
+  const rules = lines.filter((line) => /^@utility text-[am]-[\w-]+ \{.*\}$/.test(line));
+  const missing = [
+    ...FONT_ROLES.filter((name) => !roles.some((line) => line.startsWith(`${name}:`))),
+    ...TYPE_CLASSES.filter((name) => !rules.some((rule) => rule.startsWith(`@utility ${name} {`))),
+  ];
+  if (!lines.includes("@theme {") || missing.length) {
     throw new Error(
-      `the kit's tokens/house-tailwind.css has no one-line @utility rule for ${missing.join(", ")}, ` +
+      `the kit's tokens/house-tailwind.css has no one-line rule for ${missing.join(", ") || "@theme {"}, ` +
         "so the sync cannot write website/src/brand/house-type.css",
     );
   }
@@ -628,18 +683,24 @@ function typeClasses() {
   emit(
     `${WEB}/src/brand/house-type.css`,
     `/*
- * The house type classes: text-m-* is the marketing scale, for landing pages
- * and posts, and text-a-* is the app scale, for docs and apps.
+ * The house font roles and type classes. text-m-* is the marketing scale, for
+ * landing pages and posts, and text-a-* is the app scale, for docs and apps.
  *
  * GENERATED by scripts/sync-brand-assets.mjs from the kit's
  * tokens/house-tailwind.css. Do not edit. Run the sync instead.
  *
- * Each class sets a size, a line height, a face, and a weight. The size and
- * line height read the --ox-m-* and --ox-a-* tokens in house-tokens.css. The
- * faces read --font-display, --font-sans, and --font-mono, which the @theme
- * block in src/app/global.css sets. text-m-micro and text-a-micro set the
- * code face.
+ * The @theme block points each font role at the variable that src/brand/
+ * next-fonts.ts sets on <html>, so a face the kit changes reaches the site
+ * with no edit here. Each class sets a size, a line height, a face, and a
+ * weight. The size and line height read the --ox-m-* and --ox-a-* tokens in
+ * house-tokens.css, and the face reads a role below. text-m-micro and
+ * text-a-micro set the code face.
  */
+
+/* the font roles */
+@theme {
+${roles.map((line) => `  ${line}`).join("\n")}
+}
 
 /* the marketing scale */
 ${scale("m")}

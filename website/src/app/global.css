@@ -80,17 +80,13 @@
 /* Let Tailwind see Fumadocs' compiled utility classes. */
 @source "../../node_modules/fumadocs-ui/dist/**/*.js";
 
-/* Three faces, loaded by src/brand/next-fonts.ts. Geist sets every heading and
- * everything read, Monaspace Neon sets code and terminal transcripts, and Space
- * Grotesk sets only a wordmark typed as text (--font-wordmark), per the house
- * rule of 2026-09-29. Each fallback stack is the kit's, from
- * src/brand/house-tokens.css. */
+/* The faces load through src/brand/next-fonts.ts. The font roles
+ * (--font-sans, --font-display, --font-mono, and --font-wordmark) come from
+ * the kit, in src/brand/house-type.css, so this file names no face. By the
+ * house rule of 2026-10-02, Aeonik sets every heading and everything read,
+ * Monaspace Neon sets code and terminal transcripts, and Space Grotesk sets
+ * only a wordmark typed as text (--font-wordmark). */
 @theme {
-  --font-display: var(--font-geist), var(--ox-font);
-  --font-wordmark: var(--font-space-grotesk), var(--ox-font-display);
-  --font-sans: var(--font-geist), var(--ox-font);
-  --font-mono: var(--font-monaspace-neon), var(--ox-font-mono);
-
   /* The type scale for the docs, the releases timeline, and the terminal
    * panels: the kit's app scale (--ox-a-*), under the names this site's rules
    * already use. A marketing heading or lead reads the kit's marketing scale

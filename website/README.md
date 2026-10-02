@@ -9,9 +9,9 @@ Built with [Next.js](https://nextjs.org) (App Router) + [Fumadocs](https://fumad
 ## Brand
 
 House system v7.0 (`design/tokens/stella-tokens.json`): obsidian `#09090B`,
-white, neutral greys, one gold `#D4AF37` (`#8A7223` on white). Faces: Space
-Grotesk for h1–h3 and the `stella*` wordmark, Geist for body and UI, Monaspace
-Neon for code. Rules: lowercase always; gold is the signal, never the surface;
+white, neutral greys, one gold `#D4AF37` (`#8A7223` on white). Faces: Aeonik
+for every heading, body, and UI, Space Grotesk for the `stella*` wordmark, and
+Monaspace Neon for code. The kit sets the faces, and the sync carries them here. Rules: lowercase always; gold is the signal, never the surface;
 gold on white uses the deep shade (metal on white is 2.1:1).
 
 **`docs/brand/` is normative** (start with its `brand-guidelines.html`). Three
@@ -38,8 +38,8 @@ anywhere, and a `--rl-`-style prefix so the selectors cannot collide.
 `src/app/favicon.ico`, `src/app/icon.svg`, and `src/app/apple-icon.png` mirror
 `docs/brand/pwa/`; the woff2 files under `src/fonts/` mirror
 `docs/brand/fonts/`. `src/brand/` holds the kit's font loader and token sheet,
-verbatim, and `house-type.css`, the kit's `text-m-*` and `text-a-*` type
-classes taken out of its Tailwind sheet. A marketing page such as the landing
+verbatim, and `house-type.css`, the kit's font roles and its `text-m-*` and
+`text-a-*` type classes taken out of its Tailwind sheet. A marketing page such as the landing
 page sizes its text with `text-m-*`, never with Tailwind's `text-sm` or
 `text-lg`. `scripts/sync-brand-assets.mjs` writes every one of these files from
 the kit, so run it when the kit changes and never hand-edit the site's copies.
