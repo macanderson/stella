@@ -5,11 +5,9 @@
 # covers the hand-closed path, after the fact, because GitHub has no pre-close
 # hook to veto.
 #
-# Implementation lives once in oxagen — see ADR-039.
-#
-# oxageninc/product has been private since 2026-10-01. A public repository
-# cannot call a private repository's workflow, so this caller fails before it
-# starts a job. #6638 holds the decision on where the implementation moves.
+# The implementation lives once in oxageninc/.github, which is public, so
+# every caller can call it and check out its scripts. See ADR-039 in
+# oxageninc/product.
 name: dod-close-guard
 
 on:
@@ -24,4 +22,4 @@ permissions:
 
 jobs:
   guard:
-    uses: oxageninc/product/.github/workflows/dod-close-guard.yml@c7226a6179e4866ea178ab8b6ba57a786ffa4dec # oxagen main, #5183
+    uses: oxageninc/.github/.github/workflows/dod-close-guard.yml@0fcda43817ad777f564664ab2b29453745b2f436 # oxageninc/.github main, oxageninc/product#5183

@@ -431,15 +431,20 @@ If some clause in the CLA is a blocker for you, say so in the PR or email
 
 ## Shared workflow updates
 
+The shared DoD workflows live in the public
+[`oxageninc/.github`](https://github.com/oxageninc/.github/tree/main/tools/scripts)
+repository. Any repository can call a public repository's workflows and check
+out its scripts.
+
 Dependabot checks GitHub Actions weekly. What it skips is the Oxagen reusable
 workflows that the callers in `.github/workflows/` reference, excluded by the
-`oxageninc/product/.github/workflows/*` ignore pattern. That pattern names a
+`oxageninc/.github/.github/workflows/*` ignore pattern. That pattern names a
 remote dependency, so the caller files themselves are not exempt: every other
 action they pin is still updated automatically. The Oxagen pins are the
-exception because they are maintained together across Stella, ArenaBench,
-cgp-website, and context-graph-protocol. When a shared workflow changes, open
-the caller updates together and verify Oxagen's `scr-corpus-check` after they
-merge.
+exception because they are maintained together across oxageninc/product,
+Stella, ArenaBench, cgp-website, and context-graph-protocol. When a shared
+workflow changes, open the caller updates together and verify product's
+`scr-corpus-check` after they merge.
 
 The parity check is `check-dod-stub-parity.mjs`, a second step in that same
 job rather than a workflow of its own. It compares the workflow files each
@@ -448,13 +453,12 @@ files pass.
 
 The pin is a commit SHA rather than `@main` so that no repository can change
 a required check in another without a commit to review there. The cost is a
-re-pin in every caller, and the failure mode is paying it in three of four.
+re-pin in every caller, and the failure mode is paying it in four of five.
 [Oxagen ADR-045](https://github.com/oxageninc/product/blob/main/docs/adr/ADR-045-pin-cross-repo-reusable-workflows.md)
 records that decision.
 
-The shared workflows live in `oxageninc/product`. That repo has been private
-since 2026-10-01. A public repo cannot call a workflow in a private one. So
-`dod-check` and `dod-close-guard` fail here before they start a job. The
-maintainer has to pick where they move, and
-[the issue for that call](https://github.com/macanderson/stella/issues/6638)
-lists the options.
+The shared workflows lived in `oxageninc/product` until it became private on
+2026-10-01. A public repo cannot call a workflow in a private one, so they
+moved to `oxageninc/.github` on 2026-10-02
+([#6638](https://github.com/macanderson/stella/issues/6638),
+[oxageninc/product#5183](https://github.com/oxageninc/product/issues/5183)).
