@@ -91,8 +91,12 @@ fn a_context_db_older_than_v8_degrades_to_empty_ledger_sections() {
         // Rebuild the pre-v8 shape honestly: no ledger table, no lineage
         // columns on `episode`. Dropping the whole table also drops its
         // append-only triggers, exactly as a pre-v8 file never had them.
+        // The v14 export views go first. A pre-v8 file has none, and SQLite
+        // refuses to alter a table while a view names one that is gone.
         raw.execute_batch(
-            "DROP TABLE context_records;
+            "DROP VIEW IF EXISTS export_memory_uses_v1;
+             DROP VIEW IF EXISTS export_memories_v1;
+             DROP TABLE context_records;
              DROP INDEX IF EXISTS idx_episode_lineage;
              ALTER TABLE episode DROP COLUMN lineage_id;
              ALTER TABLE episode DROP COLUMN superseded_at;
