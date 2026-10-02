@@ -125,7 +125,7 @@
   --ox-a-micro-leading: 1.4;
 
   --ox-radius: 0.75rem; /* 12px: cards, panels, inputs on the website */
-  --ox-wrap: 1120px;
+  --ox-wrap: 1180px;
   --ox-shimmer-period: 2.8s;
 
   --ox-radius-base: 0.45rem; /* 7.2px: the corner every step multiplies */

@@ -462,7 +462,7 @@
     "scales": {
       "marketing": {
         "utility_prefix": "text-m-",
-        "use": "landing pages, posts, docs read once: large and spaced",
+        "use": "landing pages and posts read once: large and spaced",
         "steps": [
           {
             "step": "h1",
@@ -534,7 +534,7 @@
       },
       "app": {
         "utility_prefix": "text-a-",
-        "use": "dashboards, panels, tables, terminals, logs read all day: dense",
+        "use": "dashboards, docs, panels, tables, terminals, logs: dense",
         "steps": [
           {
             "step": "h1",
@@ -633,7 +633,7 @@
   },
   "spacing": {
     "unit": "0.25rem",
-    "wrap": "1120px"
+    "wrap": "1180px"
   },
   "wordmarks": {
     "oxagen": {
