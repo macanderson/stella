@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Guard: the issue priority scheme is written down once.
 
-`docs/scr/SCR-005-triage-separation-of-duties.md` is the home. Its Directive
-names the levels and what each one means. Everything else cites it.
+`AGENTS.md` is the home. Its standing-decisions block ends with a
+`Priority scheme:` paragraph that names the levels and what each one means.
+Everything else cites it.
 
 Four documents each named a scheme of their own and no two agreed: five levels
 in two of them, three in a third, and a hedge in the fourth about repositories
@@ -14,12 +15,14 @@ fixes the day. Reading them fixes the shape.
 
 Two rules:
 
-1. The regex in the triage guard covers every level SCR-005 names, and no
+1. The regex in the triage guard covers every level the home names, and no
    more. It is the one derived copy, because a workflow cannot read a
    document at the moment it runs.
 2. No other file in the tree states the scheme. A span from the first level
    to the last one, or a character class over them, is a second copy waiting
-   to drift. Cite SCR-005 there instead.
+   to drift. Cite the scheme in `AGENTS.md` there instead. Only the
+   scheme's own paragraph is exempt, so a second copy inside `AGENTS.md`
+   fails too.
 
 Run it with `make priority-scheme`. `scripts/test-priority-scheme.py` runs it
 against throwaway trees to show it can still fail.
@@ -32,10 +35,10 @@ import re
 import sys
 from pathlib import Path
 
-SCR = "docs/scr/SCR-005-triage-separation-of-duties.md"
+HOME = "AGENTS.md"
 WORKFLOW = ".github/workflows/triage-guard.yml"
 
-# Where the scheme is declared inside the SCR, and the token it declares each
+# Where the scheme is declared inside the home, and the token it declares each
 # level as.
 SCHEME_HEADING = "Priority scheme:"
 LEVEL = re.compile(r"`P(\d)`")
@@ -88,21 +91,34 @@ def read(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
-def declared_levels(text: str) -> tuple[list[int], str]:
-    """The levels SCR-005 declares, or no levels and the reason why not."""
+def declaration(text: str) -> tuple[str, range]:
+    """The paragraph that declares the scheme, and the line numbers it spans.
+
+    Both are empty when the home has no `Priority scheme:` line.
+    """
     start = text.find(SCHEME_HEADING)
     if start < 0:
-        return [], f"{SCR} has no `{SCHEME_HEADING}` line"
+        return "", range(0)
     # The declaration runs to the end of its paragraph, so a wrapped list is
     # read whole.
     end = text.find("\n\n", start)
-    block = text[start:] if end < 0 else text[start:end]
+    if end < 0:
+        end = len(text)
+    first = text.count("\n", 0, start) + 1
+    last = text.count("\n", 0, end) + 1
+    return text[start:end], range(first, last + 1)
+
+
+def declared_levels(block: str) -> tuple[list[int], str]:
+    """The levels the home declares, or no levels and the reason why not."""
+    if not block:
+        return [], f"{HOME} has no `{SCHEME_HEADING}` line"
     levels = [int(n) for n in LEVEL.findall(block)]
     if not levels:
-        return [], f"{SCR} has a `{SCHEME_HEADING}` line with no levels under it"
+        return [], f"{HOME} has a `{SCHEME_HEADING}` line with no levels under it"
     if levels != list(range(len(levels))):
         return [], (
-            f"{SCR} declares the levels {levels}, which do not run from 0 up "
+            f"{HOME} declares the levels {levels}, which do not run from 0 up "
             "with no gaps"
         )
     return levels, ""
@@ -127,12 +143,13 @@ def main() -> int:
         print("\n".join(report), file=sys.stderr)
         return 1
 
-    scr = root / SCR
-    if not scr.is_file():
-        note(f"FAIL - {SCR} is missing, so nothing declares the scheme.")
+    home = root / HOME
+    if not home.is_file():
+        note(f"FAIL - {HOME} is missing, so nothing declares the scheme.")
         return verdict()
 
-    levels, why = declared_levels(read(scr))
+    block, scheme_lines = declaration(read(home))
+    levels, why = declared_levels(block)
     if not levels:
         note(f"FAIL - {why}.")
         note("     Write the scheme as one paragraph of `P0` `P1` ... tokens.")
@@ -147,12 +164,12 @@ def main() -> int:
     ceilings = CLASS.findall(read(workflow))
     if not ceilings:
         note(f"FAIL - {WORKFLOW} has no `P[0-N]` pattern in it.")
-        note(f"     It is the one copy of the scheme, and {SCR} says `P0`-`P{top}`.")
+        note(f"     It is the one copy of the scheme, and {HOME} says `P0`-`P{top}`.")
         return verdict()
     for ceiling in ceilings:
         if int(ceiling) != top:
             note(f"FAIL - {WORKFLOW} matches up to `P{ceiling}`.")
-            note(f"     {SCR} names {len(levels)} levels, up to `P{top}`.")
+            note(f"     {HOME} names {len(levels)} levels, up to `P{top}`.")
             note("     A level the labels have and this regex does not is a")
             note("     hole in both directions: the guard never strips it, and")
             note("     an issue carrying only it reads as unprioritised.")
@@ -161,9 +178,12 @@ def main() -> int:
     fail = False
     for path in scan_files(root):
         rel = path.relative_to(root).as_posix()
-        if rel == SCR:
-            continue
+        # The home is a long file. Only the paragraph that declares the scheme
+        # may state it.
+        exempt = scheme_lines if rel == HOME else range(0)
         for number, line in enumerate(read(path).splitlines(), 1):
+            if number in exempt:
+                continue
             second_class = rel != WORKFLOW and CLASS.search(line)
             if second_class or SPAN.search(line):
                 note(f"FAIL - {rel}:{number} states the priority scheme.")
@@ -171,9 +191,9 @@ def main() -> int:
                 fail = True
 
     if fail:
-        note(f"     The scheme lives in {SCR}. {WORKFLOW} copies it, because")
+        note(f"     The scheme lives in {HOME}. {WORKFLOW} copies it, because")
         note("     code cannot read a document as it runs. Every other mention")
-        note("     cites SCR-005 rather than naming the levels again.")
+        note(f"     cites the scheme in {HOME} rather than naming the levels again.")
         return verdict()
 
     print(f"check-priority-scheme: ok - {len(levels)} levels, `P0` up to `P{top}`.")

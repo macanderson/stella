@@ -892,7 +892,7 @@ release-retry-test: ## Test the release-retry guard's failure directions (hermet
 	@python3 ./scripts/test-release-retry.py
 
 .PHONY: priority-scheme
-priority-scheme: ## Assert the issue priority scheme is stated once, in SCR-005 (#5216)
+priority-scheme: ## Assert the issue priority scheme is stated once, in AGENTS.md (#5216)
 	@python3 ./scripts/check-priority-scheme.py
 
 .PHONY: priority-scheme-test

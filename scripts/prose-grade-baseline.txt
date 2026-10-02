@@ -1727,12 +1727,6 @@ docs/prompts/witness-repair.md 13.23
 docs/prompts/worker.md 14.40
 docs/prose-guidelines.md 6.36
 docs/reference/diagnostics.md 11.47
-docs/scr/README.md 11.94
-docs/scr/SCR-001-no-full-suite-builds.md 17.34
-docs/scr/SCR-002-durability-first-architecture.md 13.75
-docs/scr/SCR-003-dod-verified-close.md 11.25
-docs/scr/SCR-004-residue-becomes-issues.md 13.85
-docs/scr/SCR-005-triage-separation-of-duties.md 14.34
 docs/spec/adaptive-context/adaptive-context-plan.md 12.05
 docs/spec/adaptive-context/adaptive-context.md 13.36
 docs/spec/adaptive-context/context-frame-spec.md 13.29

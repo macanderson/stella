@@ -42,14 +42,14 @@ jobs:
         with:
           script: |
             const issue = context.payload.issue;
-            // Every level SCR-005's Directive names, `P4` included. A level the
+            // Every level the scheme in AGENTS.md names, `P4` included. A level the
             // label set has and this regex does not is a hole in both
             // directions: the guard never strips it from a non-triage login,
             // and an issue carrying only that label reads as unprioritised to
             // every query built on this pattern while reading as triaged to a
             // human (#5216).
             //
-            // SCR-005 states the scheme; this is the one copy of it, because a
+            // AGENTS.md states the scheme; this is the one copy of it, because a
             // workflow cannot read a document as it runs. The two are held
             // together by scripts/check-priority-scheme.py, so editing one
             // without the other fails the gate rather than the backlog.

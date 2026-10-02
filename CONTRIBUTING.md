@@ -400,7 +400,7 @@ Both forms apply the `TRIAGE` label, and triage replaces it. Labels you'll
 see after that:
 
 - `AREA:*` routes an issue to a crate.
-- A `P` label is priority. [SCR-005](docs/scr/SCR-005-triage-separation-of-duties.md) names the levels.
+- A `P` label is priority. The priority scheme in [`AGENTS.md`](AGENTS.md) names the levels.
 - `GOOD FIRST ISSUE` and `HELP WANTED` mean what they say.
 - `NEEDS-WITNESS` means a PR is waiting on its witness test.
 

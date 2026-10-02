@@ -13,7 +13,7 @@ cmd=$(jq -r '.tool_input.command // empty' 2>/dev/null || true)
 [ -z "$cmd" ] && exit 0
 
 block() {
-  echo "Blocked (SCR-001): full test-suite builds are CI's job. Scope it: $1 — see docs/scr/SCR-001-no-full-suite-builds.md" >&2
+  echo "Blocked (SCR-001): full test-suite builds are CI's job. Scope it: $1 — see SCR-001 in AGENTS.md" >&2
   exit 2
 }
 

@@ -60,7 +60,7 @@ Flags:
 ## The separation-of-duties question — read this first
 
 Several repos in this org carry **SCR-005**
-(`docs/scr/SCR-005-triage-separation-of-duties.md`), which says the triage agent
+(SCR-005 in `AGENTS.md`), which says the triage agent
 *"never implements anything and never closes issues — it only sizes and orders."*
 
 **This command extends that role, at the maintainer's explicit request** for vet +

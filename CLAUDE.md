@@ -311,8 +311,8 @@ Mac set this on 2026-09-26 for every repository. The `agent-monitored-pr` label 
   `P1 T3 XS Bug (CLI): The resume picker drops the newest thread`. Triage
   applies exactly one label from each of five families, and any number of
   pain labels:
-  - **Priority:** one `P` label. SCR-005's Directive names the levels, and
-    is the only place that does.
+  - **Priority:** one `P` label. The priority scheme in AGENTS.md names
+    the levels, and is the only place that does.
   - **Tier:** one `MODEL:` label, picked by the hardest step in the issue,
     not the average. `MODEL:T1` (Haiku) is templated or mechanical work.
     `MODEL:T2` (Sonnet) is routine work against a clear spec. `MODEL:T3`

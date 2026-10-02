@@ -168,7 +168,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + release-retry (release.yml's publish step
                          #     retries once on a mid-publish 5xx; #5698)
                          #   + priority-scheme (the issue priority scheme is
-                         #     stated once, in SCR-005, and the triage guard's
+                         #     stated once, in AGENTS.md, and the triage guard's
                          #     regex covers exactly the levels it names)
                          #   + left-behind
                          #   + retired-model-keys (no shipping Rust
@@ -1997,24 +1997,24 @@ something it is building. It is sales/marketing material.
 
 ## Standing decisions — apply without asking
 
-Each directive below is a Steering Context Record in [`docs/scr/`](docs/scr/);
-the SCR is canonical — it carries the rationale, exceptions, and enforcement
-status. This block is the compiled summary that every agent — Claude Code
-(via CLAUDE.md's `@AGENTS.md` import) and Stella (which reads AGENTS.md
-directly) — loads at session start. The corpus is identical across the
-macanderson org repos.
+These rules are standing decisions. Each one is held as a context record in
+the Oxagen workspace this repository is linked to. The repository keeps no copy
+of the records. Oxagen [ADR-137](https://github.com/oxageninc/product/blob/main/docs/adr/ADR-137-standing-decisions-are-workspace-context-records.md)
+retired `docs/scr/` in every repository. Every agent loads this summary at
+session start. Claude Code loads it through the `@AGENTS.md` import in
+CLAUDE.md, and Stella reads AGENTS.md directly.
 
-- **[SCR-001](docs/scr/SCR-001-no-full-suite-builds.md) — Tests/builds
+- **SCR-001 — Tests/builds
   (inner loop):** Never compile or run the full test suite while developing.
   Build and test only the crates/packages/modules touched by the change
   (plus direct dependents on interface changes). The full suite is CI's job.
   Here: CI runs every build and test, and none of them runs on this machine.
-- **[SCR-002](docs/scr/SCR-002-durability-first-architecture.md) —
+- **SCR-002 —
   Architecture decisions:** Do not ask. Choose the most durable option — the
   one that can't be questioned in 10 years as the right move. Cheap-and-easy
   only wins when it is also the excellent durable choice. Record every such
   decision as an ADR in `docs/adr/`; the ADR replaces the question.
-- **[SCR-003](docs/scr/SCR-003-dod-verified-close.md) — Definition of
+- **SCR-003 — Definition of
   done:** An issue closes only when every DoD checklist item is satisfied
   and verified. Reference-grade includes tests, code comments, docs, and
   CI — not just the implementation. A PR that advances an issue without
@@ -2024,24 +2024,30 @@ macanderson org repos.
   PR that closes nothing is waived by a label, and which one is a claim:
   `NO-ISSUE` for a trivial change, `CLOSES-NOTHING` for a substantial one
   that closes no issue by design.
-- **[SCR-004](docs/scr/SCR-004-residue-becomes-issues.md) — Fix over
+- **SCR-004 — Fix over
   file:** Fix what you notice in the PR you are making; two unrelated fixes
   in one PR is fine. File an issue only when a fix cannot responsibly ride
   the PR (a maintainer decision, a rig or spend, or work larger than the
   session), and only when fixing it moves stability, reliability,
   maintainability, innovation, efficiency, or performance. Apply ONLY the
   `TRIAGE` label.
-- **[SCR-005](docs/scr/SCR-005-triage-separation-of-duties.md) — Triage
+- **SCR-005 — Triage
   separation of duties:** Never apply a priority, `MODEL:`, `SIZE:`,
   `KIND:`, or `AREA:` label. A dedicated triage agent owns them, and a
-  guard workflow strips creator-applied priorities.
-- **[SCR-006](docs/scr/SCR-006-schema-changes-are-labelled.md) — A schema change is labelled, and its migration is
+  guard workflow strips creator-applied priorities. The triage agent only
+  sizes and orders the work. It never implements anything and never closes
+  an issue. The priority scheme below the list names the levels.
+- **SCR-006 — A schema change is labelled, and its migration is
   applied before or with its deploy:** A pull request that changes a schema carries
   `MIGRATION-REQUIRED`, and the migration reaches production before or with
   the deploy of that change, never after. Say in the PR which store changed
   and what must be applied. Where a repo has no automation to apply the label
   from the diff, apply it by hand. Do not add an automatic apply to a deploy
   pipeline under this record; that is a separate decision, made per repo.
+
+Priority scheme: `P0` drop everything · `P1` this cycle · `P2` next cycle ·
+`P3` backlog · `P4` someday, speculative. Rule: every open issue carries
+either a priority label or `TRIAGE` — never neither, never both.
 
 ## Issue fields and reflection
 

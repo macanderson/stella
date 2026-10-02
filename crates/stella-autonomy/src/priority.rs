@@ -68,11 +68,10 @@ impl Default for PriorityLadder {
     /// SCR-005's five-level scheme, most urgent first.
     ///
     /// A default exists so an operator who configures nothing still gets a
-    /// working loop, and it ranks every level
-    /// `docs/scr/SCR-005-triage-separation-of-duties.md`'s Directive names.
-    /// The Directive calls `P4` "someday, speculative" — a judged rung, not
-    /// an unjudged one. Stopping at `P3` would read a `P4` issue as unjudged
-    /// and send it back for triage it already got.
+    /// working loop. It ranks every level the priority scheme in `AGENTS.md`
+    /// names. The scheme calls `P4` "someday, speculative" — a judged rung,
+    /// not an unjudged one. Stopping at `P3` would read a `P4` issue as
+    /// unjudged and send it back for triage it already got.
     fn default() -> Self {
         Self {
             rungs: ["P0", "P1", "P2", "P3", "P4"]

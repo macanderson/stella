@@ -82,7 +82,7 @@ name: docs-guards
 #     in-repo reference is generated and could not drift; the website copy is
 #     hand-picked prose and could, which is the whole gap this closes.
 # 11. priority-scheme (scripts/check-priority-scheme.py): the issue priority
-#     scheme is stated once, in SCR-005, and the regex in triage-guard.yml
+#     scheme is stated once, in AGENTS.md, and the regex in triage-guard.yml
 #     covers exactly the levels it names (#5216). Four documents each named a
 #     scheme of their own and no two agreed. The regex is code, so the gap had
 #     teeth: an issue labelled `P4` read as triaged to a person and as

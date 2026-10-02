@@ -57,17 +57,18 @@ jobs:
   triage:
     runs-on: ubuntu-latest
     steps:
-      # Checked out for the SCR that names the priority levels, and for
-      # `scripts/lib/anthropic-refusal.sh`, which reports an API refusal. The
-      # sweep reads the levels at run time rather than carrying its own copy,
-      # which is what `scripts/check-priority-scheme.py` asks of every file
-      # but the one derived copy in `triage-guard.yml`.
+      # Checked out for `AGENTS.md`, whose standing-decisions block names the
+      # priority levels, and for `scripts/lib/anthropic-refusal.sh`, which
+      # reports an API refusal. The sweep reads the levels at run time rather
+      # than carrying its own copy, which is what
+      # `scripts/check-priority-scheme.py` asks of every file but the one
+      # derived copy in `triage-guard.yml`.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Size every issue in the triage queue
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          SCR: docs/scr/SCR-005-triage-separation-of-duties.md
+          SCHEME_HOME: AGENTS.md
         run: |
           set -euo pipefail
 
@@ -80,11 +81,11 @@ jobs:
           fi
 
           # The levels and their meanings, quoted from their only home. An
-          # empty read means the SCR moved or its heading changed, and a sweep
-          # that cannot state what it is sizing against must not size.
-          scheme=$(sed -n '/^Priority scheme:/,/never both\./p' "$SCR")
+          # empty read means the paragraph moved or its heading changed, and a
+          # sweep that cannot state what it is sizing against must not size.
+          scheme=$(sed -n '/^Priority scheme:/,/never both\./p' "$SCHEME_HOME")
           if [ -z "$scheme" ]; then
-            echo "$SCR: the priority scheme did not parse — THIS SWEEP DID NOT RUN" >&2
+            echo "$SCHEME_HOME: the priority scheme did not parse — THIS SWEEP DID NOT RUN" >&2
             exit 1
           fi
 

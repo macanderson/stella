@@ -68,7 +68,7 @@ fact, triage put on one or the other. So 11 issues ended up with only the
 label no rule names.
 
 `build-time:*` says the same thing as `size/*`. SCR-005 names `size/*` as the
-size label. `doc:scr/readme` names the five repos that share the SCR corpus,
+size label. `doc:scr/readme` names the five repos that share the SCR corpus, <!-- `doc-links:ignore` -->
 so this repo cannot change SCR-005 alone. To
 keep `build-time:*` next to `size/*` would mean two size labels at once. The
 done list in `#5631` rules that out.
