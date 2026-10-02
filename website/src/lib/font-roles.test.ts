@@ -12,9 +12,9 @@ import { test } from "node:test";
  *
  * ## What went wrong without it
  *
- * On 2026-10-02 the kit made Aeonik the house sans and renamed its loader's
- * variable from `--font-geist` to `--font-aeonik` (oxageninc/brand#81). The
- * sync copied the new loader, but `src/app/global.css` still pointed
+ * On 2026-10-02 Aeonik replaced Geist as the house face, and the kit renamed
+ * its loader's variable from `--font-geist` to `--font-aeonik`. The sync
+ * copied the new loader, but `src/app/global.css` still pointed
  * `--font-sans` and `--font-display` at `--font-geist`. A var() that names an
  * unset variable makes the whole declaration invalid, so both roles fell back
  * to Tailwind's `ui-sans-serif`. Every page on stella.oxagen.sh set its text
