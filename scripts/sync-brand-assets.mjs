@@ -199,11 +199,13 @@ const GUARDED_TSX = [`${WEB}/src/app/(home)/page.tsx`];
  * marketing-scale class (`text-m-*`) is reported as the wrong scale. The nav
  * title in `layout.shared.tsx` sits in the docs sidebar and in the landing
  * page's nav bar, and both are chrome, so it takes the app scale on both.
- * The docs page route renders the title, the description, and the page
- * actions row, and passes classes to Fumadocs' page parts.
+ * `nav-title.tsx` is that nav title's link. The docs page route renders the
+ * title, the description, and the page actions row, and passes classes to
+ * Fumadocs' page parts.
  */
 const GUARDED_APP_TSX = [
   `${WEB}/src/lib/layout.shared.tsx`,
+  `${WEB}/src/components/nav-title.tsx`,
   `${WEB}/src/components/page-actions.tsx`,
   `${WEB}/src/components/page-footer.tsx`,
   `${WEB}/src/app/docs/[[...slug]]/page.tsx`,

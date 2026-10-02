@@ -1,7 +1,6 @@
-import Link from "fumadocs-core/link";
 import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
-import type { ComponentProps } from "react";
-import { GitHubMark, Wordmark } from "@/components/brand";
+import { GitHubMark } from "@/components/brand";
+import { NavTitle } from "@/components/nav-title";
 import { REPO_URL, SPONSOR_URL } from "@/lib/site";
 
 /**
@@ -34,24 +33,6 @@ import { REPO_URL, SPONSOR_URL } from "@/lib/site";
  * Setting `on: "nav"` instead would clear the sidebar too, but it would also
  * drop "Docs" from the home page's mobile menu, which reads from `menuItems`.
  */
-/**
- * The nav title link. Fumadocs calls it with the link's props, and in the
- * docs sidebar those carry a fixed 15px size (`text-[0.9375rem]`), a size the
- * house scale lacks. The `stella-nav-title` class is the hook global.css uses
- * to put the link on the app body step in the sidebar, the docs header, and
- * the landing page's nav bar.
- */
-function NavTitle({ className, ...props }: ComponentProps<"a">) {
-  return (
-    <Link {...props} className={className ? `${className} stella-nav-title` : "stella-nav-title"}>
-      <span className="inline-flex items-center gap-2.5">
-        <Wordmark className="h-6 w-auto text-fd-foreground" />
-        <span className="text-a-body text-fd-muted-foreground">docs</span>
-      </span>
-    </Link>
-  );
-}
-
 export function baseOptions({
   docsLink = true,
 }: { docsLink?: boolean } = {}): BaseLayoutProps {
