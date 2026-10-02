@@ -143,7 +143,7 @@ const TOKEN_SHEETS = [`${WEB}/src/app/tokens.css`, `${KIT}/css/tokens.css`];
  * sheet declares. A missing token voids the whole declaration, so a border
  * written with one draws no border at all.
  *
- * It is one regex pass over these files. It needs no build and no kit.
+ * It is one regex pass over these files, and it needs no build.
  */
 const GUARDED_CSS = [
   `${WEB}/src/app/global.css`,
@@ -649,10 +649,15 @@ function houseSteps() {
   return { radius, app: scale("a"), marketing: scale("m"), wrap: px(decl.get("--ox-wrap")) };
 }
 
-/** The name in `steps` whose px value is closest to `target`. */
-function nearest(steps, target) {
-  let best = steps[0];
-  for (const s of steps) if (Math.abs(s[1] - target) < Math.abs(best[1] - target)) best = s;
+/**
+ * The name in `steps` whose px value is closest to `target`, or `fallback`
+ * when the house sheet declares no step of that kind.
+ */
+function nearest(steps, target, fallback) {
+  const known = steps.filter((s) => s[1] !== null);
+  if (!known.length) return fallback;
+  let best = known[0];
+  for (const s of known) if (Math.abs(s[1] - target) < Math.abs(best[1] - target)) best = s;
   return best[0];
 }
 
@@ -660,13 +665,13 @@ function nearest(steps, target) {
 function tokenFor(prop, value, steps) {
   const px = lengths(value)[0] ?? 0;
   if (prop === "border-radius") {
-    return `var(--ox-radius) on a card, panel, or input, or var(${nearest(steps.radius, px)}) on a control (the nearest step of the house scale)`;
+    return `var(--ox-radius) on a card, panel, or input, or var(${nearest(steps.radius, px, "--ox-radius-<step>")}) on a control (the nearest step of the house scale)`;
   }
   if (prop === "box-shadow") {
     return "no shadow on a card or panel at rest, var(--ox-shadow-pop) under a floating surface on ink (--ox-shadow-pop-ink on paper), or var(--ox-shadow-ui) under a control";
   }
   if (prop === "font-size") {
-    return `var(${nearest(steps.app, px)}) on a docs or data page, or var(${nearest(steps.marketing, px)}) on a marketing page`;
+    return `var(${nearest(steps.app, px, "--ox-a-<step>")}) on a docs or data page, or var(${nearest(steps.marketing, px, "--ox-m-<step>")}) on a marketing page`;
   }
   return "var(--ox-wrap) for the page wrap; a wider wrap goes in LITERALS with its role";
 }
