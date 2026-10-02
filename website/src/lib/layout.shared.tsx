@@ -44,7 +44,7 @@ export function baseOptions({
       title: (
         <span className="inline-flex items-center gap-2.5">
           <Wordmark className="h-6 w-auto text-fd-foreground" />
-          <span className="text-sm text-fd-muted-foreground">docs</span>
+          <span className="text-a-body text-fd-muted-foreground">docs</span>
         </span>
       ),
     },

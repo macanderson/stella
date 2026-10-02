@@ -80,7 +80,7 @@ function ShareMenu({ path, title }: { path: string; title: string }) {
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="inline-flex items-center gap-1.5 text-xs text-fd-muted-foreground transition-colors hover:text-fd-foreground"
+        className="inline-flex items-center gap-1.5 text-a-micro font-sans text-fd-muted-foreground transition-colors hover:text-fd-foreground"
       >
         <Share2 className="size-3.5" aria-hidden />
         Share
@@ -98,7 +98,7 @@ function ShareMenu({ path, title }: { path: string; title: string }) {
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => setOpen(false)}
-              className="block rounded px-2.5 py-1.5 text-xs text-fd-popover-foreground hover:bg-fd-accent"
+              className="block rounded px-2.5 py-1.5 text-a-micro font-sans text-fd-popover-foreground hover:bg-fd-accent"
             >
               {target.label}
             </a>
@@ -107,7 +107,7 @@ function ShareMenu({ path, title }: { path: string; title: string }) {
             type="button"
             role="menuitem"
             onClick={copy}
-            className="flex w-full items-center gap-1.5 rounded px-2.5 py-1.5 text-left text-xs text-fd-popover-foreground hover:bg-fd-accent"
+            className="flex w-full items-center gap-1.5 rounded px-2.5 py-1.5 text-left text-a-micro font-sans text-fd-popover-foreground hover:bg-fd-accent"
           >
             {copied ? <Check className="size-3.5" aria-hidden /> : <Copy className="size-3.5" aria-hidden />}
             {copied ? "Copied" : "Copy link"}
@@ -120,7 +120,7 @@ function ShareMenu({ path, title }: { path: string; title: string }) {
 
 export function PageFooter({ path, title }: { path: string; title: string }) {
   return (
-    <footer className="mt-16 border-t border-fd-border pt-5 text-xs text-fd-muted-foreground">
+    <footer className="mt-16 border-t border-fd-border pt-5 text-a-micro font-sans text-fd-muted-foreground">
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
         <a
           href={REPO_URL}

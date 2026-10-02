@@ -152,7 +152,7 @@ export default function HomePage() {
               </div>
               <Link
                 href="/docs"
-                className="lp-cta flex shrink-0 items-center justify-center rounded-md px-6 text-m-micro font-sans"
+                className="lp-cta flex shrink-0 items-center justify-center rounded-md px-6 py-3 text-m-micro font-sans"
               >
                 Read the docs
               </Link>

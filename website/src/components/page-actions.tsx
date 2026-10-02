@@ -61,7 +61,7 @@ export function PageActions({ slug }: { slug: string[] }) {
   };
 
   const itemClass =
-    "flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-xs text-fd-popover-foreground hover:bg-fd-accent";
+    "flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-a-micro font-sans text-fd-popover-foreground hover:bg-fd-accent";
 
   return (
     <div ref={rootRef} className="stella-page-actions relative not-prose">
@@ -70,7 +70,7 @@ export function PageActions({ slug }: { slug: string[] }) {
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="inline-flex items-center gap-1.5 rounded-md border border-fd-border px-2.5 py-1.5 text-xs text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground"
+        className="inline-flex items-center gap-1.5 rounded-md border border-fd-border px-2.5 py-1.5 text-a-micro font-sans text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground"
       >
         <Copy className="size-3.5" aria-hidden />
         Copy page

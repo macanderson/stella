@@ -404,7 +404,6 @@ figure.shiki ::selection,
  * ═════════════════════════════════════════════════════════════════════════ */
 
 #nd-sidebar {
-  font-size: var(--stella-type-sm);
   --color-fd-card: var(--stella-paper-3);
   --color-fd-accent: var(--stella-paper-row); /* hover/selected chip */
   --color-fd-secondary: var(--stella-paper-row);
@@ -467,10 +466,43 @@ figure.shiki ::selection,
   scrollbar-width: thin;
 }
 
-/* The table of contents is reference furniture: quiet until the section it
- * points at is the one you are reading. */
-#nd-toc {
-  font-size: var(--stella-type-sm);
+/* ── chrome type: the app scale ────────────────────────────────────────────
+ *
+ * Fumadocs sizes the sidebar and the table of contents with Tailwind's
+ * text-sm and text-xs. Those classes read Tailwind's --text-sm and --text-xs,
+ * which are fixed at 14px and 12px. Inside the chrome the two read the app
+ * scale's body and micro steps instead, each with its line height, so a theme
+ * change reaches every entry.
+ *
+ * The hooks are the ones Fumadocs' own themes style (neutral.css, solar.css):
+ * #nd-sidebar and #nd-toc on a wide screen, #nd-sidebar-mobile and
+ * [data-toc-popover] on a narrow one. Its docs, notebook, and flux layouts
+ * all render them. These rules name no class inside the chrome, so a
+ * Fumadocs upgrade that changes the markup, or adds an entry with text-sm,
+ * still sets every entry on the scale. Overriding a Fumadocs class by
+ * selector would break on the first markup change. */
+:is(#nd-sidebar, #nd-sidebar-mobile, #nd-toc, [data-toc-popover]) {
+  --text-sm: var(--ox-a-body);
+  --text-sm--line-height: var(--ox-a-body-leading);
+  --text-xs: var(--ox-a-micro);
+  --text-xs--line-height: var(--ox-a-micro-leading);
+}
+
+/* Each panel reads the body step itself. The phone drawer needs this most:
+ * Fumadocs sets it to 15px by hand (text-[0.9375rem]), a size the house
+ * scale lacks, so it takes the body step like the wide sidebar. */
+:is(#nd-sidebar, #nd-sidebar-mobile, #nd-toc, [data-toc-popover]) {
+  font-size: var(--ox-a-body);
+  line-height: var(--ox-a-body-leading);
+}
+
+/* Fumadocs marks each table-of-contents entry `prose`, so code in a heading
+ * looks the same as in the page. That also gave each entry the 1.65 line
+ * height `.prose` sets for running text. An entry is a link, so it takes the
+ * body step's line height. */
+:is(#nd-toc, [data-toc-popover]) .prose {
+  font-size: var(--ox-a-body);
+  line-height: var(--ox-a-body-leading);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
