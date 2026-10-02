@@ -2,7 +2,8 @@
    stella — design tokens
    One color, owned: Gold on a cool near-black. Everything else is restraint.
    Drop this file in before any component styles. Pure CSS custom properties;
-   no build step required. Pair with globals.css for shadcn/ui + Tailwind v4.
+   no build step required. Keep house-tokens.css beside it, because this file
+   imports it. Pair it with house-tailwind.css for shadcn/ui and Tailwind v4.
 
    The `--st-*` block is the WHOLE palette, and is the content of
    design/tokens/stella-tokens.css, which scripts/gen-tokens.py emits from
@@ -25,6 +26,10 @@
    would also break `design_token_parity.rs`, which reads role names for
    exactly this reason.
    ========================================================================== */
+
+/* The kit's own token sheet. The radius scale below reads it, so a change in
+   the kit's theme editor reaches this sheet with no hand edit. */
+@import "./house-tokens.css";
 
 :root {
   /* ---- brand core ------------------------------------------------------ */
@@ -96,12 +101,16 @@
   --stella-leading-body: 1.65;
 
   /* ---- radius ---------------------------------------------------------- */
-  --stella-radius-xs: 4px;
-  --stella-radius-sm: 6px;
-  --stella-radius-md: 10px;
-  --stella-radius-lg: 14px;
-  --stella-radius-xl: 18px;      /* cards, tiles */
-  --stella-radius-full: 999px;
+  /* The house corner scale from house-tokens.css, mapped the way the
+     website's Tailwind theme maps it in src/app/global.css. xs to lg take
+     the house step of the same name. xl is the house corner for a card, a
+     panel, or an input (--ox-radius). A pill keeps 999px. */
+  --stella-radius-xs: var(--ox-radius-xs);
+  --stella-radius-sm: var(--ox-radius-sm);
+  --stella-radius-md: var(--ox-radius-md);
+  --stella-radius-lg: var(--ox-radius-lg);
+  --stella-radius-xl: var(--ox-radius);  /* cards, panels, inputs */
+  --stella-radius-full: 999px;           /* a pill */
 
   /* ---- motion — assemble, don't spin ----------------------------------- */
   --stella-ease-arrive: cubic-bezier(0.22, 0.9, 0.35, 1);   /* trails in */

@@ -50,8 +50,10 @@ separate Stella lockup, which is why there is none here.
 reader crossing between the two sites does not watch the brand change hue. The
 normative copy for this repo is `design/tokens/stella-tokens.json`, and
 `css/tokens.css` mirrors it. The sync writes the kit's value into each Stella
-token the house palette owns, in both files. `css/house-tokens.css` and
-`css/house-tokens.json` are the kit's own files, verbatim.
+token the house palette owns, in both files. `css/house-tokens.css`,
+`css/house-tokens.json`, and `css/house-tailwind.css` are the kit's own
+files, verbatim. `css/tokens.css` imports `css/house-tokens.css` for its
+corner scale, so keep the two files together.
 
 **The faces are the house's three.** Space Grotesk sets the wordmarks and h1
 to h3, Geist sets the text, and Monaspace Neon sets code and terminal
@@ -66,7 +68,7 @@ pwa/          favicons, app icons, maskables, the ICO, the manifest snippet
 spinners/     the house motion — animated SVG, no script
 social/       avatar · x · linkedin · youtube · open graph
 fonts/        the three house faces and JetBrains Mono, with licences
-css/          tokens.css (mirrors the JSON) · house-tokens.css · house-tokens.json · globals.css
+css/          tokens.css (mirrors the JSON) · house-tokens.css · house-tokens.json · house-tailwind.css
 prompts/      the design-system prompts
 site/         static page mocks
 brand-guidelines.html
