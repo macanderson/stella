@@ -14,7 +14,7 @@ use crate::embed::EmbedderFingerprint;
 use crate::error::ContextError;
 
 /// The current on-disk schema version, tracked in `PRAGMA user_version`.
-pub(crate) const SCHEMA_VERSION: i64 = 13;
+pub(crate) const SCHEMA_VERSION: i64 = 14;
 
 /// The v1 schema. Applied once, inside the migration transaction. Bi-temporal
 /// columns (`valid_from`/`valid_to`/`recorded_at`/`superseded_at`) exist on both
@@ -567,6 +567,69 @@ fn migrate_v13(tx: &Connection) -> Result<(), ContextError> {
     Ok(())
 }
 
+/// V14 — **two read-only views for programs outside Stella**.
+///
+/// Another program on the same machine can open this file read-only and
+/// select from `export_memories_v1` and `export_memory_uses_v1`. It needs no
+/// Stella code to do it. The crate README lists every column and what it
+/// means. The names and the columns are a contract. A change that breaks
+/// them adds a `_v2` view beside them, and the migration tests pin both
+/// column lists.
+///
+/// `export_memories_v1` holds each memory's live revision, and only while its
+/// mirror node is live. A memory a person forgot leaves it.
+///
+/// `export_memory_uses_v1` holds each `context_use` record whose record is a
+/// memory node. The ledger only grows, so `seq`, its row id, is a cursor a
+/// reader can resume from. `stella-cli` writes each use's trace id as
+/// `ut_<execution id>` and its task id as `session:<thread id>`, and the view
+/// parses both. A test in `stella-cli` runs that writer and reads this view
+/// back, so a change to either spelling fails there.
+///
+/// `used_at` is the turn's finish time in RFC 3339 UTC. `store.db` stamps it
+/// as `YYYY-MM-DD HH:MM:SS`, and the view rewrites it. A value `strftime`
+/// cannot read passes through as it was.
+///
+/// SQLite refuses `DROP COLUMN` on a column a view names. A later migration
+/// that drops one of these columns has to change the views in the same step.
+///
+/// `IF NOT EXISTS` for the reason V6 and V7 have it. A store whose
+/// `user_version` was rewound must re-run this without failing.
+pub(crate) const MIGRATION_V14: &str = "\
+CREATE VIEW IF NOT EXISTS export_memories_v1 AS
+SELECT m.lineage_id  AS lineage,
+       m.public_id   AS revision,
+       m.kind        AS kind,
+       m.content     AS content,
+       m.recorded_at AS recorded_at
+  FROM memory m
+ WHERE m.superseded_at IS NULL
+   AND EXISTS (
+         SELECT 1 FROM node n
+          WHERE n.uri = 'memory://' || m.lineage_id
+            AND n.kind = 'memory'
+            AND n.superseded_at IS NULL);
+
+CREATE VIEW IF NOT EXISTS export_memory_uses_v1 AS
+SELECT r.rowid     AS seq,
+       r.record_id AS use_id,
+       substr(n.uri, length('memory://') + 1) AS lineage,
+       json_extract(r.body, '$.use_kind') AS use_kind,
+       CASE WHEN json_extract(r.body, '$.task_id') GLOB 'session:?*'
+            THEN substr(json_extract(r.body, '$.task_id'), length('session:') + 1)
+       END AS thread_id,
+       CASE WHEN json_extract(r.body, '$.use_trace_id') GLOB 'ut_[0-9]*'
+            THEN CAST(substr(json_extract(r.body, '$.use_trace_id'), length('ut_') + 1) AS INTEGER)
+       END AS execution_id,
+       COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', r.observed_at), r.observed_at) AS used_at
+  FROM context_records r
+  JOIN node n
+    ON n.public_id = json_extract(r.body, '$.context_record_id')
+   AND n.kind = 'memory'
+   AND n.uri GLOB 'memory://?*'
+ WHERE r.record_kind = 'context_use';
+";
+
 /// Open a connection with the plane's fixed pragmas: WAL for concurrent
 /// reader/writer, `NORMAL` sync (durable enough with WAL, far cheaper than
 /// `FULL`), foreign keys on, and a busy timeout so a warm-task write never
@@ -697,6 +760,9 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), ContextError> {
     if version < 13 {
         migrate_v13(&tx)?;
     }
+    if version < 14 {
+        tx.execute_batch(MIGRATION_V14)?;
+    }
     // ── APPEND POINT — RESERVED SLOT ────────────────────────────────────
     // This is an ordered `if version < N` ladder and `SCHEMA_VERSION` is its
     // high-water mark. Two branches that each add "the next step" merge
@@ -721,7 +787,10 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), ContextError> {
     //   v13: dropped `episode.salience`/`memory.salience` — TAKEN, see
     //        `migrate_v13`.
     //
-    // The next free step is v14: take it and add your own line here.
+    //   v14: the export views for programs outside Stella — TAKEN, see
+    //        `MIGRATION_V14`.
+    //
+    // The next free step is v15: take it and add your own line here.
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
     Ok(())

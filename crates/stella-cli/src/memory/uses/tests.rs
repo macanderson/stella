@@ -384,3 +384,50 @@ fn citations_are_display_only_and_retire_nothing() {
         "nothing may be retired on citation evidence alone"
     );
 }
+
+/// `context.db`'s export view parses the trace id and the task id this
+/// extractor writes. A real memory goes through a real turn here, and a
+/// read-only reader of the view must get back its lineage, its thread and its
+/// turn. If either spelling changes, this test fails.
+#[tokio::test]
+async fn the_export_view_reads_back_what_the_extractor_writes() {
+    let (dir, store, context) = workspace();
+    let receipt = context
+        .upsert(stella_context::ContextDelta::new().with_memory(
+            stella_context::MemoryInput::reflection("prefer rg over grep", Vec::<String>::new()),
+        ))
+        .await
+        .expect("memory");
+    let node = receipt.memory_node_ids[0].clone();
+    let lineage = context
+        .memory_lineage(&node)
+        .expect("read")
+        .expect("lineage");
+    let execution = finished_turn(&store, &[node.as_str()], &[], "completed");
+    store
+        .set_execution_session(execution, "ses-1789972711780-2168")
+        .expect("thread");
+    assert_eq!(extract_context_uses(&store, &context), 1);
+
+    let reader = rusqlite::Connection::open_with_flags(
+        dir.path().join("context.db"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .expect("read-only");
+    let row: (String, Option<String>, Option<i64>, String) = reader
+        .query_row(
+            "SELECT lineage, thread_id, execution_id, use_kind FROM export_memory_uses_v1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .expect("one use");
+    assert_eq!(
+        row,
+        (
+            lineage,
+            Some("ses-1789972711780-2168".to_string()),
+            Some(execution),
+            "rendered".to_string(),
+        )
+    );
+}

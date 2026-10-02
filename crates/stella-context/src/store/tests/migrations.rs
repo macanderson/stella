@@ -508,3 +508,258 @@ fn table_has_column(conn: &Connection, table: &str, column: &str) -> bool {
         .unwrap();
     names.iter().any(|name| name == column)
 }
+
+// ── v14: the export views ─────────────────────────────────────────────────
+
+/// The column names of a table or view, in order.
+fn column_names(conn: &Connection, relation: &str) -> Vec<String> {
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({relation})"))
+        .unwrap();
+    let names: Vec<String> = stmt
+        .query_map([], |r| r.get::<_, String>("name"))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    names
+}
+
+/// Append one `context_use` record naming `record_id`, shaped the way the
+/// `stella-cli` extractor writes it.
+fn append_use(store: &ContextStore, id: &str, record_id: &str, trace: &str, task: &str, at: &str) {
+    let body = serde_json::json!({
+        "use_kind": "rendered",
+        "context_record_id": record_id,
+        "use_trace_id": trace,
+        "task_id": task,
+        "influence_stage": "none",
+        "observed_at": at,
+    })
+    .to_string();
+    let hash = format!("sha256:{id}");
+    store
+        .append_record(crate::LedgerAppend {
+            record_id: id,
+            lineage_id: id,
+            record_kind: "context_use",
+            record_hash: &hash,
+            schema_version: "1",
+            body: &body,
+            observed_at: at,
+            supersedes: None,
+        })
+        .unwrap();
+}
+
+/// The column lists are the contract a reader outside Stella builds on. A
+/// change to either one has to ship a `_v2` view instead, and this test is
+/// what says so.
+#[test]
+fn v14_export_view_columns_are_the_documented_contract() {
+    let (_dir, store) = tmp_store();
+    let conn = store.conn();
+    assert_eq!(
+        column_names(&conn, "export_memories_v1"),
+        ["lineage", "revision", "kind", "content", "recorded_at"],
+    );
+    assert_eq!(
+        column_names(&conn, "export_memory_uses_v1"),
+        [
+            "seq",
+            "use_id",
+            "lineage",
+            "use_kind",
+            "thread_id",
+            "execution_id",
+            "used_at"
+        ],
+    );
+}
+
+/// A v13 store gains both views when it opens. A store rewound to v13 that
+/// already has them opens too, because the views are `IF NOT EXISTS`.
+#[test]
+fn v14_adds_the_export_views_and_reruns_cleanly() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("context.db");
+    drop(ContextStore::open(&path).unwrap());
+    {
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "DROP VIEW export_memories_v1;
+             DROP VIEW export_memory_uses_v1;",
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", 13i64).unwrap();
+    }
+
+    let store = ContextStore::open(&path).unwrap();
+    store.integrity_check().unwrap();
+    for view in ["export_memories_v1", "export_memory_uses_v1"] {
+        let n: i64 = store
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'view' AND name = ?1",
+                [view],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1, "{view} is created by v14");
+    }
+    drop(store);
+
+    let conn = Connection::open(&path).unwrap();
+    conn.pragma_update(None, "user_version", 13i64).unwrap();
+    drop(conn);
+    let store = ContextStore::open(&path).unwrap();
+    let v: i64 = store
+        .conn()
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(
+        v, SCHEMA_VERSION,
+        "re-running v14 over its own views must not fail"
+    );
+}
+
+/// The memory view holds each live memory once, with its current text. The
+/// use view holds each memory use in ledger order, and nothing else. Before
+/// v14 neither view exists, and every query here fails.
+#[tokio::test]
+async fn v14_export_views_hold_live_memories_and_their_uses() {
+    let (_dir, store) = tmp_store();
+    let first = store
+        .upsert(crate::writeback::ContextDelta::new().with_memory(
+            crate::writeback::MemoryInput::reflection("prefer rg over grep", Vec::<String>::new()),
+        ))
+        .await
+        .unwrap();
+    let kept_node = first.memory_node_ids[0].clone();
+    let kept = store.memory_lineage(&kept_node).unwrap().expect("lineage");
+    // An edit: the same lineage, new words.
+    store
+        .upsert(
+            crate::writeback::ContextDelta::new().with_memory(
+                crate::writeback::MemoryInput::reflection(
+                    "prefer rg over grep, and fd over find",
+                    Vec::<String>::new(),
+                )
+                .revises(&kept),
+            ),
+        )
+        .await
+        .unwrap();
+    // A memory a person then forgot.
+    let second = store
+        .upsert(crate::writeback::ContextDelta::new().with_memory(
+            crate::writeback::MemoryInput::reflection("keep commits small", Vec::<String>::new()),
+        ))
+        .await
+        .unwrap();
+    let forgot_node = second.memory_node_ids[0].clone();
+    let forgot = store
+        .memory_lineage(&forgot_node)
+        .unwrap()
+        .expect("lineage");
+    assert!(store.supersede_node(&forgot_node).unwrap());
+
+    append_use(
+        &store,
+        "cu_one",
+        &kept_node,
+        "ut_7",
+        "session:ses-1789972711780-2168",
+        "2026-09-21 09:03:08",
+    );
+    append_use(
+        &store,
+        "cu_two",
+        &forgot_node,
+        "ut_8",
+        "execution:8",
+        "2026-09-21T10:00:00Z",
+    );
+    // A use of a context record, which is no memory.
+    append_use(
+        &store,
+        "cu_three",
+        "^ctx-small-commits",
+        "ut_9",
+        "session:ses-1789972711780-2168",
+        "2026-09-21T11:00:00Z",
+    );
+
+    let conn = store.conn();
+    let memories: Vec<(String, String, String, String)> = conn
+        .prepare("SELECT lineage, revision, kind, content FROM export_memories_v1")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(memories.len(), 1, "one live memory: {memories:?}");
+    let (lineage, revision, kind, content) = &memories[0];
+    assert_eq!(lineage, &kept);
+    assert_ne!(revision, &kept, "the revision id moves with the text");
+    assert_eq!(kind, "reflection");
+    assert_eq!(content, "prefer rg over grep, and fd over find");
+
+    type UseRow = (
+        i64,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<i64>,
+        String,
+    );
+    let uses: Vec<UseRow> = conn
+        .prepare(
+            "SELECT seq, use_id, lineage, use_kind, thread_id, execution_id, used_at
+               FROM export_memory_uses_v1 ORDER BY seq",
+        )
+        .unwrap()
+        .query_map([], |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+                r.get(6)?,
+            ))
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(uses.len(), 2, "the record use is left out: {uses:?}");
+    assert_eq!(uses[0].1, "cu_one");
+    assert_eq!(uses[0].2, kept);
+    assert_eq!(uses[0].3, "rendered");
+    assert_eq!(uses[0].4.as_deref(), Some("ses-1789972711780-2168"));
+    assert_eq!(uses[0].5, Some(7));
+    assert_eq!(
+        uses[0].6, "2026-09-21T09:03:08Z",
+        "the store's stamp is rewritten"
+    );
+    // A forgotten memory's past uses still happened.
+    assert_eq!(uses[1].2, forgot);
+    assert_eq!(uses[1].4, None, "a turn with no thread has no thread id");
+    assert_eq!(uses[1].5, Some(8));
+    assert_eq!(uses[1].6, "2026-09-21T10:00:00Z");
+    assert!(uses[0].0 < uses[1].0, "seq grows in ledger order");
+
+    let after: Vec<String> = conn
+        .prepare("SELECT use_id FROM export_memory_uses_v1 WHERE seq > ?1 ORDER BY seq")
+        .unwrap()
+        .query_map([uses[0].0], |r| r.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(
+        after,
+        ["cu_two"],
+        "a reader resumes past the last seq it saw"
+    );
+}
