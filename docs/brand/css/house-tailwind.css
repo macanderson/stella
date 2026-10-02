@@ -12,12 +12,13 @@
  * brand hex. Light is the default; `.dark` on <html> is the dark theme, and
  * a system preference falls back to it when neither class is set.
  *
- * Fonts: tokens/next-fonts.ts sets --font-space-grotesk, --font-geist and
- * --font-monaspace-neon on <html>. Without next/font, import
- * house-fonts.css and the family names below resolve to its @font-face.
+ * Fonts: tokens/next-fonts.ts sets --font-space-grotesk, --font-aeonik,
+ * --font-monaspace-neon, --font-aeonik-mono and --font-aeonik-fono on
+ * <html>. Without next/font, import house-fonts.css and the family names
+ * below resolve to its @font-face.
  *
  * Type: text-m-* is the marketing scale, text-a-* the app scale. A surface
- * picks one. Every heading and all text take Geist, and code takes
+ * picks one. Every heading and all text take Aeonik, and code takes
  * Monaspace Neon with texture healing on, whichever scale is in use.
  *
  * Space Grotesk reaches a page two ways. --font-wordmark sets a wordmark
@@ -28,7 +29,11 @@
  *
  * text-m-h1 points --font-hero at the wordmark face for its own contents.
  * Everywhere else --font-hero is the heading face, so hero-line-1 in the
- * app, in a text-a-h1, or on any other heading draws in Geist.
+ * app, in a text-a-h1, or on any other heading draws in Aeonik.
+ *
+ * On the website, Space Grotesk also sets every h1, h2, and h3. The site's
+ * own stylesheet points those headings at --font-wordmark. The text-m-*
+ * steps here still read --font-display.
  */
 
 @import "./house-tokens.css";
@@ -87,8 +92,8 @@
   --color-ox-destructive-text: var(--ox-destructive-text);
   --color-ox-destructive-text-ink: var(--ox-destructive-text-ink);
 
-  --font-sans: var(--font-geist, "Geist"), system-ui, -apple-system, "Segoe UI", sans-serif; /* body, labels, buttons, tables, navigation */
-  --font-display: var(--font-geist, "Geist"), system-ui, -apple-system, "Segoe UI", sans-serif; /* every heading, h1 to h6 */
+  --font-sans: var(--font-aeonik, "Aeonik"), system-ui, -apple-system, "Segoe UI", sans-serif; /* body, labels, buttons, tables, navigation */
+  --font-display: var(--font-aeonik, "Aeonik"), system-ui, -apple-system, "Segoe UI", sans-serif; /* every heading, h1 to h6 */
   --font-mono: var(--font-monaspace-neon, "Monaspace Neon"), ui-monospace, "SF Mono", Menlo, Consolas, monospace; /* code, logs, ids, and numbers in tables */
   --font-wordmark: var(--font-space-grotesk, "Space Grotesk"), "Helvetica Neue", Arial, sans-serif; /* a wordmark set as text rather than drawn */
 
@@ -272,7 +277,7 @@
 @utility text-a-body { font-size: var(--ox-a-body); line-height: var(--ox-a-body-leading); font-family: var(--font-sans); font-weight: 400; }
 @utility text-a-micro { font-size: var(--ox-a-micro); line-height: var(--ox-a-micro-leading); font-family: var(--font-mono); font-weight: 400; font-feature-settings: "calt", "liga"; }
 
-/* line 1 of a hero: Space Grotesk inside text-m-h1, Geist everywhere else */
+/* line 1 of a hero: Space Grotesk inside text-m-h1, Aeonik everywhere else */
 @utility hero-line-1 { font-family: var(--font-hero); }
 
 /* the code face with texture healing, for anything not already routed */

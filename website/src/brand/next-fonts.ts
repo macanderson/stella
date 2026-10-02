@@ -8,8 +8,11 @@
 //   <html lang="en" className={fontVariables}>
 //
 // Each loader sets one CSS variable on <html>. tokens/house-tailwind.css
-// reads Geist into --font-sans and --font-display, Monaspace Neon into
+// reads Aeonik into --font-sans and --font-display, Monaspace Neon into
 // --font-mono, and Space Grotesk into --font-wordmark and a marketing hero.
+//
+// Aeonik Mono and Aeonik Fono load too, with preload off, so a page pays
+// for one only when it names the family. No role token reads them yet.
 
 import localFont from "next/font/local";
 
@@ -26,11 +29,13 @@ export const spaceGrotesk = localFont({
   fallback: ["Helvetica Neue", "Arial"],
 });
 
-/** Geist: every heading, body, labels, buttons, tables, navigation. */
-export const geist = localFont({
-  src: "../fonts/geist-latin-wght.woff2",
-  weight: "100 900",
-  variable: "--font-geist",
+/** Aeonik: every heading, body, labels, buttons, tables, navigation. */
+export const aeonik = localFont({
+  src: [
+    { path: "../fonts/aeonik-wght.woff2", weight: "100 900", style: "normal" },
+    { path: "../fonts/aeonik-italic-wght.woff2", weight: "100 900", style: "italic" },
+  ],
+  variable: "--font-aeonik",
   display: "swap",
   fallback: ["system-ui", "-apple-system", "Segoe UI"],
 });
@@ -45,5 +50,27 @@ export const monaspaceNeon = localFont({
   adjustFontFallback: false,
 });
 
+/** Aeonik Mono: loads for a page that names it. No role reads it yet. */
+export const aeonikMono = localFont({
+  src: "../fonts/aeonik-mono-wght.woff2",
+  weight: "100 900",
+  variable: "--font-aeonik-mono",
+  display: "swap",
+  fallback: ["SF Mono", "Menlo", "Consolas"],
+  adjustFontFallback: false,
+  preload: false,
+});
+
+/** Aeonik Fono: loads for a page that names it. No role reads it yet. */
+export const aeonikFono = localFont({
+  src: "../fonts/aeonik-fono-wght.woff2",
+  weight: "100 900",
+  variable: "--font-aeonik-fono",
+  display: "swap",
+  fallback: ["SF Mono", "Menlo", "Consolas"],
+  adjustFontFallback: false,
+  preload: false,
+});
+
 /** Every variable, for the <html> className. */
-export const fontVariables = [spaceGrotesk.variable, geist.variable, monaspaceNeon.variable].join(" ");
+export const fontVariables = [spaceGrotesk.variable, aeonik.variable, monaspaceNeon.variable, aeonikMono.variable, aeonikFono.variable].join(" ");
