@@ -72,6 +72,11 @@
     var(--stella-canvas)
   );
 
+  /* The feed's choreography: the first line waits for the station to
+   * arrive, and each line after it follows by one step. */
+  --eng-feed-delay: 400ms;
+  --eng-feed-step: 110ms;
+
   /* Layout constants the stations and the HUD both measure against. */
   --eng-hud-h: 3.25rem;
   --eng-rail-h: 3.5rem;
@@ -375,7 +380,7 @@
 }
 
 .eng-tour[data-eng-js="true"] .eng-station[data-inview] .eng-station-inner > * {
-  animation: eng-arrive 620ms var(--stella-ease-arrive) both;
+  animation: eng-arrive var(--stella-duration-enter) var(--stella-ease-arrive) both;
   animation-delay: var(--eng-stagger, 0ms);
 }
 
@@ -542,8 +547,8 @@
   opacity: 0;
 }
 .eng-tour[data-eng-js="true"] .eng-station[data-inview] .eng-feed-line {
-  animation: eng-feed-line 320ms var(--stella-ease-arrive) both;
-  animation-delay: calc(400ms + var(--eng-i) * 110ms);
+  animation: eng-feed-line var(--stella-duration-reveal) var(--stella-ease-arrive) both;
+  animation-delay: calc(var(--eng-feed-delay) + var(--eng-i) * var(--eng-feed-step));
 }
 @keyframes eng-feed-line {
   from {

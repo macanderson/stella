@@ -67,7 +67,7 @@
   height: 0.45rem;
   border-radius: 50%;
   background: var(--eng-accent);
-  animation: eng-pulse 2.4s var(--stella-ease-arrive) infinite;
+  animation: eng-pulse var(--stella-duration-pulse) var(--stella-ease-arrive) infinite;
 }
 @keyframes eng-pulse {
   0%,
@@ -171,7 +171,7 @@
 .eng-ring-orbit {
   position: absolute;
   inset: 12%;
-  animation: eng-orbit 9s linear infinite;
+  animation: eng-orbit var(--stella-duration-orbit) var(--stella-ease-linear) infinite;
 }
 .eng-ring-comet {
   position: absolute;

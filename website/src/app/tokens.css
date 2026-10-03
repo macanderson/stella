@@ -206,6 +206,21 @@
   --stella-duration-fast: 120ms;
   --stella-duration-base: 180ms;
   --stella-duration-slow: 280ms;
+  /* The named moves. A rule reads one of these, so every duration and
+     easing on the site has one home. */
+  --stella-ease-linear: linear; /* a steady loop, such as the engine's orbit */
+  --stella-ease-standard: ease; /* the home nav bar fading in */
+  /* A Motion-generated spring with about 6% overshoot that settles in
+     --stella-duration-spring: the install block's lift on hover. */
+  --stella-ease-spring: linear(0, 0.3667, 0.8271, 1.0379, 1.0652, 1.0332, 1.006, 0.9961, 0.996, 0.9984, 0.9999, 1);
+  --stella-duration-spring: 350ms;
+  --stella-duration-fade: 220ms; /* the home nav bar fading in */
+  --stella-duration-draw: 240ms; /* a check mark drawing in */
+  --stella-delay-draw: 80ms; /* the check waits for its chip to pop */
+  --stella-duration-reveal: 320ms; /* one line of a feed arriving */
+  --stella-duration-enter: 620ms; /* a station's content arriving */
+  --stella-duration-pulse: 2.4s; /* one beat of a live dot */
+  --stella-duration-orbit: 9s; /* one turn of the engine's ring */
 
   /* ── texture ────────────────────────────────────────────────────────── */
   --stella-grid-opacity: 0.05; /* terminal grid lines */

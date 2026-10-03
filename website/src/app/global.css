@@ -877,8 +877,8 @@ figure.shiki ::selection,
  * sticky flow space reserved and nothing jumps when it appears. */
 #nd-nav {
   transition:
-    opacity 220ms ease,
-    transform 220ms ease;
+    opacity var(--stella-duration-fade) var(--stella-ease-standard),
+    transform var(--stella-duration-fade) var(--stella-ease-standard);
 }
 html[data-home-nav="hidden"] #nd-nav {
   opacity: 0;
@@ -1100,8 +1100,8 @@ article .deck-shot {
 /* ═══════════════════════════════════════════════════════════════════════════
  * Install block — the one-liner you copy.
  *
- * Hovering lifts it on a spring: a Motion-generated linear() curve with
- * about 6% overshoot that settles in 350ms.
+ * Hovering lifts it on a spring: --stella-ease-spring over
+ * --stella-duration-spring, both in tokens.css.
  *
  * The wrapper owns overflow and the corner, and the inner .term inherits the
  * corner so the two edges meet. Like every panel at rest, it has no shadow.
@@ -1111,21 +1111,7 @@ article .deck-shot {
   position: relative;
   border-radius: var(--ox-radius);
   overflow: hidden;
-  transition: transform 350ms
-    linear(
-      0,
-      0.3667,
-      0.8271,
-      1.0379,
-      1.0652,
-      1.0332,
-      1.006,
-      0.9961,
-      0.996,
-      0.9984,
-      0.9999,
-      1
-    );
+  transition: transform var(--stella-duration-spring) var(--stella-ease-spring);
 }
 .lp-install .term {
   border-radius: inherit;
@@ -1348,7 +1334,7 @@ figure.shiki > div:has(figcaption) {
   stroke-linejoin: round;
   stroke-dasharray: 12;
   stroke-dashoffset: 12;
-  animation: lp-code-check 240ms var(--stella-ease-arrive) 80ms forwards;
+  animation: lp-code-check var(--stella-duration-draw) var(--stella-ease-arrive) var(--stella-delay-draw) forwards;
 }
 
 @keyframes lp-code-check {
