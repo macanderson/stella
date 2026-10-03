@@ -44,7 +44,8 @@
 @theme {
   --color-ox-gold: var(--ox-gold); /* the gold: identity, one action per screen. flat, always */
   --color-ox-gold-bright: var(--ox-gold-bright); /* the shimmer highlight; hover on ink */
-  --color-ox-gold-deep: var(--ox-gold-deep); /* gold as text on paper; small gold details there */
+  --color-ox-gold-deep: var(--ox-gold-deep); /* gold as a mark on paper; small gold details there */
+  --color-ox-gold-text-ink: var(--ox-gold-text-ink); /* gold as words on paper and on a lifted row there */
   --color-ox-ink: var(--ox-ink); /* the dark canvas */
   --color-ox-void: var(--ox-void); /* below the canvas */
   --color-ox-panel: var(--ox-panel); /* panels, cards, code blocks */
@@ -142,7 +143,7 @@
     --ring: var(--ox-gold-deep);
     --gold: var(--ox-gold);
     --gold-foreground: var(--ox-ink);
-    --gold-text: var(--ox-gold-deep);
+    --gold-text: var(--ox-gold-text-ink);
     --sidebar: var(--ox-paper-panel);
     --sidebar-foreground: var(--ox-text-ink-body);
     --sidebar-primary: var(--ox-ink);

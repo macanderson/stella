@@ -28,7 +28,8 @@
 :root {
   --ox-gold: #D4AF37; /* the gold: identity, one action per screen. flat, always */
   --ox-gold-bright: #F1CE65; /* the shimmer highlight; hover on ink */
-  --ox-gold-deep: #8A7223; /* gold as text on paper; small gold details there */
+  --ox-gold-deep: #8A7223; /* gold as a mark on paper; small gold details there */
+  --ox-gold-text-ink: #866D1D; /* gold as words on paper and on a lifted row there */
   --ox-ink: #09090B; /* the dark canvas */
   --ox-void: #000000; /* below the canvas */
   --ox-panel: #18181B; /* panels, cards, code blocks */

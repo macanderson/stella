@@ -22,6 +22,7 @@ export const HOUSE_COLORS = {
   "gold": "#D4AF37",
   "gold-bright": "#F1CE65",
   "gold-deep": "#8A7223",
+  "gold-text-ink": "#866D1D",
   "ink": "#09090B",
   "void": "#000000",
   "panel": "#18181B",
