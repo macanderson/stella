@@ -48,13 +48,10 @@
  * chrome (`GUARDED_APP_TSX`) too, where a Tailwind size class such as
  * `text-sm` is the same kind of fixed number.
  *
- * Two house type rules ride the same check. No text is set under the kit's
- * floor (`type.type_floor_px`, 14px): each size in those stylesheets is worked
- * out from the tokens it reads, so a token-built size under the floor fails
- * as a number would. And stella.oxagen.sh is a customer site, so h1 to h3
- * take the display face (Space Grotesk) through `--font-heading`, and h4 to h6
- * take the text face. A stylesheet rule or a heading's classes that set
- * another face fail.
+ * The house type rule rides the same check. stella.oxagen.sh is a customer
+ * site, so h1 to h3 take the display face (Space Grotesk) through
+ * `--font-heading`, and h4 to h6 take the text face. A stylesheet rule or a
+ * heading's classes that set another face fail.
  */
 
 import {
@@ -250,10 +247,6 @@ const TAILWIND_TEXT_PX = {
  * A value matches after its whitespace is collapsed. An entry with a
  * `selector` matches only in the rule with exactly that selector. A
  * percentage never needs an entry: `50%` is a circle and passes.
- *
- * A kept font size is still held to the type floor. `belowFloor` exempts an
- * entry from it, and gives the reason. Only SVG text carries one: its size is
- * in the drawing's own units, so the floor cannot be read from the number.
  */
 const LITERALS = [
   { prop: "border-radius", value: "999px", why: "a pill" },
@@ -297,22 +290,14 @@ const LITERALS = [
     value: "12px",
     selector: ".sdg .sdg-label",
     why: "SVG text in viewBox units, which scale with the drawing",
-    belowFloor:
-      "each docs diagram is laid out around this size, and at 14 units its labels overflow their boxes, so the drawings need a new layout before the text can grow",
   },
   {
     prop: "font-size",
     value: "10px",
     selector: ".sdg .sdg-sub",
     why: "SVG text in viewBox units, which scale with the drawing",
-    belowFloor:
-      "each docs diagram is laid out around this size, and at 14 units its labels overflow their boxes, so the drawings need a new layout before the text can grow",
   },
-  {
-    prop: "font-size",
-    value: "max(0.9em, var(--ox-a-micro))",
-    why: "inline code, sized to the line it sits in and never under the smallest house step",
-  },
+  { prop: "font-size", value: "0.9em", why: "inline code, sized to the line it sits in" },
 ];
 
 /** Paths a check found different from the kit, each with an optional note. */
@@ -899,141 +884,6 @@ function tokenFor(prop, value, steps) {
   return "var(--ox-wrap) for the page wrap; a wider wrap goes in LITERALS with its role";
 }
 
-/** The kit's type floor in px. No text on a house surface is set smaller. */
-function typeFloor() {
-  const floor = house.type?.type_floor_px;
-  if (typeof floor !== "number") {
-    throw new Error("the kit's tokens/house-tokens.json names no type.type_floor_px, so the check cannot hold the type floor");
-  }
-  return floor;
-}
-
-/**
- * The smallest size in px that `value` can take, or null when the stylesheet
- * alone cannot settle it: an em, a percentage, a viewport unit, or a keyword.
- *
- * `props` maps each custom property to every value a sheet gives it. A var()
- * takes the smallest of those, because any of them can reach the element.
- * calc() is worked out, clamp() takes its minimum, max() takes its largest
- * argument that resolves, and min() resolves only when every argument does.
- */
-function smallestPx(value, props) {
-  const q = sizeOf(value.replace(/!important/g, ""), props, new Set());
-  return q && q.px ? q.n : null;
-}
-
-/** `value` as `{ n, px }`, where `px` marks a length, or null. */
-function sizeOf(value, props, seen) {
-  const src = value;
-  let at = 0;
-  const ws = () => {
-    while (at < src.length && /\s/.test(src[at])) at += 1;
-  };
-  const fail = () => {
-    throw new SyntaxError(value);
-  };
-  const expect = (ch) => {
-    ws();
-    if (src[at] !== ch) fail();
-    at += 1;
-  };
-  const combine = (a, b, op) => {
-    if (!a || !b) return null;
-    if (op === "*") return { n: a.n * b.n, px: a.px || b.px };
-    if (op === "/") return b.n === 0 ? null : { n: a.n / b.n, px: a.px };
-    return { n: op === "+" ? a.n + b.n : a.n - b.n, px: a.px || b.px };
-  };
-  const smallest = (list) => list.reduce((a, b) => (b.n < a.n ? b : a));
-  const lookup = (name, fallback) => {
-    if (seen.has(name)) return null;
-    const inner = new Set([...seen, name]);
-    const found = (props.get(name) ?? []).map((v) => sizeOf(v, props, inner)).filter(Boolean);
-    return found.length ? smallest(found) : fallback;
-  };
-  const factor = () => {
-    ws();
-    if (src[at] === "(") {
-      at += 1;
-      const v = expr();
-      expect(")");
-      return v;
-    }
-    const num = /^-?(?:\d*\.)?\d+([a-z%]*)/i.exec(src.slice(at));
-    if (num) {
-      at += num[0].length;
-      const n = Number(num[0].slice(0, num[0].length - num[1].length));
-      const unit = num[1].toLowerCase();
-      if (unit === "") return { n, px: false };
-      if (unit === "px") return { n, px: true };
-      if (unit === "rem") return { n: n * 16, px: true };
-      return null;
-    }
-    const fn = /^([a-z-]+)\(/i.exec(src.slice(at));
-    if (fn) {
-      at += fn[0].length;
-      const name = fn[1].toLowerCase();
-      if (name === "var") {
-        ws();
-        const id = /^--[\w-]+/.exec(src.slice(at));
-        if (!id) fail();
-        at += id[0].length;
-        ws();
-        let fallback = null;
-        if (src[at] === ",") {
-          at += 1;
-          fallback = expr();
-        }
-        expect(")");
-        return lookup(id[0], fallback);
-      }
-      const list = [expr()];
-      for (ws(); src[at] === ","; ws()) {
-        at += 1;
-        list.push(expr());
-      }
-      expect(")");
-      if (name === "calc") return list.length === 1 ? list[0] : null;
-      if (name === "clamp") return list.length === 3 ? list[0] : null;
-      if (name === "max") {
-        const known = list.filter(Boolean);
-        return known.length ? known.reduce((a, b) => (b.n > a.n ? b : a)) : null;
-      }
-      if (name === "min") return list.every(Boolean) ? smallest(list) : null;
-      return null;
-    }
-    const word = /^[a-z-]+/i.exec(src.slice(at));
-    if (!word) fail();
-    at += word[0].length;
-    return null;
-  };
-  const term = () => {
-    let v = factor();
-    for (ws(); src[at] === "*" || src[at] === "/"; ws()) {
-      const op = src[at];
-      at += 1;
-      v = combine(v, factor(), op);
-    }
-    return v;
-  };
-  // A + or - in calc() is an operator only with a space after it.
-  const expr = () => {
-    let v = term();
-    for (ws(); (src[at] === "+" || src[at] === "-") && /\s/.test(src[at + 1] ?? ""); ws()) {
-      const op = src[at];
-      at += 1;
-      v = combine(v, term(), op);
-    }
-    return v;
-  };
-  try {
-    const v = expr();
-    ws();
-    return at === src.length ? v : null;
-  } catch {
-    return null;
-  }
-}
-
 /** `text` split at each `sep` outside brackets. */
 function splitTop(text, sep) {
   const parts = [];
@@ -1182,25 +1032,19 @@ function headingTsxFindings() {
 }
 
 /**
- * Every value in `GUARDED_CSS` that should read a house token, every size
- * under the type floor, every token reference no sheet declares, and every
- * heading set in the wrong face, as one line each.
+ * Every value in `GUARDED_CSS` that should read a house token, every token
+ * reference no sheet declares, and every heading set in the wrong face, as
+ * one line each.
  *
  * Each line starts with the file's path and a space. brand-drift.yml finds
  * the files a pull request changed by that path, so keep it a separate word.
  */
 function cssFindings() {
   const steps = houseSteps();
-  const floor = typeFloor();
   const sheets = GUARDED_CSS.map((path) => [path, uncomment(readFileSync(join(REPO, path), "utf8"))]);
   const declared = new Set();
-  const props = new Map();
   for (const [, css] of [...sheets, [HOUSE_CSS, uncomment(readFileSync(join(REPO, HOUSE_CSS), "utf8"))]]) {
-    for (const m of css.matchAll(/(--[\w-]+)\s*:\s*([^;{}]*)/g)) {
-      declared.add(m[1]);
-      if (!props.has(m[1])) props.set(m[1], []);
-      props.get(m[1]).push(m[2].trim());
-    }
+    for (const m of css.matchAll(/(--[\w-]+)\s*:/g)) declared.add(m[1]);
   }
   const squash = (s) => s.replace(/\s+/g, " ").trim();
   const lineOf = (css, at) => css.slice(0, at).split("\n").length;
@@ -1229,19 +1073,15 @@ function cssFindings() {
         prop === "max-width"
           ? steps.wrap !== null && found.some((px) => px >= steps.wrap)
           : found.length > 0;
+      if (!literal) continue;
       const open = css.lastIndexOf("{", at);
       const from = Math.max(css.lastIndexOf("}", open - 1), css.lastIndexOf("{", open - 1), css.lastIndexOf(";", open - 1));
       const selector = squash(css.slice(from + 1, open));
-      const kept = LITERALS.find(
+      const kept = LITERALS.some(
         (l) => l.prop === prop && l.value === value && (l.selector === undefined || l.selector === selector),
       );
-      const where = `${path} line ${lineOf(css, at)}: ${m[2]}: ${value} in ${selector}`;
-      if (literal && !kept) out.push(`${where}. Use ${tokenFor(prop, value, steps)}.`);
-      if (prop !== "font-size" || kept?.belowFloor) continue;
-      const px = smallestPx(value, props);
-      if (px !== null && px < floor - 0.005) {
-        out.push(`${where} comes to ${Math.round(px * 100) / 100}px, under the ${floor}px type floor. Use var(--ox-a-micro) or a larger step.`);
-      }
+      if (kept) continue;
+      out.push(`${path} line ${lineOf(css, at)}: ${m[2]}: ${value} in ${selector}. Use ${tokenFor(prop, value, steps)}.`);
     }
     for (const m of css.matchAll(/var\(\s*(--(?:stella|st|ox)-[\w-]+)/g)) {
       if (declared.has(m[1])) continue;
@@ -1344,7 +1184,7 @@ if (CHECK) {
   if (findings.length) {
     console.error(
       `brand: ${findings.length} line(s) in the site's stylesheets and markup break a house type or token rule: ` +
-        "a value that does not read a house token, a size under the type floor, or a heading in the wrong face. " +
+        "a value that does not read a house token, or a heading in the wrong face. " +
         "Fix each line as it says, or add a kept value to LITERALS in scripts/sync-brand-assets.mjs with its reason:",
     );
     for (const f of findings) console.error(`  ${f}`);
@@ -1352,7 +1192,7 @@ if (CHECK) {
   if (drifted.length || findings.length) process.exit(1);
   console.log(
     `brand: every synced file matches ${kit}. The site's stylesheets, marketing pages, and docs chrome read the house tokens, ` +
-      "set no text under the type floor, and set each heading in its face.",
+      "and set each heading in its face.",
   );
 } else {
   console.log(

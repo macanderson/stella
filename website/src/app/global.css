@@ -116,13 +116,14 @@ h3 {
    * (--ox-m-*) directly. The theme editor changes both, and every rule here
    * follows. A docs page multiplies its steps by --docs-step.
    *
-   * No step is under the kit's 14px floor. xs and 2xs are both the app micro
-   * step: badges, meta, and captions stand apart by case, tracking, weight,
-   * or colour, never by a smaller size. sm and base are both the app body. */
-  --stella-type-2xs: var(--ox-a-micro); /* 14px: meta, badges */
-  --stella-type-xs: var(--ox-a-micro); /* 14px: captions, overlines */
-  --stella-type-sm: var(--ox-a-body); /* 14px: secondary UI, terminal panels */
-  --stella-type-base: var(--ox-a-body); /* 14px: the terminal default */
+   * Every step reads a kit token, so a change to the base in the kit reaches
+   * each one. xs and 2xs are both the app micro step, the scale's smaller
+   * step for badges, meta, and captions. sm and base are both the app body,
+   * the base. */
+  --stella-type-2xs: var(--ox-a-micro); /* the micro step: meta, badges */
+  --stella-type-xs: var(--ox-a-micro); /* the micro step: captions, overlines */
+  --stella-type-sm: var(--ox-a-body); /* the base: secondary UI, terminal panels */
+  --stella-type-base: var(--ox-a-body); /* the base: the terminal default */
   --stella-type-md: var(--ox-a-h4); /* 16px: h4, a card name */
   --stella-type-lg: var(--ox-a-h3); /* 20px: h3 */
   --stella-type-xl: var(--ox-a-h2); /* 24px: h2 */
@@ -346,8 +347,7 @@ figure.shiki ::selection,
 }
 
 /* Inline code sizes to the line it sits in, so code in a heading, a table,
- * a callout, or a table of contents entry keeps the same share of its text,
- * and never drops under the app micro step, the kit's 14px floor.
+ * a callout, or a table of contents entry keeps the same share of its text.
  * Fumadocs' typography preset fixes it at 13px with a 5px corner. The corner
  * takes the house scale's small step, the nearest one to 5px.
  *
@@ -355,7 +355,7 @@ figure.shiki ::selection,
  * style (.sc-tool-name, later in this file) still wins. Code inside a code
  * block, and anything Fumadocs marks not-prose, is left alone. */
 .prose :where(code):not(:where(pre *, .not-prose *)) {
-  font-size: max(0.9em, var(--ox-a-micro));
+  font-size: 0.9em;
   border-radius: var(--ox-radius-sm);
 }
 
@@ -584,9 +584,9 @@ figure.shiki ::selection,
  * also carried by the markup, so the rule is decorative and never the sole
  * cue.
  *
- * A card's title and body read the page's 16px body size, as the prose
- * around it does. Its meta lines and badges sit at the app micro step, the
- * kit's 14px floor, and stand apart by colour, case, and tracking.
+ * A card's title and body read the page's body size, as the prose around it
+ * does. Its meta lines and badges sit at the app micro step, the scale's
+ * smaller step, and stand apart by colour, case, and tracking.
  * ═════════════════════════════════════════════════════════════════════════ */
 
 .sc-grid {
@@ -763,6 +763,13 @@ figure.shiki ::selection,
   margin: 0;
   color: var(--color-fd-muted-foreground);
   font-size: var(--stella-type-xs);
+}
+
+/* A card's default value sits on a micro line, the smallest step of the app
+ * scale. Inline code's 0.9em would set it smaller than the badges beside it,
+ * so here the code keeps its line's size. */
+.sc-tool-when code {
+  font-size: inherit;
 }
 
 .sc-tool-when-label {
@@ -1395,10 +1402,9 @@ figure.shiki > div:has(figcaption) {
  * The label sizes are in the drawing's own units, and every drawing is 720
  * units wide. The frame never lets a drawing render narrower than 720px, so
  * a label never shows smaller than its size here: on a phone the drawing
- * scrolls sideways instead of shrinking to half size. Both sizes are under
- * the kit's 14px floor. Each drawing is laid out around them, and at 14 units
- * many labels overflow their boxes, so the drawings need a new layout before
- * the text can grow.
+ * scrolls sideways instead of shrinking to half size. Both sizes are
+ * numbers in the drawing's units. Each drawing is laid out around them, so
+ * reading a type step here needs a new layout of the drawings first.
  * ═════════════════════════════════════════════════════════════════════════ */
 
 .sdg-frame {

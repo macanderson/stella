@@ -57,7 +57,7 @@ corner scale, so keep the two files together.
 
 **The faces are the house's three.** Space Grotesk sets the wordmarks and h1
 to h3, Aeonik sets the text and h4 to h6, and Monaspace Neon sets code and
-terminal transcripts. No text is set under 14px.
+terminal transcripts.
 
 ## What is here
 

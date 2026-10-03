@@ -496,8 +496,8 @@
 
 /* The availability chip. Three states, each spelled out in words as well as
  * coloured — a reader must be able to tell a shipped capability from a
- * designed one without decoding a hue. The longest label is wider than a
- * card on a phone at the 14px floor, so the chip wraps inside the card. */
+ * designed one without decoding a hue. The longest label can be wider than
+ * a card on a phone, so the chip wraps inside the card. */
 .eng-evo-status {
   flex: none;
   max-width: 100%;

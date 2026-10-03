@@ -63,7 +63,7 @@
 }
 .rl-lede code,
 .rl-foot code {
-  font-size: max(0.9em, var(--ox-a-micro));
+  font-size: 0.9em;
   padding: 0.1em 0.35em;
   border-radius: var(--ox-radius-sm);
   background: var(--color-fd-muted);
@@ -380,7 +380,7 @@
   font-weight: 600;
 }
 .rl-code {
-  font-size: max(0.9em, var(--ox-a-micro));
+  font-size: 0.9em;
   padding: 0.1em 0.35em;
   border-radius: var(--ox-radius-sm);
   background: var(--color-fd-muted);

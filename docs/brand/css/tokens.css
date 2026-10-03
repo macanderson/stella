@@ -80,8 +80,8 @@
      Grotesk sets h1 to h3 on stella.oxagen.sh and its docs, a customer site.
      Aeonik sets the text and h4 to h6, and Monaspace Neon sets code and
      terminal transcripts. Space Grotesk ships 400 to 700, so display and
-     headings are 700. No step is under 14px: a badge or an overline stands
-     apart by case, tracking, or weight. */
+     headings are 700. Every step reads a kit token, so a change to the base
+     in the kit reaches each one. */
   --stella-font-display: var(--ox-font-display);
   --stella-font-sans: var(--ox-font);
   --stella-font-mono: var(--ox-font-mono);
@@ -90,9 +90,9 @@
   --stella-font-ui-weight: 500;
   --stella-font-body-weight: 400;
 
-  --stella-text-xs: var(--ox-a-micro);    /* 14, the floor */
-  --stella-text-sm: var(--ox-a-body);     /* 14 */
-  --stella-text-base: var(--ox-m-body);   /* 16, a customer site's body */
+  --stella-text-xs: var(--ox-a-micro);    /* the micro step: badges, overlines */
+  --stella-text-sm: var(--ox-a-body);     /* the app base */
+  --stella-text-base: var(--ox-m-body);   /* the base on a customer site */
   --stella-text-md: var(--ox-a-h4);       /* 16 */
   --stella-text-lg: var(--ox-a-h3);       /* 20 */
   --stella-text-xl: var(--ox-a-h2);       /* 24 */

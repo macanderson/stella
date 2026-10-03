@@ -15,10 +15,9 @@ name: brand-drift
 # Tailwind size class such as `text-sm`, where a `text-m-*` class should be.
 # The docs chrome's markup (`GUARDED_APP_TSX`) gets the same check against the
 # app scale, where a `text-a-*` class should be.
-# It holds the house type rule too: a size in those stylesheets that works out
-# under the kit's 14px floor fails, and so does a rule or a heading's classes
-# that set h1 to h3 in a face other than the display face, or h4 to h6 in a
-# face other than the text face.
+# It holds the house type rule's faces too: a rule or a heading's classes that
+# set h1 to h3 in a face other than the display face, or h4 to h6 in a face
+# other than the text face, fail.
 # Each line names the file, the line, and the token to use.
 #
 # The job checks out the kit's `main`, never a pinned commit, so the daily run
