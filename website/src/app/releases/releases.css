@@ -157,9 +157,10 @@
   flex-wrap: wrap;
   gap: calc(var(--ox-space) * 1.5);
 }
-/* A filter chip is a toggle button. It takes the default button's ground,
- * border, hover, and focus ring from the --button-* tokens in global.css,
- * keeps a quiet label until it is on, and takes its kind's colour when on. */
+/* A filter chip is a toggle button. It takes the neutral button's ground,
+ * border, hover, and focus ring from the --button-default-* tokens in
+ * global.css, keeps a quiet label until it is on, and takes its kind's
+ * colour when on. */
 .rl-chip {
   display: inline-flex;
   align-items: center;

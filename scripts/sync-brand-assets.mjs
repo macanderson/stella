@@ -52,6 +52,14 @@
  * site, so h1 to h3 take the display face (Space Grotesk) through
  * `--font-heading`, and h4 to h6 take the text face. A stylesheet rule or a
  * heading's classes that set another face fail.
+ *
+ * So does the semantic token rule. Outside the token-mapping layer
+ * (`TOKEN_SHEET` and the `MAPPING_SELECTORS` blocks of global.css), a
+ * stylesheet fails on a colour, a spacing length, or a duration or easing
+ * written by hand, and on a raw --ox-* colour. The site's markup fails on a
+ * Tailwind palette colour class, a spacing class with a value in brackets, a
+ * colour outside generated art (`ART_TSX`), and a `<button>` built outside
+ * the `.btn` variant set (`BUTTON_KEPT` names the exceptions).
  */
 
 import {
@@ -298,6 +306,38 @@ const LITERALS = [
     why: "SVG text in viewBox units, which scale with the drawing",
   },
   { prop: "font-size", value: "0.9em", why: "inline code, sized to the line it sits in" },
+];
+
+/**
+ * The site's token-mapping layer, where a raw value may sit.
+ *
+ * tokens.css holds the palette and the site's role tokens, so it is the one
+ * guarded sheet a colour value may sit in. In global.css, the custom
+ * properties of the blocks named here map those roles onto Fumadocs and the
+ * button set, and may read a raw --ox-* colour. Every other rule reads a role
+ * token: a colour, a spacing value, or a duration written as a number fails.
+ */
+const TOKEN_SHEET = `${WEB}/src/app/tokens.css`;
+const MAPPING_SELECTORS = new Set([":root", ".dark", "@theme", "@theme static"]);
+
+/** Generated art and third-party marks, which keep their own colours. */
+const ART_TSX = new Set([
+  `${WEB}/src/app/opengraph-image.tsx`,
+  `${WEB}/src/app/twitter-image.tsx`,
+  `${WEB}/src/components/provider-logos.tsx`,
+]);
+
+/**
+ * The `<button>`s that are not a `.btn`, each with its reason. A tab and a
+ * menu item are found by their role and need no entry.
+ */
+const BUTTON_KEPT = [
+  { className: "lp-install-hit", why: "a stretched hit target over the install block, with no face of its own" },
+  { className: "rl-disclosure", why: "a disclosure row whose face is the release heading it opens" },
+  {
+    className: "rl-chip",
+    why: "a filter chip, a pill toggle that reads the neutral --button-default-* tokens for its ground, border, and ring",
+  },
 ];
 
 /** Paths a check found different from the kit, each with an optional note. */
@@ -1031,6 +1071,150 @@ function headingTsxFindings() {
   return out;
 }
 
+/** The --ox-* tokens that hold a colour, read from the house sheet. */
+function houseColors() {
+  const css = uncomment(readFileSync(join(REPO, HOUSE_CSS), "utf8"));
+  const out = new Set();
+  for (const m of css.matchAll(/(--ox-[\w-]+)\s*:\s*([^;]+);/g)) {
+    if (/#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?|oklch|oklab)\(/.test(m[2])) out.add(m[1]);
+  }
+  return out;
+}
+
+const COLOR_LITERAL = /#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})\b|\b(?:rgba?|hsla?|oklch|oklab|lab|lch)\(/;
+const NAMED_COLOR = /(?<![\w-])(?:white|black|red|green|blue|gray|grey|silver|gold|orange|yellow|purple|pink)(?![\w-])/;
+const COLOR_PROPS = /^(?:color|background(?:-color)?|border(?:-[a-z]+)*|outline(?:-color)?|fill|stroke|text-decoration(?:-color)?|caret-color|accent-color|column-rule(?:-color)?)$/;
+const SPACING_PROPS =
+  /^(?:padding|margin|gap|row-gap|column-gap|inset|top|right|bottom|left|scroll-margin|scroll-padding)(?:-[a-z-]+)?$/;
+const MOTION_PROPS = /^(?:transition|animation)(?:-duration|-delay|-timing-function)?$/;
+
+/**
+ * Every rule in `GUARDED_CSS` that writes a colour, a spacing value, or a
+ * motion value by hand, as one line each, path first.
+ *
+ * - A colour outside tokens.css fails: a hex, `rgb()`, `hsl()`, `oklch()`,
+ *   or a named colour. So does a raw --ox-* colour read anywhere but a
+ *   mapping block. `color-mix()` over role tokens, `transparent`, and
+ *   `currentColor` pass.
+ * - A margin, padding, gap, or offset written in rem or px fails. It reads
+ *   the space unit instead, as `calc(var(--ox-space) * n)`. `0` passes, and
+ *   so does a length in em, which sizes a gap to the text it sits in.
+ * - A transition or an animation that writes a duration, a delay, or an
+ *   easing fails. It reads a motion token from tokens.css instead.
+ */
+function semanticFindings(sheets) {
+  const colors = houseColors();
+  const squash = (v) => v.replace(/\s+/g, " ").trim();
+  const lineOf = (css, at) => css.slice(0, at).split("\n").length;
+  const out = [];
+  for (const [path, css] of sheets) {
+    if (path === TOKEN_SHEET) continue;
+    for (const m of css.matchAll(/(^|[{;\s])(-{0,2}[a-z][\w-]*)\s*:\s*([^;{}]+)/g)) {
+      const at = m.index + m[1].length;
+      const prop = m[2];
+      const value = squash(m[3]);
+      const open = css.lastIndexOf("{", at);
+      if (open < 0) continue;
+      const from = Math.max(css.lastIndexOf("}", open - 1), css.lastIndexOf("{", open - 1), css.lastIndexOf(";", open - 1));
+      const selector = squash(css.slice(from + 1, open));
+      // A selector's own pseudo-class, such as `a:hover`, reads as a declaration
+      // to the pattern above. Only a declaration ends in `;` or `}`.
+      const end = css.slice(at + m[0].length - m[1].length).match(/^\s*[;}]/);
+      if (!end) continue;
+      const where = `${path} line ${lineOf(css, at)}: ${prop}: ${value} in ${selector}`;
+      const custom = prop.startsWith("--");
+      const mapping = custom && path === GUARDED_CSS[0] && MAPPING_SELECTORS.has(selector);
+      const bare = value.replace(/url\([^)]*\)/g, "");
+      if (!mapping && COLOR_LITERAL.test(bare)) {
+        out.push(`${where} writes a colour by hand. Read a role token, such as var(--stella-fg) or var(--color-fd-border), or add the colour to tokens.css.`);
+      }
+      if (!custom && COLOR_PROPS.test(prop) && NAMED_COLOR.test(bare.replace(/var\([^)]*\)/g, ""))) {
+        out.push(`${where} names a colour. Read a role token instead.`);
+      }
+      if (!mapping) {
+        for (const ref of value.matchAll(/var\(\s*(--ox-[\w-]+)/g)) {
+          if (colors.has(ref[1])) {
+            out.push(`${where} reads the raw colour ${ref[1]}. Read the role token that maps it, from tokens.css or the mapping blocks in global.css.`);
+          }
+        }
+      }
+      if (custom) continue;
+      const plain = value.replace(/var\([^()]*\)/g, "");
+      if (SPACING_PROPS.test(prop) && /(?<![\w.])-?(?:\d*\.)?\d+(?:px|rem)\b/.test(plain)) {
+        out.push(`${where} writes a spacing length by hand. Read the space unit: calc(var(--ox-space) * n).`);
+      }
+      if (MOTION_PROPS.test(prop)) {
+        if (/(?<![\w.-])(?:\d*\.)?\d+m?s\b/.test(plain) || /\b(?:ease|ease-in|ease-out|ease-in-out|linear|step-start|step-end)\b|\b(?:cubic-bezier|linear|steps)\(/.test(plain)) {
+          out.push(`${where} writes a duration or an easing by hand. Read a motion token from tokens.css, such as var(--stella-duration-base) and var(--stella-ease-arrive).`);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/** The opening tag that starts at `src[start]`, read past any `>` inside braces or quotes. */
+function openingTag(src, start) {
+  let depth = 0;
+  let quote = null;
+  for (let i = start; i < src.length; i += 1) {
+    const ch = src[i];
+    if (quote) {
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+    else if (ch === "{") depth += 1;
+    else if (ch === "}") depth -= 1;
+    else if (ch === ">" && depth === 0) return src.slice(start, i + 1);
+  }
+  return src.slice(start);
+}
+
+/**
+ * Every line of the site's markup that styles by hand what a token carries,
+ * path first: a Tailwind palette colour class, a spacing class with a value
+ * in brackets, a colour written in the markup, and a `<button>` that is not
+ * a `.btn`, a tab, a menu item, or an entry in `BUTTON_KEPT`.
+ */
+function markupFindings() {
+  const out = [];
+  const palette =
+    /(?<![\w-])(?:bg|text|border|ring|fill|stroke|outline|decoration|divide|from|via|to|shadow|accent|caret)-(?:white|black|(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d{2,3})(?:\/\d+)?(?![\w-])/g;
+  const spacing =
+    /(?<![\w-])-?(?:p|px|py|pt|pb|pl|pr|ps|pe|m|mx|my|mt|mb|ml|mr|ms|me|gap|gap-x|gap-y|space-x|space-y|inset|inset-x|inset-y|top|left|right|bottom|start|end)-\[[^\]]+\]/g;
+  const kept = new Set(BUTTON_KEPT.map((b) => b.className));
+  for (const dir of SITE_TSX_DIRS) {
+    const files = readdirSync(join(REPO, dir), { recursive: true }).filter((f) => f.endsWith(".tsx"));
+    for (const file of files.sort()) {
+      const path = `${dir}/${file}`;
+      const src = uncommentTsx(readFileSync(join(REPO, path), "utf8"));
+      const lineOf = (at) => src.slice(0, at).split("\n").length;
+      for (const m of src.matchAll(palette)) {
+        out.push(`${path} line ${lineOf(m.index)}: ${m[0]} is a palette colour. Use a role class, such as text-fd-muted-foreground or bg-fd-card.`);
+      }
+      for (const m of src.matchAll(spacing)) {
+        out.push(`${path} line ${lineOf(m.index)}: ${m[0]} writes a spacing length by hand. Use a step of the spacing scale, such as p-3.`);
+      }
+      if (!ART_TSX.has(path)) {
+        // Three and four hex digits are left out here: in markup they are far
+        // more often an issue number, such as a search hint, than a colour.
+        for (const m of src.matchAll(/#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6})\b|\b(?:rgba?|hsla?|oklch|oklab)\(/g)) {
+          out.push(`${path} line ${lineOf(m.index)}: ${m[0]} writes a colour in the markup. Read a role token in a stylesheet or a role class.`);
+        }
+      }
+      for (const m of src.matchAll(/<button\b/g)) {
+        const tag = openingTag(src, m.index);
+        if (/\brole=["'](?:tab|menuitem|menuitemradio|menuitemcheckbox|option)["']/.test(tag)) continue;
+        const names = [...tag.matchAll(/className=(?:"([^"]*)"|\{\s*`([^`]*)`\s*\}|\{\s*"([^"]*)"\s*\})/g)].flatMap((c) =>
+          (c[1] ?? c[2] ?? c[3]).split(/\s+/),
+        );
+        if (names.includes("btn") || names.some((n) => kept.has(n))) continue;
+        out.push(`${path} line ${lineOf(m.index)}: a <button> styled by hand. Give it the btn class and a variant (btn-primary, btn-outline, btn-ghost, or btn-link), or add its class to BUTTON_KEPT with its reason.`);
+      }
+    }
+  }
+  return out;
+}
+
 /**
  * Every value in `GUARDED_CSS` that should read a house token, every token
  * reference no sheet declares, and every heading set in the wrong face, as
@@ -1088,7 +1272,7 @@ function cssFindings() {
       out.push(`${path} line ${lineOf(css, m.index)}: var(${m[1]}) is declared in no stylesheet the site loads. Use a token that exists.`);
     }
   }
-  return [...out, ...headingFindings(sheets)];
+  return [...out, ...headingFindings(sheets), ...semanticFindings(sheets)];
 }
 
 /**
@@ -1176,7 +1360,7 @@ skill();
 
 const kit = `the house kit ${house.version}`;
 if (CHECK) {
-  const findings = [...cssFindings(), ...tsxFindings(houseSteps()), ...headingTsxFindings()];
+  const findings = [...cssFindings(), ...tsxFindings(houseSteps()), ...headingTsxFindings(), ...markupFindings()];
   if (drifted.length) {
     console.error(`brand: ${drifted.length} file(s) differ from ${kit} at ${BRAND}:`);
     for (const f of drifted) console.error(`  ${f}`);
@@ -1184,7 +1368,8 @@ if (CHECK) {
   if (findings.length) {
     console.error(
       `brand: ${findings.length} line(s) in the site's stylesheets and markup break a house type or token rule: ` +
-        "a value that does not read a house token, or a heading in the wrong face. " +
+        "a value that does not read a house or role token (a corner, shadow, size, wrap, colour, spacing, or motion value), " +
+        "a hand-styled button, or a heading in the wrong face. " +
         "Fix each line as it says, or add a kept value to LITERALS in scripts/sync-brand-assets.mjs with its reason:",
     );
     for (const f of findings) console.error(`  ${f}`);
@@ -1192,7 +1377,7 @@ if (CHECK) {
   if (drifted.length || findings.length) process.exit(1);
   console.log(
     `brand: every synced file matches ${kit}. The site's stylesheets, marketing pages, and docs chrome read the house tokens, ` +
-      "and set each heading in its face.",
+      "build every button from the variant set, and set each heading in its face.",
   );
 } else {
   console.log(

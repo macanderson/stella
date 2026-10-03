@@ -943,9 +943,10 @@ html[data-home-nav="hidden"] #nd-nav {
  * Every colour reads a --button-* token from the mapping blocks at the top of
  * this file, the corner reads the house scale, and the padding reads the
  * space unit. The variants mirror the kit's Button: primary is the gold
- * action, at most one per screen; default is outlined; ghost has no border
- * until hover; link is text. Sizes follow the kit's xs, sm, and lg. The
- * primary action takes no glow: the house rules retire them.
+ * action from --button-primary-*, at most one per screen; outline and ghost
+ * are the neutral buttons from --button-default-*, outline with a border and
+ * ghost without one; link is text. Sizes follow the kit's xs, sm, and lg.
+ * The primary action takes no glow: the house rules retire them.
  * ═════════════════════════════════════════════════════════════════════════ */
 
 .btn {
@@ -992,16 +993,16 @@ html[data-home-nav="hidden"] #nd-nav {
   outline-color: var(--button-primary-ring);
 }
 
-.btn-default {
+.btn-outline {
   background: var(--button-default-bg);
   color: var(--button-default-fg);
   border-color: var(--button-default-border);
 }
-.btn-default:hover,
+.btn-outline:hover,
 .btn-ghost:hover {
   background: var(--button-default-hover-bg);
 }
-.btn-default:active,
+.btn-outline:active,
 .btn-ghost:active {
   background: var(--button-default-active-bg);
 }
@@ -1371,7 +1372,7 @@ figure.shiki {
   --color-fd-primary: var(--stella-signal);
   --color-fd-muted-foreground: var(--stella-text-2);
   --color-fd-ring: var(--stella-signal);
-  /* The copy chip is a default button on ink. */
+  /* The copy chip is a neutral outline button on ink. */
   --button-default-bg: var(--stella-canvas-code);
   --button-default-fg: var(--stella-text-2);
   --button-default-border: var(--stella-canvas-edge);
@@ -1399,7 +1400,7 @@ figure.shiki > div:has(figcaption) {
  * figure so it does not scroll away with long blocks. Idle it whispers
  * "copy"; on success it pops ("copied!" with the check drawing in) on the
  * kit's pop easing, then settles back. It is a default button (`btn
- * btn-default btn-xs`), so its colours and corner come from the button
+ * btn-outline btn-xs`), so its colours and corner come from the button
  * tokens, rebound for ink on figure.shiki. This rule places it and sets
  * its label in the code face. */
 .lp-code-copy {

@@ -71,7 +71,7 @@ export function DocsCodeBlock({
         <>
           <button
             type="button"
-            className="btn btn-default btn-xs lp-code-copy"
+            className="btn btn-outline btn-xs lp-code-copy"
             data-copied={copied || undefined}
             aria-label="Copy code"
             onClick={(event) => {

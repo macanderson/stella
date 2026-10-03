@@ -17,7 +17,9 @@ name: brand-drift
 # app scale, where a `text-a-*` class should be.
 # It holds the house type rule's faces too: a rule or a heading's classes that
 # set h1 to h3 in a face other than the display face, or h4 to h6 in a face
-# other than the text face, fail.
+# other than the text face, fail. And it holds the semantic token rule: a
+# colour, spacing length, or duration written by hand outside the token
+# sheets fails, and so does a button built outside the .btn variant set.
 # Each line names the file, the line, and the token to use.
 #
 # The job checks out the kit's `main`, never a pinned commit, so the daily run
