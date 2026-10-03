@@ -65,7 +65,7 @@ export function IntakeStation() {
       </ul>
 
       <div className="eng-intake-ctas">
-        <a href="#loop" className="eng-cta">
+        <a href="#loop" className="btn btn-primary eng-cta">
           begin the tour ↓
         </a>
         <a href="#exit" className="eng-cta-quiet">

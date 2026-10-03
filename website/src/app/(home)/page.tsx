@@ -154,7 +154,7 @@ export default function HomePage() {
               </div>
               <Link
                 href="/docs"
-                className="lp-cta flex shrink-0 items-center justify-center rounded-md px-6 py-3 text-m-micro font-sans"
+                className="btn btn-primary btn-lg shrink-0"
               >
                 Read the docs
               </Link>
@@ -275,7 +275,7 @@ export default function HomePage() {
           <div className="mt-6">
             <Link
               href="/engine"
-              className="lp-cta inline-flex items-center rounded-md px-6 py-3 text-m-micro font-sans"
+              className="btn btn-primary btn-lg"
             >
               Take the engine tour
             </Link>

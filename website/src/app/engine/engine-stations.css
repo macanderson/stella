@@ -110,24 +110,15 @@
   margin: 0;
 }
 
-/* The one gold surface per station: the primary action. */
-.eng-cta {
-  display: inline-flex;
-  align-items: center;
-  padding: calc(var(--ox-space) * 2.6) calc(var(--ox-space) * 5.6);
-  border-radius: var(--ox-radius-md);
-  background: var(--eng-accent);
-  color: var(--stella-canvas);
-  font-weight: 500;
-  font-size: var(--stella-type-sm);
-  text-decoration: none;
-  transition: background-color var(--stella-duration-base) var(--stella-ease-arrive);
-}
-/* Hover lifts the fill to the bright gold and adds no glow. The glow token
- * this once named was retired and declared nowhere, so it drew nothing. */
+/* The one gold surface per station: the primary action, a `btn
+ * btn-primary` from global.css, which takes its fill, hover, and ring from
+ * the --button-primary-* tokens. These lines size it, and restate the label
+ * colour so the tour's link rule cannot paint the label gold on its fill. */
+.eng-cta,
 .eng-cta:hover {
-  background: var(--stella-signal-live);
-  color: var(--stella-canvas);
+  padding: calc(var(--ox-space) * 2.6) calc(var(--ox-space) * 5.6);
+  font-size: var(--stella-type-sm);
+  color: var(--button-primary-fg);
   text-decoration: none;
 }
 

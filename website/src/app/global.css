@@ -157,6 +157,26 @@ h3 {
   --stella-cta-fg: var(--stella-canvas);
   --stella-cta-bg-hover: var(--stella-signal-live);
 
+  /* Buttons: the kit's --button-* names, mapped onto this site's roles. The
+   * .btn classes read these and nothing else, so a button's colour changes
+   * here or in the kit, never in a component. primary is the gold action,
+   * default is the outlined neutral, and disabled is the muted pair. */
+  --button-primary-bg: var(--stella-cta-bg);
+  --button-primary-fg: var(--stella-cta-fg);
+  --button-primary-border: transparent;
+  --button-primary-hover-bg: var(--stella-cta-bg-hover);
+  --button-primary-active-bg: var(--stella-cta-bg-hover);
+  --button-primary-ring: var(--color-fd-ring);
+  --button-default-bg: transparent;
+  --button-default-fg: var(--color-fd-foreground);
+  --button-default-border: var(--color-fd-border);
+  --button-default-hover-bg: var(--color-fd-accent);
+  --button-default-active-bg: var(--color-fd-muted);
+  --button-default-ring: var(--color-fd-ring);
+  --button-disabled-bg: var(--color-fd-muted);
+  --button-disabled-fg: var(--color-fd-muted-foreground);
+  --button-link-fg: var(--color-fd-primary);
+
   /* The shadow under a floating surface: a menu, a popover, or a dialog.
    * The kit's -ink twin is the one for paper. */
   --stella-shadow-pop: var(--ox-shadow-pop-ink);
@@ -196,6 +216,24 @@ h3 {
   --stella-cta-bg: var(--stella-signal);
   --stella-cta-fg: var(--stella-canvas);
   --stella-cta-bg-hover: var(--stella-signal-live);
+
+  /* The same button roles on ink. Each one reads a property this block
+   * rebinds, so it is declared again here to take the ink value. */
+  --button-primary-bg: var(--stella-cta-bg);
+  --button-primary-fg: var(--stella-cta-fg);
+  --button-primary-border: transparent;
+  --button-primary-hover-bg: var(--stella-cta-bg-hover);
+  --button-primary-active-bg: var(--stella-cta-bg-hover);
+  --button-primary-ring: var(--color-fd-ring);
+  --button-default-bg: transparent;
+  --button-default-fg: var(--color-fd-foreground);
+  --button-default-border: var(--color-fd-border);
+  --button-default-hover-bg: var(--color-fd-accent);
+  --button-default-active-bg: var(--color-fd-muted);
+  --button-default-ring: var(--color-fd-ring);
+  --button-disabled-bg: var(--color-fd-muted);
+  --button-disabled-fg: var(--color-fd-muted-foreground);
+  --button-link-fg: var(--color-fd-primary);
 
   --stella-shadow-pop: var(--ox-shadow-pop);
 
@@ -899,16 +937,101 @@ html[data-home-nav="hidden"] #nd-nav {
   text-transform: lowercase;
 }
 
-/* Primary action: the one gold surface, with an ink label. Hover lifts the
- * fill to the bright gold. It takes no glow: the house rules retire them. */
-.lp-cta {
-  background: var(--stella-cta-bg);
-  color: var(--stella-cta-fg);
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Buttons — one variant set for the landing page and the docs.
+ *
+ * Every colour reads a --button-* token from the mapping blocks at the top of
+ * this file, the corner reads the house scale, and the padding reads the
+ * space unit. The variants mirror the kit's Button: primary is the gold
+ * action, at most one per screen; default is outlined; ghost has no border
+ * until hover; link is text. Sizes follow the kit's xs, sm, and lg. The
+ * primary action takes no glow: the house rules retire them.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--ox-space) * 1.5);
+  border: 1px solid transparent;
+  border-radius: var(--ox-radius-md);
+  font-family: var(--font-sans);
   font-weight: 500;
-  transition: background-color var(--stella-duration-base) var(--stella-ease-arrive);
+  line-height: var(--ox-a-body-leading);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--stella-duration-base) var(--stella-ease-arrive),
+    border-color var(--stella-duration-base) var(--stella-ease-arrive),
+    background-color var(--stella-duration-base) var(--stella-ease-arrive);
 }
-.lp-cta:hover {
-  background: var(--stella-cta-bg-hover);
+.btn:focus-visible {
+  outline: 2px solid var(--button-default-ring);
+  outline-offset: 2px;
+}
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  background: var(--button-disabled-bg);
+  color: var(--button-disabled-fg);
+  border-color: transparent;
+  cursor: default;
+}
+
+.btn-primary {
+  background: var(--button-primary-bg);
+  color: var(--button-primary-fg);
+  border-color: var(--button-primary-border);
+}
+.btn-primary:hover {
+  background: var(--button-primary-hover-bg);
+}
+.btn-primary:active {
+  background: var(--button-primary-active-bg);
+}
+.btn-primary:focus-visible {
+  outline-color: var(--button-primary-ring);
+}
+
+.btn-default {
+  background: var(--button-default-bg);
+  color: var(--button-default-fg);
+  border-color: var(--button-default-border);
+}
+.btn-default:hover,
+.btn-ghost:hover {
+  background: var(--button-default-hover-bg);
+}
+.btn-default:active,
+.btn-ghost:active {
+  background: var(--button-default-active-bg);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--button-default-fg);
+}
+
+.btn-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--button-link-fg);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
+
+.btn-xs {
+  padding: calc(var(--ox-space) * 0.6) calc(var(--ox-space) * 2);
+  font-size: var(--stella-type-2xs);
+}
+.btn-sm {
+  padding: calc(var(--ox-space) * 1.5) calc(var(--ox-space) * 2.5);
+  font-size: var(--ox-a-micro);
+}
+.btn-lg {
+  padding: calc(var(--ox-space) * 3) calc(var(--ox-space) * 6);
+  font-size: var(--ox-m-micro);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1248,6 +1371,13 @@ figure.shiki {
   --color-fd-primary: var(--stella-signal);
   --color-fd-muted-foreground: var(--stella-text-2);
   --color-fd-ring: var(--stella-signal);
+  /* The copy chip is a default button on ink. */
+  --button-default-bg: var(--stella-canvas-code);
+  --button-default-fg: var(--stella-text-2);
+  --button-default-border: var(--stella-canvas-edge);
+  --button-default-hover-bg: var(--stella-canvas-row);
+  --button-default-active-bg: var(--stella-canvas-row);
+  --button-default-ring: var(--stella-signal);
 }
 
 /* Code reads 15px, the app body step times 15/14, as on docs.oxagen.sh: a
@@ -1268,35 +1398,18 @@ figure.shiki > div:has(figcaption) {
 /* The floating copy chip — bottom-right, over the code, anchored to the
  * figure so it does not scroll away with long blocks. Idle it whispers
  * "copy"; on success it pops ("copied!" with the check drawing in) on the
- * kit's pop easing, then settles back. */
+ * kit's pop easing, then settles back. It is a default button (`btn
+ * btn-default btn-xs`), so its colours and corner come from the button
+ * tokens, rebound for ink on figure.shiki. This rule places it and sets
+ * its label in the code face. */
 .lp-code-copy {
   position: absolute;
   bottom: calc(var(--ox-space) * 2.4);
   inset-inline-end: calc(var(--ox-space) * 2.4);
   z-index: 2;
-  border: 1px solid var(--stella-canvas-edge);
-  border-radius: var(--ox-radius-md);
-  background: var(--stella-canvas-code);
-  color: var(--stella-text-2);
   font-family: var(--font-mono);
-  font-size: var(--stella-type-2xs);
-  font-weight: 500;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  padding: calc(var(--ox-space) * 0.6) calc(var(--ox-space) * 2);
-  cursor: pointer;
-  transition:
-    color var(--stella-duration-base) var(--stella-ease-arrive),
-    border-color var(--stella-duration-base) var(--stella-ease-arrive),
-    background-color var(--stella-duration-base) var(--stella-ease-arrive);
-}
-.lp-code-copy:hover {
-  color: var(--stella-text);
-  border-color: var(--stella-text-3);
-}
-.lp-code-copy:focus-visible {
-  outline: 2px solid var(--stella-signal);
-  outline-offset: 2px;
 }
 .lp-code-copy[data-copied] {
   color: var(--stella-success); /* 11.4:1 on ink; word + glyph carry it */

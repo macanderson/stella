@@ -70,7 +70,7 @@ export function PageActions({ slug }: { slug: string[] }) {
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="inline-flex items-center gap-1.5 rounded-md border border-fd-border px-2.5 py-1.5 text-a-micro font-sans text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground"
+        className="btn btn-default btn-sm"
       >
         <Copy className="size-3.5" aria-hidden />
         Copy page

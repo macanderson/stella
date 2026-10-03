@@ -163,7 +163,7 @@ export function ReleasesBrowser({ releases }: { releases: Release[] }) {
             ? "no matching changes"
             : `${shown} change${shown === 1 ? "" : "s"}${isFiltered ? ` of ${total}` : ""}`}
           {isFiltered ? (
-            <button type="button" className="rl-reset" onClick={reset}>
+            <button type="button" className="btn btn-link rl-reset" onClick={reset}>
               clear
             </button>
           ) : null}

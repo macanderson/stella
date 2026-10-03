@@ -72,6 +72,10 @@
     var(--stella-canvas)
   );
 
+  /* The tour's ground is ink in both site themes, so a focus ring around
+   * its primary button takes the bright gold. */
+  --button-primary-ring: var(--stella-signal);
+
   /* The feed's choreography: the first line waits for the station to
    * arrive, and each line after it follows by one step. */
   --eng-feed-delay: 400ms;

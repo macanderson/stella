@@ -157,6 +157,9 @@
   flex-wrap: wrap;
   gap: calc(var(--ox-space) * 1.5);
 }
+/* A filter chip is a toggle button. It takes the default button's ground,
+ * border, hover, and focus ring from the --button-* tokens in global.css,
+ * keeps a quiet label until it is on, and takes its kind's colour when on. */
 .rl-chip {
   display: inline-flex;
   align-items: center;
@@ -165,8 +168,8 @@
   font-size: var(--stella-type-xs);
   line-height: 1;
   color: var(--stella-muted-fg);
-  background: transparent;
-  border: 1px solid var(--color-fd-border);
+  background: var(--button-default-bg);
+  border: 1px solid var(--button-default-border);
   border-radius: 999px;
   cursor: pointer;
   transition:
@@ -175,16 +178,16 @@
     background-color var(--stella-duration-fast) var(--stella-ease-arrive);
 }
 .rl-chip:hover {
-  color: var(--color-fd-foreground);
-  border-color: var(--stella-muted-fg);
+  color: var(--button-default-fg);
+  background: var(--button-default-hover-bg);
 }
 .rl-chip[data-active="true"] {
-  color: var(--color-fd-foreground);
+  color: var(--button-default-fg);
   border-color: var(--rl-kind);
   background: color-mix(in srgb, var(--rl-kind) 12%, transparent);
 }
 .rl-chip:focus-visible {
-  outline: 2px solid var(--stella-accent-text);
+  outline: 2px solid var(--button-default-ring);
   outline-offset: 2px;
 }
 .rl-chip-dot {
@@ -204,15 +207,10 @@
   color: var(--stella-muted-fg);
   font-variant-numeric: tabular-nums;
 }
+/* A link button (btn btn-link) at the size of the count beside it. */
 .rl-reset {
   margin-left: calc(var(--ox-space) * 2);
-  padding: 0;
   font: inherit;
-  color: var(--stella-accent-text);
-  background: none;
-  border: none;
-  border-bottom: 1px solid currentColor;
-  cursor: pointer;
 }
 
 /* ── timeline ─────────────────────────────────────────────────────────────── */
@@ -266,7 +264,7 @@
   cursor: pointer;
 }
 .rl-disclosure:focus-visible {
-  outline: 2px solid var(--stella-accent-text);
+  outline: 2px solid var(--button-default-ring);
   outline-offset: 4px;
   border-radius: 0.25rem;
 }

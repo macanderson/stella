@@ -80,7 +80,7 @@ function ShareMenu({ path, title }: { path: string; title: string }) {
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="inline-flex items-center gap-1.5 text-a-micro font-sans text-fd-muted-foreground transition-colors hover:text-fd-foreground"
+        className="btn btn-ghost btn-sm"
       >
         <Share2 className="size-3.5" aria-hidden />
         Share
