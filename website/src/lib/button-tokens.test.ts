@@ -11,15 +11,15 @@ import { test } from "node:test";
  *
  * Mac's rule of 2026-10-03: buttons, corners, and colours come from semantic
  * tokens. `src/app/global.css` maps the kit's --button-* names onto this
- * site's roles, once for paper (`:root`) and once for ink (`.dark`), and one
- * `.btn` class with its variants reads them. This test holds both halves. A
+ * site's roles, once for paper (`:root`) and once for ink (`.dark`), and the
+ * `.btn` classes read them. This test holds both halves. A
  * button whose colour is written in its own rule, or a theme that leaves a
  * role undeclared, fails here.
  */
 
 const CSS = join(dirname(fileURLToPath(import.meta.url)), "..", "app", "global.css");
 
-/** The roles the .btn variants read, with the kit's names. */
+/** The roles the .btn classes read, with the kit's names. */
 const ROLES = [
   "--button-primary-bg",
   "--button-primary-fg",
@@ -60,12 +60,12 @@ test("both themes declare every button role", () => {
       missing,
       [],
       `src/app/global.css's ${theme} block declares no ${missing.join(", ")}. Map each role onto a ` +
-        "site role token there, so the .btn variants have a value in that theme.",
+        "site role token there, so the .btn classes have a value in that theme.",
     );
   }
 });
 
-test("the .btn variants read their colours from the button roles and their padding from the space unit", () => {
+test("the .btn classes read their colours from the button roles and their padding from the space unit", () => {
   const btn = rules(readFileSync(CSS, "utf8")).filter(([selector]) =>
     selector.split(",").some((s) => /^\.btn(?:-[\w-]+)?(?::[\w-]+|\[[^\]]+\])*$/.test(s.trim())),
   );
