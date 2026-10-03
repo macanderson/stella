@@ -19,9 +19,12 @@
  *
  * Type: text-m-* is the marketing scale, text-a-* the app scale. A surface
  * picks one. Aeonik sets the default text everywhere, and Monaspace Neon
- * sets code with texture healing on. No step on either scale is below 14px,
- * and text-xs and text-sm read the app body step, so they cannot go below
- * it either.
+ * sets code with texture healing on. Each scale has one base, --ox-m-base
+ * and --ox-a-base, and every step is the base times its ratio. text-xs and
+ * text-sm read the app base here. To point Tailwind's text-xs to text-3xl
+ * at the app steps in order, import house-text-scale.css after this file.
+ * text-input-touch sets a text field on a phone: 16px or the app base,
+ * whichever is larger, so iOS never zooms the page on focus.
  *
  * Headings: text-m-h1 to text-m-h3 set Space Grotesk (--font-display), for
  * a marketing or customer site. text-a-h1 to text-a-h3, and bare h1 to h3,
@@ -98,10 +101,12 @@
   --font-mono: var(--font-monaspace-neon, "Monaspace Neon"), ui-monospace, "SF Mono", Menlo, Consolas, monospace; /* code, logs, ids, and numbers in tables */
   --font-wordmark: var(--font-space-grotesk, "Space Grotesk"), "Helvetica Neue", Arial, sans-serif; /* a wordmark set as text rather than drawn. It is fixed */
 
-  --text-xs: var(--ox-a-body); /* 14px, the app body step */
+  --text-xs: var(--ox-a-body); /* the app base, until the site imports house-text-scale.css */
   --text-xs--line-height: var(--ox-a-body-leading);
-  --text-sm: var(--ox-a-body); /* 14px, the app body step */
+  --text-sm: var(--ox-a-body); /* the app base, until the site imports house-text-scale.css */
   --text-sm--line-height: var(--ox-a-body-leading);
+  --text-input-touch: max(16px, var(--ox-a-body)); /* a text field on a phone */
+  --text-input-touch--line-height: var(--ox-a-body-leading);
 
   --tracking-hero: -0.03em;
   --tracking-display: -0.02em;
@@ -280,6 +285,7 @@
 @utility text-a-h4 { font-size: var(--ox-a-h4); line-height: var(--ox-a-h4-leading); font-family: var(--font-sans); font-weight: 600; }
 @utility text-a-body { font-size: var(--ox-a-body); line-height: var(--ox-a-body-leading); font-family: var(--font-sans); font-weight: 400; }
 @utility text-a-micro { font-size: var(--ox-a-micro); line-height: var(--ox-a-micro-leading); font-family: var(--font-mono); font-weight: 400; font-feature-settings: "calt", "liga"; }
+@utility text-a-2xs { font-size: var(--ox-a-2xs); line-height: var(--ox-a-2xs-leading); font-family: var(--font-sans); font-weight: 500; }
 
 /* the code face with texture healing, for anything not already routed */
 @utility font-code { font-family: var(--font-mono); font-feature-settings: "calt", "liga"; }

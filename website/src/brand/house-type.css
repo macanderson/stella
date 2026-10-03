@@ -39,3 +39,4 @@
 @utility text-a-h4 { font-size: var(--ox-a-h4); line-height: var(--ox-a-h4-leading); font-family: var(--font-sans); font-weight: 600; }
 @utility text-a-body { font-size: var(--ox-a-body); line-height: var(--ox-a-body-leading); font-family: var(--font-sans); font-weight: 400; }
 @utility text-a-micro { font-size: var(--ox-a-micro); line-height: var(--ox-a-micro-leading); font-family: var(--font-mono); font-weight: 400; font-feature-settings: "calt", "liga"; }
+@utility text-a-2xs { font-size: var(--ox-a-2xs); line-height: var(--ox-a-2xs-leading); font-family: var(--font-sans); font-weight: 500; }
