@@ -1,5 +1,5 @@
 {
-  "version": "2.6.0",
+  "version": "2.7.0",
   "name": "oxagen house system",
   "built_on": "oxagen brand kit (Space Grotesk), on obsidian and white with one gold",
   "icons": {
@@ -522,19 +522,33 @@
         "family": "Monaspace Neon"
       }
     ],
-    "display_floor_px": 20,
-    "type_floor_px": 14,
+    "text_scale": {
+      "file": "tokens/house-text-scale.css",
+      "sizes": {
+        "text-xs": "--ox-a-2xs",
+        "text-sm": "--ox-a-micro",
+        "text-base": "--ox-a-body",
+        "text-lg": "--ox-a-h4",
+        "text-xl": "--ox-a-h3",
+        "text-2xl": "--ox-a-h2",
+        "text-3xl": "--ox-a-h1"
+      }
+    },
     "scales": {
       "marketing": {
         "utility_prefix": "text-m-",
         "use": "landing pages and posts read once: large and spaced",
+        "base": "1rem",
+        "base_px": 16.0,
+        "base_var": "--ox-m-base",
         "steps": [
           {
             "step": "h1",
             "role": "display",
             "family": "Space Grotesk",
-            "size": "4.5rem",
-            "px": 72,
+            "ratio": 4.5,
+            "size": "calc(var(--ox-m-base) * 4.5)",
+            "px": 72.0,
             "line_height": 1.05,
             "weight": 700,
             "tracking": "-0.03em"
@@ -543,8 +557,9 @@
             "step": "h2",
             "role": "display",
             "family": "Space Grotesk",
-            "size": "2.5rem",
-            "px": 40,
+            "ratio": 2.5,
+            "size": "calc(var(--ox-m-base) * 2.5)",
+            "px": 40.0,
             "line_height": 1.2,
             "weight": 700,
             "tracking": "-0.01em"
@@ -553,8 +568,9 @@
             "step": "h3",
             "role": "display",
             "family": "Space Grotesk",
-            "size": "1.75rem",
-            "px": 28,
+            "ratio": 1.75,
+            "size": "calc(var(--ox-m-base) * 1.75)",
+            "px": 28.0,
             "line_height": 1.3,
             "weight": 600,
             "tracking": "0"
@@ -563,8 +579,9 @@
             "step": "h4",
             "role": "sans",
             "family": "Aeonik",
-            "size": "1.25rem",
-            "px": 20,
+            "ratio": 1.25,
+            "size": "calc(var(--ox-m-base) * 1.25)",
+            "px": 20.0,
             "line_height": 1.4,
             "weight": 500,
             "tracking": "0"
@@ -573,8 +590,9 @@
             "step": "body",
             "role": "sans",
             "family": "Aeonik",
-            "size": "1rem",
-            "px": 16,
+            "ratio": 1,
+            "size": "var(--ox-m-base)",
+            "px": 16.0,
             "line_height": 1.625,
             "weight": 400,
             "tracking": "0"
@@ -583,8 +601,9 @@
             "step": "micro",
             "role": "mono",
             "family": "Monaspace Neon",
-            "size": "0.875rem",
-            "px": 14,
+            "ratio": 0.875,
+            "size": "calc(var(--ox-m-base) * 0.875)",
+            "px": 14.0,
             "line_height": 1.5,
             "weight": 400,
             "tracking": "0"
@@ -594,13 +613,17 @@
       "app": {
         "utility_prefix": "text-a-",
         "use": "dashboards, panels, tables, terminals, logs: dense",
+        "base": "0.875rem",
+        "base_px": 14.0,
+        "base_var": "--ox-a-base",
         "steps": [
           {
             "step": "h1",
             "role": "heading",
             "family": "Aeonik",
-            "size": "1.875rem",
-            "px": 30,
+            "ratio": 2.142857,
+            "size": "calc(var(--ox-a-base) * 2.142857)",
+            "px": 30.0,
             "line_height": 1.15,
             "weight": 700,
             "tracking": "-0.02em"
@@ -609,8 +632,9 @@
             "step": "h2",
             "role": "heading",
             "family": "Aeonik",
-            "size": "1.5rem",
-            "px": 24,
+            "ratio": 1.714286,
+            "size": "calc(var(--ox-a-base) * 1.714286)",
+            "px": 24.0,
             "line_height": 1.2,
             "weight": 600,
             "tracking": "0"
@@ -619,8 +643,9 @@
             "step": "h3",
             "role": "heading",
             "family": "Aeonik",
-            "size": "1.25rem",
-            "px": 20,
+            "ratio": 1.428571,
+            "size": "calc(var(--ox-a-base) * 1.428571)",
+            "px": 20.0,
             "line_height": 1.25,
             "weight": 600,
             "tracking": "0"
@@ -629,8 +654,9 @@
             "step": "h4",
             "role": "sans",
             "family": "Aeonik",
-            "size": "1rem",
-            "px": 16,
+            "ratio": 1.142857,
+            "size": "calc(var(--ox-a-base) * 1.142857)",
+            "px": 16.0,
             "line_height": 1.4,
             "weight": 600,
             "tracking": "0"
@@ -639,8 +665,9 @@
             "step": "body",
             "role": "sans",
             "family": "Aeonik",
-            "size": "0.875rem",
-            "px": 14,
+            "ratio": 1,
+            "size": "var(--ox-a-base)",
+            "px": 14.0,
             "line_height": 1.5,
             "weight": 400,
             "tracking": "0"
@@ -649,10 +676,22 @@
             "step": "micro",
             "role": "mono",
             "family": "Monaspace Neon",
-            "size": "0.875rem",
-            "px": 14,
-            "line_height": 1.5,
+            "ratio": 0.857143,
+            "size": "calc(var(--ox-a-base) * 0.857143)",
+            "px": 12.0,
+            "line_height": 1.4,
             "weight": 400,
+            "tracking": "0"
+          },
+          {
+            "step": "2xs",
+            "role": "sans",
+            "family": "Aeonik",
+            "ratio": 0.714286,
+            "size": "calc(var(--ox-a-base) * 0.714286)",
+            "px": 10.0,
+            "line_height": 1.4,
+            "weight": 500,
             "tracking": "0"
           }
         ]

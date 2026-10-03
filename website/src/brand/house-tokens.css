@@ -18,8 +18,10 @@
  * the internal tools, and every h4 to h6. Space Grotesk sets h1 to h3 on
  * the marketing and customer sites (--ox-font-display). Monaspace Neon sets
  * code, logs, digests, and the numbers in tables. Space Grotesk sets the
- * wordmarks (--ox-font-wordmark), and that face is fixed. No type step is
- * below 14px.
+ * wordmarks (--ox-font-wordmark), and that face is fixed. Each type scale
+ * has one base, --ox-m-base (16px) and --ox-a-base (14px), and every step
+ * is the base times its ratio, so a change to a base moves every step on
+ * its scale.
  * tokens/house-fonts.css carries the @font-face rules.
  */
 
@@ -100,19 +102,22 @@
   --ox-tracking-heading: -0.01em;
   --ox-tracking-none: 0;
 
-  --ox-m-h1: 4.5rem; /* marketing h1, 72px, line-height 1.05 */
-  --ox-m-h2: 2.5rem; /* marketing h2, 40px, line-height 1.2 */
-  --ox-m-h3: 1.75rem; /* marketing h3, 28px, line-height 1.3 */
-  --ox-m-h4: 1.25rem; /* marketing h4, 20px, line-height 1.4 */
-  --ox-m-body: 1rem; /* marketing body, 16px, line-height 1.625 */
-  --ox-m-micro: 0.875rem; /* marketing micro, 14px, line-height 1.5 */
+  --ox-m-base: 1rem; /* 16px: the marketing body size, which every step multiplies */
+  --ox-m-h1: calc(var(--ox-m-base) * 4.5); /* marketing h1, 72px at the base, line-height 1.05 */
+  --ox-m-h2: calc(var(--ox-m-base) * 2.5); /* marketing h2, 40px at the base, line-height 1.2 */
+  --ox-m-h3: calc(var(--ox-m-base) * 1.75); /* marketing h3, 28px at the base, line-height 1.3 */
+  --ox-m-h4: calc(var(--ox-m-base) * 1.25); /* marketing h4, 20px at the base, line-height 1.4 */
+  --ox-m-body: var(--ox-m-base); /* marketing body, the base, line-height 1.625 */
+  --ox-m-micro: calc(var(--ox-m-base) * 0.875); /* marketing micro, 14px at the base, line-height 1.5 */
 
-  --ox-a-h1: 1.875rem; /* app h1, 30px, line-height 1.15 */
-  --ox-a-h2: 1.5rem; /* app h2, 24px, line-height 1.2 */
-  --ox-a-h3: 1.25rem; /* app h3, 20px, line-height 1.25 */
-  --ox-a-h4: 1rem; /* app h4, 16px, line-height 1.4 */
-  --ox-a-body: 0.875rem; /* app body, 14px, line-height 1.5 */
-  --ox-a-micro: 0.875rem; /* app micro, 14px, line-height 1.5 */
+  --ox-a-base: 0.875rem; /* 14px: the app body size, which every step multiplies */
+  --ox-a-h1: calc(var(--ox-a-base) * 2.142857); /* app h1, 30px at the base, line-height 1.15 */
+  --ox-a-h2: calc(var(--ox-a-base) * 1.714286); /* app h2, 24px at the base, line-height 1.2 */
+  --ox-a-h3: calc(var(--ox-a-base) * 1.428571); /* app h3, 20px at the base, line-height 1.25 */
+  --ox-a-h4: calc(var(--ox-a-base) * 1.142857); /* app h4, 16px at the base, line-height 1.4 */
+  --ox-a-body: var(--ox-a-base); /* app body, the base, line-height 1.5 */
+  --ox-a-micro: calc(var(--ox-a-base) * 0.857143); /* app micro, 12px at the base, line-height 1.4 */
+  --ox-a-2xs: calc(var(--ox-a-base) * 0.714286); /* app 2xs, 10px at the base, line-height 1.4 */
 
   --ox-m-h1-leading: 1.05;
   --ox-m-h2-leading: 1.2;
@@ -126,7 +131,8 @@
   --ox-a-h3-leading: 1.25;
   --ox-a-h4-leading: 1.4;
   --ox-a-body-leading: 1.5;
-  --ox-a-micro-leading: 1.5;
+  --ox-a-micro-leading: 1.4;
+  --ox-a-2xs-leading: 1.4;
 
   --ox-radius: 0.75rem; /* 12px: cards, panels, inputs on the website */
   --ox-wrap: 1180px;
