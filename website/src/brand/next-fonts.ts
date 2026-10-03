@@ -8,11 +8,11 @@
 //   <html lang="en" className={fontVariables}>
 //
 // Each loader sets one CSS variable on <html>. tokens/house-tailwind.css
-// reads Aeonik into --font-sans, Space Grotesk into --font-display,
+// reads Geist into --font-sans, Space Grotesk into --font-display,
 // Monaspace Neon into --font-mono, and Space Grotesk into --font-wordmark.
 //
-// Aeonik Mono and Aeonik Fono load too, with preload off, so a page pays
-// for one only when it names the family. No role token reads them yet.
+// Aeonik, Aeonik Mono and Aeonik Fono load too, with preload off, so a page
+// pays for one only when it names the family. No role token reads them yet.
 
 import localFont from "next/font/local";
 
@@ -29,13 +29,11 @@ export const spaceGrotesk = localFont({
   fallback: ["Helvetica Neue", "Arial"],
 });
 
-/** Aeonik: body, labels, buttons, tables, navigation, every app heading, and every h4 to h6. */
-export const aeonik = localFont({
-  src: [
-    { path: "../fonts/aeonik-wght.woff2", weight: "100 900", style: "normal" },
-    { path: "../fonts/aeonik-italic-wght.woff2", weight: "100 900", style: "italic" },
-  ],
-  variable: "--font-aeonik",
+/** Geist: body, labels, buttons, tables, navigation, every app heading, and every h4 to h6. */
+export const geist = localFont({
+  src: "../fonts/geist-latin-wght.woff2",
+  weight: "100 900",
+  variable: "--font-geist",
   display: "swap",
   fallback: ["system-ui", "-apple-system", "Segoe UI"],
 });
@@ -48,6 +46,18 @@ export const monaspaceNeon = localFont({
   display: "swap",
   fallback: ["SF Mono", "Menlo", "Consolas"],
   adjustFontFallback: false,
+});
+
+/** Aeonik: loads for a page that names it. No role reads it yet. */
+export const aeonik = localFont({
+  src: [
+    { path: "../fonts/aeonik-wght.woff2", weight: "100 900", style: "normal" },
+    { path: "../fonts/aeonik-italic-wght.woff2", weight: "100 900", style: "italic" },
+  ],
+  variable: "--font-aeonik",
+  display: "swap",
+  fallback: ["system-ui", "-apple-system", "Segoe UI"],
+  preload: false,
 });
 
 /** Aeonik Mono: loads for a page that names it. No role reads it yet. */
@@ -73,4 +83,4 @@ export const aeonikFono = localFont({
 });
 
 /** Every variable, for the <html> className. */
-export const fontVariables = [spaceGrotesk.variable, aeonik.variable, monaspaceNeon.variable, aeonikMono.variable, aeonikFono.variable].join(" ");
+export const fontVariables = [spaceGrotesk.variable, geist.variable, monaspaceNeon.variable, aeonik.variable, aeonikMono.variable, aeonikFono.variable].join(" ");

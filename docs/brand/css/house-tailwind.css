@@ -12,13 +12,13 @@
  * brand hex. Light is the default; `.dark` on <html> is the dark theme, and
  * a system preference falls back to it when neither class is set.
  *
- * Fonts: tokens/next-fonts.ts sets --font-space-grotesk, --font-aeonik,
- * --font-monaspace-neon, --font-aeonik-mono and --font-aeonik-fono on
- * <html>. Without next/font, import house-fonts.css and the family names
- * below resolve to its @font-face.
+ * Fonts: tokens/next-fonts.ts sets --font-space-grotesk, --font-geist,
+ * --font-monaspace-neon, --font-aeonik, --font-aeonik-mono and
+ * --font-aeonik-fono on <html>. Without next/font, import house-fonts.css
+ * and the family names below resolve to its @font-face.
  *
  * Type: text-m-* is the marketing scale, text-a-* the app scale. A surface
- * picks one. Aeonik sets the default text everywhere, and Monaspace Neon
+ * picks one. Geist sets the default text everywhere, and Monaspace Neon
  * sets code with texture healing on. Each scale has one base, --ox-m-base
  * and --ox-a-base, and every step is the base times its ratio. text-xs and
  * text-sm read the app base here. To point Tailwind's text-xs to text-3xl
@@ -28,13 +28,13 @@
  *
  * Headings: text-m-h1 to text-m-h3 set Space Grotesk (--font-display), for
  * a marketing or customer site. text-a-h1 to text-a-h3, and bare h1 to h3,
- * read --font-heading, which is Aeonik (--font-sans) for an app. A
- * marketing or docs site sets its h1 to h3 in the display face with one
- * line in its own stylesheet:
+ * read --font-heading, which is Geist (--font-sans) for an app. A marketing
+ * or docs site sets its h1 to h3 in the display face with one line in its
+ * own stylesheet:
  *
  *     :root { --font-heading: var(--font-display); }
  *
- * Every h4 to h6, and text-m-h4 and text-a-h4, take Aeonik. --font-wordmark
+ * Every h4 to h6, and text-m-h4 and text-a-h4, take Geist. --font-wordmark
  * sets a wordmark that is text rather than an SVG, in Space Grotesk,
  * whatever face --font-display takes.
  */
@@ -96,7 +96,7 @@
   --color-ox-destructive-text: var(--ox-destructive-text);
   --color-ox-destructive-text-ink: var(--ox-destructive-text-ink);
 
-  --font-sans: var(--font-aeonik, "Aeonik"), system-ui, -apple-system, "Segoe UI", sans-serif; /* body, labels, buttons, tables, navigation, every app heading, and every h4 to h6 */
+  --font-sans: var(--font-geist, "Geist"), system-ui, -apple-system, "Segoe UI", sans-serif; /* body, labels, buttons, tables, navigation, every app heading, and every h4 to h6 */
   --font-display: var(--font-space-grotesk, "Space Grotesk"), "Helvetica Neue", Arial, sans-serif; /* h1 to h3 on a marketing or customer site */
   --font-heading: var(--font-sans); /* h1 to h3 on this surface. A marketing or docs site points it at --font-display */
   --font-mono: var(--font-monaspace-neon, "Monaspace Neon"), ui-monospace, "SF Mono", Menlo, Consolas, monospace; /* code, logs, ids, and numbers in tables */

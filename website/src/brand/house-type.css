@@ -17,7 +17,7 @@
 
 /* the font roles */
 @theme {
-  --font-sans: var(--font-aeonik, "Aeonik"), system-ui, -apple-system, "Segoe UI", sans-serif; /* body, labels, buttons, tables, navigation, every app heading, and every h4 to h6 */
+  --font-sans: var(--font-geist, "Geist"), system-ui, -apple-system, "Segoe UI", sans-serif; /* body, labels, buttons, tables, navigation, every app heading, and every h4 to h6 */
   --font-display: var(--font-space-grotesk, "Space Grotesk"), "Helvetica Neue", Arial, sans-serif; /* h1 to h3 on a marketing or customer site */
   --font-heading: var(--font-sans); /* h1 to h3 on this surface. A marketing or docs site points it at --font-display */
   --font-mono: var(--font-monaspace-neon, "Monaspace Neon"), ui-monospace, "SF Mono", Menlo, Consolas, monospace; /* code, logs, ids, and numbers in tables */

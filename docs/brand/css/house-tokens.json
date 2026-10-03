@@ -325,7 +325,7 @@
     }
   },
   "type": {
-    "family": "Aeonik",
+    "family": "Geist",
     "display_family": "Space Grotesk",
     "mono_family": "Monaspace Neon",
     "weights": {
@@ -398,20 +398,15 @@
         "features": "normal"
       },
       "sans": {
-        "family": "Aeonik",
+        "family": "Geist",
         "job": "body, labels, buttons, tables, navigation, every app heading, and every h4 to h6",
-        "stack": "\"Aeonik\", system-ui, -apple-system, \"Segoe UI\", sans-serif",
-        "next_var": "--font-aeonik",
+        "stack": "\"Geist\", system-ui, -apple-system, \"Segoe UI\", sans-serif",
+        "next_var": "--font-geist",
         "files": [
           {
-            "file": "aeonik-wght.woff2",
+            "file": "geist-latin-wght.woff2",
             "weight": "100 900",
             "style": "normal"
-          },
-          {
-            "file": "aeonik-italic-wght.woff2",
-            "weight": "100 900",
-            "style": "italic"
           }
         ],
         "features": "normal"
@@ -432,6 +427,25 @@
       }
     },
     "extra_faces": [
+      {
+        "family": "Aeonik",
+        "job": "loads for a page that names it. No role reads it yet",
+        "stack": "\"Aeonik\", system-ui, -apple-system, \"Segoe UI\", sans-serif",
+        "next_var": "--font-aeonik",
+        "files": [
+          {
+            "file": "aeonik-wght.woff2",
+            "weight": "100 900",
+            "style": "normal"
+          },
+          {
+            "file": "aeonik-italic-wght.woff2",
+            "weight": "100 900",
+            "style": "italic"
+          }
+        ],
+        "features": "normal"
+      },
       {
         "family": "Aeonik Mono",
         "job": "loads for a page that names it. No role reads it yet",
@@ -465,7 +479,7 @@
       "sans": {
         "css_var": "--font-sans",
         "face": "sans",
-        "family": "Aeonik",
+        "family": "Geist",
         "job": "body, labels, buttons, tables, navigation, every app heading, and every h4 to h6"
       },
       "display": {
@@ -477,7 +491,7 @@
       "heading": {
         "css_var": "--font-heading",
         "face": "sans",
-        "family": "Aeonik",
+        "family": "Geist",
         "job": "h1 to h3 on this surface. A marketing or docs site points it at --font-display",
         "reads": "--font-sans"
       },
@@ -505,17 +519,17 @@
       {
         "elements": "h1, h2, h3",
         "role": "heading",
-        "family": "Aeonik"
+        "family": "Geist"
       },
       {
         "elements": "h4, h5, h6",
         "role": "sans",
-        "family": "Aeonik"
+        "family": "Geist"
       },
       {
         "elements": "body, button, input, select, textarea, label, nav",
         "role": "sans",
-        "family": "Aeonik"
+        "family": "Geist"
       },
       {
         "elements": "pre, code, kbd, samp, [data-mono]",
@@ -579,7 +593,7 @@
           {
             "step": "h4",
             "role": "sans",
-            "family": "Aeonik",
+            "family": "Geist",
             "ratio": 1.25,
             "size": "calc(var(--ox-m-base) * 1.25)",
             "px": 20.0,
@@ -590,7 +604,7 @@
           {
             "step": "body",
             "role": "sans",
-            "family": "Aeonik",
+            "family": "Geist",
             "ratio": 1,
             "size": "var(--ox-m-base)",
             "px": 16.0,
@@ -621,7 +635,7 @@
           {
             "step": "h1",
             "role": "heading",
-            "family": "Aeonik",
+            "family": "Geist",
             "ratio": 2.142857,
             "size": "calc(var(--ox-a-base) * 2.142857)",
             "px": 30.0,
@@ -632,7 +646,7 @@
           {
             "step": "h2",
             "role": "heading",
-            "family": "Aeonik",
+            "family": "Geist",
             "ratio": 1.714286,
             "size": "calc(var(--ox-a-base) * 1.714286)",
             "px": 24.0,
@@ -643,7 +657,7 @@
           {
             "step": "h3",
             "role": "heading",
-            "family": "Aeonik",
+            "family": "Geist",
             "ratio": 1.428571,
             "size": "calc(var(--ox-a-base) * 1.428571)",
             "px": 20.0,
@@ -654,7 +668,7 @@
           {
             "step": "h4",
             "role": "sans",
-            "family": "Aeonik",
+            "family": "Geist",
             "ratio": 1.142857,
             "size": "calc(var(--ox-a-base) * 1.142857)",
             "px": 16.0,
@@ -665,7 +679,7 @@
           {
             "step": "body",
             "role": "sans",
-            "family": "Aeonik",
+            "family": "Geist",
             "ratio": 1,
             "size": "var(--ox-a-base)",
             "px": 14.0,
@@ -687,7 +701,7 @@
           {
             "step": "2xs",
             "role": "sans",
-            "family": "Aeonik",
+            "family": "Geist",
             "ratio": 0.714286,
             "size": "calc(var(--ox-a-base) * 0.714286)",
             "px": 10.0,

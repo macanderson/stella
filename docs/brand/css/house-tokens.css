@@ -14,9 +14,9 @@
  * A word in a state's colour takes its text stop, st-*-text on ink and
  * st-*-text-ink on paper, which clears 4.5:1 on every surface of its theme.
  *
- * Aeonik sets the default text on every surface, h1 to h3 in the app and
- * the internal tools, and every h4 to h6. Space Grotesk sets h1 to h3 on
- * the marketing and customer sites (--ox-font-display). Monaspace Neon sets
+ * Geist sets the default text on every surface, h1 to h3 in the app and the
+ * internal tools, and every h4 to h6. Space Grotesk sets h1 to h3 on the
+ * marketing and customer sites (--ox-font-display). Monaspace Neon sets
  * code, logs, digests, and the numbers in tables. Space Grotesk sets the
  * wordmarks (--ox-font-wordmark), and that face is fixed. Each type scale
  * has one base, --ox-m-base (16px) and --ox-a-base (14px), and every step
@@ -85,9 +85,9 @@
   --ox-gold-sheen: linear-gradient(45deg, #8A7223 0%, #D4AF37 38%, #F1CE65 56%, #D4AF37 74%, #8A7223 100%);
 
   --ox-font-display: "Space Grotesk", "Helvetica Neue", Arial, sans-serif; /* h1 to h3 on a marketing or customer site */
-  --ox-font: "Aeonik", system-ui, -apple-system, "Segoe UI", sans-serif; /* body, labels, buttons, tables, navigation, every app heading, and every h4 to h6 */
+  --ox-font: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif; /* body, labels, buttons, tables, navigation, every app heading, and every h4 to h6 */
   --ox-font-mono: "Monaspace Neon", ui-monospace, "SF Mono", Menlo, Consolas, monospace; /* code, terminal output, logs, digests, paths, ids, and numbers in tables */
-  --ox-font-heading: "Aeonik", system-ui, -apple-system, "Segoe UI", sans-serif; /* app h1 to h3 and every h4 to h6: the text face */
+  --ox-font-heading: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif; /* app h1 to h3 and every h4 to h6: the text face */
   --ox-font-wordmark: "Space Grotesk", "Helvetica Neue", Arial, sans-serif; /* the oxagen and stella wordmarks and Stella's asterisk, set as text. It is fixed */
   --ox-font-mono-features: "calt", "liga"; /* texture healing and code ligatures */
 
