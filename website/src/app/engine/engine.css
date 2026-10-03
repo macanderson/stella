@@ -91,10 +91,11 @@
   min-height: 100vh;
   background: var(--eng-bg);
   color: var(--eng-fg);
-  /* The tour is a walk inside a terminal, so its text is set in the code
-   * face. Its h1 to h3 take the display face from the heading rule in
-   * global.css, as on every page of this customer site. */
-  font-family: var(--font-mono);
+  /* By the house type rule, the tour's text is Aeonik, the text face, and its
+   * h1 to h3 take the display face from the heading rule in global.css. The
+   * code face is kept for what reads as code or a terminal, in the rule
+   * below. */
+  font-family: var(--font-sans);
   font-size: var(--stella-type-base);
   line-height: 1.65;
 
@@ -113,6 +114,27 @@
 
 /* The kit's terminal grid, at the kit's 5% — decoration behind every station
  * (z-index 0, under `.eng-main`) and under `pointer-events: none`. */
+/* The code face, for what reads as code or a terminal: the goal's command
+ * line, the event feed, tool names, file paths, a test's FAIL or PASS, and
+ * the station and rung numbers and rail stops, which are styled as a CLI.
+ * The brand name in running text is set in it too, as on the landing page.
+ * The terminal panels and deck shots carry the code face from global.css.
+ * The brand check (scripts/sync-brand-assets.mjs --check) fails on a rule in
+ * this sheet that sets the code face anywhere else. */
+.eng-goal,
+.eng-feed-body,
+.eng-bay-tool,
+.eng-gov-path,
+.eng-flip-state,
+.eng-overline,
+.eng-rail-stop,
+.eng-rail-compact,
+.eng-rail-hint,
+.eng-ladder-num,
+.eng-brand-face {
+  font-family: var(--font-mono);
+}
+
 .eng-tour::before {
   content: "";
   position: fixed;

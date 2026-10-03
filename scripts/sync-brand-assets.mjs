@@ -59,7 +59,8 @@
  * written by hand, and on a raw --ox-* colour. The site's markup fails on a
  * Tailwind palette colour class, a spacing class with a value in brackets, a
  * colour outside generated art (`ART_TSX`), and a `<button>` built outside
- * the `.btn` variant set (`BUTTON_KEPT` names the exceptions).
+ * the `.btn` variant set (`BUTTON_KEPT` names the exceptions). On the engine
+ * tour, text set in the code face outside `ENGINE_CODE_FACE` fails too.
  */
 
 import {
@@ -319,6 +320,30 @@ const LITERALS = [
  */
 const TOKEN_SHEET = `${WEB}/src/app/tokens.css`;
 const MAPPING_SELECTORS = new Set([":root", ".dark", "@theme", "@theme static"]);
+
+/**
+ * The engine tour's stylesheets, and the classes on it that read as code or
+ * a terminal. The house type rule sets every surface's text in the text face
+ * and keeps the code face for code, so the tour's root reads --font-sans and
+ * only these classes may set --font-mono: the goal's command line, the event
+ * feed, tool names, file paths, a test's FAIL or PASS, the CLI-styled
+ * station and rung numbers and rail stops, and the brand name in running
+ * text. Each one is named in engine.css with the same reason.
+ */
+const ENGINE_CSS = [`${WEB}/src/app/engine/engine.css`, `${WEB}/src/app/engine/engine-stations.css`];
+const ENGINE_CODE_FACE = new Set([
+  "eng-goal",
+  "eng-feed-body",
+  "eng-bay-tool",
+  "eng-gov-path",
+  "eng-flip-state",
+  "eng-overline",
+  "eng-rail-stop",
+  "eng-rail-compact",
+  "eng-rail-hint",
+  "eng-ladder-num",
+  "eng-brand-face",
+]);
 
 /** Generated art and third-party marks, which keep their own colours. */
 const ART_TSX = new Set([
@@ -1153,6 +1178,45 @@ function semanticFindings(sheets) {
   return out;
 }
 
+/**
+ * Every rule in the engine tour's stylesheets that sets text in the wrong
+ * face, as one line each, path first: the tour's root in anything but the
+ * text face, and the code face on a class `ENGINE_CODE_FACE` does not name.
+ */
+function engineFaceFindings(sheets) {
+  const squash = (v) => v.replace(/\s+/g, " ").trim();
+  const lineOf = (css, at) => css.slice(0, at).split("\n").length;
+  const out = [];
+  let root = false;
+  for (const [path, css] of sheets) {
+    if (!ENGINE_CSS.includes(path)) continue;
+    for (const m of css.matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
+      const selector = squash(m[1].slice(m[1].lastIndexOf(";") + 1));
+      const face = /(^|[;\s])font-family\s*:\s*([^;]+)/.exec(m[2]);
+      if (!face || selector.startsWith("@")) continue;
+      const value = squash(face[2]);
+      const at = m.index + m[1].length + 1 + face.index + face[1].length;
+      const where = `${path} line ${lineOf(css, at)}: font-family: ${value} in ${selector}`;
+      for (const sel of splitTop(selector, ",")) {
+        if (sel === ".eng-tour") {
+          root = true;
+          if (value !== "var(--font-sans)") {
+            out.push(`${where} sets the tour's text in another face. Its text reads var(--font-sans), the text face.`);
+          }
+          continue;
+        }
+        if (!/var\(--font-mono\)|var\(--ox-font-mono\)/.test(value)) continue;
+        const names = [...lastCompound(sel).matchAll(/\.([\w-]+)/g)].map((c) => c[1]);
+        if (!names.some((n) => ENGINE_CODE_FACE.has(n))) {
+          out.push(`${where} sets text in the code face. Keep the code face for code and terminal text, or add the class to ENGINE_CODE_FACE with its reason.`);
+        }
+      }
+    }
+  }
+  if (!root) out.push(`${ENGINE_CSS[0]} sets no face on .eng-tour. Set font-family: var(--font-sans) there, so the tour's text is the text face.`);
+  return out;
+}
+
 /** The opening tag that starts at `src[start]`, read past any `>` inside braces or quotes. */
 function openingTag(src, start) {
   let depth = 0;
@@ -1272,7 +1336,7 @@ function cssFindings() {
       out.push(`${path} line ${lineOf(css, m.index)}: var(${m[1]}) is declared in no stylesheet the site loads. Use a token that exists.`);
     }
   }
-  return [...out, ...headingFindings(sheets), ...semanticFindings(sheets)];
+  return [...out, ...headingFindings(sheets), ...semanticFindings(sheets), ...engineFaceFindings(sheets)];
 }
 
 /**
