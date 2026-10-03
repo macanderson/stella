@@ -130,7 +130,7 @@ h3 {
   --stella-type-2xl: var(--ox-a-h1); /* 30px: h1, a page title */
 
   /* Vertical rhythm. Every block margin below is a multiple of the unit. */
-  --stella-rhythm: 0.5rem;
+  --stella-rhythm: calc(var(--ox-space) * 2);
 
   /* Prose measure. Mono is wide; ~70 mono characters is a comfortable line. */
   --stella-measure: 70ch;
@@ -243,10 +243,10 @@ figure.shiki ::selection,
  * has focus. */
 .skip-link {
   position: fixed;
-  top: 0.5rem;
-  left: 0.5rem;
+  top: calc(var(--ox-space) * 2);
+  left: calc(var(--ox-space) * 2);
   z-index: 100;
-  padding: 0.5rem 0.9rem;
+  padding: calc(var(--ox-space) * 2) calc(var(--ox-space) * 3.6);
   border-radius: var(--ox-radius-md);
   background: var(--stella-cta-bg);
   color: var(--stella-cta-fg);
@@ -391,7 +391,7 @@ figure.shiki ::selection,
 .prose :is(th, td) {
   border-inline-start: 0;
   border-bottom: 1px solid var(--color-fd-border);
-  padding: 0.55rem 0.9rem 0.55rem 0;
+  padding: calc(var(--ox-space) * 2.2) calc(var(--ox-space) * 3.6) calc(var(--ox-space) * 2.2) 0;
   background: transparent;
 }
 .prose th {
@@ -672,7 +672,7 @@ figure.shiki ::selection,
 
 .sc-meta {
   display: grid;
-  gap: 0.3rem calc(var(--stella-rhythm) * 1.5);
+  gap: calc(var(--ox-space) * 1.2) calc(var(--stella-rhythm) * 1.5);
   margin: calc(var(--stella-rhythm) * 0.5) 0 0;
   font-size: var(--stella-type-xs);
 }
@@ -680,7 +680,7 @@ figure.shiki ::selection,
 .sc-meta-row {
   display: grid;
   grid-template-columns: minmax(5.5rem, auto) 1fr;
-  gap: 0.1rem calc(var(--stella-rhythm) * 1.5);
+  gap: calc(var(--ox-space) * 0.4) calc(var(--stella-rhythm) * 1.5);
   align-items: baseline;
 }
 
@@ -934,8 +934,8 @@ html[data-home-nav="hidden"] #nd-nav {
 .term-head {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
-  padding: 0.5rem 0.9rem;
+  gap: calc(var(--ox-space) * 2.4);
+  padding: calc(var(--ox-space) * 2) calc(var(--ox-space) * 3.6);
   border-bottom: 1px solid var(--stella-canvas-edge);
   font-size: var(--stella-type-xs);
   color: var(--stella-text-2); /* muted on ink, regardless of page theme */
@@ -943,7 +943,7 @@ html[data-home-nav="hidden"] #nd-nav {
 
 .term-body {
   margin: 0;
-  padding: 0.9rem;
+  padding: calc(var(--ox-space) * 3.6);
   white-space: pre;
   tab-size: 2;
 }
@@ -973,14 +973,14 @@ html[data-home-nav="hidden"] #nd-nav {
   background: var(--stella-canvas);
   color: var(--stella-text);
   overflow: hidden;
-  margin: 1.5rem 0;
+  margin: calc(var(--ox-space) * 6) 0;
 }
 
 .dke-tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.125rem;
-  padding: 0.6rem 0.6rem 0;
+  gap: calc(var(--ox-space) * 0.5);
+  padding: calc(var(--ox-space) * 2.4) calc(var(--ox-space) * 2.4) 0;
   border-bottom: 1px solid var(--stella-canvas-edge);
 }
 
@@ -992,7 +992,7 @@ html[data-home-nav="hidden"] #nd-nav {
   background: none;
   border: none;
   border-radius: var(--ox-radius-md) var(--ox-radius-md) 0 0;
-  padding: 0.4rem 0.65rem;
+  padding: calc(var(--ox-space) * 1.6) calc(var(--ox-space) * 2.6);
   cursor: pointer;
 }
 
@@ -1011,11 +1011,11 @@ html[data-home-nav="hidden"] #nd-nav {
 }
 
 .dke-pane {
-  padding: 0.9rem 1rem 1.1rem;
+  padding: calc(var(--ox-space) * 3.6) calc(var(--ox-space) * 4) calc(var(--ox-space) * 4.4);
 }
 
 .dke-blurb {
-  margin: 0 0 0.75rem;
+  margin: 0 0 calc(var(--ox-space) * 3);
   font-size: var(--stella-type-sm);
   color: var(--stella-text-2);
 }
@@ -1063,7 +1063,7 @@ html[data-home-nav="hidden"] #nd-nav {
 }
 
 .deck-shot-cap {
-  margin-top: 0.75rem;
+  margin-top: calc(var(--ox-space) * 3);
   max-width: var(--stella-measure);
   font-size: var(--stella-type-sm);
   line-height: 1.6;
@@ -1094,7 +1094,7 @@ html[data-home-nav="hidden"] #nd-nav {
  * elements have; on the landing page and the engine tour the caller spaces it. */
 .fd-prose .deck-shot,
 article .deck-shot {
-  margin: 1.5rem 0;
+  margin: calc(var(--ox-space) * 6) 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1159,8 +1159,8 @@ article .deck-shot {
 /* Corner chip — visual state only (aria-hidden); clicks fall through. */
 .lp-install-chip {
   position: absolute;
-  top: 0.55rem;
-  inset-inline-end: 0.6rem;
+  top: calc(var(--ox-space) * 2.2);
+  inset-inline-end: calc(var(--ox-space) * 2.4);
   pointer-events: none;
   font-family: var(--font-mono);
   font-size: var(--stella-type-2xs);
@@ -1170,7 +1170,7 @@ article .deck-shot {
   background: var(--stella-canvas-code);
   border: 1px solid var(--stella-canvas-edge);
   border-radius: var(--ox-radius-md);
-  padding: 0.15rem 0.5rem;
+  padding: calc(var(--ox-space) * 0.6) calc(var(--ox-space) * 2);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1285,8 +1285,8 @@ figure.shiki > div:has(figcaption) {
  * kit's pop easing, then settles back. */
 .lp-code-copy {
   position: absolute;
-  bottom: 0.6rem;
-  inset-inline-end: 0.6rem;
+  bottom: calc(var(--ox-space) * 2.4);
+  inset-inline-end: calc(var(--ox-space) * 2.4);
   z-index: 2;
   border: 1px solid var(--stella-canvas-edge);
   border-radius: var(--ox-radius-md);
@@ -1297,7 +1297,7 @@ figure.shiki > div:has(figcaption) {
   font-weight: 500;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  padding: 0.15rem 0.5rem;
+  padding: calc(var(--ox-space) * 0.6) calc(var(--ox-space) * 2);
   cursor: pointer;
   transition:
     color var(--stella-duration-base) var(--stella-ease-arrive),
@@ -1386,7 +1386,7 @@ figure.shiki > div:has(figcaption) {
   border-inline-start-width: 3px;
   border-inline-start-color: var(--callout-color);
   /* restore the symmetric p-3 the component gives up to `ps-1` */
-  padding-inline-start: 0.75rem;
+  padding-inline-start: calc(var(--ox-space) * 3);
 }
 .stella-callout > [role="none"] {
   display: none;

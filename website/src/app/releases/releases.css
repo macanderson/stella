@@ -26,7 +26,7 @@
 .rl-page {
   max-width: var(--ox-wrap);
   margin: 0 auto;
-  padding: 3.5rem 1.25rem 6rem;
+  padding: calc(var(--ox-space) * 14) calc(var(--ox-space) * 5) calc(var(--ox-space) * 24);
 }
 
 /* ── hero ─────────────────────────────────────────────────────────────────── */
@@ -36,7 +36,7 @@
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--stella-muted-fg);
-  margin: 0 0 0.5rem;
+  margin: 0 0 calc(var(--ox-space) * 2);
 }
 
 /* lowercase always — the brand kit's rule. There is no text-transform here
@@ -52,7 +52,7 @@
 
 .rl-lede {
   max-width: 46rem;
-  margin: 1.25rem 0 0;
+  margin: calc(var(--ox-space) * 5) 0 0;
   font-size: var(--ox-m-body);
   line-height: var(--ox-m-body-leading);
   color: var(--stella-muted-fg);
@@ -76,8 +76,8 @@
 .rl-latest {
   display: inline-flex;
   align-items: center;
-  gap: 0.55rem;
-  margin: 1.5rem 0 0;
+  gap: calc(var(--ox-space) * 2.2);
+  margin: calc(var(--ox-space) * 6) 0 0;
   font-size: var(--stella-type-sm);
   color: var(--stella-muted-fg);
 }
@@ -102,9 +102,9 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.75rem;
-  margin: 2.75rem 0 0;
-  padding: 0.875rem 0;
+  gap: calc(var(--ox-space) * 3);
+  margin: calc(var(--ox-space) * 11) 0 0;
+  padding: calc(var(--ox-space) * 3.5) 0;
   /* An opaque ground by default: the timeline must not scroll visibly through
    * the bar. The translucent treatment is an enhancement, not the base. */
   background: var(--color-fd-background);
@@ -135,7 +135,7 @@
 
 .rl-search-input {
   width: 100%;
-  padding: 0.5rem 0.75rem;
+  padding: calc(var(--ox-space) * 2) calc(var(--ox-space) * 3);
   font: inherit;
   font-size: var(--stella-type-base);
   color: var(--color-fd-foreground);
@@ -155,13 +155,13 @@
 .rl-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.375rem;
+  gap: calc(var(--ox-space) * 1.5);
 }
 .rl-chip {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.375rem 0.625rem;
+  gap: calc(var(--ox-space) * 1.6);
+  padding: calc(var(--ox-space) * 1.5) calc(var(--ox-space) * 2.5);
   font-size: var(--stella-type-xs);
   line-height: 1;
   color: var(--stella-muted-fg);
@@ -205,7 +205,7 @@
   font-variant-numeric: tabular-nums;
 }
 .rl-reset {
-  margin-left: 0.5rem;
+  margin-left: calc(var(--ox-space) * 2);
   padding: 0;
   font: inherit;
   color: var(--stella-accent-text);
@@ -218,7 +218,7 @@
 /* ── timeline ─────────────────────────────────────────────────────────────── */
 
 .rl-empty {
-  margin: 3rem 0;
+  margin: calc(var(--ox-space) * 12) 0;
   color: var(--stella-muted-fg);
 }
 .rl-empty a {
@@ -239,23 +239,23 @@
 .rl-release {
   position: relative;
   border-left: 1px solid var(--color-fd-border);
-  padding: 2.25rem 0 0 1.75rem;
-  margin-left: 0.5rem;
+  padding: calc(var(--ox-space) * 9) 0 0 calc(var(--ox-space) * 7);
+  margin-left: calc(var(--ox-space) * 2);
 }
 .rl-release:last-child {
-  padding-bottom: 1rem;
+  padding-bottom: calc(var(--ox-space) * 4);
 }
 
 .rl-release-head {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 0.75rem;
+  gap: calc(var(--ox-space) * 3);
 }
 .rl-disclosure {
   display: flex;
   align-items: center;
-  gap: 0.875rem;
+  gap: calc(var(--ox-space) * 3.5);
   flex: 1 1 auto;
   padding: 0;
   font: inherit;
@@ -276,7 +276,7 @@
  * behind the dot rather than through it. */
 .rl-marker {
   position: absolute;
-  left: calc(-0.3125rem - 1px);
+  left: calc(var(--ox-space) * -1.25 - var(--ox-space) * 0.25);
   width: 0.625rem;
   height: 0.625rem;
   border-radius: 50%;
@@ -303,7 +303,7 @@
 .rl-meter {
   display: flex;
   flex: 0 1 8rem;
-  gap: 2px;
+  gap: calc(var(--ox-space) * 0.5);
   height: 3px;
   margin-left: auto;
   border-radius: var(--ox-radius-xs);
@@ -332,11 +332,11 @@
 }
 
 .rl-release-body {
-  margin-top: 1.25rem;
+  margin-top: calc(var(--ox-space) * 5);
 }
 .rl-summary {
   max-width: 44rem;
-  margin: 0 0 1.5rem;
+  margin: 0 0 calc(var(--ox-space) * 6);
   font-size: var(--stella-type-base);
   line-height: 1.65;
   color: var(--stella-muted-fg);
@@ -349,14 +349,14 @@
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 1.125rem;
+  gap: calc(var(--ox-space) * 4.5);
 }
 .rl-entry {
   display: grid;
   grid-template-columns: 5.5rem 1fr;
-  gap: 0.875rem;
+  gap: calc(var(--ox-space) * 3.5);
   align-items: baseline;
-  padding-left: 0.875rem;
+  padding-left: calc(var(--ox-space) * 3.5);
   border-left: 2px solid var(--rl-kind);
 }
 
@@ -393,15 +393,15 @@
 }
 .rl-refs {
   display: inline-flex;
-  gap: 0.375rem;
-  margin-left: 0.375rem;
+  gap: calc(var(--ox-space) * 1.5);
+  margin-left: calc(var(--ox-space) * 1.5);
 }
 .rl-ref {
   font-size: var(--stella-type-xs);
   font-variant-numeric: tabular-nums;
   color: var(--stella-muted-fg);
   text-decoration: none;
-  padding: 0.05rem 0.35rem;
+  padding: calc(var(--ox-space) * 0.2) calc(var(--ox-space) * 1.4);
   border: 1px solid var(--color-fd-border);
   border-radius: var(--ox-radius-sm);
 }
@@ -422,8 +422,8 @@
 /* ── footer ───────────────────────────────────────────────────────────────── */
 
 .rl-foot {
-  margin-top: 4rem;
-  padding-top: 1.5rem;
+  margin-top: calc(var(--ox-space) * 16);
+  padding-top: calc(var(--ox-space) * 6);
   border-top: 1px solid var(--color-fd-border);
   font-size: var(--stella-type-sm);
   line-height: 1.7;
@@ -434,20 +434,20 @@
 
 @media (max-width: 640px) {
   .rl-page {
-    padding-top: 2.25rem;
+    padding-top: calc(var(--ox-space) * 9);
   }
   /* The kind label moves above the prose: at 380px a 5.5rem gutter leaves the
    * text column too narrow to read, and the label is short enough that a line
    * of its own costs less than the column it was taking. */
   .rl-entry {
     grid-template-columns: 1fr;
-    gap: 0.25rem;
+    gap: calc(var(--ox-space) * 1);
   }
   .rl-meter {
     flex-basis: 4rem;
   }
   .rl-controls {
-    gap: 0.5rem;
+    gap: calc(var(--ox-space) * 2);
   }
 }
 

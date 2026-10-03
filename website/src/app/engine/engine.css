@@ -76,7 +76,7 @@
   --eng-hud-h: 3.25rem;
   --eng-rail-h: 3.5rem;
   --eng-measure: 62ch;
-  --eng-gutter: 1.5rem;
+  --eng-gutter: calc(var(--ox-space) * 6);
 
   position: relative;
   min-height: 100vh;
@@ -164,7 +164,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: calc(var(--ox-space) * 4);
   padding: 0 var(--eng-gutter);
   border-bottom: 1px solid var(--eng-rule);
   background: color-mix(in srgb, var(--stella-canvas) 82%, transparent);
@@ -178,7 +178,7 @@
 .eng-hud-lockup {
   display: inline-flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: calc(var(--ox-space) * 2.4);
   text-decoration: none;
   color: var(--eng-fg);
 }
@@ -204,7 +204,7 @@
 .eng-hud-exit {
   display: flex;
   align-items: center;
-  gap: 1.25rem;
+  gap: calc(var(--ox-space) * 5);
   font-size: var(--stella-type-xs);
 }
 .eng-hud-exit a {
@@ -232,7 +232,7 @@
   min-height: var(--eng-rail-h);
   display: flex;
   align-items: center;
-  gap: 1.25rem;
+  gap: calc(var(--ox-space) * 5);
   padding: 0 var(--eng-gutter);
   border-top: 1px solid var(--eng-rule);
   background: color-mix(in srgb, var(--stella-canvas) 82%, transparent);
@@ -246,7 +246,7 @@
 /* The travelled distance, as a gold hairline along the top edge. */
 .eng-rail-progress {
   position: absolute;
-  top: -1px;
+  top: calc(var(--ox-space) * -0.25);
   inset-inline-start: 0;
   height: 1px;
   width: var(--eng-progress, 0%);
@@ -257,7 +257,7 @@
 .eng-rail-stops {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: calc(var(--ox-space) * 1);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -273,8 +273,8 @@
 .eng-rail-stop {
   display: inline-flex;
   align-items: baseline;
-  gap: 0.45rem;
-  padding: 0.35rem 0.6rem;
+  gap: calc(var(--ox-space) * 1.8);
+  padding: calc(var(--ox-space) * 1.4) calc(var(--ox-space) * 2.4);
   border-radius: var(--ox-radius-md);
   text-decoration: none;
   color: var(--eng-faint);
@@ -313,7 +313,7 @@
 .eng-rail-compact {
   display: none;
   align-items: baseline;
-  gap: 0.5rem;
+  gap: calc(var(--ox-space) * 2);
   margin: 0;
   flex: 1;
   color: var(--eng-accent);
@@ -337,8 +337,8 @@
   display: flex;
   align-items: center;
   min-height: 100vh;
-  padding: calc(var(--eng-hud-h) + 3.5rem) var(--eng-gutter)
-    calc(var(--eng-rail-h) + 3.5rem);
+  padding: calc(var(--eng-hud-h) + var(--ox-space) * 14) var(--eng-gutter)
+    calc(var(--eng-rail-h) + var(--ox-space) * 14);
   border-bottom: 1px solid var(--eng-rule);
   scroll-margin-top: var(--eng-hud-h);
 }
@@ -409,15 +409,15 @@
 /* ── station head ─────────────────────────────────────────────────────────── */
 
 .eng-head {
-  margin-bottom: 1.5rem;
+  margin-bottom: calc(var(--ox-space) * 6);
 }
 
 .eng-overline {
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
-  gap: 0.75rem;
-  margin: 0 0 0.9rem;
+  gap: calc(var(--ox-space) * 3);
+  margin: 0 0 calc(var(--ox-space) * 3.6);
   font-size: var(--stella-type-xs);
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -430,7 +430,7 @@
   color: var(--eng-faint);
 }
 .eng-overline-badge {
-  padding: 0.1rem 0.5rem;
+  padding: calc(var(--ox-space) * 0.4) calc(var(--ox-space) * 2);
   border: 1px solid var(--eng-accent-dim);
   border-radius: var(--ox-radius-sm);
   color: var(--eng-accent);
@@ -464,7 +464,7 @@
 }
 
 .eng-lead {
-  margin: 0 0 2rem;
+  margin: 0 0 calc(var(--ox-space) * 8);
   max-width: var(--eng-measure);
   font-size: var(--ox-m-body);
   line-height: var(--ox-m-body-leading);
@@ -485,11 +485,11 @@
 /* ── fact panels ──────────────────────────────────────────────────────────── */
 
 .eng-fact {
-  padding: 1rem 0 0;
+  padding: calc(var(--ox-space) * 4) 0 0;
   border-top: 1px solid var(--eng-rule);
 }
 .eng-fact-title {
-  margin: 0 0 0.4rem;
+  margin: 0 0 calc(var(--ox-space) * 1.6);
   font-size: var(--stella-type-sm);
   font-weight: 700;
   letter-spacing: -0.01em;
@@ -510,7 +510,7 @@
  * below it. The figure paints its own frame (see .deck-shot in global.css),
  * so this only places it and sets the caption's measure. */
 .eng-deck {
-  margin: 2.5rem 0 0;
+  margin: calc(var(--ox-space) * 10) 0 0;
 }
 
 .eng-deck .deck-shot-cap {
@@ -518,7 +518,7 @@
 }
 
 .eng-feed {
-  margin: 2.5rem 0 0;
+  margin: calc(var(--ox-space) * 10) 0 0;
   border: 1px solid var(--eng-rule);
   border-radius: var(--ox-radius);
   background: var(--eng-surface);
@@ -527,7 +527,7 @@
 
 .eng-feed-body {
   margin: 0;
-  padding: 0.9rem 1rem;
+  padding: calc(var(--ox-space) * 3.6) calc(var(--ox-space) * 4);
   font-size: var(--stella-type-xs);
   line-height: 1.9;
   color: var(--eng-muted);
@@ -557,7 +557,7 @@
 }
 
 .eng-feed-caption {
-  padding: 0.5rem 1rem;
+  padding: calc(var(--ox-space) * 2) calc(var(--ox-space) * 4);
   border-top: 1px solid var(--eng-rule);
   font-size: var(--stella-type-2xs);
   letter-spacing: 0.08em;
@@ -578,17 +578,17 @@
 
 @media (max-width: 48rem) {
   .eng-tour {
-    --eng-gutter: 1.1rem;
+    --eng-gutter: calc(var(--ox-space) * 4.4);
   }
   .eng-station {
     min-height: auto;
-    padding: calc(var(--eng-hud-h) + 2.5rem) var(--eng-gutter) 3rem;
+    padding: calc(var(--eng-hud-h) + var(--ox-space) * 10) var(--eng-gutter) calc(var(--ox-space) * 12);
   }
   .eng-station:first-child {
     min-height: 100vh;
   }
   .eng-station:last-child {
-    padding-bottom: calc(var(--eng-rail-h) + 3rem);
+    padding-bottom: calc(var(--eng-rail-h) + var(--ox-space) * 12);
   }
   .eng-rail-stops {
     display: none;

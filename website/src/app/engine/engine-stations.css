@@ -33,8 +33,8 @@
  * ═════════════════════════════════════════════════════════════════════════ */
 
 .eng-goal {
-  margin: 0 0 2rem;
-  padding: 1rem 1.1rem;
+  margin: 0 0 calc(var(--ox-space) * 8);
+  padding: calc(var(--ox-space) * 4) calc(var(--ox-space) * 4.4);
   border: 1px solid var(--eng-accent-dim);
   border-radius: var(--ox-radius);
   background: var(--eng-surface-warm);
@@ -55,8 +55,8 @@
 .eng-goal-status {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  margin: 0.6rem 0 0;
+  gap: calc(var(--ox-space) * 2);
+  margin: calc(var(--ox-space) * 2.4) 0 0;
   font-size: var(--stella-type-2xs);
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -83,17 +83,17 @@
 }
 
 .eng-intake-facts {
-  margin: 0 0 2rem;
+  margin: 0 0 calc(var(--ox-space) * 8);
   padding: 0;
   list-style: none;
   display: grid;
-  gap: 0.4rem;
+  gap: calc(var(--ox-space) * 1.6);
   font-size: var(--stella-type-sm);
   color: var(--eng-muted);
 }
 .eng-intake-facts li {
   display: flex;
-  gap: 0.7rem;
+  gap: calc(var(--ox-space) * 2.8);
 }
 .eng-intake-facts li::before {
   content: "✦";
@@ -106,7 +106,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.75rem 1.5rem;
+  gap: calc(var(--ox-space) * 3) calc(var(--ox-space) * 6);
   margin: 0;
 }
 
@@ -114,7 +114,7 @@
 .eng-cta {
   display: inline-flex;
   align-items: center;
-  padding: 0.65rem 1.4rem;
+  padding: calc(var(--ox-space) * 2.6) calc(var(--ox-space) * 5.6);
   border-radius: var(--ox-radius-md);
   background: var(--eng-accent);
   color: var(--stella-canvas);
@@ -149,9 +149,9 @@
 .eng-ring-scene {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 2.5rem 3rem;
+  gap: calc(var(--ox-space) * 10) calc(var(--ox-space) * 12);
   align-items: center;
-  margin: 0 0 2.5rem;
+  margin: 0 0 calc(var(--ox-space) * 10);
 }
 
 .eng-ring {
@@ -175,11 +175,11 @@
 }
 .eng-ring-comet {
   position: absolute;
-  top: -0.3rem;
+  top: calc(var(--ox-space) * -1.2);
   inset-inline-start: 50%;
   width: 0.6rem;
   height: 0.6rem;
-  margin-inline-start: -0.3rem;
+  margin-inline-start: calc(var(--ox-space) * -1.2);
   border-radius: 50%;
   background: var(--eng-accent);
 }
@@ -193,7 +193,7 @@
 .eng-ring-gate {
   position: absolute;
   margin: 0;
-  padding: 0.4rem 0.7rem;
+  padding: calc(var(--ox-space) * 1.6) calc(var(--ox-space) * 2.8);
   border: 1px solid var(--eng-rule-strong);
   border-radius: var(--ox-radius-md);
   background: var(--eng-surface-high);
@@ -237,7 +237,7 @@
   text-transform: none;
   letter-spacing: 0.04em;
   display: grid;
-  gap: 0.15rem;
+  gap: calc(var(--ox-space) * 0.6);
   text-align: center;
 }
 .eng-ring-gate-label {
@@ -253,7 +253,7 @@
   margin: 0;
   display: grid;
   align-content: center;
-  gap: 0.35rem;
+  gap: calc(var(--ox-space) * 1.4);
   text-align: center;
   border: 1px solid var(--eng-accent-dim);
   border-radius: 50%;
@@ -261,7 +261,7 @@
   font-size: var(--stella-type-xs);
   font-weight: 700;
   color: var(--eng-fg);
-  padding: 0.5rem;
+  padding: calc(var(--ox-space) * 2);
 }
 .eng-ring-core span {
   display: block;
@@ -273,16 +273,16 @@
 
 .eng-ring-copy {
   display: grid;
-  gap: 1.5rem;
+  gap: calc(var(--ox-space) * 6);
 }
 
 /* ── the ladder ───────────────────────────────────────────────────────────── */
 
 .eng-ladder {
-  margin: 0 0 2.5rem;
+  margin: 0 0 calc(var(--ox-space) * 10);
 }
 .eng-ladder-label {
-  margin: 0 0 1rem;
+  margin: 0 0 calc(var(--ox-space) * 4);
   font-size: var(--stella-type-xs);
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -298,10 +298,10 @@
   border-top: 1px solid var(--eng-rule);
 }
 .eng-ladder-rung {
-  padding: 1rem 1.25rem 1.25rem 0;
+  padding: calc(var(--ox-space) * 4) calc(var(--ox-space) * 5) calc(var(--ox-space) * 5) 0;
   border-bottom: 1px solid var(--eng-rule);
   border-inline-start: 2px solid var(--eng-rule-strong);
-  padding-inline-start: 0.9rem;
+  padding-inline-start: calc(var(--ox-space) * 3.6);
 }
 .eng-ladder-rung[data-tone="pass"] {
   border-inline-start-color: var(--stella-success);
@@ -315,8 +315,8 @@
 .eng-ladder-rung-head {
   display: flex;
   align-items: baseline;
-  gap: 0.6rem;
-  margin: 0 0 0.4rem;
+  gap: calc(var(--ox-space) * 2.4);
+  margin: 0 0 calc(var(--ox-space) * 1.6);
 }
 .eng-ladder-num {
   font-size: var(--stella-type-2xs);
@@ -339,13 +339,13 @@
 /* ── the receipt ──────────────────────────────────────────────────────────── */
 
 .eng-receipt {
-  margin: 0 0 2.5rem;
-  padding: 1.25rem 0 1.25rem 1.25rem;
+  margin: 0 0 calc(var(--ox-space) * 10);
+  padding: calc(var(--ox-space) * 5) 0 calc(var(--ox-space) * 5) calc(var(--ox-space) * 5);
   border-inline-start: 2px solid var(--eng-accent);
   max-width: var(--eng-measure);
 }
 .eng-receipt p {
-  margin: 0 0 0.6rem;
+  margin: 0 0 calc(var(--ox-space) * 2.4);
   font-size: var(--stella-type-sm);
   line-height: 1.7;
   color: var(--eng-fg);
@@ -370,25 +370,25 @@
 .eng-gov {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
-  gap: 1.5rem;
-  margin: 0 0 2.5rem;
+  gap: calc(var(--ox-space) * 6);
+  margin: 0 0 calc(var(--ox-space) * 10);
 }
 
 .eng-gov-layer {
-  padding: 1.1rem 1.15rem;
+  padding: calc(var(--ox-space) * 4.4) calc(var(--ox-space) * 4.6);
   border: 1px solid var(--eng-rule);
   border-radius: var(--ox-radius);
   background: var(--eng-surface);
 }
 .eng-gov-path {
-  margin: 0 0 0.5rem;
+  margin: 0 0 calc(var(--ox-space) * 2);
   font-size: var(--stella-type-2xs);
   letter-spacing: 0.04em;
   color: var(--eng-accent);
   overflow-wrap: anywhere;
 }
 .eng-gov-name {
-  margin: 0 0 0.5rem;
+  margin: 0 0 calc(var(--ox-space) * 2);
   font-size: var(--stella-type-sm);
   font-weight: 700;
   color: var(--eng-fg);
@@ -403,21 +403,21 @@
 /* ── egress ───────────────────────────────────────────────────────────────── */
 
 .eng-egress {
-  margin: 0 0 1.5rem;
-  padding: 1.5rem;
+  margin: 0 0 calc(var(--ox-space) * 6);
+  padding: calc(var(--ox-space) * 6);
   border: 1px solid var(--eng-accent-dim);
   border-radius: var(--ox-radius);
   background: var(--eng-surface-warm);
 }
 .eng-egress-title {
-  margin: 0 0 0.9rem;
+  margin: 0 0 calc(var(--ox-space) * 3.6);
   font-size: var(--stella-type-lg);
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--eng-fg);
 }
 .eng-egress-body {
-  margin: 0 0 0.9rem;
+  margin: 0 0 calc(var(--ox-space) * 3.6);
   max-width: var(--eng-measure);
   font-size: var(--stella-type-sm);
   line-height: 1.7;
@@ -429,7 +429,7 @@
 }
 .eng-egress-enforced {
   margin: 0;
-  padding-top: 0.9rem;
+  padding-top: calc(var(--ox-space) * 3.6);
   border-top: 1px solid var(--eng-rule);
   max-width: var(--eng-measure);
   font-size: var(--stella-type-xs);
@@ -438,7 +438,7 @@
 }
 .eng-egress-enforced-label {
   display: block;
-  margin-bottom: 0.3rem;
+  margin-bottom: calc(var(--ox-space) * 1.2);
   font-size: var(--stella-type-2xs);
   font-weight: 700;
   letter-spacing: 0.14em;
@@ -458,15 +458,15 @@
 .eng-evo {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
-  gap: 1.5rem;
-  margin: 0 0 2rem;
+  gap: calc(var(--ox-space) * 6);
+  margin: 0 0 calc(var(--ox-space) * 8);
 }
 
 .eng-evo-card {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
-  padding: 1.25rem;
+  gap: calc(var(--ox-space) * 2.4);
+  padding: calc(var(--ox-space) * 5);
   border: 1px solid var(--eng-rule);
   border-radius: var(--ox-radius);
   background: var(--eng-surface);
@@ -484,7 +484,7 @@
   align-items: baseline;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: calc(var(--ox-space) * 2);
 }
 .eng-evo-name {
   margin: 0;
@@ -501,7 +501,7 @@
 .eng-evo-status {
   flex: none;
   max-width: 100%;
-  padding: 0.15rem 0.5rem;
+  padding: calc(var(--ox-space) * 0.6) calc(var(--ox-space) * 2);
   border: 1px solid currentColor;
   border-radius: var(--ox-radius-sm);
   font-size: var(--stella-type-2xs);
@@ -534,17 +534,17 @@
 }
 .eng-evo-issue {
   margin: auto 0 0;
-  padding-top: 0.5rem;
+  padding-top: calc(var(--ox-space) * 2);
   font-size: var(--stella-type-2xs);
 }
 
 .eng-evo-rails {
-  margin: 0 0 1.5rem;
-  padding: 1.25rem 0 0;
+  margin: 0 0 calc(var(--ox-space) * 6);
+  padding: calc(var(--ox-space) * 5) 0 0;
   border-top: 1px solid var(--eng-rule);
 }
 .eng-evo-rails-label {
-  margin: 0 0 0.9rem;
+  margin: 0 0 calc(var(--ox-space) * 3.6);
   font-size: var(--stella-type-xs);
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -553,7 +553,7 @@
 .eng-evo-rails-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
-  gap: 0.9rem 2rem;
+  gap: calc(var(--ox-space) * 3.6) calc(var(--ox-space) * 8);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -563,7 +563,7 @@
   font-size: var(--stella-type-xs);
   line-height: 1.7;
   color: var(--eng-muted);
-  padding-inline-start: 0.9rem;
+  padding-inline-start: calc(var(--ox-space) * 3.6);
   border-inline-start: 2px solid var(--eng-rule-strong);
 }
 .eng-evo-rails-list strong {
@@ -576,9 +576,9 @@
  * this paragraph at full strength. */
 .eng-evo-honest {
   display: flex;
-  gap: 0.7rem;
+  gap: calc(var(--ox-space) * 2.8);
   margin: 0;
-  padding: 1rem 1.15rem;
+  padding: calc(var(--ox-space) * 4) calc(var(--ox-space) * 4.6);
   border: 1px dashed var(--eng-accent-dim);
   border-radius: var(--ox-radius);
   max-width: 60rem;
@@ -601,11 +601,11 @@
 
 .eng-exit-install {
   max-width: 34rem;
-  margin: 0 0 2rem;
+  margin: 0 0 calc(var(--ox-space) * 8);
 }
 
 .eng-exit-coda {
-  margin: 2rem 0 0;
+  margin: calc(var(--ox-space) * 8) 0 0;
   max-width: var(--eng-measure);
   font-size: var(--stella-type-sm);
   color: var(--eng-faint);
@@ -643,9 +643,9 @@
     background: var(--eng-accent);
   }
   .eng-flip-arrow::after {
-    inset-inline-end: -0.2rem;
+    inset-inline-end: calc(var(--ox-space) * -0.8);
     top: auto;
-    bottom: -1px;
+    bottom: calc(var(--ox-space) * -0.25);
     border-block: 0;
     border-inline: 0.25rem solid transparent;
     border-top: 0.35rem solid var(--stella-success);
@@ -670,7 +670,7 @@
     width: 100%;
     aspect-ratio: auto;
     display: grid;
-    gap: 0.5rem;
+    gap: calc(var(--ox-space) * 2);
   }
   .eng-ring-track,
   .eng-ring-orbit {
@@ -695,7 +695,7 @@
   }
   .eng-ring-core {
     border-radius: var(--ox-radius-md);
-    padding: 0.7rem;
+    padding: calc(var(--ox-space) * 2.8);
     text-align: center;
   }
   .eng-ring-gate {
