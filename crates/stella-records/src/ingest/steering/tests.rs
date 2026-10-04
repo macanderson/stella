@@ -53,6 +53,8 @@ fn the_fixture_parses_field_for_field() {
             kind: SteeringKind::BusinessRule,
             name: None,
             effect: None,
+            decision: None,
+            declassification: None,
             force: Force::Must,
             scope: SteeringScope::Workspace,
             repos: Vec::new(),
@@ -363,6 +365,333 @@ fn a_run_memory_keeps_a_null_agent() {
             evidence: Vec::new(),
         }]
     );
+}
+
+// Decision and declassification records (Oxagen ADR-299).
+
+/// The fixture as an imported decision record.
+fn decision(map: &str) -> String {
+    with(
+        "kind: business-rule",
+        &format!("kind: decision\ndecision:\n{map}"),
+    )
+    .replacen("force: must", "force: info", 1)
+}
+
+const DECISION_MAP: &str = "  number: 31
+  title: Store code graph edges in Postgres and S3 graph files
+  status: accepted
+  date: \"2026-09-28\"
+  deciders:
+    - Mac Anderson
+  source:
+    repo: github.com/a-intel/platform
+    number: 7
+    path: docs/adr/0007-postgres.md
+";
+
+/// The fixture as a declassification record.
+fn declassification(map: &str) -> String {
+    with(
+        "kind: business-rule",
+        &format!("kind: declassification\ndeclassification:\n{map}"),
+    )
+    .replacen("force: must", "force: info", 1)
+}
+
+const STANDING_MAP: &str = "  form: standing
+  source: github.com/a-intel/platform
+  destination: github.com/a-intel/oxagen-core
+  reason: Every steering reader already reads platform.
+  deciders:
+    - mac
+";
+
+const TEXT_MAP: &str = "  form: text
+  text: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  sources:
+    - github.com/a-intel/platform
+    - github.com/a-intel/billing
+  destination: github.com/a-intel/oxagen-core
+  reason: The domain name says nothing billing keeps private.
+  deciders:
+    - mac
+";
+
+#[test]
+fn a_decision_record_parses_with_every_field() {
+    let record = SteeringRecord::parse(&decision(DECISION_MAP)).expect("the decision parses");
+    assert_eq!(record.kind, SteeringKind::Decision);
+    assert_eq!(
+        record.decision,
+        Some(SteeringDecision {
+            number: 31,
+            title: "Store code graph edges in Postgres and S3 graph files".to_string(),
+            status: DecisionStatus::Accepted,
+            date: Some("2026-09-28".to_string()),
+            deciders: vec!["Mac Anderson".to_string()],
+            source: Some(DecisionSource {
+                repo: "github.com/a-intel/platform".to_string(),
+                number: 7,
+                path: "docs/adr/0007-postgres.md".to_string(),
+            }),
+        })
+    );
+    assert_eq!(record.declassification, None);
+}
+
+#[test]
+fn a_decision_needs_only_its_number_title_and_status() {
+    let record = SteeringRecord::parse(&decision(
+        "  number: 32\n  title: Use one ADR sequence\n  status: proposed\n",
+    ))
+    .expect("the decision parses");
+    let fields = record.decision.expect("the map is carried");
+    assert_eq!(fields.status, DecisionStatus::Proposed);
+    assert_eq!(fields.date, None);
+    assert!(fields.deciders.is_empty());
+    assert_eq!(fields.source, None);
+}
+
+#[test]
+fn a_decision_and_a_declassification_parse_and_do_not_load() {
+    for (text, kind) in [
+        (decision(DECISION_MAP), "decision"),
+        (declassification(STANDING_MAP), "declassification"),
+    ] {
+        let steering = SteeringRecord::parse(&text).expect("the record parses");
+        assert_eq!(
+            steering.to_record(),
+            Err(SteeringRecordError::UnsupportedKind(kind))
+        );
+    }
+}
+
+#[test]
+fn both_declassification_forms_parse() {
+    let standing = SteeringRecord::parse(&declassification(STANDING_MAP))
+        .expect("the standing record parses")
+        .declassification
+        .expect("the map is carried");
+    assert_eq!(
+        standing.form,
+        DeclassificationForm::Standing {
+            source: "github.com/a-intel/platform".to_string()
+        }
+    );
+    assert_eq!(standing.destination, "github.com/a-intel/oxagen-core");
+    assert_eq!(standing.deciders, vec!["mac".to_string()]);
+
+    let one_text = SteeringRecord::parse(&declassification(TEXT_MAP))
+        .expect("the one-text record parses")
+        .declassification
+        .expect("the map is carried");
+    assert_eq!(
+        one_text.form,
+        DeclassificationForm::Text {
+            text: format!("sha256:{}", "b".repeat(64)),
+            sources: vec![
+                "github.com/a-intel/platform".to_string(),
+                "github.com/a-intel/billing".to_string(),
+            ],
+        }
+    );
+}
+
+#[test]
+fn a_decision_needs_its_map() {
+    assert_eq!(
+        refusal(&with("kind: business-rule", "kind: decision")),
+        SteeringRecordError::Invalid {
+            field: "decision",
+            detail: "is required on a decision record",
+        }
+    );
+}
+
+#[test]
+fn a_declassification_needs_its_map() {
+    assert_eq!(
+        refusal(
+            &with("kind: business-rule", "kind: declassification").replacen(
+                "force: must",
+                "force: info",
+                1
+            )
+        ),
+        SteeringRecordError::Invalid {
+            field: "declassification",
+            detail: "is required on a declassification record",
+        }
+    );
+}
+
+#[test]
+fn a_decision_map_on_another_kind_is_refused() {
+    assert_eq!(
+        refusal(&with(
+            "kind: business-rule",
+            &format!("kind: business-rule\ndecision:\n{DECISION_MAP}")
+        )),
+        SteeringRecordError::Invalid {
+            field: "decision",
+            detail: "is allowed only on a decision record",
+        }
+    );
+}
+
+#[test]
+fn a_declassification_map_on_another_kind_is_refused() {
+    assert_eq!(
+        refusal(&with(
+            "kind: business-rule",
+            &format!("kind: business-rule\ndeclassification:\n{STANDING_MAP}")
+        )),
+        SteeringRecordError::Invalid {
+            field: "declassification",
+            detail: "is allowed only on a declassification record",
+        }
+    );
+}
+
+#[test]
+fn a_declassification_must_be_info() {
+    let text = declassification(STANDING_MAP).replacen("force: info", "force: must", 1);
+    assert_eq!(
+        refusal(&text),
+        SteeringRecordError::Invalid {
+            field: "force",
+            detail: "must be info on a declassification record",
+        }
+    );
+}
+
+#[test]
+fn an_unknown_decision_status_is_refused_by_name() {
+    assert_eq!(
+        refusal(&decision(
+            &DECISION_MAP.replace("status: accepted", "status: approved")
+        )),
+        SteeringRecordError::InvalidValue {
+            field: "decision.status",
+            value: "approved".to_string(),
+            expected: "proposed, accepted, rejected, deprecated, or superseded",
+        }
+    );
+}
+
+#[test]
+fn a_bad_decision_field_is_refused() {
+    let cases = [
+        ("number: 31", "number: 0", "decision.number"),
+        (
+            "date: \"2026-09-28\"",
+            "date: 28 September 2026",
+            "decision.date",
+        ),
+        (
+            "repo: github.com/a-intel/platform",
+            "repo: a-intel/platform",
+            "decision.source.repo",
+        ),
+        (
+            "path: docs/adr/0007-postgres.md",
+            "path: ../adr.md",
+            "decision.source.path",
+        ),
+    ];
+    for (from, to, field) in cases {
+        let error = refusal(&decision(&DECISION_MAP.replace(from, to)));
+        assert!(
+            matches!(error, SteeringRecordError::Invalid { field: found, .. } if found == field),
+            "{from} -> {to}: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn an_unknown_field_in_a_decision_map_is_refused() {
+    assert!(matches!(
+        refusal(&decision(&format!("{DECISION_MAP}  supersedes: 12\n"))),
+        SteeringRecordError::Frontmatter(_)
+    ));
+}
+
+#[test]
+fn a_field_from_the_other_declassification_form_is_refused() {
+    let standing_with_sources = STANDING_MAP.replace(
+        "  destination:",
+        "  sources:\n    - github.com/a-intel/billing\n  destination:",
+    );
+    assert_eq!(
+        refusal(&declassification(&standing_with_sources)),
+        SteeringRecordError::Invalid {
+            field: "declassification.sources",
+            detail: "belongs to a record for one text, not a standing record",
+        }
+    );
+    let text_with_source = TEXT_MAP.replace(
+        "  destination:",
+        "  source: github.com/a-intel/platform\n  destination:",
+    );
+    assert_eq!(
+        refusal(&declassification(&text_with_source)),
+        SteeringRecordError::Invalid {
+            field: "declassification.source",
+            detail: "belongs to a standing record, not a record for one text",
+        }
+    );
+}
+
+#[test]
+fn an_unknown_declassification_form_is_refused_by_name() {
+    assert_eq!(
+        refusal(&declassification(
+            &STANDING_MAP.replace("form: standing", "form: forever")
+        )),
+        SteeringRecordError::InvalidValue {
+            field: "declassification.form",
+            value: "forever".to_string(),
+            expected: "text or standing",
+        }
+    );
+}
+
+#[test]
+fn a_bad_declassification_field_is_refused() {
+    let cases = [
+        (
+            TEXT_MAP,
+            "text: sha256:bbbb",
+            "text: sha256:XYZ",
+            "declassification.text",
+        ),
+        (
+            STANDING_MAP,
+            "destination: github.com/a-intel/oxagen-core",
+            "destination: oxagen-core",
+            "declassification.destination",
+        ),
+        (
+            STANDING_MAP,
+            "    - mac",
+            "    - Mac Anderson",
+            "declassification.deciders",
+        ),
+        (
+            TEXT_MAP,
+            "    - github.com/a-intel/billing",
+            "    - github.com/a-intel/platform",
+            "declassification.sources",
+        ),
+    ];
+    for (map, from, to, field) in cases {
+        let error = refusal(&declassification(&map.replacen(from, to, 1)));
+        assert!(
+            matches!(&error, SteeringRecordError::Invalid { field: found, .. } if *found == field),
+            "{from} -> {to}: {error:?}"
+        );
+    }
 }
 
 // Tests that load records through the registry.

@@ -8,6 +8,12 @@
 //! keeps both as they are. It never hashes them again.
 //!
 //! A file with the wrong `schema` fails first. The module does no I/O.
+//!
+//! Two kinds belong to Oxagen's code graph, not to an agent's turn:
+//! `decision`, an ADR, and `declassification`, which lets text built from a
+//! private repo reach one destination. Each carries a map named for its kind
+//! (Oxagen ADR-299). The reader checks both maps, and `to_record` withholds
+//! both kinds, as it does a skill.
 
 use serde::{Deserialize, Deserializer};
 use serde_norway::Value;
@@ -22,6 +28,12 @@ pub const STEERING_SCHEMA: &str = "steering-record/v1";
 
 /// The longest label Oxagen takes, counted in UTF-16 units.
 pub const LABEL_MAX: usize = 36;
+
+/// The longest decision title Oxagen takes, counted in UTF-16 units.
+pub const TITLE_MAX: usize = 200;
+
+/// The longest declassification reason Oxagen takes, counted in UTF-16 units.
+pub const REASON_MAX: usize = 1000;
 
 /// Why a steering record file was refused.
 ///
@@ -124,11 +136,15 @@ pub enum SteeringKind {
     Preference,
     /// A memory a steering PR promoted.
     Memory,
+    /// An architecture decision record, with its `decision` map.
+    Decision,
+    /// A declassification, with its `declassification` map.
+    Declassification,
 }
 
 impl SteeringKind {
     /// Every v1 kind, in the order the schema lists them.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 10] = [
         Self::BusinessRule,
         Self::CodeRule,
         Self::Constraint,
@@ -137,6 +153,8 @@ impl SteeringKind {
         Self::Fact,
         Self::Preference,
         Self::Memory,
+        Self::Decision,
+        Self::Declassification,
     ];
 
     /// The v1 spelling.
@@ -150,6 +168,8 @@ impl SteeringKind {
             Self::Fact => "fact",
             Self::Preference => "preference",
             Self::Memory => "memory",
+            Self::Decision => "decision",
+            Self::Declassification => "declassification",
         }
     }
 
@@ -159,8 +179,9 @@ impl SteeringKind {
 
     /// The Stella kind this kind loads as.
     ///
-    /// Both rule kinds load as a rule. A skill gets `None`, since Stella
-    /// has no skill kind.
+    /// Both rule kinds load as a rule. A skill, a decision, and a
+    /// declassification get `None`. Stella has no skill kind, and the other
+    /// two steer no turn.
     pub fn record_kind(self) -> Option<RecordKind> {
         match self {
             Self::BusinessRule | Self::CodeRule => Some(RecordKind::Rule),
@@ -169,7 +190,7 @@ impl SteeringKind {
             Self::Fact => Some(RecordKind::Fact),
             Self::Preference => Some(RecordKind::Preference),
             Self::Memory => Some(RecordKind::Memory),
-            Self::Skill => None,
+            Self::Skill | Self::Decision | Self::Declassification => None,
         }
     }
 }
@@ -338,6 +359,105 @@ pub struct SteeringProvenance {
     pub memories: Vec<SteeringMemory>,
 }
 
+/// Where an ADR stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DecisionStatus {
+    /// Someone proposed it, and no one has accepted it yet.
+    Proposed,
+    /// It is in force.
+    Accepted,
+    /// It was turned down. The record stays on file.
+    Rejected,
+    /// It no longer applies.
+    Deprecated,
+    /// A later decision replaced it.
+    Superseded,
+}
+
+impl DecisionStatus {
+    /// The v1 spelling.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Proposed => "proposed",
+            Self::Accepted => "accepted",
+            Self::Rejected => "rejected",
+            Self::Deprecated => "deprecated",
+            Self::Superseded => "superseded",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        [
+            Self::Proposed,
+            Self::Accepted,
+            Self::Rejected,
+            Self::Deprecated,
+            Self::Superseded,
+        ]
+        .into_iter()
+        .find(|status| status.as_str() == value)
+    }
+}
+
+/// The ADR an imported decision copies.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionSource {
+    /// The repo the ADR lives in, such as `github.com/acme/platform`.
+    pub repo: String,
+    /// The ADR's number in that repo.
+    pub number: u32,
+    /// The ADR file's path in that repo.
+    pub path: String,
+}
+
+/// A `decision` record's map.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SteeringDecision {
+    /// The number in the workspace's own sequence.
+    pub number: u32,
+    /// The ADR's full title.
+    pub title: String,
+    /// Where the ADR stands.
+    pub status: DecisionStatus,
+    /// The decision's date, `YYYY-MM-DD`, when the record gives one.
+    pub date: Option<String>,
+    /// Who decided. Empty when the record names no one.
+    pub deciders: Vec<String>,
+    /// The ADR this record copies. Set on imports only.
+    pub source: Option<DecisionSource>,
+}
+
+/// What a declassification covers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeclassificationForm {
+    /// One text, by the SHA-256 of its bytes, and the repos it was built from.
+    Text {
+        /// `sha256:` and 64 lowercase hex digits.
+        text: String,
+        /// The source repos.
+        sources: Vec<String>,
+    },
+    /// Every later text built from one source repo.
+    Standing {
+        /// The source repo.
+        source: String,
+    },
+}
+
+/// A `declassification` record's map.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SteeringDeclassification {
+    /// One text, or a standing record for one source repo.
+    pub form: DeclassificationForm,
+    /// The repo the text may reach.
+    pub destination: String,
+    /// Why the text may reach it.
+    pub reason: String,
+    /// The members who decided.
+    pub deciders: Vec<String>,
+}
+
 /// One parsed `steering-record/v1` file, with every field.
 ///
 /// A missing list is empty here. A list the file gives must have items. So
@@ -356,6 +476,10 @@ pub struct SteeringRecord {
     pub name: Option<String>,
     /// A constraint's effect.
     pub effect: Option<SteeringEffect>,
+    /// A decision record's map.
+    pub decision: Option<SteeringDecision>,
+    /// A declassification record's map.
+    pub declassification: Option<SteeringDeclassification>,
     /// How hard the record steers.
     pub force: Force,
     /// Who the record reaches.
@@ -519,6 +643,10 @@ struct RawFrontmatter {
     name: Option<String>,
     #[serde(default, deserialize_with = "some")]
     effect: Option<String>,
+    #[serde(default, deserialize_with = "some")]
+    decision: Option<RawDecision>,
+    #[serde(default, deserialize_with = "some")]
+    declassification: Option<RawDeclassification>,
     force: String,
     scope: String,
     #[serde(default, deserialize_with = "some")]
@@ -551,6 +679,205 @@ struct RawProvenance {
     agent: Option<String>,
     #[serde(default, deserialize_with = "some")]
     memories: Option<Vec<SteeringMemory>>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawDecision {
+    number: u32,
+    title: String,
+    status: String,
+    #[serde(default, deserialize_with = "some")]
+    date: Option<String>,
+    #[serde(default, deserialize_with = "some")]
+    deciders: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "some")]
+    source: Option<DecisionSource>,
+}
+
+impl RawDecision {
+    fn into_decision(self) -> Result<SteeringDecision, SteeringRecordError> {
+        let status = one_of(
+            "decision.status",
+            &self.status,
+            "proposed, accepted, rejected, deprecated, or superseded",
+            DecisionStatus::parse,
+        )?;
+        if self.number == 0 {
+            return Err(invalid("decision.number", "must be 1 or more"));
+        }
+        let title_len = self.title.encode_utf16().count();
+        if title_len == 0 || title_len > TITLE_MAX {
+            return Err(invalid(
+                "decision.title",
+                "must be 1 to 200 characters long",
+            ));
+        }
+        if let Some(date) = &self.date
+            && !is_date(date)
+        {
+            return Err(invalid(
+                "decision.date",
+                "must be a date written YYYY-MM-DD",
+            ));
+        }
+        let deciders = present_list("decision.deciders", self.deciders)?;
+        if deciders
+            .iter()
+            .any(|decider| decider.is_empty() || decider.encode_utf16().count() > 128)
+        {
+            return Err(invalid(
+                "decision.deciders",
+                "must name each decider in 1 to 128 characters",
+            ));
+        }
+        unique("decision.deciders", &deciders)?;
+        if let Some(source) = &self.source {
+            if !is_repo_ref(&source.repo) {
+                return Err(invalid(
+                    "decision.source.repo",
+                    "must be <host>/<owner>/<name> in lowercase",
+                ));
+            }
+            if source.number == 0 {
+                return Err(invalid("decision.source.number", "must be 1 or more"));
+            }
+            if !is_repo_path(&source.path) {
+                return Err(invalid(
+                    "decision.source.path",
+                    "must be a relative path with no empty, `.`, or `..` part",
+                ));
+            }
+        }
+        Ok(SteeringDecision {
+            number: self.number,
+            title: self.title,
+            status,
+            date: self.date,
+            deciders,
+            source: self.source,
+        })
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawDeclassification {
+    form: String,
+    #[serde(default, deserialize_with = "some")]
+    text: Option<String>,
+    #[serde(default, deserialize_with = "some")]
+    sources: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "some")]
+    source: Option<String>,
+    destination: String,
+    reason: String,
+    deciders: Vec<String>,
+}
+
+impl RawDeclassification {
+    fn into_declassification(self) -> Result<SteeringDeclassification, SteeringRecordError> {
+        let form = match self.form.as_str() {
+            "text" => {
+                if self.source.is_some() {
+                    return Err(invalid(
+                        "declassification.source",
+                        "belongs to a standing record, not a record for one text",
+                    ));
+                }
+                let text = self.text.ok_or_else(|| {
+                    invalid("declassification.text", "is required when the form is text")
+                })?;
+                if !is_record_hash(&text) {
+                    return Err(invalid(
+                        "declassification.text",
+                        "must be `sha256:` and 64 lowercase hex digits",
+                    ));
+                }
+                let sources = present_list("declassification.sources", self.sources)?;
+                if sources.is_empty() {
+                    return Err(invalid(
+                        "declassification.sources",
+                        "is required when the form is text",
+                    ));
+                }
+                if !sources.iter().all(|source| is_repo_ref(source)) {
+                    return Err(invalid(
+                        "declassification.sources",
+                        "must name each repo as <host>/<owner>/<name> in lowercase",
+                    ));
+                }
+                unique("declassification.sources", &sources)?;
+                DeclassificationForm::Text { text, sources }
+            }
+            "standing" => {
+                if self.text.is_some() {
+                    return Err(invalid(
+                        "declassification.text",
+                        "belongs to a record for one text, not a standing record",
+                    ));
+                }
+                if self.sources.is_some() {
+                    return Err(invalid(
+                        "declassification.sources",
+                        "belongs to a record for one text, not a standing record",
+                    ));
+                }
+                let source = self.source.ok_or_else(|| {
+                    invalid(
+                        "declassification.source",
+                        "is required when the form is standing",
+                    )
+                })?;
+                if !is_repo_ref(&source) {
+                    return Err(invalid(
+                        "declassification.source",
+                        "must be <host>/<owner>/<name> in lowercase",
+                    ));
+                }
+                DeclassificationForm::Standing { source }
+            }
+            other => {
+                return Err(SteeringRecordError::InvalidValue {
+                    field: "declassification.form",
+                    value: other.to_string(),
+                    expected: "text or standing",
+                });
+            }
+        };
+        if !is_repo_ref(&self.destination) {
+            return Err(invalid(
+                "declassification.destination",
+                "must be <host>/<owner>/<name> in lowercase",
+            ));
+        }
+        let reason_len = self.reason.encode_utf16().count();
+        if reason_len == 0 || reason_len > REASON_MAX {
+            return Err(invalid(
+                "declassification.reason",
+                "must be 1 to 1000 characters long",
+            ));
+        }
+        if self.deciders.is_empty() {
+            return Err(invalid(
+                "declassification.deciders",
+                "must hold at least 1 item",
+            ));
+        }
+        if !self.deciders.iter().all(|decider| is_actor(decider)) {
+            return Err(invalid(
+                "declassification.deciders",
+                "must name each member in lowercase letters, digits, dots, underscores, and hyphens",
+            ));
+        }
+        unique("declassification.deciders", &self.deciders)?;
+        Ok(SteeringDeclassification {
+            form,
+            destination: self.destination,
+            reason: self.reason,
+            deciders: self.deciders,
+        })
+    }
 }
 
 impl RawFrontmatter {
@@ -678,6 +1005,38 @@ impl RawFrontmatter {
                 "is required when the source is run",
             ));
         }
+        let decision = match (kind, self.decision) {
+            (SteeringKind::Decision, Some(raw)) => Some(raw.into_decision()?),
+            (SteeringKind::Decision, None) => {
+                return Err(invalid("decision", "is required on a decision record"));
+            }
+            (_, Some(_)) => {
+                return Err(invalid("decision", "is allowed only on a decision record"));
+            }
+            (_, None) => None,
+        };
+        let declassification = match (kind, self.declassification) {
+            (SteeringKind::Declassification, Some(raw)) => Some(raw.into_declassification()?),
+            (SteeringKind::Declassification, None) => {
+                return Err(invalid(
+                    "declassification",
+                    "is required on a declassification record",
+                ));
+            }
+            (_, Some(_)) => {
+                return Err(invalid(
+                    "declassification",
+                    "is allowed only on a declassification record",
+                ));
+            }
+            (_, None) => None,
+        };
+        if kind == SteeringKind::Declassification && force != Force::Info {
+            return Err(invalid(
+                "force",
+                "must be info on a declassification record",
+            ));
+        }
 
         Ok(SteeringRecord {
             lineage: self.lineage,
@@ -686,6 +1045,8 @@ impl RawFrontmatter {
             kind,
             name: self.name,
             effect,
+            decision,
+            declassification,
             force,
             scope,
             repos,
@@ -843,6 +1204,79 @@ fn is_record_id(value: &str) -> bool {
             .iter()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'_')
         && digest.iter().all(is_lower_hex)
+}
+
+/// A list that names one item twice is refused.
+fn unique(field: &'static str, items: &[String]) -> Result<(), SteeringRecordError> {
+    let mut seen = std::collections::HashSet::new();
+    if items.iter().all(|item| seen.insert(item.as_str())) {
+        Ok(())
+    } else {
+        Err(invalid(field, "must not name one item twice"))
+    }
+}
+
+/// `YYYY-MM-DD`, with a month from 01 to 12 and a day from 01 to 31.
+fn is_date(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
+        return false;
+    }
+    let digits = |range: std::ops::Range<usize>| bytes[range].iter().all(u8::is_ascii_digit);
+    if !(digits(0..4) && digits(5..7) && digits(8..10)) {
+        return false;
+    }
+    let month = (bytes[5] - b'0') * 10 + (bytes[6] - b'0');
+    let day = (bytes[8] - b'0') * 10 + (bytes[9] - b'0');
+    (1..=12).contains(&month) && (1..=31).contains(&day)
+}
+
+/// Oxagen's `REPO_REF_PATTERN`: a host with a dot, then two or more path
+/// parts of lowercase letters, digits, `_`, `.`, and `-`, none `.` or `..`.
+fn is_repo_ref(value: &str) -> bool {
+    let mut parts = value.split('/');
+    let Some(host) = parts.next() else {
+        return false;
+    };
+    let host_ok = host.contains('.')
+        && host.split('.').all(|label| {
+            !label.is_empty()
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        });
+    let rest: Vec<&str> = parts.collect();
+    host_ok
+        && rest.len() >= 2
+        && rest.iter().all(|part| {
+            !part.is_empty()
+                && *part != "."
+                && *part != ".."
+                && part.bytes().all(|byte| {
+                    byte.is_ascii_lowercase()
+                        || byte.is_ascii_digit()
+                        || matches!(byte, b'_' | b'.' | b'-')
+                })
+        })
+}
+
+/// A relative path with no empty, `.`, or `..` part.
+fn is_repo_path(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != "..")
+}
+
+/// Oxagen's actor: `^[a-z0-9][a-z0-9._-]*$`, at most 128 characters.
+fn is_actor(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let word = |byte: &u8| byte.is_ascii_lowercase() || byte.is_ascii_digit();
+    bytes.len() <= 128
+        && bytes.first().is_some_and(word)
+        && bytes
+            .iter()
+            .all(|byte| word(byte) || matches!(*byte, b'.' | b'_' | b'-'))
 }
 
 /// `^sha256:[0-9a-f]{64}$`.
