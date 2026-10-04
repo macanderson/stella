@@ -368,7 +368,7 @@ pub enum DecisionStatus {
     Accepted,
     /// It was turned down. The record stays on file.
     Rejected,
-    /// It no longer applies.
+    /// It is out of force, and nothing replaced it.
     Deprecated,
     /// A later decision replaced it.
     Superseded,
