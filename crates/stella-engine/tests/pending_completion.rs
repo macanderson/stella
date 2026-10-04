@@ -143,7 +143,7 @@ impl ToolExecutor for HostTools {
 }
 
 /// The host's store for saved turns.
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct SavedTurns {
     saved: Mutex<Vec<String>>,
 }
@@ -207,7 +207,10 @@ async fn a_turn_saved_during_a_pending_call_resumes_with_the_answer_a_day_later(
             () = in_flight.notified() => {}
         }
     }
-    assert_eq!(*first_tools.runs.lock().unwrap_or_else(|p| p.into_inner()), 1);
+    assert_eq!(
+        *first_tools.runs.lock().unwrap_or_else(|p| p.into_inner()),
+        1
+    );
     let submitted = first
         .submitted
         .lock()
@@ -215,7 +218,11 @@ async fn a_turn_saved_during_a_pending_call_resumes_with_the_answer_a_day_later(
         .clone()
         .expect("the second call reached the batch");
 
-    let saved = store.saved.lock().unwrap_or_else(|p| p.into_inner()).clone();
+    let saved = store
+        .saved
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
     assert_eq!(saved.len(), 1, "one step boundary gives one saved turn");
 
     // A day goes by with no process holding the turn.
@@ -233,7 +240,11 @@ async fn a_turn_saved_during_a_pending_call_resumes_with_the_answer_a_day_later(
     );
     let checkpoint = decode_checkpoint(&saved[0]).expect("the saved turn decodes");
     let mut state = engine.resume_turn(checkpoint);
-    assert_eq!(state.step(), 1, "the turn picks up at the step that was out");
+    assert_eq!(
+        state.step(),
+        1,
+        "the turn picks up at the step that was out"
+    );
 
     let text = match engine.run_step(&mut state, &events).await {
         StepOutcome::Done { text, .. } => text,
