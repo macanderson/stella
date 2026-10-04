@@ -367,7 +367,7 @@ fn a_run_memory_keeps_a_null_agent() {
     );
 }
 
-// Decision and declassification records (Oxagen ADR-299).
+// Decision and declassification records (Oxagen ADR-301).
 
 /// The fixture as an imported decision record.
 fn decision(map: &str) -> String {

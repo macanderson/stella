@@ -12,7 +12,7 @@
 //! Two kinds belong to Oxagen's code graph, not to an agent's turn:
 //! `decision`, an ADR, and `declassification`, which lets text built from a
 //! private repo reach one destination. Each carries a map named for its kind
-//! (Oxagen ADR-299). The reader checks both maps, and `to_record` withholds
+//! (Oxagen ADR-301). The reader checks both maps, and `to_record` withholds
 //! both kinds, as it does a skill.
 
 use serde::{Deserialize, Deserializer};
