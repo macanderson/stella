@@ -628,8 +628,8 @@
       "app": {
         "utility_prefix": "text-a-",
         "use": "dashboards, panels, tables, terminals, logs: dense",
-        "base": "0.875rem",
-        "base_px": 14.0,
+        "base": "0.925rem",
+        "base_px": 14.8,
         "base_var": "--ox-a-base",
         "steps": [
           {
@@ -638,7 +638,7 @@
             "family": "Geist",
             "ratio": 2.142857,
             "size": "calc(var(--ox-a-base) * 2.142857)",
-            "px": 30.0,
+            "px": 31.71,
             "line_height": 1.15,
             "weight": 700,
             "tracking": "-0.02em"
@@ -649,7 +649,7 @@
             "family": "Geist",
             "ratio": 1.714286,
             "size": "calc(var(--ox-a-base) * 1.714286)",
-            "px": 24.0,
+            "px": 25.37,
             "line_height": 1.2,
             "weight": 600,
             "tracking": "0"
@@ -660,7 +660,7 @@
             "family": "Geist",
             "ratio": 1.428571,
             "size": "calc(var(--ox-a-base) * 1.428571)",
-            "px": 20.0,
+            "px": 21.14,
             "line_height": 1.25,
             "weight": 600,
             "tracking": "0"
@@ -671,7 +671,7 @@
             "family": "Geist",
             "ratio": 1.142857,
             "size": "calc(var(--ox-a-base) * 1.142857)",
-            "px": 16.0,
+            "px": 16.91,
             "line_height": 1.4,
             "weight": 600,
             "tracking": "0"
@@ -682,7 +682,7 @@
             "family": "Geist",
             "ratio": 1,
             "size": "var(--ox-a-base)",
-            "px": 14.0,
+            "px": 14.8,
             "line_height": 1.5,
             "weight": 400,
             "tracking": "0"
@@ -693,7 +693,7 @@
             "family": "Monaspace Neon",
             "ratio": 0.857143,
             "size": "calc(var(--ox-a-base) * 0.857143)",
-            "px": 12.0,
+            "px": 12.69,
             "line_height": 1.4,
             "weight": 400,
             "tracking": "0"
@@ -704,7 +704,7 @@
             "family": "Geist",
             "ratio": 0.714286,
             "size": "calc(var(--ox-a-base) * 0.714286)",
-            "px": 10.0,
+            "px": 10.57,
             "line_height": 1.4,
             "weight": 500,
             "tracking": "0"

@@ -19,7 +19,7 @@
  * marketing and customer sites (--ox-font-display). Monaspace Neon sets
  * code, logs, digests, and the numbers in tables. Space Grotesk sets the
  * wordmarks (--ox-font-wordmark), and that face is fixed. Each type scale
- * has one base, --ox-m-base (16px) and --ox-a-base (14px), and every step
+ * has one base, --ox-m-base (16px) and --ox-a-base (14.8px), and every step
  * is the base times its ratio, so a change to a base moves every step on
  * its scale.
  * tokens/house-fonts.css carries the @font-face rules.
@@ -111,14 +111,14 @@
   --ox-m-body: var(--ox-m-base); /* marketing body, the base, line-height 1.625 */
   --ox-m-micro: calc(var(--ox-m-base) * 0.875); /* marketing micro, 14px at the base, line-height 1.5 */
 
-  --ox-a-base: 0.875rem; /* 14px: the app body size, which every step multiplies */
-  --ox-a-h1: calc(var(--ox-a-base) * 2.142857); /* app h1, 30px at the base, line-height 1.15 */
-  --ox-a-h2: calc(var(--ox-a-base) * 1.714286); /* app h2, 24px at the base, line-height 1.2 */
-  --ox-a-h3: calc(var(--ox-a-base) * 1.428571); /* app h3, 20px at the base, line-height 1.25 */
-  --ox-a-h4: calc(var(--ox-a-base) * 1.142857); /* app h4, 16px at the base, line-height 1.4 */
+  --ox-a-base: 0.925rem; /* 14.8px: the app body size, which every step multiplies */
+  --ox-a-h1: calc(var(--ox-a-base) * 2.142857); /* app h1, 31.71px at the base, line-height 1.15 */
+  --ox-a-h2: calc(var(--ox-a-base) * 1.714286); /* app h2, 25.37px at the base, line-height 1.2 */
+  --ox-a-h3: calc(var(--ox-a-base) * 1.428571); /* app h3, 21.14px at the base, line-height 1.25 */
+  --ox-a-h4: calc(var(--ox-a-base) * 1.142857); /* app h4, 16.91px at the base, line-height 1.4 */
   --ox-a-body: var(--ox-a-base); /* app body, the base, line-height 1.5 */
-  --ox-a-micro: calc(var(--ox-a-base) * 0.857143); /* app micro, 12px at the base, line-height 1.4 */
-  --ox-a-2xs: calc(var(--ox-a-base) * 0.714286); /* app 2xs, 10px at the base, line-height 1.4 */
+  --ox-a-micro: calc(var(--ox-a-base) * 0.857143); /* app micro, 12.69px at the base, line-height 1.4 */
+  --ox-a-2xs: calc(var(--ox-a-base) * 0.714286); /* app 2xs, 10.57px at the base, line-height 1.4 */
 
   --ox-m-h1-leading: 1.05;
   --ox-m-h2-leading: 1.2;
