@@ -12,13 +12,11 @@ and nothing here is edited by hand.**
 
 ```sh
 make brand-sync                              # pull the kit into this repo
-node scripts/sync-brand-assets.mjs --check   # fail if a copy has drifted
 ```
 
-Both read the kit from `$OXAGEN_BRAND_KIT`, else from `../oxagen-brand` or
+The sync reads the kit from `$OXAGEN_BRAND_KIT`, else from `../oxagen-brand` or
 `~/Projects/oxagen-brand`, whichever exists first. Pass `--brand <dir>` to the
 script to name another checkout.
-`.github/workflows/brand-drift.yml` runs the check against the kit's `main`.
 
 ```sh
 node scripts/sync-brand-assets.mjs --brand ~/Projects/oxagen-brand

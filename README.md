@@ -676,8 +676,7 @@ from it, which the site's `tokens.css` carries verbatim under a checker
 (`make tokens-update` regenerates, `make tokens` checks), and
 `scripts/sync-brand-assets.mjs` copies the marks, icons, fonts, and spinners
 from the house kit into `docs/brand/` and `website/`. It also writes the kit's
-value into each token the house palette owns. `brand-drift.yml` runs its
-`--check` against the kit's `main` in CI. Edit the JSON or rebuild the kit;
+value into each token the house palette owns. Edit the JSON or rebuild the kit;
 never the generated files.
 
 ## Development

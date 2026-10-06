@@ -90,9 +90,8 @@
  * stella.oxagen.sh is a customer site, the docs included, so its h1 to h3
  * take the display face. The kit's --font-heading reads the text face, as an
  * app's headings do, and the line below points it at the display face, as
- * the kit says a marketing or docs site should. The brand check
- * (scripts/sync-brand-assets.mjs --check) fails without that line, and on a
- * rule that sets a heading in another face. */
+ * the kit says a marketing or docs site should. Keep that line, and set no
+ * heading in another face. */
 :root {
   --font-heading: var(--font-display);
 
