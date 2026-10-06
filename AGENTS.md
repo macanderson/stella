@@ -30,9 +30,10 @@ Oxagen's *Engineering Deterministic AI Coding Agents* field manual.
 
 ## Local execution
 
-Mac set this on 2026-09-26 for every repository on this machine. Local builds, test runs, dev servers, and git hooks ran the laptop out of memory and killed agent runs partway through, and every killed run costs money. CI is the only place code is built, checked, or tested.
+Mac set this on 2026-09-26 for every repository on this machine. Local builds, test runs, dev servers, and git hooks ran the laptop out of memory and killed agent runs partway through, and every killed run costs money. CI is the only place code is built or checked, and the only place the full test suite runs. Mac amended this on 2026-10-05: an agent may run the tests of a package it changed, one package at a time, with at most two test workers.
 
-- Do not run the gate, a build, a typecheck, a lint, or any test, not even one test file. Push the branch and read the CI result. Read a failed job with `gh run view --job <id> --log-failed`.
+- Do not run the gate, a build, a typecheck, a lint, or the full test suite. Push the branch and read the CI result. Read a failed job with `gh run view --job <id> --log-failed`.
+- Before you push, you may run the tests of a package you changed. Run one package at a time, with at most two test workers, and never with coverage or watch mode. In a Node package, run `pnpm --filter <package> exec vitest run --maxWorkers=2`. In a Rust crate, run `cargo test -p <crate> -j 2 -- --test-threads=2`. Never start tests through `pnpm test`, `turbo`, or the repository root, because those run every package at once.
 - Do not start a dev server: no `next dev`, `next start`, `pnpm dev`, a server under `cargo run`, or anything else that listens on a port.
 - Do not start Docker or Colima, and do not run anything that needs them.
 - Do not run Biome in any form.
