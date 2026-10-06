@@ -673,11 +673,9 @@ between them is the brand: `design/tokens/stella-tokens.json` is the normative
 palette, and it adopts the Oxagen house table. `scripts/gen-tokens.py` emits
 the terminal tokens (`stella-tui-theme`) and `design/tokens/stella-tokens.css`
 from it, which the site's `tokens.css` carries verbatim under a checker
-(`make tokens-update` regenerates, `make tokens` checks), and
-`scripts/sync-brand-assets.mjs` copies the marks, icons, fonts, and spinners
-from the house kit into `docs/brand/` and `website/`. It also writes the kit's
-value into each token the house palette owns. Edit the JSON or rebuild the kit;
-never the generated files.
+(`make tokens-update` regenerates, `make tokens` checks). The marks, icons, fonts, and spinners in `docs/brand/`
+and `website/` are committed copies of the Oxagen house kit, edited by hand.
+Edit the JSON for tokens, and never the files `make tokens-update` generates.
 
 ## Development
 

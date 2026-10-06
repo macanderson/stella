@@ -2,14 +2,12 @@
  * stella docs — the semantic layer.
  *
  * Brand system: the marks, the faces, and every house colour come from the
- * Oxagen house kit (oxageninc/brand), copied in by
- * scripts/sync-brand-assets.mjs. tokens.css carries the palette, and
- * src/brand/house-tokens.css is the kit's own token sheet. This file reads
- * that sheet for the font stacks, the two type scales, the corners, the
- * floating-surface shadow, and the spacing unit, so a change in the kit's
- * theme editor reaches the site on the next sync. The brand check
- * (`--check` in that script) fails on a corner, shadow, type size, or page
- * wrap written here as a number.
+ * Oxagen house kit (oxageninc/brand), kept here as committed copies.
+ * tokens.css carries the palette, and
+ * src/brand/house-tokens.css is a copy of the kit's token sheet. This file
+ * reads that sheet for the font stacks, the two type scales, the corners, the
+ * floating-surface shadow, and the spacing unit. Write a corner, shadow, type
+ * size, or page wrap as a token from that sheet, not as a number.
  *
  * Three rules the rest of the file obeys:
  *

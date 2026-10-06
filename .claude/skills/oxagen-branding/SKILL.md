@@ -16,6 +16,6 @@ curl -fsSL "https://raw.githubusercontent.com/oxageninc/brand/$sha/skills/oxagen
 
 Read every file the skill names from the same `$sha`. Use `curl` when you have a shell. A web-fetch tool may summarise what it reads, so without a shell ask it for the file verbatim.
 
-If the network fails, use a local checkout (`$OXAGEN_BRAND_KIT`, else `~/Projects/oxagen-brand`): run `git -C <kit> fetch origin main`, then read each file with `git -C <kit> show origin/main:<path>`. If that fails too, stop and say that the brand source is unreachable.
+If the network fails, use a local checkout (`~/Projects/oxagen-brand`): run `git -C <kit> fetch origin main`, then read each file with `git -C <kit> show origin/main:<path>`. If that fails too, stop and say that the brand source is unreachable.
 
 This stub comes from `skills/stub/oxagen-branding/` in oxagen-brand, and `skills/install.sh` installs it. Do not edit it here.

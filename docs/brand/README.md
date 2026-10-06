@@ -6,30 +6,20 @@ status: living
 
 # docs/brand — the house kit, mirrored
 
-**This directory is a copy. The source is
-[oxageninc/brand](https://github.com/oxageninc/brand),
-and nothing here is edited by hand.**
+**This directory is a committed copy of the house kit
+([oxageninc/brand](https://github.com/oxageninc/brand)). Edit it by hand.**
 
-```sh
-make brand-sync                              # pull the kit into this repo
-```
+Nothing syncs it from the kit. Stella lives on GitHub and the Oxagen product on
+GitLab, so a script that pulled one into the other was too complex to keep
+right. When the kit changes and Stella should follow, copy the change here and
+into `website/` yourself.
 
-The sync reads the kit from `$OXAGEN_BRAND_KIT`, else from `../oxagen-brand` or
-`~/Projects/oxagen-brand`, whichever exists first. Pass `--brand <dir>` to the
-script to name another checkout.
+## Why a copy exists
 
-```sh
-node scripts/sync-brand-assets.mjs --brand ~/Projects/oxagen-brand
-```
-
-## Why a copy exists at all
-
-`website/src/lib/brand-parity.test.ts` holds the site's assets to the kit's,
-and it runs in CI, where the house kit is not checked out. So the kit lands
-here first — offline, in the repository — and the site is held to this copy.
-Deleting it would not remove a duplicate; it would remove the only thing the
-parity test can compare against, which is how the site drifted a whole brand
-version behind in the first place.
+`website/src/lib/brand-parity.test.ts` holds the site's assets to this
+directory in CI. Deleting it would remove the only thing the parity test can
+compare against, which is how the site drifted a whole brand version behind
+in the first place.
 
 ## What changed
 
@@ -47,8 +37,7 @@ separate Stella lockup, which is why there is none here.
 **The palette is the house palette.** One table for Stella and Oxagen, so a
 reader crossing between the two sites does not watch the brand change hue. The
 normative copy for this repo is `design/tokens/stella-tokens.json`, and
-`css/tokens.css` mirrors it. The sync writes the kit's value into each Stella
-token the house palette owns, in both files. `css/house-tokens.css`,
+`css/tokens.css` mirrors it. Edit a token the house palette owns in both files. `css/house-tokens.css`,
 `css/house-tokens.json`, and `css/house-tailwind.css` are the kit's own
 files, verbatim. `css/tokens.css` imports `css/house-tokens.css` for its
 corner scale, so keep the two files together.

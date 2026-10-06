@@ -43,8 +43,8 @@ anywhere, and a `--rl-`-style prefix so the selectors cannot collide.
 verbatim, and `house-type.css`, the kit's font roles and its `text-m-*` and
 `text-a-*` type classes taken out of its Tailwind sheet. A marketing page such as the landing
 page sizes its text with `text-m-*`, never with Tailwind's `text-sm` or
-`text-lg`. `scripts/sync-brand-assets.mjs` writes every one of these files from
-the kit, so run it when the kit changes and never hand-edit the site's copies.
+`text-lg`. Every one of these files is a committed copy of the house kit, edited
+by hand. Keep `docs/brand/` in step, because `brand-parity.test.ts` compares the two.
 The one rendered-from-geometry surface is the `next/og` card in
 `src/app/opengraph-image.tsx`, which draws the lockup from the constants in
 `src/components/brand-marks.generated.ts`.

@@ -68,14 +68,14 @@ test("every font role reads a variable the kit's next/font loader sets", () => {
         assert.ok(
           loaded.has(ref[1]),
           `src/${sheet} points ${m[1]} at ${ref[1]}, which src/brand/next-fonts.ts does not set, ` +
-            "so the role falls back to the system face. Let the brand sync set the role in " +
+            "so the role falls back to the system face. Set the role in " +
             "src/brand/house-type.css, and remove it from src/app/global.css.",
         );
       }
     }
   }
   for (const role of ROLES) {
-    assert.ok(set.has(role), `no stylesheet sets ${role}. Run node scripts/sync-brand-assets.mjs.`);
+    assert.ok(set.has(role), `no stylesheet sets ${role}. Set it in src/brand/house-type.css.`);
   }
 });
 

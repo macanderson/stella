@@ -5,11 +5,11 @@ import { RootProvider } from "fumadocs-ui/provider/next";
 import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 /*
- * The house faces load through the kit's own `next/font` loader, which
- * `scripts/sync-brand-assets.mjs` copies to `src/brand/next-fonts.ts` with the
- * font files beside it in `src/fonts/`. Space Grotesk sets h1 to h3 and the
+ * The house faces load through the kit's own `next/font` loader, a committed
+ * copy at `src/brand/next-fonts.ts` with the font files beside it in
+ * `src/fonts/`. Space Grotesk sets h1 to h3 and the
  * wordmark, Aeonik sets everything else read, and Monaspace Neon sets code.
- * `src/brand/house-type.css`, which the same sync writes, maps the loader's
+ * `src/brand/house-type.css` maps the loader's
  * variables onto the site's font roles, and global.css points the heading
  * role at the display face.
  */

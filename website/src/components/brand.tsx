@@ -1,12 +1,11 @@
 /**
  * The stella marks — the Oxagen house brand system.
  *
- * Geometry comes from `./brand-marks.generated.ts`, extracted by
- * `scripts/sync-brand-assets.mjs` from the house kit
- * (oxageninc/brand). Nothing here is drawn: the wordmark is
+ * Geometry comes from `./brand-marks.generated.ts`, a committed copy of the
+ * house kit's marks. Nothing here is drawn: the wordmark is
  * Space Grotesk's own outlines at the kit's logo weight, which is the face this
  * site is set in, so the name in the nav and the name in a sentence are the same
- * design. To change a mark, change the kit and re-run the sync.
+ * design. To change a mark, edit that file and `docs/brand/` by hand.
  *
  * ## The comet is retired
  *
