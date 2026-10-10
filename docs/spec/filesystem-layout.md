@@ -23,9 +23,9 @@ Three tiers, in the order the config chain merges them:
 > the JSON until you delete it yourself. Where both exist, the TOML wins and
 > stella says so.
 >
-> One exception: `[mcp.servers]` in `stella.toml` is not consumed yet — MCP
-> servers still load from `.stella/mcp.toml`. Stella warns rather than failing
-> to start them silently.
+> One exception: `[mcp.servers]` in `stella.toml` is not consumed yet. MCP
+> servers load from `.stella/mcp.toml` and from `~/.stella/mcp.toml`. Stella
+> warns rather than failing to start them silently.
 
 ---
 
@@ -140,7 +140,9 @@ Your machine, all projects. Never committed anywhere.
 │   ── Config ──
 ├── stella.toml ................. USER CONFIG — live. Merges under project.
 ├── settings.json ............... USER CONFIG — legacy, read only if no TOML
-├── mcp.toml .................... MCP servers available in every project
+├── mcp.toml .................... MCP servers available in every project.
+│                                 A workspace .stella/mcp.toml entry of the
+│                                 same name replaces one here.
 │
 │   ── Secrets. All owner-only (0600). ──
 ├── credentials.toml ............ provider API keys, plaintext.

@@ -1,7 +1,11 @@
 //! MCP management orchestration: the shared logic behind both the `stella mcp`
-//! subcommand and the deck's MCP tab. It owns *where* `.stella/mcp.toml` lives
-//! and the registry-URL resolution; `stella-mcp` owns the transport shapes, the
-//! registry client, and the install mapping.
+//! subcommand and the deck's MCP tab. It owns *where* `.stella/mcp.toml` and
+//! the user's `$STELLA_HOME/mcp.toml` live ([`scopes`]) and the registry-URL
+//! resolution; `stella-mcp` owns the transport shapes, the registry client,
+//! and the install mapping.
+//!
+//! The commands here edit the workspace file alone. A session reads both
+//! files, merged by [`load_own_config`].
 //!
 //! Nothing here logs a credential value: config is written to disk (the
 //! pre-existing `mcp.toml` convention, owner-only where the platform allows),
@@ -16,6 +20,10 @@ use stella_mcp::{
 };
 
 use crate::settings::Settings;
+
+mod scopes;
+
+pub(crate) use scopes::load_own_config;
 
 /// The workspace's MCP server config file.
 pub fn mcp_toml_path(workspace_root: &Path) -> PathBuf {
@@ -312,20 +320,28 @@ pub(crate) fn latency_ms(health: &[stella_mcp::ServerHealth], name: &str) -> Opt
 ///   until its handshake is reviewed. That door is the one the gate exists
 ///   for: a search result is a keystroke away from a `cmd` line this process
 ///   spawns.
-/// - **A hand-written `mcp.toml` entry** records no decision, and is granted.
-///   Writing the transport by hand is already the review the gate asks for.
-/// - **A plugin-contributed server** is not in `mcp.toml` at all, and is
-///   granted for the same reason: installing the plugin was the decision, and
-///   there is no entry a grant could even be recorded in.
+/// - **A hand-written `mcp.toml` entry**, in the workspace file or the user
+///   file, records no decision, and is granted. Writing the transport by hand
+///   is already the review the gate asks for.
+/// - **A plugin-contributed server** is not in either `mcp.toml` at all, and
+///   is granted for the same reason: installing the plugin was the decision,
+///   and there is no entry a grant could even be recorded in.
 ///
-/// A config that will not parse yields an empty set — deny, because the
-/// alternative is granting everything on the strength of a file nobody could
-/// read.
+/// The decisions come from [`load_own_config`], the merge the plan was built
+/// from. A file that does not parse put no servers into the plan, so none of
+/// its decisions is needed here.
 pub fn initial_grants(
     workspace_root: &Path,
     servers: &[stella_mcp::McpServerConfig],
 ) -> stella_mcp::CapabilityGrants {
-    let cfg = load_config(workspace_root).unwrap_or_default();
+    // The same merge the plan was built from, so a decision the user file
+    // records holds for the server it describes, and a workspace entry that
+    // replaced it brings its own decision.
+    let cfg = load_own_config(
+        workspace_root,
+        crate::settings::project_code_execution_trusted(),
+    )
+    .config;
     let granted = servers
         .iter()
         .filter(|s| {
