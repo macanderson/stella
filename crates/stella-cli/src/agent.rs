@@ -766,11 +766,20 @@ pub(crate) enum McpPlan {
     /// only when nothing at all is left to connect that its reason becomes the
     /// session's reason — disabling nothing needs no protecting.
     Invalid(String),
-    /// Servers to connect via [`connect_mcp_servers`] — never empty — and how
-    /// the list was narrowed on the way: a file of yours that was skipped, a
-    /// package whose file did not parse, or a package server dropped because
-    /// you run one under the same name.
-    Servers(Vec<McpServerConfig>, Vec<String>),
+    /// Servers to connect via [`connect_mcp_servers`].
+    Servers {
+        /// Never empty.
+        servers: Vec<McpServerConfig>,
+        /// How the list was narrowed on the way: a file of yours that was
+        /// skipped, a package whose file did not parse, or a package server
+        /// dropped because you run one under the same name.
+        notices: Vec<String>,
+        /// The servers whose capabilities start granted
+        /// (`mcp_cmd::initial_grants`). It is built from the same read of
+        /// the files as `servers`, so a file edited after that read cannot
+        /// give a server another entry's decision.
+        granted: std::collections::HashSet<String>,
+    },
 }
 
 /// Your own MCP servers: `$STELLA_HOME/mcp.toml` with the workspace's
@@ -784,9 +793,9 @@ pub(crate) enum McpPlan {
 /// and the reason is said once. The user file is not gated, for the reason
 /// `~/.stella/stella.toml`'s hooks are not: only you write to it.
 ///
-/// [`load_mcp_plan`], [`own_mcp_server_names`] and
-/// `mcp_cmd::initial_grants` all read through here, so the plan, the plugin
-/// principals and the grant set agree on whose server a name is.
+/// [`load_mcp_plan`] and [`own_mcp_server_names`] both read through here, so
+/// the plan, its grant set and the plugin principals agree on whose server a
+/// name is.
 pub(crate) fn own_mcp_config(workspace_root: &std::path::Path) -> crate::mcp_cmd::OwnMcpConfig {
     crate::mcp_cmd::load_own_config(
         workspace_root,
@@ -832,8 +841,10 @@ pub(crate) fn load_mcp_plan(cfg: &Config) -> McpPlan {
     // A file of yours that is refused or does not parse adds a notice and no
     // servers, and the rest still start. When nothing at all is left, that
     // notice becomes the session's reason, below.
+    // In an untrusted repo, `servers()` starts them in `$STELLA_HOME`, so
+    // the repo's files do not decide what a runner such as `npx` loads.
     let own = own_mcp_config(&cfg.workspace_root);
-    let mut servers = own.config.into_servers();
+    let mut servers = own.servers();
     let mut notices = own.notices;
 
     // The packages', after the user's own, so the collision rule below reads
@@ -862,7 +873,11 @@ pub(crate) fn load_mcp_plan(cfg: &Config) -> McpPlan {
         (true, true) => McpPlan::None,
         // Nothing left to connect, so the reasons above are the session's.
         (true, false) => McpPlan::Invalid(notices.join(" · ")),
-        _ => McpPlan::Servers(servers, notices),
+        _ => McpPlan::Servers {
+            granted: crate::mcp_cmd::initial_grants(&own.config, &servers),
+            servers,
+            notices,
+        },
     }
 }
 
@@ -917,7 +932,7 @@ pub(crate) async fn connect_mcp(
     usage: Option<stella_store::mcp_usage::McpUsageLedger>,
     print_diagnostics: bool,
 ) -> Result<Option<Arc<McpToolSet>>, String> {
-    let servers = match load_mcp_plan(cfg) {
+    let (servers, granted) = match load_mcp_plan(cfg) {
         McpPlan::None => return Ok(None),
         McpPlan::Invalid(reason) => {
             if print_diagnostics {
@@ -925,13 +940,17 @@ pub(crate) async fn connect_mcp(
             }
             return Ok(None);
         }
-        McpPlan::Servers(servers, notices) => {
+        McpPlan::Servers {
+            servers,
+            notices,
+            granted,
+        } => {
             if print_diagnostics {
                 for notice in notices {
                     eprintln!("  {} {notice}", "!".yellow());
                 }
             }
-            servers
+            (servers, granted)
         }
     };
     // A one-shot run has no interactive enable/disable, so no disabled set.
@@ -939,7 +958,7 @@ pub(crate) async fn connect_mcp(
     // with no deck attached reads the same answer the deck wrote, and a server
     // nobody has reviewed must not become callable by being run from a script.
     let auth = crate::mcp_cmd::oauth_manager(&cfg.workspace_root)?;
-    let grants = crate::mcp_cmd::initial_grants(&cfg.workspace_root, &servers);
+    let grants = Arc::new(std::sync::Mutex::new(granted));
     let set = connect_mcp_servers(&servers, native, usage, None, Some(grants), Some(auth)).await;
     if print_diagnostics {
         crate::mcp_cmd::print_connect_diagnostics(&set);

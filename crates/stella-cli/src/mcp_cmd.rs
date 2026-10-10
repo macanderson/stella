@@ -4,7 +4,9 @@
 //! resolution; `stella-mcp` owns the transport shapes, the registry client,
 //! and the install mapping.
 //!
-//! The commands here edit the workspace file alone. A session reads both
+//! The commands here list the servers of both files ([`load_listed_config`]).
+//! An install writes to the workspace file. A change to a server that is
+//! already there is written to the file that holds it. A session reads both
 //! files, merged by [`load_own_config`].
 //!
 //! Nothing here logs a credential value: config is written to disk (the
@@ -23,7 +25,7 @@ use crate::settings::Settings;
 
 mod scopes;
 
-pub(crate) use scopes::{OwnMcpConfig, load_own_config};
+pub(crate) use scopes::{OwnMcpConfig, load_listed_config, load_own_config};
 
 /// The workspace's MCP server config file.
 pub fn mcp_toml_path(workspace_root: &Path) -> PathBuf {
@@ -32,26 +34,22 @@ pub fn mcp_toml_path(workspace_root: &Path) -> PathBuf {
 
 /// Load `.stella/mcp.toml` (an absent file is an empty config, not an error).
 pub fn load_config(workspace_root: &Path) -> Result<McpConfig, String> {
-    let path = mcp_toml_path(workspace_root);
-    match stella_store::read_sensitive_file_to_string(&path) {
-        Ok(text) => McpConfig::from_toml_str(&text)
-            .map_err(|e| format!("{} is invalid: {e}", path.display())),
-        Err(_)
-            if matches!(
-                std::fs::symlink_metadata(&path),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound
-            ) =>
-        {
-            Ok(McpConfig::default())
-        }
-        Err(e) => Err(format!("cannot read {}: {e}", path.display())),
-    }
+    load_config_at(&mcp_toml_path(workspace_root))
+}
+
+/// Load the `mcp.toml` at `path` (an absent file is an empty config).
+fn load_config_at(path: &Path) -> Result<McpConfig, String> {
+    scopes::read_mcp_file(path).map(Option::unwrap_or_default)
 }
 
 /// Write `.stella/mcp.toml` atomically (temp + rename), owner-only on Unix
 /// since it may hold credentials.
 pub fn save_config(workspace_root: &Path, cfg: &McpConfig) -> Result<(), String> {
-    let path = mcp_toml_path(workspace_root);
+    save_config_at(&mcp_toml_path(workspace_root), cfg)
+}
+
+/// Write the `mcp.toml` at `path` the way [`save_config`] does.
+fn save_config_at(path: &Path, cfg: &McpConfig) -> Result<(), String> {
     if let Some(parent) = path.parent()
         && !parent.exists()
     {
@@ -327,43 +325,64 @@ pub(crate) fn latency_ms(health: &[stella_mcp::ServerHealth], name: &str) -> Opt
 ///   is granted for the same reason: installing the plugin was the decision,
 ///   and there is no entry a grant could even be recorded in.
 ///
-/// The decisions come from `agent::own_mcp_config`, the merge the plan was
-/// built from. A file that does not parse put no servers into the plan, so none of
-/// its decisions is needed here.
-pub fn initial_grants(
-    workspace_root: &Path,
+/// `own` is the config the plan's servers were read from, the same value and
+/// not a second read of the files. A file that changed between two reads
+/// could otherwise give a server a decision that belongs to a different
+/// entry. `agent::load_mcp_plan` is the one caller.
+pub(crate) fn initial_grants(
+    own: &McpConfig,
     servers: &[stella_mcp::McpServerConfig],
-) -> stella_mcp::CapabilityGrants {
-    // The same merge the plan was built from, so a decision the user file
-    // records holds for the server it describes, and a workspace entry that
-    // replaced it brings its own decision.
-    let cfg = crate::agent::own_mcp_config(workspace_root).config;
-    let granted = servers
+) -> std::collections::HashSet<String> {
+    servers
         .iter()
         .filter(|s| {
-            cfg.grant_decision(&s.name)
+            own.grant_decision(&s.name)
                 .is_none_or(|decision| decision.unwrap_or(true))
         })
         .map(|s| s.name.clone())
-        .collect();
-    std::sync::Arc::new(std::sync::Mutex::new(granted))
+        .collect()
 }
 
 /// Record the operator's capability grant for a configured server (SPEC
 /// §9.3's first-enable handshake) and return whether the server existed to
 /// grant.
 ///
-/// The decision persists in `.stella/mcp.toml`, so it survives the session it
-/// was made in — and so a run with no deck attached reads the same answer the
-/// deck recorded. The live session's grant set is the caller's to update; this is
-/// only the write to disk.
+/// The decision persists in the `mcp.toml` that holds the server, so it
+/// survives the session it was made in — and so a run with no deck attached
+/// reads the same answer the deck recorded. The live session's grant set is
+/// the caller's to update; this is only the write to disk.
 pub fn set_granted(workspace_root: &Path, name: &str, granted: bool) -> Result<bool, String> {
-    let mut cfg = load_config(workspace_root)?;
-    if !cfg.set_granted(name, granted) {
-        return Ok(false);
-    }
-    save_config(workspace_root, &cfg)?;
-    Ok(true)
+    Ok(
+        edit_owning_file(workspace_root, name, |cfg| cfg.set_granted(name, granted))?
+            .unwrap_or(false),
+    )
+}
+
+/// Apply `edit` to the `mcp.toml` that holds `name`, and save that file.
+/// It is `Ok(None)`, with nothing written, when neither file names it.
+fn edit_owning_file<T>(
+    workspace_root: &Path,
+    name: &str,
+    edit: impl FnOnce(&mut McpConfig) -> T,
+) -> Result<Option<T>, String> {
+    let Some(path) = scopes::owning_file(workspace_root, name)? else {
+        return Ok(None);
+    };
+    let mut cfg = load_config_at(&path)?;
+    let edited = edit(&mut cfg);
+    save_config_at(&path, &cfg)?;
+    Ok(Some(edited))
+}
+
+/// The error for a server that neither `mcp.toml` names.
+fn not_configured(workspace_root: &Path, server: &str) -> String {
+    let user = scopes::user_mcp_toml_path()
+        .map(|path| format!(" or {}", path.display()))
+        .unwrap_or_default();
+    format!(
+        "no MCP server `{server}` in {}{user}",
+        mcp_toml_path(workspace_root).display()
+    )
 }
 
 /// Search a registry over HTTP (async, non-blocking).
@@ -422,13 +441,10 @@ pub async fn refresh_card(
     registry_url: &str,
     alias: &str,
 ) -> Result<Option<ServerCard>, String> {
-    let cfg = load_config(workspace_root)?;
-    if cfg.get(alias).is_none() {
-        return Err(format!(
-            "no MCP server `{alias}` in {}",
-            mcp_toml_path(workspace_root).display()
-        ));
-    }
+    let Some(path) = scopes::owning_file(workspace_root, alias)? else {
+        return Err(not_configured(workspace_root, alias));
+    };
+    let cfg = load_config_at(&path)?;
     let recorded = cfg.card(alias).and_then(|c| c.registry_name.clone());
     let query = recorded.clone().unwrap_or_else(|| alias.to_string());
     let page = search(registry_url, Some(&query), None, 30).await?;
@@ -444,40 +460,38 @@ pub async fn refresh_card(
     // Re-load rather than reuse `cfg`: the registry round-trip above is a
     // network call, and an auth write racing it must not be rolled back by a
     // stale in-memory document.
-    let mut cfg = load_config(workspace_root)?;
+    let mut cfg = load_config_at(&path)?;
     if cfg.set_card(alias, card.clone()) {
-        save_config(workspace_root, &cfg)?;
+        save_config_at(&path, &cfg)?;
     }
     Ok(Some(card))
 }
 
 /// Set a credential (env var for stdio, header for http) on a configured
-/// server — the auth / re-auth write path. The value is never logged.
+/// server — the auth / re-auth write path. The value is never logged. It is
+/// written to the `mcp.toml` that holds the server.
 pub fn set_credential(
     workspace_root: &Path,
     server: &str,
     field: &str,
     value: String,
 ) -> Result<(), String> {
-    let mut cfg = load_config(workspace_root)?;
-    let transport = cfg.get_mut(server).ok_or_else(|| {
-        format!(
-            "no MCP server `{server}` in {}",
-            mcp_toml_path(workspace_root).display()
-        )
+    let set = edit_owning_file(workspace_root, server, |cfg| {
+        cfg.get_mut(server)
+            .map(|transport| transport.set_credential(field, value))
+            .is_some()
     })?;
-    transport.set_credential(field, value);
-    save_config(workspace_root, &cfg)
+    match set {
+        Some(true) => Ok(()),
+        _ => Err(not_configured(workspace_root, server)),
+    }
 }
 
-/// Remove a configured server; returns whether it existed.
+/// Remove a configured server from the `mcp.toml` that holds it; returns
+/// whether it existed. A server in both files is removed from the workspace
+/// file, and the user file's entry is used again.
 pub fn remove(workspace_root: &Path, name: &str) -> Result<bool, String> {
-    let mut cfg = load_config(workspace_root)?;
-    let removed = cfg.remove(name);
-    if removed {
-        save_config(workspace_root, &cfg)?;
-    }
-    Ok(removed)
+    Ok(edit_owning_file(workspace_root, name, |cfg| cfg.remove(name))?.unwrap_or(false))
 }
 
 /// Resolve the workspace's owner-only OAuth token store, migrating a safe
@@ -499,17 +513,18 @@ pub fn oauth_manager(
 
 /// Look up the URL a configured **http** server points at — the OAuth login
 /// target. A stdio server has no authorization server, so it is an error.
+///
+/// The server can be in either `mcp.toml`; the workspace entry wins a shared
+/// name, as it does in the session. The tokens go to this workspace's store,
+/// the one the session reads.
 pub fn http_server_url(workspace_root: &Path, server: &str) -> Result<String, String> {
-    let cfg = load_config(workspace_root)?;
+    let cfg = load_listed_config(workspace_root)?;
     match cfg.get(server) {
         Some(stella_mcp::McpTransport::Http { url, .. }) => Ok(url.clone()),
         Some(_) => Err(format!(
             "`{server}` is a stdio server — OAuth login applies to http servers only"
         )),
-        None => Err(format!(
-            "no MCP server `{server}` in {}",
-            mcp_toml_path(workspace_root).display()
-        )),
+        None => Err(not_configured(workspace_root, server)),
     }
 }
 
@@ -660,7 +675,7 @@ fn runtime() -> Result<tokio::runtime::Runtime, String> {
 
 fn run_list(workspace_root: &Path) -> Result<(), String> {
     crate::plain::section_header("Configured MCP servers");
-    let cfg = load_config(workspace_root)?;
+    let cfg = load_listed_config(workspace_root)?;
     if cfg.names().is_empty() {
         println!(
             "  {}",
@@ -842,13 +857,11 @@ fn run_login(workspace_root: &Path, name: &str) -> Result<(), String> {
 /// clearing the key, because "reviewed and declined" and "never asked" are
 /// different states and only the first should survive a re-read.
 fn run_grant(workspace_root: &Path, name: &str, yes: bool, revoke: bool) -> Result<(), String> {
-    let cfg = load_config(workspace_root)?;
-    let transport = cfg.get(name).cloned().ok_or_else(|| {
-        format!(
-            "no MCP server `{name}` in {}",
-            mcp_toml_path(workspace_root).display()
-        )
-    })?;
+    let cfg = load_listed_config(workspace_root)?;
+    let transport = cfg
+        .get(name)
+        .cloned()
+        .ok_or_else(|| not_configured(workspace_root, name))?;
     if revoke {
         set_granted(workspace_root, name, false)?;
         println!(
@@ -864,6 +877,7 @@ fn run_grant(workspace_root: &Path, name: &str, yes: bool, revoke: bool) -> Resu
         name: name.to_string(),
         transport,
         candidate_safe: cfg.is_candidate_safe(name),
+        cwd: None,
     };
     let auth = oauth_manager(workspace_root)?;
     // No grant set on this client: it never calls a tool, and gating the
@@ -1163,13 +1177,6 @@ mod tests {
     /// chosen by the operator; a registry install is one keystroke.
     #[test]
     fn the_session_grants_come_from_how_each_server_was_configured() {
-        let _env = crate::test_env::lock();
-        let _restore =
-            crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
-        // The grants read the workspace file only when the project is
-        // trusted, the same as the plan the grants are for.
-        // SAFETY: we hold the env lock until the env is put back.
-        unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let transport = || McpTransport::Stdio {
@@ -1198,10 +1205,10 @@ mod tests {
                 name: name.to_string(),
                 transport: transport(),
                 candidate_safe: false,
+                cwd: None,
             })
             .collect();
-        let grants = initial_grants(root, &plan);
-        let granted = grants.lock().unwrap();
+        let granted = initial_grants(&load_config(root).unwrap(), &plan);
         assert!(!granted.contains("installed"), "{granted:?}");
         assert!(granted.contains("handwritten"), "{granted:?}");
         // Not in mcp.toml at all — a plugin shipped it, and installing the

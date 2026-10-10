@@ -54,6 +54,7 @@ impl McpConfig {
                 name,
                 transport: entry.transport,
                 candidate_safe: entry.candidate_safe,
+                cwd: None,
             })
             .collect()
     }
@@ -378,7 +379,8 @@ pub struct McpServerEntry {
 }
 
 /// One named server: its `name` (used as the tool-namespace segment), its
-/// transport, and its Best-of-N candidate-allowlist flag (issue #248 Phase 1).
+/// transport, its Best-of-N candidate-allowlist flag (issue #248 Phase 1),
+/// and the directory a stdio server starts in.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpServerConfig {
     pub name: String,
@@ -386,6 +388,14 @@ pub struct McpServerConfig {
     pub transport: McpTransport,
     #[serde(default)]
     pub candidate_safe: bool,
+    /// The working directory of a stdio server's process. `None` keeps the
+    /// directory Stella runs in. An http server ignores it.
+    ///
+    /// No `mcp.toml` can set it. The caller that read the file chooses it,
+    /// because a runner such as `npx` resolves packages from its working
+    /// directory, and the file's author must not pick that directory.
+    #[serde(skip)]
+    pub cwd: Option<std::path::PathBuf>,
 }
 
 /// How to reach a server. `transport` is the discriminant; the remaining
@@ -566,6 +576,7 @@ mod tests {
                 headers: BTreeMap::new(),
             },
             candidate_safe: true,
+            cwd: None,
         };
         let s = toml::to_string(&entry).unwrap();
         let back: McpServerConfig = toml::from_str(&s).unwrap();
@@ -883,6 +894,7 @@ mod tests {
             name: "s".into(),
             transport: http,
             candidate_safe: false,
+            cwd: None,
         };
         assert!(!format!("{cfg:?}").contains("leak-me"));
     }

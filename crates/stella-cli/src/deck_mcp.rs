@@ -3,7 +3,7 @@
 //! Split out of `command_deck.rs` (#629's 1500-line ratchet) when the tab
 //! grew an inspector. Three sources are joined here and nowhere else:
 //!
-//! - **`.stella/mcp.toml`** — the transport and the publisher's
+//! - **The two `mcp.toml` files** — the transport and the publisher's
 //!   [`stella_mcp::ServerCard`] (what the server *is*, recorded at install).
 //! - **The live [`stella_mcp::McpToolSet`]** — which servers connected, what
 //!   they said about themselves at handshake, and every tool they advertise.
@@ -33,7 +33,7 @@ use crate::config::Config;
 /// - `disabled` — servers the operator toggled off. Session-scoped by design:
 ///   it changes a running conversation's tool set and is forgotten at exit.
 /// - `grants` — servers whose declared capabilities the operator granted (SPEC
-///   §9.3). Mirrors `.stella/mcp.toml`, so unlike the toggle it survives.
+///   §9.3). Mirrors the `mcp.toml` files, so unlike the toggle it survives.
 ///
 /// Both are `Arc<Mutex<HashSet<_>>>` shared with `McpToolSet`, which re-reads
 /// them on every advertise and every dispatch — so a toggle or a grant takes
@@ -44,7 +44,7 @@ pub(crate) struct McpSession {
     pub(crate) grants: stella_mcp::CapabilityGrants,
 }
 
-/// Build the MCP tab snapshot: every configured server (`.stella/mcp.toml`)
+/// Build the MCP tab snapshot: every configured server (both `mcp.toml` files)
 /// joined with its live session state — enabled (not in the disabled set),
 /// connected (in the live tool set), health, per-server tool count (derived
 /// from the advertised schemas, so it is 0 the moment a server is disabled),
@@ -59,7 +59,7 @@ pub(crate) async fn mcp_snapshot(
     mcp: Option<&stella_mcp::McpToolSet>,
     disabled: &stella_mcp::DisabledServers,
 ) -> Result<Vec<stella_tui::McpServerInfo>, String> {
-    let config = crate::mcp_cmd::load_config(&cfg.workspace_root)?;
+    let config = crate::mcp_cmd::load_listed_config(&cfg.workspace_root)?;
     let connected: HashSet<String> = mcp
         .map(|s| {
             s.connected_names()
@@ -206,10 +206,10 @@ pub(crate) async fn mcp_detail(
     name: &str,
     lookup: McpLookupState,
 ) -> Result<stella_tui::McpServerDetail, String> {
-    let config = crate::mcp_cmd::load_config(&cfg.workspace_root)?;
+    let config = crate::mcp_cmd::load_listed_config(&cfg.workspace_root)?;
     let transport = config
         .get(name)
-        .ok_or_else(|| format!("`{name}` is not configured in .stella/mcp.toml"))?;
+        .ok_or_else(|| format!("`{name}` is not configured in either mcp.toml"))?;
     let card = config.card(name).expect("name resolved above");
     let connected = mcp.is_some_and(|s| s.connected_names().contains(&name));
     let (health, latency_ms) = match mcp {
@@ -301,8 +301,8 @@ pub(crate) async fn mcp_detail(
 ///
 /// The detail is pushed **before** any lookup so the inspector opens
 /// immediately, then pushed again with the outcome. A lookup that succeeds
-/// also backfills `.stella/mcp.toml`, so the answer is paid for once and the
-/// list row carries it from then on.
+/// also backfills the `mcp.toml` that holds the server, so the answer is paid
+/// for once and the list row carries it from then on.
 async fn send_mcp_detail(
     cfg: &Config,
     mcp: Option<&stella_mcp::McpToolSet>,
@@ -356,7 +356,7 @@ async fn send_mcp_detail(
 /// servers and deduping the registry's per-version rows to one per name.
 async fn run_mcp_search(cfg: &Config, query: &str) -> stella_tui::McpSearchOutcome {
     let query = query.trim().to_string();
-    let configured: HashSet<String> = crate::mcp_cmd::load_config(&cfg.workspace_root)
+    let configured: HashSet<String> = crate::mcp_cmd::load_listed_config(&cfg.workspace_root)
         .map(|c| c.names().into_iter().map(str::to_string).collect())
         .unwrap_or_default();
     let registry_url = crate::mcp_cmd::resolve_registry_url(&cfg.workspace_root);
@@ -422,8 +422,9 @@ fn display_signature(signature: stella_mcp::SignatureStatus) -> stella_tui::McpS
 }
 
 /// Record a capability grant and make it effective in this session: the
-/// decision goes to `.stella/mcp.toml`, the name joins the shared grant set
-/// the tool layer consults on every model call, and the server is enabled.
+/// decision goes to the `mcp.toml` that holds the server, the name joins the
+/// shared grant set the tool layer consults on every model call, and the
+/// server is enabled.
 ///
 /// Disk first. A grant that is live but unrecorded would evaporate at the next
 /// start, and the operator — who just read a tool list and answered for it —
@@ -439,7 +440,7 @@ pub(crate) fn apply_mcp_grant(
         Ok(true) => {}
         Ok(false) => {
             let _ = in_tx.send(chrome_note(format!(
-                "mcp: `{name}` is not configured in .stella/mcp.toml — nothing granted\n"
+                "mcp: `{name}` is not configured in either mcp.toml — nothing granted\n"
             )));
             return false;
         }
@@ -503,7 +504,7 @@ pub(crate) async fn service_mcp_action(
                 // had it. Silence here reads as success.
                 Ok(false) => {
                     let _ = in_tx.send(chrome_note(format!(
-                        "mcp: `{name}` was not configured in .stella/mcp.toml — nothing removed\n"
+                        "mcp: `{name}` was not configured in either mcp.toml — nothing removed\n"
                     )));
                 }
                 Err(e) => {

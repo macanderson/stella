@@ -12,7 +12,7 @@ MCP servers are configured in two files with the same format:
 - `.stella/mcp.toml` in your workspace holds the servers one repository uses.
 - `~/.stella/mcp.toml` holds the servers you want in every repository. `$STELLA_HOME` moves it, along with the rest of `~/.stella`.
 
-stella reads both at **session start**, connects to each configured server, and merges the tools it offers into the agent, alongside the [built-in tools](/docs/agent-tools) and any custom tools. A missing file is skipped without a message. A file that does not parse is named in a notice, its servers are skipped, and the servers in the other file still start.
+stella reads both at **session start**, connects to each configured server, and merges the tools it offers into the agent, alongside the [built-in tools](/docs/agent-tools) and any custom tools. A missing file is skipped without a message. A file that does not parse is named in a notice, its servers are skipped, and the servers in the other file still start. stella won't follow a symlink to either file. It also refuses a file whose directory another user can write to, since that user could swap the file.
 
 ### Same server name in both files
 
@@ -31,7 +31,7 @@ stella mcp usage                  # per-server, per-tool call counts from local 
 stella mcp remove github          # drop one
 ```
 
-These commands read and write the workspace file. Edit `~/.stella/mcp.toml` by hand.
+`stella mcp list` and the deck's MCP tab show the servers from both files. `stella mcp install` adds a server to the workspace file. `grant`, `login`, `remove` and the deck's actions change the file that holds the server. When both files name it, that's the workspace file. To add a server to `~/.stella/mcp.toml`, edit the file by hand.
 
 Turning a server on or off is deliberately not a CLI command. It's session-scoped, since it changes a running conversation's tool set, so it lives in the deck's MCP tab (`/mcp`) instead.
 
@@ -43,7 +43,7 @@ The handshake is what you review. Connecting is how a server's declared capabili
 
 Either surface asks the same question. Pressing `e` on an ungranted row in the deck's MCP tab (`/mcp`) shows the declared tools and grants them. [`stella mcp grant <name>`](/docs/commands/mcp) does the same from a shell, with `--yes` for provisioning and `--revoke` to withdraw.
 
-Your answer is recorded as `granted` in `.stella/mcp.toml`, so every session reads it. For a server in `~/.stella/mcp.toml`, write `granted` in that file yourself. You're asked once, not every morning. An entry you wrote by hand carries no `granted` key and is usable without a grant, since writing the transport yourself is already the review the gate is asking for.
+Your answer is recorded as `granted` in the `mcp.toml` that holds the server, so every session reads it. You're asked once, not every morning. An entry you wrote by hand carries no `granted` key and is usable without a grant, since writing the transport yourself is already the review the gate is asking for.
 
 Because tools are added at session start, connecting a new server takes effect on your next session. Each server gets a **10-second** connect budget, and connections are isolated per server. One that hangs or fails is recorded and skipped, and it doesn't take the whole session down.
 
@@ -65,7 +65,9 @@ The MCP tab is where this review happens. Each server shows its transport, tool 
   `git clone && stella`, or an attacker-controlled `url` that workspace content gets
   sent to, which carries the same risk as [project hooks](/docs/agent-tools/hooks).
   Until you trust the repo, stella skips that file and prints the reason once. The servers in
-  your own `~/.stella/mcp.toml` still start, because only you write to that file. Opt in per repo:
+  your own `~/.stella/mcp.toml` still start, because only you write to that file. They start in
+  `~/.stella`, not in the repo. A runner such as `npx` looks for packages in the directory it
+  starts in, so this keeps the repo from swapping in its own package. Opt in per repo:
 
   ```bash
   export STELLA_TRUST_PROJECT=1

@@ -17,13 +17,15 @@ stella mcp <list|search|install|remove|grant|login|logout|usage> [args]
 
 ## What it does
 
-`stella mcp` reads and writes your workspace's `.stella/mcp.toml` file. It also talks to the MCP server registry over HTTP to search for servers and install them. It does not need a provider API key. Any server listed in `.stella/mcp.toml` connects at the start of each interactive session.
+`stella mcp` reads and writes your workspace's `.stella/mcp.toml` file and your own `~/.stella/mcp.toml` file. It also talks to the MCP server registry over HTTP to search for servers and install them. It does not need a provider API key. Any server listed in either file connects at the start of each interactive session. When both files list a server with the same name, the workspace entry is used. See [MCP servers](/docs/agent-tools/mcp) for how the two files combine.
+
+A server you install goes into the workspace file. `remove`, `grant` and `login` act on the file that holds the server. When both files hold it, they act on the workspace file.
 
 ## Subcommands
 
 ### `stella mcp list`
 
-List the MCP servers set up in `.stella/mcp.toml`. Each entry shows its name and description, saved when you installed it, with its local alias underneath. If a server is waiting for your approval, this list flags it. If a server was added by hand, or has no saved description, the list shows its endpoint instead: the URL or the command that starts it.
+List the MCP servers set up in `.stella/mcp.toml` and `~/.stella/mcp.toml`. Each entry shows its name and description, saved when you installed it, with its local alias underneath. If a server is waiting for your approval, this list flags it. If a server was added by hand, or has no saved description, the list shows its endpoint instead: the URL or the command that starts it.
 
 ```bash
 stella mcp list
@@ -67,7 +69,7 @@ If the registry can't vouch for a server, `install` refuses it. Installing write
 
 ### `stella mcp remove <name>`
 
-Remove a server from `.stella/mcp.toml` by its local name.
+Remove a server by its local name, from the file that holds it.
 
 ```bash
 stella mcp remove filesystem
@@ -85,7 +87,7 @@ stella mcp grant github --revoke   # take back an approval you gave before
 
 This connects to the real server because what matters is what it announces right now, not what a registry listing said in the past. Unless you type an explicit `y`, the prompt treats everything else, including closed input, as no.
 
-Your decision is saved as `granted` in `.stella/mcp.toml`, so it applies to every future session. Turning a server on or off is different — that's per-session only. There are three states, and each means something different:
+Your decision is saved as `granted` in the `mcp.toml` that holds the server, so it applies to every future session. Turning a server on or off is different — that's per-session only. There are three states, and each means something different:
 
 | In `mcp.toml` | Written by | The model can call it |
 | --- | --- | --- |

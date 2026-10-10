@@ -29,6 +29,7 @@ fn stdio_config(name: &str, args: &[&str]) -> McpServerConfig {
             env: BTreeMap::new(),
         },
         candidate_safe: false,
+        cwd: None,
     }
 }
 

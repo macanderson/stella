@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path;
 
 use stella_mcp::{McpServerConfig, McpTransport};
@@ -249,21 +250,7 @@ fn the_session_plan_carries_the_user_servers_and_the_workspace_override() {
         ),
     );
 
-    let provider = crate::config::PROVIDERS
-        .first()
-        .expect("the provider table is never empty")
-        .clone();
-    let model_id = provider.default_model.to_string();
-    let mut cfg = crate::config::Config::for_tests(provider, model_id);
-    cfg.workspace_root = workspace.clone();
-
-    let servers: Vec<McpServerConfig> = match crate::agent::load_mcp_plan(&cfg) {
-        crate::agent::McpPlan::Servers(servers, notices) => {
-            assert!(notices.is_empty(), "{notices:?}");
-            servers
-        }
-        other => panic!("expected servers from both files, got {other:?}"),
-    };
+    let (servers, _) = planned_servers(&workspace);
     let named = |name: &str| {
         servers
             .iter()
@@ -291,16 +278,75 @@ fn the_session_plan_carries_the_user_servers_and_the_workspace_override() {
     );
 }
 
-/// The grants read both files, the same way the plan does. A "no" in the
-/// user file holds the server back. A repo entry takes its place.
-#[test]
-fn the_session_grants_read_the_user_file_too() {
-    let _env = crate::test_env::lock();
-    let _restore =
+/// The session plan for `workspace`: its servers and the names that start
+/// granted. It fails the test when the plan connects nothing.
+fn planned_servers(workspace: &Path) -> (Vec<McpServerConfig>, HashSet<String>) {
+    let provider = crate::config::PROVIDERS
+        .first()
+        .expect("the provider table is never empty")
+        .clone();
+    let model_id = provider.default_model.to_string();
+    let mut cfg = crate::config::Config::for_tests(provider, model_id);
+    cfg.workspace_root = workspace.to_path_buf();
+    match crate::agent::load_mcp_plan(&cfg) {
+        crate::agent::McpPlan::Servers {
+            servers,
+            notices,
+            granted,
+        } => {
+            assert!(notices.is_empty(), "{notices:?}");
+            (servers, granted)
+        }
+        other => panic!("expected servers, got {other:?}"),
+    }
+}
+
+/// A home and a repo for a test that builds the session plan. The plan also
+/// reads plugin rosters, so the whole home is redirected, not only the
+/// stella root. `trusted` sets `STELLA_TRUST_PROJECT`.
+struct PlanFixture {
+    _dir: tempfile::TempDir,
+    home: std::path::PathBuf,
+    workspace: std::path::PathBuf,
+    _home: crate::paths::TestHomeGuard,
+    _restore: crate::test_env::EnvRestore,
+    _env: crate::test_env::EnvLock,
+}
+
+fn plan_fixture(trusted: bool) -> PlanFixture {
+    let env = crate::test_env::lock();
+    let restore =
         crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
-    let fx = fixture();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let home = dir.path().join("home");
+    let workspace = dir.path().join("repo");
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let home_guard = crate::paths::test_user_home(home.clone());
     // SAFETY: we hold the env lock until the env is put back.
-    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+    unsafe {
+        std::env::remove_var("STELLA_PROJECT_HOOKS");
+        if trusted {
+            std::env::set_var("STELLA_TRUST_PROJECT", "1");
+        } else {
+            std::env::remove_var("STELLA_TRUST_PROJECT");
+        }
+    }
+    PlanFixture {
+        _dir: dir,
+        home,
+        workspace,
+        _home: home_guard,
+        _restore: restore,
+        _env: env,
+    }
+}
+
+/// The grants come from the read the plan's servers came from. A "no" in
+/// the user file holds the server back, and a repo entry takes its place.
+/// An edit to a file after that read changes neither.
+#[test]
+fn the_session_grants_come_from_the_plans_own_read() {
+    let fx = plan_fixture(true);
     write_user_file(
         &fx.home,
         "[servers.withheld]\ntransport = \"stdio\"\ncmd = \"a\"\ngranted = false\n\
@@ -310,25 +356,150 @@ fn the_session_grants_read_the_user_file_too() {
         &fx.workspace,
         "[servers.overridden]\ntransport = \"stdio\"\ncmd = \"c\"\n",
     );
-    let plan: Vec<McpServerConfig> = ["withheld", "overridden"]
-        .into_iter()
-        .map(|name| McpServerConfig {
-            name: name.to_string(),
-            transport: McpTransport::Stdio {
-                cmd: "x".into(),
-                args: vec![],
-                env: Default::default(),
-            },
-            candidate_safe: false,
-        })
-        .collect();
 
-    let grants = super::super::initial_grants(&fx.workspace, &plan);
-    let granted = grants.lock().expect("grants");
+    let (_, granted) = planned_servers(&fx.workspace);
+    // The file loses its "no" after the plan was read.
+    write_user_file(&fx.home, &stdio_server("withheld", "a"));
 
     assert!(!granted.contains("withheld"), "{granted:?}");
     assert!(
         granted.contains("overridden"),
         "the hand-written workspace entry replaced the withheld one: {granted:?}"
+    );
+}
+
+/// In a repo you have not trusted, your servers start in `$STELLA_HOME`. A
+/// runner such as `npx` would otherwise load a package the repo ships.
+#[test]
+fn an_untrusted_repo_starts_your_servers_in_stella_home() {
+    let fx = plan_fixture(false);
+    write_user_file(&fx.home, &stdio_server("everywhere", "npx"));
+
+    let (servers, _) = planned_servers(&fx.workspace);
+
+    assert_eq!(servers.len(), 1, "{servers:?}");
+    assert_eq!(servers[0].cwd, Some(fx.home.join(".stella")));
+}
+
+/// In a trusted repo the repo may run code anyway, so your servers start
+/// where Stella runs, as the repo's own servers do.
+#[test]
+fn a_trusted_repo_starts_your_servers_where_stella_runs() {
+    let fx = plan_fixture(true);
+    write_user_file(&fx.home, &stdio_server("everywhere", "npx"));
+
+    let (servers, _) = planned_servers(&fx.workspace);
+
+    assert_eq!(servers.len(), 1, "{servers:?}");
+    assert_eq!(servers[0].cwd, None);
+}
+
+/// A user file that is a symlink is not followed. Its servers are skipped,
+/// and the notice names the file.
+#[cfg(unix)]
+#[test]
+fn a_symlinked_user_file_is_refused() {
+    let fx = fixture();
+    let elsewhere = fx.home.join("elsewhere.toml");
+    std::fs::write(&elsewhere, stdio_server("planted", "attacker")).expect("target");
+    std::fs::create_dir_all(fx.home.join(".stella")).expect("user stella root");
+    let user_path = fx.home.join(".stella").join("mcp.toml");
+    std::os::unix::fs::symlink(&elsewhere, &user_path).expect("symlink");
+
+    let own = load_own_config(&fx.workspace, true);
+
+    assert!(own.config.names().is_empty(), "{:?}", own.config.names());
+    assert_eq!(own.notices.len(), 1, "{:?}", own.notices);
+    assert!(
+        own.notices[0].contains(&user_path.display().to_string()),
+        "{:?}",
+        own.notices
+    );
+}
+
+/// A user file in a directory other users can write to is refused. Anyone
+/// who can write there could swap the file.
+#[cfg(unix)]
+#[test]
+fn a_user_file_in_a_shared_directory_is_refused() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let fx = fixture();
+    write_user_file(&fx.home, &stdio_server("everywhere", "user-mcp"));
+    let root = fx.home.join(".stella");
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o777)).expect("chmod");
+
+    let own = load_own_config(&fx.workspace, true);
+
+    assert!(own.config.names().is_empty(), "{:?}", own.config.names());
+    assert_eq!(own.notices.len(), 1, "{:?}", own.notices);
+}
+
+/// The `stella mcp` commands and the deck list your servers too, an OAuth
+/// login finds a server that only your file names, and a change to that
+/// server is written to your file.
+#[test]
+fn a_user_file_server_is_listed_logged_into_and_edited_in_the_user_file() {
+    let fx = fixture();
+    write_user_file(
+        &fx.home,
+        &format!(
+            "{}[servers.remote]\ntransport = \"http\"\nurl = \"https://mcp.example.com/mcp\"\n",
+            stdio_server("everywhere", "user-mcp")
+        ),
+    );
+    write_workspace_file(&fx.workspace, &stdio_server("here", "repo-mcp"));
+    let user_path = fx.home.join(".stella").join("mcp.toml");
+    let user_file = || {
+        read_mcp_file(&user_path)
+            .expect("user file")
+            .expect("there")
+    };
+
+    assert_eq!(
+        load_listed_config(&fx.workspace).expect("listing").names(),
+        vec!["everywhere", "here", "remote"]
+    );
+    assert_eq!(
+        super::super::http_server_url(&fx.workspace, "remote").as_deref(),
+        Ok("https://mcp.example.com/mcp")
+    );
+
+    assert!(super::super::set_granted(&fx.workspace, "everywhere", false).expect("grant"));
+    assert_eq!(user_file().grant_decision("everywhere"), Some(Some(false)));
+    assert_eq!(
+        super::super::load_config(&fx.workspace)
+            .expect("workspace file")
+            .names(),
+        vec!["here"],
+        "the workspace file gained no entry"
+    );
+
+    assert!(super::super::remove(&fx.workspace, "everywhere").expect("remove"));
+    assert_eq!(user_file().names(), vec!["remote"]);
+}
+
+/// When both files name a server, the workspace entry is the one that runs,
+/// so a change is written there and the user entry is left alone.
+#[test]
+fn a_shared_name_is_edited_in_the_workspace_file() {
+    let fx = fixture();
+    write_user_file(&fx.home, &stdio_server("github", "user-github"));
+    write_workspace_file(&fx.workspace, &stdio_server("github", "repo-github"));
+    let user_path = fx.home.join(".stella").join("mcp.toml");
+
+    assert!(super::super::set_granted(&fx.workspace, "github", false).expect("grant"));
+
+    assert_eq!(
+        super::super::load_config(&fx.workspace)
+            .expect("workspace file")
+            .grant_decision("github"),
+        Some(Some(false))
+    );
+    assert_eq!(
+        read_mcp_file(&user_path)
+            .expect("user file")
+            .expect("there")
+            .grant_decision("github"),
+        Some(None)
     );
 }
