@@ -3327,6 +3327,7 @@ name = "stella-cli"
 version = "0.9.489"
 dependencies = [
  "async-trait",
+ "base64 0.23.1",
  "clap",
  "clap_complete",
  "colored",
@@ -3336,6 +3337,7 @@ dependencies = [
  "contextgraph-types",
  "cpal",
  "dotenvy",
+ "ed25519-dalek",
  "futures-util",
  "hmac",
  "libc",
