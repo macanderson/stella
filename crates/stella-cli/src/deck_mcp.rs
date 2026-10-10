@@ -32,8 +32,8 @@ use crate::config::Config;
 ///
 /// - `disabled` — servers the operator toggled off. Session-scoped by design:
 ///   it changes a running conversation's tool set and is forgotten at exit.
-/// - `grants` — servers whose declared capabilities the operator granted (SPEC
-///   §9.3). Mirrors the `mcp.toml` files, so unlike the toggle it survives.
+/// - `grants` — servers the operator granted (SPEC §9.3). Each grant is also
+///   saved to a file, so it lasts. The toggle does not.
 ///
 /// Both are `Arc<Mutex<HashSet<_>>>` shared with `McpToolSet`, which re-reads
 /// them on every advertise and every dispatch — so a toggle or a grant takes
@@ -44,8 +44,8 @@ pub(crate) struct McpSession {
     pub(crate) grants: stella_mcp::CapabilityGrants,
 }
 
-/// Build the MCP tab snapshot: every configured server (both `mcp.toml` files)
-/// joined with its live session state — enabled (not in the disabled set),
+/// Build the MCP tab snapshot. It lists the servers in both `mcp.toml` files.
+/// Each row joins a server with its live session state — enabled (not in the disabled set),
 /// connected (in the live tool set), health, per-server tool count (derived
 /// from the advertised schemas, so it is 0 the moment a server is disabled),
 /// configured credential field names, and total recorded tool calls.
@@ -421,10 +421,10 @@ fn display_signature(signature: stella_mcp::SignatureStatus) -> stella_tui::McpS
     }
 }
 
-/// Record a capability grant and make it effective in this session: the
-/// decision goes to the `mcp.toml` that holds the server, the name joins the
-/// shared grant set the tool layer consults on every model call, and the
-/// server is enabled.
+/// Record a grant and make it live in this session. The grant is saved in the
+/// file that holds the server. The name joins the
+/// shared grant set, which the tool layer reads on each model call. And the
+/// server is turned on.
 ///
 /// Disk first. A grant that is live but unrecorded would evaporate at the next
 /// start, and the operator — who just read a tool list and answered for it —
