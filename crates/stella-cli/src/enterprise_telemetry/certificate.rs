@@ -35,7 +35,6 @@ pub(crate) struct CertificateClaims {
     event_classes: Vec<EnrollmentEventClass>,
     // Parsed so that any other mode is refused. Only one mode exists, so the
     // bytes write `process_free` as a fixed string.
-    #[allow(dead_code, reason = "read only by serde to refuse other modes")]
     host_data_isolation: HostDataIsolation,
     model_catalog: Vec<ManagedModelDimension>,
     issued_at_unix_s: i64,
@@ -60,6 +59,9 @@ pub(crate) fn parse_certificate_claims(value: &Value) -> Result<CertificateClaim
 /// The bytes that Oxagen signs. They add `device_public_key` after
 /// `credential_env`. Each other field sits where the HMAC bytes put it.
 pub(crate) fn canonical_certificate_bytes(claims: &CertificateClaims) -> Result<Vec<u8>, String> {
+    // Only one mode exists. A second one fails to compile here until the
+    // encoding says how to write it.
+    let HostDataIsolation::ProcessFree = claims.host_data_isolation;
     encode_claims(
         CERTIFICATE_DOMAIN,
         &[
