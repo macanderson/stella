@@ -65,7 +65,7 @@ fn save_config_at(path: &Path, cfg: &McpConfig) -> Result<(), String> {
             .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
     }
     let toml = cfg.to_toml_string().map_err(|e| e.to_string())?;
-    stella_store::write_sensitive_file_atomic(&path, toml.as_bytes())
+    stella_store::write_sensitive_file_atomic(path, toml.as_bytes())
         .map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
