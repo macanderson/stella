@@ -773,6 +773,27 @@ pub(crate) enum McpPlan {
     Servers(Vec<McpServerConfig>, Vec<String>),
 }
 
+/// Your own MCP servers: `$STELLA_HOME/mcp.toml` with the workspace's
+/// `.stella/mcp.toml` laid over it (`mcp_cmd::scopes`).
+///
+/// The one place the project-trust gate is asked about MCP. A cloned repo's
+/// `.stella/mcp.toml` can name an arbitrary stdio `command` (executed at
+/// session start — RCE on `git clone && stella`) or an attacker-controlled
+/// http endpoint. That is the same code-execution risk as project hooks, so
+/// it is gated by the same flag: untrusted, the workspace file is not read
+/// and the reason is said once. The user file is not gated, for the reason
+/// `~/.stella/stella.toml`'s hooks are not: only you write to it.
+///
+/// [`load_mcp_plan`], [`own_mcp_server_names`] and
+/// `mcp_cmd::initial_grants` all read through here, so the plan, the plugin
+/// principals and the grant set agree on whose server a name is.
+pub(crate) fn own_mcp_config(workspace_root: &std::path::Path) -> crate::mcp_cmd::OwnMcpConfig {
+    crate::mcp_cmd::load_own_config(
+        workspace_root,
+        crate::settings::project_code_execution_trusted(),
+    )
+}
+
 /// The server names you configured yourself: those in `$STELLA_HOME/mcp.toml`
 /// and in the workspace's `.stella/mcp.toml`. A file that is missing, does
 /// not parse, or is refused by the trust gate adds none.
@@ -786,15 +807,12 @@ pub(crate) fn own_mcp_server_names(workspace_root: &std::path::Path) -> Vec<Stri
     {
         return Vec::new();
     }
-    crate::mcp_cmd::load_own_config(
-        workspace_root,
-        crate::settings::project_code_execution_trusted(),
-    )
-    .config
-    .names()
-    .into_iter()
-    .map(str::to_string)
-    .collect()
+    own_mcp_config(workspace_root)
+        .config
+        .names()
+        .into_iter()
+        .map(str::to_string)
+        .collect()
 }
 
 pub(crate) fn load_mcp_plan(cfg: &Config) -> McpPlan {
@@ -803,30 +821,18 @@ pub(crate) fn load_mcp_plan(cfg: &Config) -> McpPlan {
     {
         return McpPlan::None;
     }
-    // Your own servers: `$STELLA_HOME/mcp.toml` with the workspace's
-    // `.stella/mcp.toml` laid over it (`mcp_cmd::scopes`).
+    // Your own servers, behind the trust gate ([`own_mcp_config`]).
     //
-    // Trust gate. A cloned repo's `.stella/mcp.toml` can name an arbitrary
-    // stdio `command` (executed at session start — RCE on `git clone && stella`)
-    // or an attacker-controlled http endpoint (egress + a would-be-whitelisted
-    // phone-home). This is the same code-execution risk as project hooks, so it
-    // is gated by the same flag: untrusted, the workspace file is not read and
-    // the reason is said once. The user file is not gated, for the reason
-    // `~/.stella/stella.toml`'s hooks are not: only you write to it.
-    //
-    // It gates the packages too, and needs no second check to: a project-tier
-    // package does not reach the roster at all in an untrusted checkout, and a
-    // user-tier one is not gated, because nothing arrives there
-    // except through `stella plugin install`'s consent transaction
+    // The gate covers the packages too, and needs no second check to: a
+    // project-tier package does not reach the roster at all in an untrusted
+    // checkout, and a user-tier one is not gated, because nothing arrives
+    // there except through `stella plugin install`'s consent transaction
     // (`plugin_cmd::roster::read_project_tier`).
     //
     // A file of yours that is refused or does not parse adds a notice and no
     // servers, and the rest still start. When nothing at all is left, that
     // notice becomes the session's reason, below.
-    let own = crate::mcp_cmd::load_own_config(
-        &cfg.workspace_root,
-        crate::settings::project_code_execution_trusted(),
-    );
+    let own = own_mcp_config(&cfg.workspace_root);
     let mut servers = own.config.into_servers();
     let mut notices = own.notices;
 

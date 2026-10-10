@@ -23,7 +23,7 @@ use crate::settings::Settings;
 
 mod scopes;
 
-pub(crate) use scopes::load_own_config;
+pub(crate) use scopes::{OwnMcpConfig, load_own_config};
 
 /// The workspace's MCP server config file.
 pub fn mcp_toml_path(workspace_root: &Path) -> PathBuf {
@@ -327,8 +327,8 @@ pub(crate) fn latency_ms(health: &[stella_mcp::ServerHealth], name: &str) -> Opt
 ///   is granted for the same reason: installing the plugin was the decision,
 ///   and there is no entry a grant could even be recorded in.
 ///
-/// The decisions come from [`load_own_config`], the merge the plan was built
-/// from. A file that does not parse put no servers into the plan, so none of
+/// The decisions come from `agent::own_mcp_config`, the merge the plan was
+/// built from. A file that does not parse put no servers into the plan, so none of
 /// its decisions is needed here.
 pub fn initial_grants(
     workspace_root: &Path,
@@ -337,11 +337,7 @@ pub fn initial_grants(
     // The same merge the plan was built from, so a decision the user file
     // records holds for the server it describes, and a workspace entry that
     // replaced it brings its own decision.
-    let cfg = load_own_config(
-        workspace_root,
-        crate::settings::project_code_execution_trusted(),
-    )
-    .config;
+    let cfg = crate::agent::own_mcp_config(workspace_root).config;
     let granted = servers
         .iter()
         .filter(|s| {
@@ -1167,6 +1163,13 @@ mod tests {
     /// chosen by the operator; a registry install is one keystroke.
     #[test]
     fn the_session_grants_come_from_how_each_server_was_configured() {
+        let _env = crate::test_env::lock();
+        let _restore =
+            crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+        // The grants read the workspace file only when the project is
+        // trusted, the same as the plan the grants are for.
+        // SAFETY: we hold the env lock until the env is put back.
+        unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let transport = || McpTransport::Stdio {
