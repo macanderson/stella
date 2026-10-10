@@ -48,6 +48,7 @@ async fn startup(server_uri: &str, store_dir: &Path) -> (McpToolSet, Arc<OAuthMa
             headers: BTreeMap::new(),
         },
         candidate_safe: false,
+        cwd: None,
     }];
     let set =
         McpToolSet::connect_with_auth(&configs, Duration::from_secs(5), Some(manager.clone()))

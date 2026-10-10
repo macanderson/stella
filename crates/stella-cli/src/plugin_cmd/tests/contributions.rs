@@ -563,7 +563,7 @@ fn a_plugins_mcp_server_merges_behind_the_trust_gate_and_runs_as_the_plugin() {
     let mut cfg = crate::config::Config::for_tests(provider, model_id);
     cfg.workspace_root = root.clone();
     match crate::agent::load_mcp_plan(&cfg) {
-        crate::agent::McpPlan::Servers(servers, _) => assert!(
+        crate::agent::McpPlan::Servers { servers, .. } => assert!(
             servers.iter().any(|server| server.name == "acme"),
             "a package's server joins the session plan: {servers:?}"
         ),

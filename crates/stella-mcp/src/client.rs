@@ -650,9 +650,9 @@ async fn build_transport(
     auth: Option<&OAuthManager>,
 ) -> Result<Box<dyn Transport>, McpError> {
     Ok(match &config.transport {
-        McpTransport::Stdio { cmd, args, env } => {
-            Box::new(StdioTransport::spawn(&config.name, cmd, args, env).await?)
-        }
+        McpTransport::Stdio { cmd, args, env } => Box::new(
+            StdioTransport::spawn(&config.name, cmd, args, env, config.cwd.as_deref()).await?,
+        ),
         McpTransport::Http { url, headers } => {
             let mut transport = HttpTransport::new(&config.name, url, headers, timeout)?;
             if let Some(manager) = auth {

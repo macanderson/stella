@@ -56,6 +56,7 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -231,14 +232,19 @@ pub struct StdioTransport {
 impl StdioTransport {
     /// Spawn `cmd args…` with a scrubbed environment plus exactly the keys in
     /// `env`, and start the reader task. `server_name` is used only to make
-    /// error messages self-identifying.
+    /// error messages self-identifying. `cwd` is the child's working
+    /// directory; `None` keeps this process's.
     pub async fn spawn(
         server_name: &str,
         cmd: &str,
         args: &[String],
         env: &BTreeMap<String, String>,
+        cwd: Option<&Path>,
     ) -> Result<Self, McpError> {
         let mut command = Command::new(cmd);
+        if let Some(dir) = cwd {
+            command.current_dir(dir);
+        }
         command
             .args(args)
             .env_clear() // SCRUB — no ambient inheritance.
@@ -603,8 +609,14 @@ mod tests {
     #[tokio::test]
     async fn spawning_a_missing_binary_is_a_transport_error() {
         let env = BTreeMap::new();
-        let result =
-            StdioTransport::spawn("ghost", "definitely-not-a-real-binary-xyzzy", &[], &env).await;
+        let result = StdioTransport::spawn(
+            "ghost",
+            "definitely-not-a-real-binary-xyzzy",
+            &[],
+            &env,
+            None,
+        )
+        .await;
         assert!(matches!(result, Err(McpError::Transport(_))));
     }
 
@@ -619,10 +631,34 @@ mod tests {
         // `cat` is a bare name that only resolves through PATH; with the
         // scrub-everything-but-PATH policy it must still be found and spawned.
         let env = BTreeMap::new();
-        let transport = StdioTransport::spawn("cat-server", "cat", &[], &env)
+        let transport = StdioTransport::spawn("cat-server", "cat", &[], &env, None)
             .await
             .expect("a bare runner must resolve via the inherited PATH");
         let _ = transport.close().await;
+    }
+
+    /// The child runs in the `cwd` its caller gives. A runner such as `npx`
+    /// resolves packages from that directory, so the directory is part of
+    /// what the server runs.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_child_starts_in_the_given_directory() {
+        let dir = std::env::temp_dir().join(format!("stella-mcp-cwd-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("cwd dir");
+        let env = BTreeMap::new();
+        let args = ["-c".to_string(), "touch started-here; exec cat".to_string()];
+        let transport = StdioTransport::spawn("cwd-server", "sh", &args, &env, Some(&dir))
+            .await
+            .expect("sh must spawn");
+        let marker = dir.join("started-here");
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !marker.exists() && std::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let _ = transport.close().await;
+        let started_there = marker.exists();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(started_there, "the child did not run in {}", dir.display());
     }
 
     /// #613: a caller-side timeout drops the `request` future, and the slot it
@@ -638,7 +674,7 @@ mod tests {
     #[tokio::test]
     async fn a_dropped_request_reclaims_its_pending_slot() {
         let env = BTreeMap::new();
-        let transport = StdioTransport::spawn("cat-server", "cat", &[], &env)
+        let transport = StdioTransport::spawn("cat-server", "cat", &[], &env, None)
             .await
             .expect("cat must spawn");
 
