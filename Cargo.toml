@@ -180,6 +180,9 @@ scraper = { version = "0.27", default-features = false, features = ["errors"] }
 rusqlite = { version = "0.40", features = ["bundled"] }
 hmac = "0.13"
 sha2 = "0.11"
+# Verifies the enterprise enrollment certificate in `stella-cli`. Already in
+# the lock through `contextgraph-types`, so this adds no crate to the tree.
+ed25519-dalek = { version = "2.2", default-features = false, features = ["std"] }
 tempfile = "3"
 # Snapshot review for the TUI v2 golden frames. The v1 deck's own golden
 # harness (`crates/stella-tui/tests/deck_render_snapshots.rs`) deliberately

@@ -1,0 +1,38 @@
+{
+  "$comment": "Cross-language conformance vector for the enterprise enrollment certificate (ADR-6604): canonical_enrollment_bytes under the domain 'stella.enterprise.telemetry.enrollment-certificate.v1', then Ed25519. The private key is test data for this vector and nothing else. oxagen's TypeScript signer (packages/handlers/src/lib/stella-enrollment-certificate.ts) and stella's Rust verifier (crates/stella-cli/src/enterprise_telemetry.rs) each pin this file with a test, so a change to the encoding fails both.",
+  "signing_private_key_pem": "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEILHAtkPmy6eW6E0pri5TUGID2g9/usoeF4SGB/MT/Nk1\n-----END PRIVATE KEY-----\n",
+  "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAU78WPcDzr9xEE1uusFu7BBb3GTAojT6fc/KAYO5yJ4M=\n-----END PUBLIC KEY-----\n",
+  "kid": "514ff0082816049e",
+  "claims": {
+    "schema": "stella.enterprise.telemetry.enrollment.v1",
+    "issuer": "oxagen-enterprise",
+    "audience": "stella-cli",
+    "enrollment_id": "sten_conformance0001",
+    "organization_id": "org_conformance",
+    "workspace_id": "ws_conformance",
+    "endpoint": "https://api.oxagen.sh/v1/telemetry/stella/operational",
+    "credential_env": "STELLA_ENTERPRISE_TELEMETRY_TOKEN",
+    "device_public_key": "ed25519:U78WPcDzr9xEE1uusFu7BBb3GTAojT6fc/KAYO5yJ4M=",
+    "event_classes": ["execution_rollup"],
+    "host_data_isolation": "process_free",
+    "model_catalog": [
+      {
+        "provider": "anthropic",
+        "model": "anthropic/claude-fable-5"
+      },
+      {
+        "provider": "openai",
+        "model": "openai/gpt-5"
+      }
+    ],
+    "issued_at_unix_s": 1760054400,
+    "expires_at_unix_s": 1767830400
+  },
+  "canonical_bytes_sha256": "44bc599e20cfaa94cc5390f969c7f0858a009339b92f243f85622a26f90615c9",
+  "canonical_bytes_length": 487,
+  "signature": {
+    "kid": "514ff0082816049e",
+    "alg": "ed25519",
+    "sig": "KhhUsGXqWyxiHDonpgIJ6SLcFf8M6dj+cum/4BB8WYndzy87wBGejxNgyeDBA8kH4jHfR2CED5a6wVHxx+U9BA=="
+  }
+}
