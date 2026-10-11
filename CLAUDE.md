@@ -421,6 +421,10 @@ Mac set this on 2026-09-26 for every repository. The `agent-monitored-pr` label 
   can still do for the next one, and it is what turns a collision into a
   stand-down.
 
+## Attribution
+
+Write no Claude attribution anywhere: no `Co-Authored-By` line naming Claude, no `claude.ai/code` session or project link, and no "Generated with Claude Code" line. This covers commits, PR bodies, issue bodies, and every comment. Mac set this on 2026-10-11 for every repository. `.claude/settings.json` turns off Claude Code's own commit and PR attribution.
+
 ## Headings and labels: plain nouns
 
 A heading names the thing, a caption states one fact, and no label carries a comma, a mid-dot,
