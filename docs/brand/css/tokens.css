@@ -33,8 +33,8 @@
 
 :root {
   /* ---- brand core ------------------------------------------------------ */
-  /* Roles, pointed at the ramp below. scripts/sync-brand-assets.mjs writes
-     the house value of each `--st-*` it owns, so the roles follow the kit. */
+  /* Roles, pointed at the ramp below. The `--st-*` values the house palette
+     owns are committed copies of the kit's. Edit them by hand. */
   --stella-brand: var(--st-gold);      /* the brand metal */
   --stella-brand-deep: var(--st-ink);  /* brand *text* on light is never gold */
   --stella-ink: var(--st-bg);          /* the canvas */

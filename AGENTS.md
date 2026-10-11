@@ -28,11 +28,20 @@ Oxagen's *Engineering Deterministic AI Coding Agents* field manual.
 
 ---
 
+## Operating cost ceiling
+
+Mac set this on 2026-10-06 for every Oxagen repository. Until a customer is live, the whole product costs at most $1,000 a month to operate. The total covers hosting, databases, CI minutes, model calls, vendors, and domains across every repository. Spending above it needs Mac's approval before the money is spent.
+
+- **Weigh cost in every design.** Before you add a CI job, a service, a vendor, a scheduled task, or a larger instance, estimate its monthly cost and state it in the pull request.
+- **CI does two jobs.** It prevents regressions by running the unit tests, and it deploys to production on merge. Applying a migration before the deploy is part of deploying. Add no other CI job without Mac's approval. The checks CI already runs stay until Mac decides which to cut, and their minutes count toward the ceiling.
+- **Ask before crossing the ceiling.** When a change would take the monthly total past $1,000, stop and ask Mac. Do not merge it, start it, or buy it until Mac approves.
+
 ## Local execution
 
-Mac set this on 2026-09-26 for every repository on this machine. Local builds, test runs, dev servers, and git hooks ran the laptop out of memory and killed agent runs partway through, and every killed run costs money. CI is the only place code is built, checked, or tested.
+Mac set this on 2026-09-26 for every repository on this machine. Local builds, test runs, dev servers, and git hooks ran the laptop out of memory and killed agent runs partway through, and every killed run costs money. CI is the only place code is built or checked, and the only place the full test suite runs. Mac amended this on 2026-10-05: an agent may run the tests of a package it changed, one package at a time, with at most two test workers.
 
-- Do not run the gate, a build, a typecheck, a lint, or any test, not even one test file. Push the branch and read the CI result. Read a failed job with `gh run view --job <id> --log-failed`.
+- Do not run the gate, a build, a typecheck, a lint, or the full test suite. Push the branch and read the CI result. Read a failed job with `gh run view --job <id> --log-failed`.
+- Before you push, you may run the tests of a package you changed. Run one package at a time, with at most two test workers, and never with coverage or watch mode. In a Node package, run `pnpm --filter <package> exec vitest run --maxWorkers=2`. In a Rust crate, run `cargo test -p <crate> -j 2 -- --test-threads=2`. Never start tests through `pnpm test`, `turbo`, or the repository root, because those run every package at once.
 - Do not start a dev server: no `next dev`, `next start`, `pnpm dev`, a server under `cargo run`, or anything else that listens on a port.
 - Do not start Docker or Colima, and do not run anything that needs them.
 - Do not run Biome in any form.
@@ -1653,7 +1662,7 @@ editing Stella's own code should know what lives where:
 | `.stella/tools/*.toml` | Developer-defined custom script tools. Also scanned at `~/.stella/tools/`. |
 | `.stella/issues/<provider>.toml` | The active tracker's provider manifest: which raw statuses mean open, how each resolution is spelled, and which labels mean which issue class (`doc:agent-native-delivery` §4.1). GitHub's and Linear's both ship embedded in the binary (`crates/stella-cli/src/issue_provider/github.toml` and `linear.toml`, listed in that module's `BUILT_IN` table) and a file here of the same name shadows one, key by key. Adding a tracker is a `.toml` beside those two and a row in that table — no code branches on a provider name. `stella.toml`'s `[issues]` says which provider is active. |
 | `.stella/settings.json` | Project-scope provider config (overrides built-ins or defines new providers) and tool switches (`tools.delegate: "off"` withholds the sub-agent delegation tool — every built-in is registered by default since #710). Merged per-field with org-managed and user scopes. |
-| `.stella/mcp.toml` | MCP server config — extra tools merged into the registry at session start. An installed plugin may also ship one (`<plugin_dir>/mcp.toml`, declared as `[[mcp]]`, #4733); a server of yours keeps its name on a collision, and the package's copy is dropped with a notice. |
+| `.stella/mcp.toml` | MCP server config — extra tools merged into the registry at session start. `~/.stella/mcp.toml` holds servers for every repository, and an entry here with the same name replaces that one whole (`stella-cli`'s `mcp_cmd::scopes`). An installed plugin may also ship one (`<plugin_dir>/mcp.toml`, declared as `[[mcp]]`, #4733); a server of yours keeps its name on a collision, and the package's copy is dropped with a notice. |
 | `.stella/domains.toml` | Domain taxonomy for memory/reflection tagging, inferred by `stella init`. |
 | `.stella/workspace.json` | Durable per-workspace telemetry identity (`workspace_id`), written by `stella cloud register`. Deliberately **outside** `private/` and safe to commit — sharing it makes every clone/machine report under one `workspace_id` to a cloud org. |
 | `.stella/private/` | Owner-only generated local state (`0700`; files `0600`). The generated `.stella/.gitignore` excludes this whole directory. |

@@ -77,9 +77,8 @@ const softwareJsonLd = {
  * text-m-micro, both from src/brand/house-type.css. text-m-micro sets the
  * code face, so small text that people read adds font-sans. The h1 and each
  * section's h2 take the display face, Space Grotesk, from the heading rule in
- * global.css. The brand check (`scripts/sync-brand-assets.mjs --check`) fails
- * on a Tailwind size class such as text-sm here, and on a face class on a
- * heading.
+ * global.css. Use no Tailwind size class such as text-sm here, and no face
+ * class on a heading.
  */
 
 /**

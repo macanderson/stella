@@ -16,7 +16,7 @@ use stella_core::router::{CircuitBreaker, ProviderProfile};
 use stella_core::{
     BudgetGuard, CalibrationMap, Engine, EngineConfig, RoleTable, Router, TurnOutcome,
 };
-use stella_mcp::{McpConfig, McpServerConfig, McpToolSet};
+use stella_mcp::{McpServerConfig, McpToolSet};
 use stella_model::credential::ApiKey;
 use stella_model::provider::Provider;
 use stella_protocol::{
@@ -749,9 +749,10 @@ pub(crate) async fn record_turn_episode<T, E>(
 /// tool call at 10s.
 pub(crate) const MCP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// The parse of `.stella/mcp.toml` **and** of every installed package's own
-/// `mcp.toml`, split from the connect so a caller that owns a UI (the deck)
-/// can announce the slow part before awaiting it (#98).
+/// The parse of the user's `$STELLA_HOME/mcp.toml`, the workspace's
+/// `.stella/mcp.toml`, **and** every installed package's own `mcp.toml`,
+/// split from the connect so a caller that owns a UI (the deck) can announce
+/// the slow part before awaiting it (#98).
 #[derive(Debug)]
 pub(crate) enum McpPlan {
     /// No config file, no package servers, and nothing to say about it.
@@ -765,15 +766,46 @@ pub(crate) enum McpPlan {
     /// only when nothing at all is left to connect that its reason becomes the
     /// session's reason — disabling nothing needs no protecting.
     Invalid(String),
-    /// Servers to connect via [`connect_mcp_servers`] — never empty — and how
-    /// the list was narrowed on the way: a package whose file did not parse, or
-    /// whose server was dropped because the user runs one under the same name.
-    Servers(Vec<McpServerConfig>, Vec<String>),
+    /// Servers to connect via [`connect_mcp_servers`].
+    Servers {
+        /// Never empty.
+        servers: Vec<McpServerConfig>,
+        /// How the list was narrowed on the way: a file of yours that was
+        /// skipped, a package whose file did not parse, or a package server
+        /// dropped because you run one under the same name.
+        notices: Vec<String>,
+        /// The servers whose capabilities start granted
+        /// (`mcp_cmd::initial_grants`). It is built from the same read of
+        /// the files as `servers`, so a file edited after that read cannot
+        /// give a server another entry's decision.
+        granted: std::collections::HashSet<String>,
+    },
 }
 
-/// The server names the workspace's **own** `.stella/mcp.toml` defines —
-/// empty when there is no file, it does not parse, or the trust gate would
-/// refuse it anyway.
+/// Your own MCP servers: `$STELLA_HOME/mcp.toml` with the workspace's
+/// `.stella/mcp.toml` laid over it (`mcp_cmd::scopes`).
+///
+/// The one place the project-trust gate is asked about MCP. A cloned repo's
+/// `.stella/mcp.toml` can name an arbitrary stdio `command` (executed at
+/// session start — RCE on `git clone && stella`) or an attacker-controlled
+/// http endpoint. That is the same code-execution risk as project hooks, so
+/// it is gated by the same flag: untrusted, the workspace file is not read
+/// and the reason is said once. The user file is not gated, for the reason
+/// `~/.stella/stella.toml`'s hooks are not: only you write to it.
+///
+/// [`load_mcp_plan`] and [`own_mcp_server_names`] both read through here, so
+/// the plan, its grant set and the plugin principals agree on whose server a
+/// name is.
+pub(crate) fn own_mcp_config(workspace_root: &std::path::Path) -> crate::mcp_cmd::OwnMcpConfig {
+    crate::mcp_cmd::load_own_config(
+        workspace_root,
+        crate::settings::project_code_execution_trusted(),
+    )
+}
+
+/// The server names you configured yourself: those in `$STELLA_HOME/mcp.toml`
+/// and in the workspace's `.stella/mcp.toml`. A file that is missing, does
+/// not parse, or is refused by the trust gate adds none.
 ///
 /// The collision rule's left-hand side, named once so
 /// [`load_mcp_plan`] and `tool_stack::contributed_server_principals` cannot
@@ -781,15 +813,15 @@ pub(crate) enum McpPlan {
 pub(crate) fn own_mcp_server_names(workspace_root: &std::path::Path) -> Vec<String> {
     if crate::settings::filesystem_settings_disabled()
         || crate::enterprise_telemetry::process_free_authority_active()
-        || !crate::settings::project_code_execution_trusted()
     {
         return Vec::new();
     }
-    std::fs::read_to_string(workspace_root.join(".stella").join("mcp.toml"))
-        .ok()
-        .and_then(|text| McpConfig::from_toml_str(&text).ok())
-        .map(|parsed| parsed.names().into_iter().map(str::to_string).collect())
-        .unwrap_or_default()
+    own_mcp_config(workspace_root)
+        .config
+        .names()
+        .into_iter()
+        .map(str::to_string)
+        .collect()
 }
 
 pub(crate) fn load_mcp_plan(cfg: &Config) -> McpPlan {
@@ -798,46 +830,26 @@ pub(crate) fn load_mcp_plan(cfg: &Config) -> McpPlan {
     {
         return McpPlan::None;
     }
-    let path = cfg.workspace_root.join(".stella").join("mcp.toml");
-    // Trust gate. A cloned repo's `.stella/mcp.toml` can name an arbitrary
-    // stdio `command` (executed at session start — RCE on `git clone && stella`)
-    // or an attacker-controlled http endpoint (egress + a would-be-whitelisted
-    // phone-home). This is the same code-execution risk as project hooks, so it
-    // is gated by the same flag: untrusted, we do not connect and say why once.
-    // (Project settings.json hooks/credential-routing are already gated in
-    // settings.rs; this closes the parallel .stella/mcp.toml hole.)
+    // Your own servers, behind the trust gate ([`own_mcp_config`]).
     //
-    // It gates the packages too, and needs no second check to: a project-tier
-    // package does not reach the roster at all in an untrusted checkout, and a
-    // user-tier one is not gated, because nothing arrives there
-    // except through `stella plugin install`'s consent transaction
-    // (`plugin_cmd::roster::read_project_tier`). What the flag does decide here
-    // is the workspace's own file, below.
-    let own = std::fs::read_to_string(&path).ok();
-    if own.is_some() && !crate::settings::project_code_execution_trusted() {
-        return McpPlan::Invalid(format!(
-            "{} was NOT loaded — set STELLA_TRUST_PROJECT=1 to let this repo start its \
-             MCP servers (they run commands / open connections on your machine)",
-            path.display()
-        ));
-    }
-    let mut servers = Vec::new();
-    if let Some(text) = own {
-        match McpConfig::from_toml_str(&text) {
-            Ok(parsed) => servers = parsed.into_servers(),
-            Err(e) => {
-                return McpPlan::Invalid(format!(
-                    "{} is invalid: {e} — MCP servers disabled this session",
-                    path.display()
-                ));
-            }
-        }
-    }
+    // The gate covers the packages too, and needs no second check to: a
+    // project-tier package does not reach the roster at all in an untrusted
+    // checkout, and a user-tier one is not gated, because nothing arrives
+    // there except through `stella plugin install`'s consent transaction
+    // (`plugin_cmd::roster::read_project_tier`).
+    //
+    // A file of yours that is refused or does not parse adds a notice and no
+    // servers, and the rest still start. When nothing at all is left, that
+    // notice becomes the session's reason, below.
+    // In an untrusted repo, `servers()` starts them in `$STELLA_HOME`, so
+    // the repo's files do not decide what a runner such as `npx` loads.
+    let own = own_mcp_config(&cfg.workspace_root);
+    let mut servers = own.servers();
+    let mut notices = own.notices;
 
     // The packages', after the user's own, so the collision rule below reads
     // in one direction: yours is already in the list, and a package's copy of
     // that name is what gets dropped.
-    let mut notices = Vec::new();
     for contributed in
         crate::plugin_cmd::package::contributed_mcp_servers(&cfg.workspace_root, &mut notices)
     {
@@ -859,9 +871,13 @@ pub(crate) fn load_mcp_plan(cfg: &Config) -> McpPlan {
 
     match (servers.is_empty(), notices.is_empty()) {
         (true, true) => McpPlan::None,
-        // Nothing left to connect, so the packages' reasons are the session's.
+        // Nothing left to connect, so the reasons above are the session's.
         (true, false) => McpPlan::Invalid(notices.join(" · ")),
-        _ => McpPlan::Servers(servers, notices),
+        _ => McpPlan::Servers {
+            granted: crate::mcp_cmd::initial_grants(&own.config, &servers),
+            servers,
+            notices,
+        },
     }
 }
 
@@ -902,7 +918,7 @@ pub(crate) async fn connect_mcp_servers(
     set
 }
 
-/// Connect the workspace's MCP servers (.stella/mcp.toml), wrapping the
+/// Connect the session's MCP servers ([`load_mcp_plan`]), wrapping the
 /// native registry so their tools merge into the agent's set under
 /// `mcp__<server>__<tool>` names. Absent config -> None (zero overhead).
 /// Connection is best-effort per server (stella-mcp isolates failures);
@@ -916,7 +932,7 @@ pub(crate) async fn connect_mcp(
     usage: Option<stella_store::mcp_usage::McpUsageLedger>,
     print_diagnostics: bool,
 ) -> Result<Option<Arc<McpToolSet>>, String> {
-    let servers = match load_mcp_plan(cfg) {
+    let (servers, granted) = match load_mcp_plan(cfg) {
         McpPlan::None => return Ok(None),
         McpPlan::Invalid(reason) => {
             if print_diagnostics {
@@ -924,13 +940,17 @@ pub(crate) async fn connect_mcp(
             }
             return Ok(None);
         }
-        McpPlan::Servers(servers, notices) => {
+        McpPlan::Servers {
+            servers,
+            notices,
+            granted,
+        } => {
             if print_diagnostics {
                 for notice in notices {
                     eprintln!("  {} {notice}", "!".yellow());
                 }
             }
-            servers
+            (servers, granted)
         }
     };
     // A one-shot run has no interactive enable/disable, so no disabled set.
@@ -938,7 +958,7 @@ pub(crate) async fn connect_mcp(
     // with no deck attached reads the same answer the deck wrote, and a server
     // nobody has reviewed must not become callable by being run from a script.
     let auth = crate::mcp_cmd::oauth_manager(&cfg.workspace_root)?;
-    let grants = crate::mcp_cmd::initial_grants(&cfg.workspace_root, &servers);
+    let grants = Arc::new(std::sync::Mutex::new(granted));
     let set = connect_mcp_servers(&servers, native, usage, None, Some(grants), Some(auth)).await;
     if print_diagnostics {
         crate::mcp_cmd::print_connect_diagnostics(&set);

@@ -1576,9 +1576,9 @@ dependencies = [
 
 [[package]]
 name = "insta"
-version = "1.48.0"
+version = "1.49.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86f0f8fee8c926415c58d6ae43a08523a26faccb2323f5e6b644fe7dd4ef6b82"
+checksum = "b67d3d2e287e4b86c10b3f3b641033d1f89b74bdb39d05f34952e2b9a6fe21cd"
 dependencies = [
  "console",
  "once_cell",
@@ -1740,9 +1740,9 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "libc"
-version = "0.2.189"
+version = "0.2.190"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
+checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
 
 [[package]]
 name = "libm"
@@ -3131,9 +3131,9 @@ dependencies = [
 
 [[package]]
 name = "serde_spanned"
-version = "1.1.1"
+version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6662b5879511e06e8999a8a235d848113e942c9124f211511b16466ee2995f26"
+checksum = "4e7523beb55eece201a2356bee0bbca0d1ab466c14c07703b2e0ee6d42cb0c2c"
 dependencies = [
  "serde_core",
 ]
@@ -3310,11 +3310,11 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "stella-ansi"
-version = "0.9.484"
+version = "0.9.492"
 
 [[package]]
 name = "stella-autonomy"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "proptest",
  "serde",
@@ -3324,9 +3324,10 @@ dependencies = [
 
 [[package]]
 name = "stella-cli"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "async-trait",
+ "base64 0.23.1",
  "clap",
  "clap_complete",
  "colored",
@@ -3336,6 +3337,7 @@ dependencies = [
  "contextgraph-types",
  "cpal",
  "dotenvy",
+ "ed25519-dalek",
  "futures-util",
  "hmac",
  "libc",
@@ -3382,7 +3384,7 @@ dependencies = [
 
 [[package]]
 name = "stella-context"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "async-trait",
  "contextgraph-types",
@@ -3399,7 +3401,7 @@ dependencies = [
 
 [[package]]
 name = "stella-core"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3417,7 +3419,7 @@ dependencies = [
 
 [[package]]
 name = "stella-diag"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "proptest",
  "serde",
@@ -3428,14 +3430,14 @@ dependencies = [
 
 [[package]]
 name = "stella-diff"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "stella-embed"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "async-trait",
  "proptest",
@@ -3449,7 +3451,7 @@ dependencies = [
 
 [[package]]
 name = "stella-engine"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "async-trait",
  "serde",
@@ -3462,7 +3464,7 @@ dependencies = [
 
 [[package]]
 name = "stella-fleet"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3483,7 +3485,7 @@ dependencies = [
 
 [[package]]
 name = "stella-graph"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "async-trait",
  "contextgraph-types",
@@ -3513,11 +3515,11 @@ dependencies = [
 
 [[package]]
 name = "stella-home"
-version = "0.9.484"
+version = "0.9.492"
 
 [[package]]
 name = "stella-learn"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "proptest",
  "serde",
@@ -3527,7 +3529,7 @@ dependencies = [
 
 [[package]]
 name = "stella-mcp"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3549,7 +3551,7 @@ dependencies = [
 
 [[package]]
 name = "stella-model"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3574,7 +3576,7 @@ dependencies = [
 
 [[package]]
 name = "stella-observatory"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "libc",
  "rusqlite",
@@ -3597,7 +3599,7 @@ dependencies = [
 
 [[package]]
 name = "stella-parity"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "stella-core",
  "stella-protocol",
@@ -3606,7 +3608,7 @@ dependencies = [
 
 [[package]]
 name = "stella-plugin"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "proptest",
  "schemars",
@@ -3619,7 +3621,7 @@ dependencies = [
 
 [[package]]
 name = "stella-protocol"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "async-trait",
  "schemars",
@@ -3632,7 +3634,7 @@ dependencies = [
 
 [[package]]
 name = "stella-records"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "serde",
  "serde_json",
@@ -3647,7 +3649,7 @@ dependencies = [
 
 [[package]]
 name = "stella-runtime"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3669,7 +3671,7 @@ dependencies = [
 
 [[package]]
 name = "stella-serve"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "async-trait",
  "proptest",
@@ -3688,7 +3690,7 @@ dependencies = [
 
 [[package]]
 name = "stella-store"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "base64 0.23.1",
  "libc",
@@ -3706,7 +3708,7 @@ dependencies = [
 
 [[package]]
 name = "stella-time"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "async-trait",
  "rand 0.10.3",
@@ -3716,7 +3718,7 @@ dependencies = [
 
 [[package]]
 name = "stella-tool-facts"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "proptest",
  "stella-protocol",
@@ -3726,7 +3728,7 @@ dependencies = [
 
 [[package]]
 name = "stella-tools"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3754,7 +3756,7 @@ dependencies = [
 
 [[package]]
 name = "stella-transcript"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "proptest",
  "serde",
@@ -3774,11 +3776,11 @@ dependencies = [
 
 [[package]]
 name = "stella-tty"
-version = "0.9.484"
+version = "0.9.492"
 
 [[package]]
 name = "stella-tui"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "arboard",
  "crossterm",
@@ -3806,7 +3808,7 @@ dependencies = [
 
 [[package]]
 name = "stella-tui-theme"
-version = "0.9.484"
+version = "0.9.492"
 dependencies = [
  "ratatui",
 ]
@@ -3930,7 +3932,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -4123,9 +4125,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
-version = "1.53.1"
+version = "1.53.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
+checksum = "e95f91fcc7a621e8b030f6aa23c71fe9838ae2fb4d8118b75602a328f5144044"
 dependencies = [
  "bytes",
  "libc",
@@ -4173,9 +4175,9 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "1.1.6+spec-1.1.0"
+version = "1.1.7+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "920602543f0911ab71da12c50d59701da54c196d1a2bf5cb4b75667f137a406a"
+checksum = "7874cd34dd99040fc24e30923aa64a60a81ff3ddfe2b8129ccc84ba24949deed"
 dependencies = [
  "indexmap",
  "serde_core",
@@ -4188,18 +4190,18 @@ dependencies = [
 
 [[package]]
 name = "toml_datetime"
-version = "1.1.1+spec-1.1.0"
+version = "1.1.2+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3165f65f62e28e0115a00b2ebdd37eb6f3b641855f9d636d3cd4103767159ad7"
+checksum = "2b86d767906c6c42421dcba507eb9d203e779497710a47782a224bb871653053"
 dependencies = [
  "serde_core",
 ]
 
 [[package]]
 name = "toml_edit"
-version = "0.25.15+spec-1.1.0"
+version = "0.25.17+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1340ea94a5856333492c9064b02c778b191dd2c853778d9609debdcdfea3a614"
+checksum = "e3641d5bbb5349a79e1020a242d251efbc546ad8048d133958323ce9c40a9c9c"
 dependencies = [
  "indexmap",
  "serde_core",
@@ -4212,18 +4214,18 @@ dependencies = [
 
 [[package]]
 name = "toml_parser"
-version = "1.1.3+spec-1.1.0"
+version = "1.1.5+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d38ac1cf9b95face32296c0a3ede1fdc270627c9d9c02a7274dd6d960dc4d56"
+checksum = "baa693a8032d7e1cada7d0041e96126df243179ff061456783ac7f12bda4744c"
 dependencies = [
  "winnow",
 ]
 
 [[package]]
 name = "toml_writer"
-version = "1.1.2+spec-1.1.0"
+version = "1.1.3+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d56353a2a665ad0f41a421187180aab746c8c325620617ad883a99a1cbe66d2"
+checksum = "06bdbd8cfc056b8d2e2e85f29b56a3bdbecb527cef81eb39e3e7b98af4652770"
 
 [[package]]
 name = "tower"
@@ -4416,9 +4418,9 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "trybuild"
-version = "1.0.121"
+version = "1.0.122"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0cabaa10be1917331a313866bd94526343e03c77bcf69144b62b072ad35d47c"
+checksum = "62db9c92d704393fbf2132041720cc80b689f2d3f28521015c2ac866223c11b8"
 dependencies = [
  "glob",
  "serde",
@@ -5196,9 +5198,9 @@ dependencies = [
 
 [[package]]
 name = "zeroize"
-version = "1.9.0"
+version = "1.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
+checksum = "e13084392c5e4bc371903e2935a5eaeed24905a7511356b883835e18a78f6879"
 
 [[package]]
 name = "zerotrie"

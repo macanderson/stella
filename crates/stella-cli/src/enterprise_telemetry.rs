@@ -188,27 +188,48 @@ fn frame(bytes: &mut Vec<u8>, value: &[u8]) -> Result<(), String> {
 pub(crate) fn canonical_enrollment_bytes(value: &Value) -> Result<Vec<u8>, String> {
     let claims: EnrollmentClaims = serde_json::from_value(value.clone())
         .map_err(|error| format!("invalid enterprise telemetry claims: {error}"))?;
-    let mut bytes = b"stella.enterprise.telemetry.enrollment-signature.v1".to_vec();
-    for scalar in [
-        claims.schema.as_str(),
-        claims.issuer.as_str(),
-        claims.audience.as_str(),
-        claims.enrollment_id.as_str(),
-        claims.organization_id.as_str(),
-        claims.workspace_id.as_str(),
-        claims.endpoint.as_str(),
-        claims.credential_env.as_str(),
-    ] {
+    encode_claims(
+        b"stella.enterprise.telemetry.enrollment-signature.v1",
+        &[
+            claims.schema.as_str(),
+            claims.issuer.as_str(),
+            claims.audience.as_str(),
+            claims.enrollment_id.as_str(),
+            claims.organization_id.as_str(),
+            claims.workspace_id.as_str(),
+            claims.endpoint.as_str(),
+            claims.credential_env.as_str(),
+        ],
+        &claims.event_classes,
+        &claims.model_catalog,
+        claims.issued_at_unix_s,
+        claims.expires_at_unix_s,
+    )
+}
+
+/// The encoding both enrollment formats sign: the domain unframed, then each
+/// scalar, the event classes, the isolation mode, the model catalog and the
+/// two timestamps, every one length-framed.
+fn encode_claims(
+    domain: &[u8],
+    scalars: &[&str],
+    event_classes: &[EnrollmentEventClass],
+    model_catalog: &[ManagedModelDimension],
+    issued_at_unix_s: i64,
+    expires_at_unix_s: i64,
+) -> Result<Vec<u8>, String> {
+    let mut bytes = domain.to_vec();
+    for scalar in scalars {
         frame(&mut bytes, scalar.as_bytes())?;
     }
     frame(
         &mut bytes,
-        u32::try_from(claims.event_classes.len())
+        u32::try_from(event_classes.len())
             .map_err(|_| "too many enrollment event classes".to_string())?
             .to_be_bytes()
             .as_slice(),
     )?;
-    for class in &claims.event_classes {
+    for class in event_classes {
         let label = match class {
             EnrollmentEventClass::ExecutionRollup => "execution_rollup",
             EnrollmentEventClass::ComplianceAudit => "compliance_audit",
@@ -218,17 +239,17 @@ pub(crate) fn canonical_enrollment_bytes(value: &Value) -> Result<Vec<u8>, Strin
     frame(&mut bytes, b"process_free")?;
     frame(
         &mut bytes,
-        u32::try_from(claims.model_catalog.len())
+        u32::try_from(model_catalog.len())
             .map_err(|_| "too many enrollment model dimensions".to_string())?
             .to_be_bytes()
             .as_slice(),
     )?;
-    for dimension in &claims.model_catalog {
+    for dimension in model_catalog {
         frame(&mut bytes, dimension.provider().as_bytes())?;
         frame(&mut bytes, dimension.model().as_bytes())?;
     }
-    frame(&mut bytes, &claims.issued_at_unix_s.to_be_bytes())?;
-    frame(&mut bytes, &claims.expires_at_unix_s.to_be_bytes())?;
+    frame(&mut bytes, &issued_at_unix_s.to_be_bytes())?;
+    frame(&mut bytes, &expires_at_unix_s.to_be_bytes())?;
     Ok(bytes)
 }
 
@@ -1350,6 +1371,18 @@ pub(crate) fn start_best_effort_flush() {
         let _ = handle.block_on(runtime.flush());
     });
 }
+
+// The enrollment flow still checks the HMAC above. Until it moves onto the
+// Ed25519 certificate, only the conformance test calls into this module, and
+// the `expect` fails the build once the flow starts calling it.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "only the conformance test calls the certificate verifier until the enrollment flow adopts it"
+    )
+)]
+mod certificate;
 
 #[cfg(test)]
 mod tests;

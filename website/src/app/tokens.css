@@ -7,11 +7,10 @@
  * the gate on any hex here that is not a live token — so "this file mirrors the
  * system" is a checked property rather than a promise in a comment.
  *
- * The Oxagen house kit (oxageninc/brand) owns the value of most of
- * these tokens: the grounds, the greys, the text stops, and the golds.
- * scripts/sync-brand-assets.mjs writes the kit's value into each one here, in
- * the token JSON, and in docs/brand/css/tokens.css, so a kit colour change
- * reaches this file on the next sync. `PALETTE` in that script names them.
+ * The Oxagen house kit (oxageninc/brand) set the value of most of
+ * these tokens: the grounds, the greys, the text stops, and the golds. Stella
+ * keeps its own committed copy of those values here, in the token JSON, and
+ * in docs/brand/css/tokens.css, and edits all three by hand when one changes.
  * The status hues, the diff grounds, `--st-hl`, and `--st-muted` have no house
  * value and stay Stella's own.
  *
@@ -116,8 +115,7 @@
    *  - The **mark** — the wordmark, the logomark, the favicon, the PWA
    *    icons — takes the kit ramp above. Those are cut assets: thirteen SVGs,
    *    eight PWA icons and a favicon.ico, byte-parity-checked against
-   *    docs/brand/ by brand_parity, rebuilt by the house kit and
-   *    mirrored here by scripts/sync-brand-assets.mjs. Repointing a CSS
+   *    docs/brand/ by brand_parity and copied from the house kit. Repointing a CSS
    *    variable cannot recolour a PNG, which is why the mark moves as its own
    *    step rather than with this file.
    *

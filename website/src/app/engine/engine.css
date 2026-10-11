@@ -119,8 +119,7 @@
  * the station and rung numbers and rail stops, which are styled as a CLI.
  * The brand name in running text is set in it too, as on the landing page.
  * The terminal panels and deck shots carry the code face from global.css.
- * The brand check (scripts/sync-brand-assets.mjs --check) fails on a rule in
- * this sheet that sets the code face anywhere else. */
+ * No other rule in this sheet sets the code face. */
 .eng-goal,
 .eng-feed-body,
 .eng-bay-tool,

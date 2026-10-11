@@ -3,9 +3,8 @@ import { HOUSE_COLORS } from "@/components/brand-marks.generated";
 
 /**
  * PWA manifest. Next auto-links this at `/manifest.webmanifest`. The icon
- * files under public/icons and the theme colour come from the house kit,
- * through scripts/sync-brand-assets.mjs. Run the sync rather than editing
- * either one here.
+ * files under public/icons and the theme colour are committed copies of the
+ * house kit's. Edit them by hand, and keep `docs/brand/pwa/` in step.
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {

@@ -16,9 +16,9 @@ import {
  * and it is the same animation on every surface the kit renders.
  *
  * Nothing here is authored. The geometry is the kit's wordmark and the timing
- * is `SWEEP`, read out of `spinners/stella-spinner-wordmark.svg` by
- * `scripts/sync-brand-assets.mjs`, so re-running the sync after a kit rebuild
- * re-times this component without anyone touching it. The kit loops; this runs
+ * is `SWEEP`, copied from `spinners/stella-spinner-wordmark.svg` into
+ * `brand-marks.generated.ts`, so a change to the timing there re-times this
+ * component without an edit here. The kit loops; this runs
  * once and holds, because a landing page is read rather than watched, and
  * every track's final state is its resting state.
  *
