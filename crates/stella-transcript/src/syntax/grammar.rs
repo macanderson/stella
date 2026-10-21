@@ -634,7 +634,10 @@ mod tests {
         let (tree, spent) =
             with_parser(Grammar::Tsx, |p| parse_within(p, &line, 0)).expect("TSX installs");
         assert!(tree.is_none(), "a parse past its budget must be cancelled");
-        assert_eq!(spent, 1, "the first callback past the budget must stop the parse");
+        assert_eq!(
+            spent, 1,
+            "the first callback past the budget must stop the parse"
+        );
     }
 
     /// A cancelled parse leaves tree-sitter holding an outstanding parse, and
