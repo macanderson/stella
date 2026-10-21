@@ -55,12 +55,12 @@
 //!
 //! ## Termination is bought, not assumed (#4469)
 //!
-//! A parse is not guaranteed to finish. `tokenize("(s1.']z]9:A|8=", Lang::TsJs)`
-//! — fourteen characters — spins inside tree-sitter's own error recovery
-//! (`ts_parser__condense_stack` → `ts_parser__handle_error`) and had not
-//! returned after five minutes. It reached CI as a fifty-minute stall on the
-//! losslessness property, which feeds arbitrary text through all eight
-//! grammars, and the job was cancelled rather than failed.
+//! A parse is not guaranteed to finish. Under tree-sitter 0.27.0,
+//! `tokenize("(s1.']z]9:A|8=", Lang::TsJs)` spun in the library's error
+//! recovery and had not returned after five minutes. It reached CI as a
+//! fifty-minute stall on the losslessness property, and the job was cancelled.
+//! tree-sitter 0.27.1 fixed that loop. A later grammar or release can bring a
+//! new one, so the bound stays.
 //!
 //! The walk above terminates by construction, so the bound belongs on the
 //! parse: [`parse_bounded`] spends a fixed [`PARSE_PROGRESS_BUDGET`] of
@@ -616,27 +616,35 @@ mod tests {
         assert!(worst > 0, "no grammar reported any progress at all");
     }
 
-    /// The fourteen characters that hung CI for fifty minutes (#4469).
+    /// A line long enough to fire tree-sitter's progress callback many times.
     ///
-    /// Not merely "fast": the parse does not terminate at all, so a machine
-    /// slow enough to make a duration assertion flaky is not the hazard here.
-    /// What is asserted is the contract the budget preserves — the line still
-    /// round-trips, as one untinted run.
+    /// The library fires one callback every 100 parser operations, so a budget
+    /// of zero cancels this line at its first callback.
+    fn long_line() -> String {
+        "const x = f(a, b);".repeat(100)
+    }
+
+    /// A parse that runs past its budget is cancelled and returns no tree.
+    ///
+    /// The budget forces the cancel, so this test does not depend on finding
+    /// a line that some grammar cannot finish.
     #[test]
-    fn a_grammar_that_loops_is_cancelled_not_awaited() {
-        let text = "(s1.']z]9:A|8=";
-        assert!(
-            runs(text, Grammar::Tsx).is_none(),
-            "the TSX error-recovery loop must be cancelled, not parsed"
-        );
+    fn a_parse_past_its_budget_is_cancelled() {
+        let line = long_line();
+        let (tree, spent) =
+            with_parser(Grammar::Tsx, |p| parse_within(p, &line, 0)).expect("TSX installs");
+        assert!(tree.is_none(), "a parse past its budget must be cancelled");
+        assert_eq!(spent, 1, "the first callback past the budget must stop the parse");
     }
 
     /// A cancelled parse leaves tree-sitter holding an outstanding parse, and
     /// the next call on that thread's parser *resumes* it. Without the reset in
-    /// [`parse_within`] every later line on this thread inherits the loop.
+    /// [`parse_within`], the next line on this thread gets the old line's tree.
     #[test]
     fn a_pathological_line_does_not_poison_the_next_one() {
-        assert!(runs("(s1.']z]9:A|8=", Grammar::Tsx).is_none());
+        let line = long_line();
+        let cancelled = with_parser(Grammar::Tsx, |p| parse_within(p, &line, 0).0.is_none());
+        assert_eq!(cancelled, Some(true), "the first parse must be cancelled");
         let after = runs("const x = 'ok';", Grammar::Tsx).expect("the next line still parses");
         let rebuilt: String = after.iter().map(|(t, _)| t.as_str()).collect();
         assert_eq!(rebuilt, "const x = 'ok';");
