@@ -92,7 +92,7 @@ serde_json = "1"
 # whole record digest is narrower: stella's preimage also drops `null`-valued
 # object members, and CGP's keeps them, so the two agree on a record whose
 # objects carry no such member. `stella_protocol::hash` pins that boundary.
-serde_json_canonicalizer = "0.3.2"
+serde_json_canonicalizer = "0.4.1"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "process", "fs", "io-util", "sync"] }
 async-trait = "0.1"
