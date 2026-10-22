@@ -357,6 +357,17 @@ jobs:
             exit 0
           fi
 
+          # Whether the roll actually touched CHANGELOG.md, read from the index
+          # rather than guessed from the version. changelog-roll.sh leaves the
+          # file alone on a patch release, on a missing file, on one with no
+          # [Unreleased] heading, and on a version whose section it already
+          # wrote at the tagged-release call site. Only the index distinguishes
+          # all four. Captured here because `git commit` below empties it.
+          changelog_rolled=""
+          if ! git diff --cached --quiet -- CHANGELOG.md; then
+            changelog_rolled=1
+          fi
+
           # Squash merges use the commit title here (single-commit PR,
           # COMMIT_OR_PR_TITLE), so [skip release] survives onto main and this
           # merge can never cut another release.
@@ -379,7 +390,14 @@ jobs:
             "- \`[workspace.package].version\` in \`Cargo.toml\` (inherited by every crate)"
             "- the workspace-member entries in \`Cargo.lock\`"
             "- \`packaging/homebrew/stella.rb\` (build-from-source formula)"
-            "- \`CHANGELOG.md\` — whatever was under \`[Unreleased]\` now sits under \`[${version}]\`"
+          )
+          # The bullet claimed the roll unconditionally, so it was false on every
+          # release that did not move the file: every patch write-back, and a
+          # minor or major one whose roll made no change.
+          if [ -n "${changelog_rolled}" ]; then
+            body_lines+=("- \`CHANGELOG.md\` — whatever was under \`[Unreleased]\` now sits under \`[${version}]\`")
+          fi
+          body_lines+=(
             ""
             "The workflow approves this PR's parked workflow runs, waits for the required checks, and merges once they are green (#5589). No action is needed unless a check fails."
           )
