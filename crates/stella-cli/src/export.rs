@@ -631,7 +631,7 @@ fn render_dashboard(
      `each_surface_declares_one_scheme_per_gate` is what makes that true. It
      was a sentence here and nothing else until #4942, and the Observatory is
      what a sentence buys: its two gates drifted seventeen roles apart, and an
-     OS-light reader read #C7CBD1 on paper at 1.68:1 (#4296). */
+     OS-light reader read pale grey text on paper at 1.68:1 (#4296). */
   @media (prefers-color-scheme: light) {{
     :root:not([data-theme="dark"]) {{
       color-scheme: light;
