@@ -565,8 +565,8 @@ fn render_dashboard(
     --neutral-mark: #6E727A;
     --ink: #090A0D;
     --accent: #FCFCFE;
-    --accent-wash: rgba(255,255,255,.08);
-    --accent-edge: rgba(255,255,255,.38);
+    --accent-wash: rgba(252,252,254,.08);
+    --accent-edge: rgba(252,252,254,.38);
     --sunken: #090A0D;
     --control-edge: #9A9FA6;
 
