@@ -42,8 +42,8 @@ export const HOUSE_COLORS = {
   "text-ink": "#090A0D",
   "text-ink-body": "#353941",
   "muted-ink": "#4F545D",
-  "muted-text-ink": "#4C515A",
-  "dim-ink": "#83878F",
+  "muted-text-ink": "#4F545D",
+  "dim-ink": "#858991",
 } as const;
 
 /** The kit's own viewBox for the wordmark. Never re-fit it. */

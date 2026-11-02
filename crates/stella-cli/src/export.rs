@@ -638,16 +638,16 @@ fn render_dashboard(
       --void: #FCFCFE; --ground: #FCFCFE; --surface: #F6F7FA; --raised: #FCFCFE;
       --hairline: #E7EAEE; --hairline-strong: #CDD1D8;
       --identity: #806719; --identity-ink: #FCFCFE;
-      --text: #090A0D; --text-2: #6E727A; --text-3: #9A9FA6;
+      --text: #090A0D; --text-2: #6E727A; --text-3: #858991;
       --ok: #006933; --warn: #8d3b19; --bad: #952141;
-      --c1: #090A0D; --c2: #6E727A; --c3: #9A9FA6; --c4: #9A9FA6;
-      --neutral-mark: #9A9FA6;
+      --c1: #090A0D; --c2: #6E727A; --c3: #858991; --c4: #858991;
+      --neutral-mark: #858991;
       --ink: #FCFCFE;
       --accent: #090A0D;
       --accent-wash: rgba(9,10,13,.06);
       --accent-edge: rgba(9,10,13,.28);
       --sunken: #F6F7FA;
-      --control-edge: #9A9FA6;
+      --control-edge: #858991;
     }}
   }}
   :root[data-theme="light"] {{
@@ -655,16 +655,16 @@ fn render_dashboard(
     --void: #FCFCFE; --ground: #FCFCFE; --surface: #F6F7FA; --raised: #FCFCFE;
     --hairline: #E7EAEE; --hairline-strong: #CDD1D8;
     --identity: #806719; --identity-ink: #FCFCFE;
-    --text: #090A0D; --text-2: #6E727A; --text-3: #9A9FA6;
+    --text: #090A0D; --text-2: #6E727A; --text-3: #858991;
     --ok: #006933; --warn: #8d3b19; --bad: #952141;
-    --c1: #090A0D; --c2: #6E727A; --c3: #9A9FA6; --c4: #9A9FA6;
-    --neutral-mark: #9A9FA6;
+    --c1: #090A0D; --c2: #6E727A; --c3: #858991; --c4: #858991;
+    --neutral-mark: #858991;
     --ink: #FCFCFE;
     --accent: #090A0D;
     --accent-wash: rgba(9,10,13,.06);
     --accent-edge: rgba(9,10,13,.28);
     --sunken: #F6F7FA;
-    --control-edge: #9A9FA6;
+    --control-edge: #858991;
   }}
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
   html {{ color-scheme: dark; }}

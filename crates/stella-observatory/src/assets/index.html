@@ -154,7 +154,7 @@
   --sunken:#090A0D;
   /* Control outlines. WCAG 1.4.11 wants 3:1 for the boundary that identifies
      an interactive component; no token in the ground ramp reaches it —
-     --hairline-strong measures 1.48:1 on --surface. --text-3 does, so every
+     --hairline-strong measures 1.56:1 on --surface. --text-3 does, so every
      control that is operable takes it, while purely decorative grouping seams
      (card edges, table rules) keep the hairlines. */
   --control-edge:var(--text-3);
@@ -259,7 +259,7 @@
    every peer surface already mirrors (#4072).
 
    The light scheme reads the SAME neutral ramp from the other end: --text-2
-   and --text-3 are literally the palette's own `dim` and `silver`, so a theme
+   and --text-3 are literally the palette's own `dim` and `muted`, so a theme
    switch changes the lightness and not the temperature. Every neutral in
    both schemes holds OKLCH hue 245.0–271.4 at chroma ≤ 0.015; the two stops
    with no hue to hold are the near-white #FCFCFE and the pure black #000000.
@@ -274,7 +274,7 @@
    estimated, on --ground (#FCFCFE) and on --surface (#F6F7FA — the lightest
    panel a mark can land on, so the binding constraint):
 
-     --text 19.32 / 18.48   --text-2  4.71 /  4.51   --text-3 2.60 / 2.49
+     --text 19.32 / 18.48   --text-2  4.71 /  4.51   --text-3 3.42 / 3.28
      --ok    6.68 /  6.39   --warn    7.39 /  7.07   --bad    7.97 / 7.62
      --identity 5.29 / 5.06 (#806719)   --text-emph 11.30 / 10.81
 
@@ -286,10 +286,10 @@
    --text clears AAA (7:1) on both; --text-2 clears AAA on dark --ground
    (7.43:1) and AA everywhere else (4.71 / 4.51 light, 5.78 dark --raised);
    the three semantics and --identity clear AA (4.5:1) on both. --text-3
-   clears AA on dark (5.78:1) and on neither light pairing — 2.60:1 on
-   --ground, 2.49:1 on --surface, stated rather than rounded up (#4070) —
-   and is not meant to on paper, which is the constraint to hold when
-   editing: it carries non-essential labelling only, a legend key or a units
+   clears AA on dark (5.78:1 on --raised) and on neither light pairing —
+   3.42:1 on --ground, 3.28:1 on --surface, stated rather than rounded up
+   (#4070) — and is not meant to on paper, which is the constraint to hold
+   when editing: it carries non-essential labelling only, a legend key or a units
    suffix, never a value a reader must act on. The inversion pair (--ink on
    --accent) is 19.32:1 in both schemes; the identity fill pair
    (--identity-ink on --identity) is 5.29:1 light and 9.41:1 dark — both
@@ -307,11 +307,11 @@
     --hairline:#E7EAEE; --hairline-strong:#CDD1D8;
     --mark:#090A0D; --mark-bright:#000000; --mark-deep:#6E727A;
     --identity:#806719; --identity-ink:#FCFCFE;
-    --text:#090A0D; --text-2:#6E727A; --text-3:#9A9FA6;
+    --text:#090A0D; --text-2:#6E727A; --text-3:#858991;
     --text-emph:#353941;
     --ok:#006933; --warn:#8D3B19; --bad:#952141;
-    --c1:#090A0D; --c2:#6E727A; --c3:#9A9FA6; --c4:#9A9FA6;
-    --neutral-mark:#9A9FA6;
+    --c1:#090A0D; --c2:#6E727A; --c3:#858991; --c4:#858991;
+    --neutral-mark:#858991;
     --ink:#FCFCFE;
     --accent-wash:rgba(9,10,13,.06);
     --accent-edge:rgba(9,10,13,.28);
@@ -324,11 +324,11 @@
   --hairline:#E7EAEE; --hairline-strong:#CDD1D8;
   --mark:#090A0D; --mark-bright:#000000; --mark-deep:#6E727A;
   --identity:#806719; --identity-ink:#FCFCFE;
-  --text:#090A0D; --text-2:#6E727A; --text-3:#9A9FA6;
+  --text:#090A0D; --text-2:#6E727A; --text-3:#858991;
   --text-emph:#353941;
   --ok:#006933; --warn:#8D3B19; --bad:#952141;
-  --c1:#090A0D; --c2:#6E727A; --c3:#9A9FA6; --c4:#9A9FA6;
-  --neutral-mark:#9A9FA6;
+  --c1:#090A0D; --c2:#6E727A; --c3:#858991; --c4:#858991;
+  --neutral-mark:#858991;
   --ink:#FCFCFE;
   --accent-wash:rgba(9,10,13,.06);
   --accent-edge:rgba(9,10,13,.28);

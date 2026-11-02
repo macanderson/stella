@@ -50,8 +50,8 @@
   --ox-text-ink: #090A0D; /* primary text on paper */
   --ox-text-ink-body: #353941; /* body text on paper */
   --ox-muted-ink: #4F545D; /* secondary text on paper */
-  --ox-muted-text-ink: #4C515A; /* secondary text on paper and on a lifted row there */
-  --ox-dim-ink: #83878F; /* the quietest text on paper */
+  --ox-muted-text-ink: #4F545D; /* secondary text on paper and on a lifted row there */
+  --ox-dim-ink: #858991; /* the quietest text on paper */
 
   --ox-st-allowed: #5FBF9F; /* a request a rule allowed, on ink */
   --ox-st-allowed-ink: #19704F; /* the same, on paper */

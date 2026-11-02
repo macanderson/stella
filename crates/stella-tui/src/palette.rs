@@ -308,11 +308,11 @@ pub const INK: Color = token::BG;
 /// name; this is the last of them.
 pub const INK_MUTED: Color = token::INK_MUTED;
 
-/// Tertiary text on paper -- 3.52:1 on [`PAPER`], the counterpart of
+/// Tertiary text on paper -- 3.42:1 on [`PAPER`], the counterpart of
 /// [`TEXT_TERTIARY`] and a large-text / UI tone. The house kit's quietest ink
 /// on paper, written out because this ramp's name for the tier and the dark
 /// ramp's name for that value are different words.
-pub const INK_DIM: Color = Color::Rgb(0x83, 0x87, 0x8F);
+pub const INK_DIM: Color = Color::Rgb(0x85, 0x89, 0x91);
 
 /// The bright-neutral tier on paper -- 11.30:1, the counterpart of
 /// [`TEXT_EMPHASIS`], and like it a cool neutral (OKLCH hue 264.4). The house
