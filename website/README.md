@@ -8,8 +8,8 @@ Built with [Next.js](https://nextjs.org) (App Router) + [Fumadocs](https://fumad
 
 ## Brand
 
-House system v7.0 (`design/tokens/stella-tokens.json`): obsidian `#09090B`,
-white, neutral greys, one gold `#D4AF37` (`#8A7223` on white). Faces: Space
+House system v8.0 (`design/tokens/stella-tokens.json`): soot `#090A0D`,
+bone, cool greys, one gold `#D4AF37` (`#806719` on bone). Faces: Space
 Grotesk for h1 to h3 and the `stella*` wordmark, Aeonik for body, UI, and h4
 to h6, and Monaspace Neon for code. The site is a customer site, so its body
 is 16px, and every other size is a step of the kit's scale. The kit sets the

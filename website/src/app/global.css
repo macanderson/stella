@@ -16,8 +16,8 @@
  * else. If everything is gold, nothing is.
  *
  * Gold text is ground-aware. Full-strength #D4AF37 only earns its keep on the
- * dark ground (11.99:1 on the canvas); on paper it is 1.32:1 and drops to
- * the signal's ink stop (#8A7223, 6.02:1).
+ * dark ground (9.41:1 on the canvas); on paper it is 2.05:1 and drops to
+ * the signal's ink stop (#806719, 5.29:1).
  * `--stella-accent-text` in tokens.css encodes exactly this flip — components
  * use it and never pick a gold by hand.
  *
@@ -144,11 +144,11 @@ h3 {
    * custom property is invalid at computed-value time — it silently falls
    * back — so every token a component consumes is defined here for BOTH
    * grounds. */
-  --stella-rule: var(--stella-text-3); /* 4.7:1 on the paper ground */
-  --stella-faint: var(--stella-muted-fg); /* 5.8:1 on the paper ground */
+  --stella-rule: var(--stella-text-3); /* 3.4:1 on the paper ground */
+  --stella-faint: var(--stella-muted-fg); /* 4.7:1 on the paper ground */
   --stella-mark: var(--stella-accent-text); /* small gold marks beside text */
 
-  /* The one primary action: a gold fill with an obsidian label. Gold is
+  /* The one primary action: a gold fill with a soot label. Gold is
    * the signal — the CTA is the signal, so it is the one gold surface. */
   --stella-cta-bg: var(--stella-signal);
   --stella-cta-fg: var(--stella-canvas);
@@ -181,7 +181,7 @@ h3 {
   --color-fd-background: var(--stella-bg);
   --color-fd-foreground: var(--stella-fg);
   --color-fd-muted: var(--stella-paper-row);
-  --color-fd-muted-foreground: var(--stella-muted-fg); /* 5.8:1 on paper */
+  --color-fd-muted-foreground: var(--stella-muted-fg); /* 4.7:1 on paper */
   --color-fd-card: var(--stella-surface);
   --color-fd-card-foreground: var(--stella-fg);
   --color-fd-popover: var(--stella-surface);
@@ -189,7 +189,7 @@ h3 {
   --color-fd-border: var(--stella-border); /* decorative seam */
   --color-fd-accent: var(--stella-paper-row); /* hover/selected surface */
   --color-fd-accent-foreground: var(--stella-fg);
-  --color-fd-primary: var(--stella-accent-text); /* signal ink, 6.02:1 on paper */
+  --color-fd-primary: var(--stella-accent-text); /* signal ink, 5.29:1 on paper */
   --color-fd-primary-foreground: var(--stella-canvas); /* label on a gold fill */
   --color-fd-secondary: var(--stella-paper-row);
   --color-fd-secondary-foreground: var(--stella-fg);
@@ -206,8 +206,8 @@ h3 {
  * ═════════════════════════════════════════════════════════════════════════ */
 
 .dark {
-  --stella-rule: var(--stella-text-3); /* 4.5:1 on the canvas */
-  --stella-faint: var(--stella-muted-fg); /* 8.6:1 on the canvas */
+  --stella-rule: var(--stella-text-3); /* 5.6:1 on the canvas */
+  --stella-faint: var(--stella-muted-fg); /* 7.4:1 on the canvas */
   --stella-mark: var(--stella-signal);
 
   --stella-cta-bg: var(--stella-signal);
@@ -237,7 +237,7 @@ h3 {
   --color-fd-background: var(--stella-bg);
   --color-fd-foreground: var(--stella-fg);
   --color-fd-muted: var(--stella-surface);
-  --color-fd-muted-foreground: var(--stella-muted-fg); /* 8.6:1 on canvas */
+  --color-fd-muted-foreground: var(--stella-muted-fg); /* 7.4:1 on canvas */
   --color-fd-card: var(--stella-surface);
   --color-fd-card-foreground: var(--stella-fg);
   --color-fd-popover: var(--stella-canvas-row);
@@ -245,7 +245,7 @@ h3 {
   --color-fd-border: var(--stella-border);
   --color-fd-accent: var(--stella-canvas-row); /* hover surface */
   --color-fd-accent-foreground: var(--stella-fg);
-  --color-fd-primary: var(--stella-signal); /* 11.99:1 on the canvas */
+  --color-fd-primary: var(--stella-signal); /* 9.41:1 on the canvas */
   --color-fd-primary-foreground: var(--stella-canvas);
   --color-fd-secondary: var(--stella-canvas-row);
   --color-fd-secondary-foreground: var(--stella-fg);
@@ -478,7 +478,7 @@ figure.shiki ::selection,
  * it is the *direction* that separates them, and the sidebar carries no
  * border). The fd tokens are re-scoped inside the aside so hover/selected
  * chips stay neutral on white. Dark mode needs no override: the surface
- * (#18181B) already lifts off the canvas.
+ * (#0F1115) already lifts off the canvas.
  *
  * The phone drawer (#nd-sidebar-mobile) is the same tree on a narrow screen,
  * so every rule here names both panels. Fumadocs paints the drawer with
@@ -533,7 +533,7 @@ figure.shiki ::selection,
 
 /* The active page is a solid gold pill with ink text — the one gold surface
  * in the tree, because the current location IS the signal (same law as the
- * CTA). Identical in both modes: gold on white chrome, gold on obsidian. */
+ * CTA). Identical in both modes: gold on white chrome, gold on soot. */
 :is(#nd-sidebar, #nd-sidebar-mobile) a[data-active="true"] {
   background: var(--stella-signal);
   color: var(--stella-canvas);

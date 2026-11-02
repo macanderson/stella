@@ -172,7 +172,7 @@ export default function OpengraphImage() {
             }}
           >
             {/* One dot gold: gold is the signal, so exactly one thing gets it. */}
-            {[BRAND_GOLD, "#52525b", HOUSE_COLORS.rule].map((c, i) => (
+            {[BRAND_GOLD, "#4f535b", HOUSE_COLORS.rule].map((c, i) => (
               <div
                 key={c}
                 style={{

@@ -1,7 +1,7 @@
 {
   "version": "2.7.0",
   "name": "oxagen house system",
-  "built_on": "oxagen brand kit (Space Grotesk), on obsidian and white with one gold",
+  "built_on": "oxagen brand kit (Space Grotesk), on soot and bone with one gold",
   "icons": {
     "oxagen": {
       "kind": "hive",
@@ -65,196 +65,196 @@
       "H": 91.06
     },
     "bright_oklch": {
-      "L": 0.86,
-      "C": 0.13,
-      "H": 91.0
+      "L": 0.8267121330762407,
+      "C": 0.12867709763957946,
+      "H": 92.94266490075604
     },
     "deep_oklch": {
-      "L": 0.56,
-      "C": 0.1,
-      "H": 91.0
+      "L": 0.5243677520719066,
+      "C": 0.09727075212824353,
+      "H": 89.95309195972186
     },
-    "bright": "#F1CE65",
-    "deep": "#8A7223",
-    "on_ink": 9.46,
-    "deep_on_paper": 4.65
+    "bright": "#E3C45B",
+    "deep": "#806719",
+    "on_ink": 9.41,
+    "deep_on_paper": 5.29
   },
   "tokens": {
     "gold": "#D4AF37",
-    "gold-bright": "#F1CE65",
-    "gold-deep": "#8A7223",
-    "gold-text-ink": "#866D1D",
-    "ink": "#09090B",
-    "void": "#000000",
-    "panel": "#18181B",
-    "hl": "#27272A",
-    "border": "#27272A",
-    "rule": "#3F3F46",
-    "paper": "#FFFFFF",
-    "paper-void": "#F4F4F5",
+    "gold-bright": "#E3C45B",
+    "gold-deep": "#806719",
+    "gold-text-ink": "#806719",
+    "ink": "#090A0D",
+    "void": "#040506",
+    "panel": "#0F1115",
+    "hl": "#16191D",
+    "border": "#222529",
+    "rule": "#40444A",
+    "paper": "#FCFCFE",
+    "paper-void": "#F8F9FB",
     "paper-panel": "#FFFFFF",
-    "paper-hl": "#F4F4F5",
-    "paper-border": "#E4E4E7",
-    "paper-rule": "#D4D4D8",
-    "text": "#FFFFFF",
-    "text-body": "#E4E4E7",
-    "muted": "#A1A1AA",
-    "dim": "#71717A",
-    "text-ink": "#09090B",
-    "text-ink-body": "#27272A",
-    "muted-ink": "#71717A",
-    "muted-text-ink": "#6E6E77",
-    "dim-ink": "#A1A1AA"
+    "paper-hl": "#ECEEF3",
+    "paper-border": "#E3E5E9",
+    "paper-rule": "#CBCED3",
+    "text": "#FCFCFE",
+    "text-body": "#C7CBD1",
+    "muted": "#9A9FA6",
+    "dim": "#858991",
+    "text-ink": "#090A0D",
+    "text-ink-body": "#353941",
+    "muted-ink": "#4F545D",
+    "muted-text-ink": "#4C515A",
+    "dim-ink": "#83878F"
   },
   "states": {
     "allowed": {
-      "ink": "#57A97C",
-      "paper": "#2F7D52",
+      "ink": "#5FBF9F",
+      "paper": "#19704F",
       "use": "a request a rule allowed",
-      "text_ink": "#57A97C",
-      "text_paper": "#2F7D52"
+      "text_ink": "#60C0A0",
+      "text_paper": "#19704F"
     },
     "approval": {
-      "ink": "#5B93D6",
-      "paper": "#2E6BA8",
+      "ink": "#7AA2F0",
+      "paper": "#2E5FBF",
       "use": "a request routed to a person",
-      "text_ink": "#6098DB",
-      "text_paper": "#2E6BA8"
+      "text_ink": "#81AAF9",
+      "text_paper": "#2E5FBF"
     },
     "denied": {
-      "ink": "#C66A4A",
-      "paper": "#9B4526",
+      "ink": "#E5596E",
+      "paper": "#B3283F",
       "use": "a request a rule denied",
-      "text_ink": "#D67858",
-      "text_paper": "#9B4526"
+      "text_ink": "#FF7688",
+      "text_paper": "#B3283F"
     },
     "proven": {
-      "ink": "#3FA2A2",
-      "paper": "#1F7676",
-      "use": "the witness's word, beside a witness flip",
-      "text_ink": "#44A7A7",
-      "text_paper": "#1F7676"
+      "ink": "#4FB3A9",
+      "paper": "#1C6F68",
+      "use": "a result a named check proved",
+      "text_ink": "#5CBEB4",
+      "text_paper": "#1C6F68"
     },
     "failed": {
-      "ink": "#C0453C",
-      "paper": "#992F28",
+      "ink": "#E5596E",
+      "paper": "#B3283F",
       "use": "a check that did not hold",
-      "text_ink": "#E7685C",
-      "text_paper": "#992F28"
+      "text_ink": "#FF7688",
+      "text_paper": "#B3283F"
     },
     "critical": {
-      "ink": "#D6455E",
-      "paper": "#AE2540",
+      "ink": "#E5596E",
+      "paper": "#B3283F",
       "use": "a run that needs a person now",
-      "text_ink": "#EF5C72",
-      "text_paper": "#AE2540"
+      "text_ink": "#FF7688",
+      "text_paper": "#B3283F"
     }
   },
   "destructive": {
-    "ink": "#D5584D",
-    "paper": "#992F28",
-    "lift": 0.06,
-    "text_ink": "#E7685C",
-    "text_paper": "#992F28"
+    "ink": "#EC5F74",
+    "paper": "#B3283F",
+    "lift": 0.02,
+    "text_ink": "#FF7689",
+    "text_paper": "#B3283F"
   },
   "state_text": {
     "rule": "a word in a state's colour takes its text stop; a badge or a dot takes the bare stop",
-    "l_on_ink": 0.67,
+    "l_on_ink": 0.74,
     "oklch": {
       "allowed": {
         "dark": {
-          "L": 0.67,
-          "C": 0.106,
-          "H": 157.8
+          "L": 0.74,
+          "C": 0.103,
+          "H": 169.3
         },
         "light": {
-          "L": 0.53,
-          "C": 0.103,
-          "H": 156.0
+          "L": 0.486,
+          "C": 0.096,
+          "H": 162.6
         }
       },
       "approval": {
         "dark": {
-          "L": 0.67,
-          "C": 0.117,
-          "H": 253.8
+          "L": 0.74,
+          "C": 0.123,
+          "H": 262.9
         },
         "light": {
-          "L": 0.518,
-          "C": 0.115,
-          "H": 251.1
+          "L": 0.506,
+          "C": 0.16,
+          "H": 262.0
         }
       },
       "denied": {
         "dark": {
-          "L": 0.67,
-          "C": 0.126,
-          "H": 39.7
+          "L": 0.74,
+          "C": 0.174,
+          "H": 14.3
         },
         "light": {
-          "L": 0.497,
-          "C": 0.123,
-          "H": 39.7
+          "L": 0.508,
+          "C": 0.174,
+          "H": 17.4
         }
       },
       "proven": {
         "dark": {
-          "L": 0.67,
-          "C": 0.091,
-          "H": 195.2
+          "L": 0.74,
+          "C": 0.094,
+          "H": 186.4
         },
         "light": {
-          "L": 0.517,
-          "C": 0.079,
-          "H": 195.0
+          "L": 0.492,
+          "C": 0.077,
+          "H": 186.7
         }
       },
       "failed": {
         "dark": {
-          "L": 0.67,
-          "C": 0.16,
-          "H": 27.6
+          "L": 0.74,
+          "C": 0.174,
+          "H": 14.3
         },
         "light": {
-          "L": 0.464,
-          "C": 0.142,
-          "H": 27.8
+          "L": 0.508,
+          "C": 0.174,
+          "H": 17.4
         }
       },
       "critical": {
         "dark": {
-          "L": 0.67,
-          "C": 0.181,
-          "H": 14.5
+          "L": 0.74,
+          "C": 0.174,
+          "H": 14.3
         },
         "light": {
-          "L": 0.496,
-          "C": 0.172,
-          "H": 15.7
+          "L": 0.508,
+          "C": 0.174,
+          "H": 17.4
         }
       },
       "destructive": {
         "dark": {
-          "L": 0.67,
-          "C": 0.16,
-          "H": 27.7
+          "L": 0.74,
+          "C": 0.174,
+          "H": 14.1
         },
         "light": {
-          "L": 0.464,
-          "C": 0.142,
-          "H": 27.8
+          "L": 0.508,
+          "C": 0.174,
+          "H": 17.4
         }
       }
     },
     "surfaces": {
       "dark": {
-        "ink": "#09090B",
-        "panel": "#18181B",
-        "hl": "#27272A"
+        "ink": "#090A0D",
+        "panel": "#0F1115",
+        "hl": "#16191D"
       },
       "light": {
-        "paper": "#FFFFFF",
-        "paper-hl": "#F4F4F5"
+        "paper": "#FCFCFE",
+        "paper-hl": "#ECEEF3"
       }
     }
   },
@@ -277,19 +277,19 @@
       "destructive": "var(--ox-destructive-ink)",
       "destructive-foreground": "var(--ox-paper)",
       "border": "var(--ox-paper-border)",
-      "input": "var(--ox-paper-border)",
-      "ring": "var(--ox-gold-deep)",
+      "input": "var(--ox-paper-rule)",
+      "ring": "var(--ox-rust-ink)",
       "gold": "var(--ox-gold)",
-      "gold-foreground": "var(--ox-ink)",
-      "gold-text": "var(--ox-gold-text-ink)",
-      "sidebar": "var(--ox-paper-panel)",
+      "gold-foreground": "var(--ox-on-gold)",
+      "gold-text": "var(--ox-rust-text-ink)",
+      "sidebar": "var(--ox-paper-void)",
       "sidebar-foreground": "var(--ox-text-ink-body)",
       "sidebar-primary": "var(--ox-ink)",
       "sidebar-primary-foreground": "var(--ox-paper)",
       "sidebar-accent": "var(--ox-paper-hl)",
       "sidebar-accent-foreground": "var(--ox-text-ink)",
       "sidebar-border": "var(--ox-paper-border)",
-      "sidebar-ring": "var(--ox-gold-deep)"
+      "sidebar-ring": "var(--ox-rust-ink)"
     },
     "dark": {
       "background": "var(--ox-ink)",
@@ -309,16 +309,16 @@
       "destructive": "var(--ox-destructive)",
       "destructive-foreground": "var(--ox-ink)",
       "border": "var(--ox-border)",
-      "input": "var(--ox-border)",
+      "input": "var(--ox-rule)",
       "ring": "var(--ox-gold)",
       "gold": "var(--ox-gold)",
-      "gold-foreground": "var(--ox-ink)",
-      "gold-text": "var(--ox-gold)",
-      "sidebar": "var(--ox-panel)",
+      "gold-foreground": "var(--ox-on-gold)",
+      "gold-text": "var(--ox-rust-text)",
+      "sidebar": "var(--ox-void)",
       "sidebar-foreground": "var(--ox-text-body)",
       "sidebar-primary": "var(--ox-text)",
       "sidebar-primary-foreground": "var(--ox-ink)",
-      "sidebar-accent": "var(--ox-hl)",
+      "sidebar-accent": "var(--ox-panel)",
       "sidebar-accent-foreground": "var(--ox-text)",
       "sidebar-border": "var(--ox-border)",
       "sidebar-ring": "var(--ox-gold)"

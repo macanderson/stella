@@ -25,7 +25,7 @@
  * shared cell. The generator and the guard can.
  *
  * WHAT CHANGED IN v5.0, and why it is a supersession rather than a tune. The
- * brand hue moves to #d4af37 and the ground to #09090b because v4.0's own
+ * brand hue moves to #d4af37 and the ground to #090a0d because v4.0's own
  * anchors fall outside the system's hue clamp. Bronze Gold measured
  * r=197 g=138 b=50, and a gold must satisfy g >= 0.78r — so g >= 154. At 138 it
  * missed by 16 points and sat in the orange band that reads brown on an
@@ -59,34 +59,34 @@
 
 :root {
   /* ── the system, generated ──────────────────────────────────────────── */
-  --st-bg: #09090b; /* canvas */
-  --st-panel: #18181B; /* panels, cards, code blocks */
-  --st-hl: #1f1f23; /* selected and hover rows */
-  --st-border: #27272A; /* hairlines, dividers, unfilled meter track */
-  --st-rule: #3f3f46; /* section rules, turn boundaries */
+  --st-bg: #090a0d; /* canvas */
+  --st-panel: #0F1115; /* panels, cards, code blocks */
+  --st-hl: #16191d; /* selected and hover rows */
+  --st-border: #222529; /* hairlines, dividers, unfilled meter track */
+  --st-rule: #40444a; /* section rules, turn boundaries */
   --st-gold: #d4af37; /* the brand metal: actions, active states, money, the mark */
-  --st-gold-bright: #f1ce65; /* tiny live indicators only */
-  --st-silver: #a1a1aa; /* secondary emphasis, incoming context */
-  --st-silver-type: #e4e4e7; /* syntax types, tertiary labels */
-  --st-text: #ffffff; /* primary text on dark, in the deck */
-  --st-muted: #8a8a93; /* secondary text */
-  --st-dim: #71717a; /* hints, captions, line numbers */
+  --st-gold-bright: #e3c45b; /* tiny live indicators only */
+  --st-silver: #9a9fa6; /* secondary emphasis, incoming context */
+  --st-silver-type: #c7cbd1; /* syntax types, tertiary labels */
+  --st-text: #fcfcfe; /* primary text on dark, in the deck */
+  --st-muted: #858991; /* secondary text */
+  --st-dim: #6e727a; /* hints, captions, line numbers */
   --st-green: #74c991; /* pass, additive diff sign */
   --st-red: #e0687d; /* fail, destructive, removal diff sign */
   --st-diff-add: #10201a; /* added diff row background */
   --st-diff-del: #241019; /* removed diff row background */
-  --st-ink: #09090B; /* primary text on light surfaces */
-  --st-paper: #ffffff; /* light canvas */
-  --st-text: #ffffff; /* primary text on dark, off the deck */
-  --st-paper-panel: #ffffff; /* light panel */
-  --st-paper-border: #e4e4e7; /* light border */
-  --st-void: #000000; /* below the canvas: full-bleed backdrops */
-  --st-gold-ink: #8a7223; /* gold as TEXT on the light ground */
-  --st-paper-ground: #ffffff; /* the warm paper page ground */
-  --st-paper-raised: #ffffff; /* light surface raised above the page ground */
-  --st-paper-row: #f4f4f5; /* light hover and selected rows */
-  --st-paper-seam: #e4e4e7; /* light seam: the hairline under a border */
-  --st-ink-muted: #71717a; /* secondary text on light surfaces */
+  --st-ink: #090A0D; /* primary text on light surfaces */
+  --st-paper: #fcfcfe; /* light canvas */
+  --st-text: #fcfcfe; /* primary text on dark, off the deck */
+  --st-paper-panel: #fcfcfe; /* light panel */
+  --st-paper-border: #e3e5e9; /* light border */
+  --st-void: #040506; /* below the canvas: full-bleed backdrops */
+  --st-gold-ink: #806719; /* gold as TEXT on the light ground */
+  --st-paper-ground: #fcfcfe; /* the warm paper page ground */
+  --st-paper-raised: #fcfcfe; /* light surface raised above the page ground */
+  --st-paper-row: #eceef3; /* light hover and selected rows */
+  --st-paper-seam: #e3e5e9; /* light seam: the hairline under a border */
+  --st-ink-muted: #6e727a; /* secondary text on light surfaces */
   --st-green-ink: #006933; /* pass, as text on the light ground */
   --st-amber: #eb8960; /* warning */
   --st-amber-ink: #8d3b19; /* warning, as text on the light ground */
@@ -95,7 +95,7 @@
   /* ── brand core, named by role ──────────────────────────────────────── */
   --stella-brand: var(--st-gold);
   /* Brand *text* on a light ground is not gold. Rule 6 forbids it and the
-     measurement agrees: gold on paper is 1.65:1. The mark is exempt as a
+     measurement agrees: gold on paper is 2.05:1. The mark is exempt as a
      logotype; a word is not. */
   --stella-brand-deep: var(--st-ink);
   --stella-ink: var(--st-bg);
@@ -126,8 +126,8 @@
    * design/tokens/stella-tokens.json is upstream of both, so the two ramps
    * below are one system expressed twice rather than two systems held apart.
    *
-   * Every neutral here is blue-above-red (OKLCH hue 285.6–286.4 at chroma
-   * 0.004–0.018). The gold is two values and no more: `--stella-signal` for
+   * Every neutral here is a cool grey (OKLCH hue 245.0–271.4 at chroma
+   * 0.004–0.015). The gold is two values and no more: `--stella-signal` for
    * every resting mark, `--stella-signal-live` for small things that are
    * moving. Role names, not hue names, for the same reason the ramp above
    * uses them. */
@@ -152,18 +152,18 @@
   --stella-canvas-code: var(--st-panel); /* cards, code blocks */
   --stella-canvas-row: var(--st-hl); /* highlight rows, hover surfaces */
   --stella-canvas-edge: var(--st-border); /* borders */
-  --stella-signal: var(--st-gold); /* 11.99:1 on canvas */
-  --stella-signal-live: var(--st-gold-bright); /* 14.22:1 — small, and moving */
-  --stella-signal-ink: var(--st-gold-ink); /* gold TEXT on the paper ground, 6.02:1 */
-  --stella-text: var(--st-text); /* 16.19:1 on canvas */
-  --stella-text-2: var(--st-silver); /* 8.58:1 — the safe small-text tone */
-  --stella-text-3: var(--st-muted); /* 4.79:1 — caption/UI tier (#4063) */
-  --stella-text-dim: var(--st-dim); /* 3.14:1 — chrome only, never words */
+  --stella-signal: var(--st-gold); /* 9.41:1 on canvas */
+  --stella-signal-live: var(--st-gold-bright); /* 11.61:1 — small, and moving */
+  --stella-signal-ink: var(--st-gold-ink); /* gold TEXT on the paper ground, 5.29:1 */
+  --stella-text: var(--st-text); /* 19.32:1 on canvas */
+  --stella-text-2: var(--st-silver); /* 7.43:1 — the safe small-text tone */
+  --stella-text-3: var(--st-muted); /* 5.64:1 — caption/UI tier (#4063) */
+  --stella-text-dim: var(--st-dim); /* 4.10:1 — chrome only, never words */
   --stella-paper-2: var(--st-paper-ground); /* the warm paper ground */
   --stella-paper-3: var(--st-paper-raised); /* paper surface */
   --stella-paper-row: var(--st-paper-row); /* paper hover / raised */
   --stella-paper-edge: var(--st-paper-seam); /* paper seam */
-  --stella-ink-2: var(--st-ink-muted); /* paper secondary text, 5.83:1 */
+  --stella-ink-2: var(--st-ink-muted); /* paper secondary text, 4.71:1 */
 
   /* ── status. Not part of the brand kit's one-color law: these are
    *    FUNCTIONAL hues (a warning must not read as decoration), and each has
@@ -238,20 +238,12 @@
   --stella-muted-fg: var(--stella-ink-2);
   --stella-accent: var(--stella-signal);
   /* the gold stop that holds its edge as TEXT on the light ground: the
-     full-strength signal is 1.32:1 on paper, this stop is 6.02:1 */
+     full-strength signal is 2.05:1 on paper, this stop is 5.29:1 */
   --stella-accent-text: var(--stella-signal-ink);
-  /* the stop the MARK takes on a light ground — shapes, not text. v5.0
-     retires the split that v3.0 introduced and v4.0 kept: gold, text and ink
-     are the only three mark colours, and the mark is the same gold on both
-     grounds, standing on the WCAG logotype exemption rather than on the 3:1
-     graphical floor.
-
-     The `brand-700` stop this used to name does not exist in v5.0 and is
-     defined nowhere in this file, so the variable resolved to nothing and
-     every light-mode consumer fell through to the literal in its own
-     `var(--stella-mark-shape, …)` fallback — which was already this gold.
-     Nothing renders differently; the variable means something again. */
-  --stella-mark-shape: var(--stella-brand);
+  /* The stop the MARK takes on a light ground, shapes and not text. Gold on
+     a light ground is always darker than gold on a dark ground, so the mark
+     takes the same ink stop as gold text. */
+  --stella-mark-shape: var(--stella-signal-ink);
 }
 
 /* ── semantic aliases — dark (ink) ───────────────────────────────────── */
