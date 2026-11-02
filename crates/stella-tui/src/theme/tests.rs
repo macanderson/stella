@@ -522,8 +522,8 @@ fn every_stated_hue_angle_matches_the_computation() {
 
     for (phrase, computed) in [
         ("OKLCH hue 91.1", hue(BRAND)),
-        ("0.0 deg from [`BRAND`] in hue", sep(BRAND_LIVE, BRAND)),
-        ("(0.5 deg from [`BRAND`])", sep(BRAND_INK, BRAND)),
+        ("1.9 deg from [`BRAND`] in hue", sep(BRAND_LIVE, BRAND)),
+        ("(1.1 deg from [`BRAND`])", sep(BRAND_INK, BRAND)),
         ("OKLCH hue 153.9", hue(SUCCESS)),
         ("(62.8 deg from", sep(SUCCESS, BRAND)),
         ("OKLCH hue 43.0", hue(WARNING)),
