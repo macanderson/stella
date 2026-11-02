@@ -37,10 +37,12 @@ separate Stella lockup, which is why there is none here.
 **The palette is the house palette.** One table for Stella and Oxagen, so a
 reader crossing between the two sites does not watch the brand change hue. The
 normative copy for this repo is `design/tokens/stella-tokens.json`, and
-`css/tokens.css` mirrors it. Edit a token the house palette owns in both files. `css/house-tokens.css`,
-`css/house-tokens.json`, and `css/house-tailwind.css` are the kit's own
-files, verbatim. `css/tokens.css` imports `css/house-tokens.css` for its
-corner scale, so keep the two files together.
+`css/tokens.css` mirrors it. Edit a token the house palette owns in both files.
+`css/house-tokens.css` and `css/house-tokens.json` hold the kit's colours as of
+2026-11-02, the cool soot and bone grounds and the true gold, on the type and
+corner values of the earlier kit. `css/house-tailwind.css` is the kit's file as
+it was. `css/tokens.css` imports `css/house-tokens.css` for its corner scale,
+so keep the two files together.
 
 **The faces are the house's three.** Space Grotesk sets the wordmarks and h1
 to h3, Aeonik sets the text and h4 to h6, and Monaspace Neon sets code and
@@ -67,8 +69,8 @@ brand-guidelines.html
   surface and it never encodes a state — that is what `--st-green`, `--st-amber`
   and `--st-red` are for, and `scripts/check-hue-separation.py` keeps them 30°
   clear of it.
-- **Gold as text on warm paper becomes `#8A7223`.** The mark keeps the metal;
-  words do not.
+- **Gold as text on bone becomes `#806719`.** On a light ground the mark takes
+  the same darker gold, so gold on light is always darker than gold on dark.
 - **Nothing sits to the left of `stella*`.** The asterisk is the only mark.
 - **Minimum 88 px** for the wordmark, **24 px** for the icon. Below that, use
   the favicon.

@@ -12,14 +12,14 @@ use crate::palette;
 
 // ── stella palette — "Gold on a cool near-black" ────────────────────────────
 //
-// One colour, owned. The ground is a four-step neutral ramp from `#09090B`,
+// One colour, owned. The ground is a four-step neutral ramp from `#090A0D`,
 // every step of it blue-above-red so the screen never reads warm on a cheap
 // panel; Gold is the signal — reserved for brand, the prompt, active/running,
 // selection and focus, and for nothing else. Gold is the signal, never the
 // surface: if everything is gold, nothing is, so a general-purpose highlight
 // is exactly what this hue must not become. The one sanctioned gold *fill* is
 // a pill that owns attention (the H1 title bar, a selected tab), and a gold
-// fill always carries GROUND-dark text — white on this gold is 1.35:1.
+// fill always carries GROUND-dark text — white on this gold is 2.05:1.
 // (Gold is the *default* accent; `stella-light` swaps it for the deep gold
 // ramp on cool paper — see [`apply_theme`].)
 //
@@ -68,9 +68,9 @@ pub const SURFACE: Color = palette::SURFACE;
 /// Raised panel — the highlight-row value, one step above surface.
 pub const RAISED: Color = palette::RAISED;
 /// Hairline border / rule — the border value. Deliberately below 3.0
-/// contrast (1.31:1): it may never be the only thing conveying structure.
+/// contrast (1.29:1): it may never be the only thing conveying structure.
 pub const HAIRLINE: Color = palette::HAIRLINE;
-/// The louder seam, for a boundary that must actually read (1.63:1). Still
+/// The louder seam, for a boundary that must actually read (2.02:1). Still
 /// decoration — a stronger rule, not a substitute for a glyph or a gap.
 pub const HAIRLINE_STRONG: Color = palette::HAIRLINE_STRONG;
 
@@ -79,11 +79,11 @@ pub const HAIRLINE_STRONG: Color = palette::HAIRLINE_STRONG;
 /// Primary text.
 pub const TEXT_PRIMARY: Color = palette::TEXT_PRIMARY;
 /// Secondary text, and the tone context events take. The safe small-text tone
-/// on every dark ground (8.58:1).
+/// on every dark ground (7.43:1).
 ///
 /// This tier is `silver`, and it used to answer to a second name — `MUTED`,
 /// with [`text_secondary`] spelled `muted()`. That name was one tier off its
-/// own value: it resolved here, to `stella_tui_theme::token::SILVER` `#A1A1AA`,
+/// own value: it resolved here, to `stella_tui_theme::token::SILVER` `#9A9FA6`,
 /// while `token::MUTED` is the tier below and the paper theme's secondary ink
 /// `#5E5E69` was a third colour again — three constants, one word, until
 /// #4966 removed this one and #5001 renamed the paper stop to
@@ -96,11 +96,11 @@ pub const TEXT_PRIMARY: Color = palette::TEXT_PRIMARY;
 /// [`TEXT_TERTIARY`] (which *is* `token::MUTED`) → [`TEXT_DIM`], so the tier a
 /// call site asks for is the tier it gets.
 pub const TEXT_SECONDARY: Color = palette::TEXT_SECONDARY;
-/// Tertiary text (labels, captions). 4.79:1 on [`GROUND`] — clears the AA
+/// Tertiary text (labels, captions). 5.64:1 on [`GROUND`] — clears the AA
 /// body floor; it stays the caption/UI tier and anything a reader must read
 /// at 13px on a raised row still takes [`TEXT_SECONDARY`].
 pub const TEXT_TERTIARY: Color = palette::TEXT_TERTIARY;
-/// The dim tier — 3.14:1, clearing the 3:1 large-text/graphical floor and
+/// The dim tier — 4.10:1, clearing the 3:1 large-text/graphical floor and
 /// still below the 4.5:1 body floor. **Chrome only, never words**: the
 /// unfilled progress groove. It has its own value now rather than aliasing
 /// [`TEXT_TERTIARY`], which is why the three progress call sites that
@@ -175,7 +175,7 @@ pub const ORCHID: Color = palette::DATA_5;
 // Role names remap onto the palette so call sites read as intent (accent,
 // ink, rule) rather than as a hue that a future recolor would falsify.
 
-/// stella's brand accent — Gold `#D4AF37` (11.99:1 on [`GROUND`]). Brand,
+/// stella's brand accent — Gold `#D4AF37` (9.41:1 on [`GROUND`]). Brand,
 /// active/running, focus, selection, and progress only. In the transcript,
 /// the tool name and nothing else. The active theme's actual hue is applied
 /// per-frame by [`apply_theme`]; this is the canonical dark value every call
@@ -183,7 +183,7 @@ pub const ORCHID: Color = palette::DATA_5;
 ///
 /// The same value clears AA on a glyph, a one-cell rule, and a fill on every
 /// dark ground. When it is a *fill*, the text on it must be [`GROUND`]-dark —
-/// ink on gold is 11.99:1 where white on gold is 1.35:1.
+/// ink on gold is 9.41:1 where white on gold is 2.05:1.
 pub const ACCENT: Color = palette::BRAND;
 /// The brand hue for *fills* — a pill, a bar body, a selected-tab wash. The
 /// same gold: one owned colour means the stroke and the fill agree, and the
@@ -357,7 +357,7 @@ pub const DIFF_DEL_BG_EMPH: Color = Color::Rgb(0x53, 0x2A, 0x31);
 
 /// Language keyword (`fn`/`let`/`def`/`import`/`return`…), and in JSON an
 /// object key — the palette's "syntax types" slot. [`palette::TEXT_EMPHASIS`],
-/// 11.04:1 on ground.
+/// 12.15:1 on ground.
 pub const SYNTAX_KEYWORD: Color = palette::TEXT_EMPHASIS;
 /// String / char literal — a soft green at the scheme's own chroma (0.115,
 /// against the retired tone's 0.164), 11.78:1 on ground. 8.4° from
@@ -622,7 +622,7 @@ pub fn degrade_buffer(buf: &mut ratatui::buffer::Buffer, mode: ColorMode) {
 
 /// `stella-light`: every canonical (dark) token value → its paper counterpart.
 const LIGHT_REMAP: &[(Color, Color)] = &[
-    // Grounds → paper. The paper ramp is cooled to the same 285-286° neutral
+    // Grounds → paper. The paper ramp is cooled to the same cool neutral
     // hue the dark ramp holds, so switching theme changes the lightness and
     // not the temperature.
     (VOID, palette::PAPER),
@@ -642,9 +642,9 @@ const LIGHT_REMAP: &[(Color, Color)] = &[
     // that still reads as texture on `snow`.
     (TEXT_DIM, palette::INK_DIM),
     // Brand → the deep gold ramp. ACCENT, ACCENT_FILL and GOLD are one value,
-    // so one entry sends every flat gold cell to `brand-ink` (6.02:1 on
+    // so one entry sends every flat gold cell to `brand-ink` (5.29:1 on
     // paper) — `gold-ink` is reserved for *graphical* chrome, because at
-    // 3.37:1 it cannot carry terminal-cell text on paper.
+    // 3.61:1 it cannot carry terminal-cell text on paper.
     (ACCENT, palette::BRAND_INK),
     (ACCENT_LIVE, palette::GOLD_INK),
     // Status → ink variants (OK/BRIGHT share the base value).
@@ -729,9 +729,9 @@ pub fn rule() -> Style {
 /// The border of a panel that *contains* something a reader works in — the
 /// transcript, PLAN, the deck's section boxes.
 ///
-/// [`HAIRLINE_STRONG`], not [`RULE`]. The plain hairline is 1.26:1 and is
+/// [`HAIRLINE_STRONG`], not [`RULE`]. The plain hairline is 1.29:1 and is
 /// documented as decoration that "may never be the only thing conveying
-/// structure" — which is exactly the job a panel border does have. At 1.57:1
+/// structure" — which is exactly the job a panel border does have. At 2.02:1
 /// the seam is still quiet enough to recede and finally strong enough to
 /// enclose. Popovers and cards that already sit on a lifted ground keep
 /// [`rule`].

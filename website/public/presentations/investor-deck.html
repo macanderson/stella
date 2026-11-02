@@ -7,7 +7,7 @@
 <meta name="description" content="We don't sell tokens — we sell verified work. AI that proves its own work, then trains on it. +15.7 points over Claude Code with the model held constant, on the full Terminal-Bench 2.1 suite — preregistered and reproducible. Software first, then every vertical with a checkable outcome.">
 <meta property="og:title" content="stella · oxagen investor deck">
 <meta property="og:description" content="We don't sell tokens. Verified done, not claimed done. Same model, same tasks: +15.7 points over Claude Code on Terminal-Bench 2.1 — preregistered, artifact-backed, reproducible.">
-<link rel="icon" type="image/svg+xml" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" role="img" aria-label="stella mark"><g transform="translate(3.050,128.164) scale(1.27608)"><path class="mark" d="M5.88507 -58.2714V-67.369H16.3847L25.7719 -65.7956L26.4302 -67.4381L18.669 -72.8821L11.2665 -80.3931L17.6519 -86.7785L25.163 -79.3761L30.607 -71.6149L32.2494 -72.2732L30.6761 -81.6604V-92.16H39.7737V-81.6604L38.2004 -72.2732L39.8428 -71.6149L45.2868 -79.3761L52.7978 -86.7785L59.1832 -80.3931L51.7808 -72.8821L44.0196 -67.4381L44.6779 -65.7956L54.0651 -67.369H64.5647V-58.2714H54.0651L44.6779 -59.8447L44.0196 -58.2023L51.7808 -52.7583L59.1832 -45.2472L52.7978 -38.8618L45.2868 -46.2642L39.8428 -54.0254L38.2004 -53.3672L39.7737 -43.98V-33.4804H30.6761V-43.98L32.2494 -53.3672L30.607 -54.0254L25.163 -46.2642L17.6519 -38.8618L11.2665 -45.2472L18.669 -52.7583L26.4302 -58.2023L25.7719 -59.8447L16.3847 -58.2714Z" fill="#D4AF37"/></g><style>:root%7Bcolor:#09090B%7D@media(prefers-color-scheme:dark)%7B:root%7Bcolor:#FFFFFF%7D%7D</style></svg>'>
+<link rel="icon" type="image/svg+xml" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" role="img" aria-label="stella mark"><g transform="translate(3.050,128.164) scale(1.27608)"><path class="mark" d="M5.88507 -58.2714V-67.369H16.3847L25.7719 -65.7956L26.4302 -67.4381L18.669 -72.8821L11.2665 -80.3931L17.6519 -86.7785L25.163 -79.3761L30.607 -71.6149L32.2494 -72.2732L30.6761 -81.6604V-92.16H39.7737V-81.6604L38.2004 -72.2732L39.8428 -71.6149L45.2868 -79.3761L52.7978 -86.7785L59.1832 -80.3931L51.7808 -72.8821L44.0196 -67.4381L44.6779 -65.7956L54.0651 -67.369H64.5647V-58.2714H54.0651L44.6779 -59.8447L44.0196 -58.2023L51.7808 -52.7583L59.1832 -45.2472L52.7978 -38.8618L45.2868 -46.2642L39.8428 -54.0254L38.2004 -53.3672L39.7737 -43.98V-33.4804H30.6761V-43.98L32.2494 -53.3672L30.607 -54.0254L25.163 -46.2642L17.6519 -38.8618L11.2665 -45.2472L18.669 -52.7583L26.4302 -58.2023L25.7719 -59.8447L16.3847 -58.2714Z" fill="#D4AF37"/></g><style>:root%7Bcolor:#090A0D%7D@media(prefers-color-scheme:dark)%7B:root%7Bcolor:#FCFCFE%7D%7D</style></svg>'>
 <style>
 /* ==========================================================================
    stella investor system: Oxide Gold on Ink and warm uncoated Paper.
@@ -30,17 +30,17 @@
 
 :root {
   --gold: #D4AF37;
-  --gold-deep: #09090B;
-  --gold-300: #F1CE65;
-  --ink: #09090B;
-  --ink-soft: #18181B;
-  --paper: #FFFFFF;
-  --sheet: #FFFFFF;
+  --gold-deep: #090A0D;
+  --gold-300: #E3C45B;
+  --ink: #090A0D;
+  --ink-soft: #0F1115;
+  --paper: #FCFCFE;
+  --sheet: #FCFCFE;
   --sheet-deep: #DBE2EA;
   --sheet-line: #A7AEB6;
-  --surface: #18181B;
+  --surface: #0F1115;
   --border: #1F262D;
-  --muted: #777782;
+  --muted: #737882;
   --pass: #2FD3C6;
   --fail: #E4408F;
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
@@ -142,9 +142,9 @@ body {
   --surface: var(--sheet-deep);
   --border: var(--sheet-line);
   --muted: #60666D;
-  --gold: #09090B;
+  --gold: #090A0D;
   --gold-deep: #D4AF37;
-  --gold-300: #09090B;
+  --gold-300: #090A0D;
 }
 .slide.tone-paper::before {
   content: "";
@@ -164,17 +164,17 @@ body {
   position: absolute;
   inset: 18px;
   z-index: 0;
-  border: 1px solid rgb(24 24 27 / 0.12);
+  border: 1px solid rgb(15 17 21 / 0.12);
   pointer-events: none;
 }
 .slide.tone-paper .term {
-  color: #FFFFFF;
-  --paper: #FFFFFF;
-  --surface: #18181B;
+  color: #FCFCFE;
+  --paper: #FCFCFE;
+  --surface: #0F1115;
   --border: #2F353B;
   --muted: #90979E;
   --gold: #D4AF37;
-  --gold-deep: #09090B;
+  --gold-deep: #090A0D;
 }
 
 .overline { font-size: 0.8rem; font-weight: 500; letter-spacing: 0.18em; color: var(--gold); margin-bottom: 14px; }
@@ -443,7 +443,7 @@ a.ref { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(
 
 <div class="texture" aria-hidden="true"></div>
 <svg class="starfield" aria-hidden="true" viewBox="0 0 1600 900" preserveAspectRatio="none">
-  <g fill="#FFFFFF">
+  <g fill="#FCFCFE">
     <circle cx="140" cy="120" r="1.2" style="--o:.16"/><circle cx="420" cy="80" r="0.9" style="--o:.10;animation-delay:-1s"/>
     <circle cx="820" cy="150" r="1.1" style="--o:.13;animation-delay:-2s"/><circle cx="1240" cy="90" r="0.8" style="--o:.10;animation-delay:-3s"/>
     <circle cx="1520" cy="210" r="1.2" style="--o:.14;animation-delay:-4s"/><circle cx="240" cy="520" r="0.9" style="--o:.09;animation-delay:-5s"/>
@@ -575,7 +575,7 @@ a.ref { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(
     <p class="lead rise" style="--d:2">The most valuable thing your team makes with a coding tool is not the code. It is the traces: every step, every fix, every decision. Today they vanish into someone else's model.</p>
     <div class="body cols c-2">
       <svg class="dia rise" style="--d:3" viewBox="0 0 660 232" role="img" aria-label="diagram: today, your engineers' traces flow out of your network into a frontier lab's shared model, which every competitor also rents">
-        <text class="lbl" x="0" y="14" fill="#777782">TODAY</text>
+        <text class="lbl" x="0" y="14" fill="#737882">TODAY</text>
         <rect class="box" x="0" y="34" width="240" height="182" rx="12" stroke-dasharray="5 5"/>
         <text class="sm" x="120" y="58" text-anchor="middle">your network</text>
         <rect class="box" x="28" y="80" width="184" height="44" rx="8"/><text class="lbl" x="120" y="108" text-anchor="middle">your engineers</text>
@@ -727,7 +727,7 @@ a.ref { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(
       <path class="ln lng draw" d="M510 30 H770" stroke-width="1.5" marker-end="url(#ar-gold)"/>
       <path class="ln lng draw" d="M910 30 H1170" stroke-width="1.5" marker-end="url(#ar-gold)"/>
       <path class="ln lng draw" d="M1310 46 C1370 104 50 104 110 46" stroke-width="1.5" stroke-dasharray="6 6" marker-end="url(#ar-gold)"/>
-      <g class="sm" text-anchor="middle" fill="#FFFFFF" font-weight="700">
+      <g class="sm" text-anchor="middle" fill="#FCFCFE" font-weight="700">
         <text x="55" y="35">work</text><text x="440" y="35">witness</text><text x="840" y="35">lesson</text><text x="1240" y="35">next cycle</text>
       </g>
       <text class="sm" x="710" y="70" text-anchor="middle">the commit history is the audit trail</text>
@@ -968,7 +968,7 @@ a.ref { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(
         <path class="lng draw" d="M282 93 C430 93 430 190 570 190" stroke-width="2" marker-end="url(#ar-now)"/>
         <path class="lng draw" d="M282 195 H570" stroke-width="2" marker-end="url(#ar-now)"/>
         <path class="lng draw" d="M282 297 C430 297 430 200 570 200" stroke-width="2" marker-end="url(#ar-now)"/>
-        <circle cx="650" cy="195" r="108" fill="#18181B" stroke="#09090B" stroke-width="1"/>
+        <circle cx="650" cy="195" r="108" fill="#0F1115" stroke="#090A0D" stroke-width="1"/>
         <circle class="pulse" cx="650" cy="195" r="78" fill="none" stroke="#D4AF37" stroke-width="2"/>
         <text class="sm gd" x="650" y="166" text-anchor="middle">THE WINDOW</text>
         <text class="lbl" x="650" y="194" text-anchor="middle">verified, private</text>

@@ -6,8 +6,8 @@
 //! SPEC 3.2 originally asked for one rule over "every color in the gold role":
 //! `r > g > b`, `g >= 0.78 r`, `b <= 0.35 r`. That rule is not satisfiable by a
 //! palette that also wants a *lift* — a brighter stop of the same gold for
-//! single-cell live indicators — and the spec's own `gold_bright` `#F1CE65`
-//! was the proof, measuring `b/r = 0.433`.
+//! single-cell live indicators — and the spec's own `gold_bright` `#E3C45B`
+//! was the proof, measuring `b/r = 0.401`.
 //!
 //! It is not a bad colour. It is a geometry problem. Lightening a hue moves
 //! every channel toward white, and the channel furthest from it — blue, in a
@@ -74,7 +74,7 @@ pub const GOLD_BLUE_PCT: u32 = token::GOLD_BLUE_PCT;
 /// to sit strictly inside that: anything at or beyond 4° is a colour a reader
 /// could not tell from gold anyway, which is the wrong end of the argument.
 ///
-/// It discriminates in practice. `GOLD_BRIGHT` sits 0.86° from `GOLD` and
+/// It discriminates in practice. `GOLD_BRIGHT` sits 0.46° from `GOLD` and
 /// passes; the v1 gold `#FFB81A` sits 4.46° away and fails; the orange
 /// `#EF8A1F` sits 14.99° away and fails.
 pub const LIFT_HUE_TOLERANCE_DEG: f64 = token::GOLD_LIFT_HUE_TOLERANCE_DEG;
@@ -248,8 +248,8 @@ pub fn is_shade_of(shade: (u8, u8, u8), base: (u8, u8, u8)) -> bool {
 /// `max(r, g, b) - min(r, g, b) <= NEUTRAL_SPREAD`. One predicate for every
 /// neutral in the system, ink to paper.
 ///
-/// The house system uses obsidian and white with a zinc ramp that leans a few
-/// units blue (its 500 step has `b - r = 9`). A grey must not carry a hue: tan
+/// The house system uses soot and bone with a cool ramp that leans a few
+/// units blue (its dim stop has `b - r = 12`). A grey must not carry a hue: tan
 /// competes with the gold, blue fights it. A bound on the channel spread says
 /// that in both directions, and rejects a sepia grey that spreads 13.
 #[must_use]

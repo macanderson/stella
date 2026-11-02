@@ -42,34 +42,34 @@
   --stella-paper-bg: var(--st-paper);  /* light-mode surface */
 
   /* ---- brand ramp ------------------------------------------------------ */
-  --st-bg: #09090B;
-  --st-panel: #18181B;
-  --st-hl: #1F1F23;
-  --st-border: #27272A;
-  --st-rule: #3F3F46;
+  --st-bg: #090A0D;
+  --st-panel: #0F1115;
+  --st-hl: #16191D;
+  --st-border: #222529;
+  --st-rule: #40444A;
   --st-gold: #D4AF37;
-  --st-gold-bright: #F1CE65;
-  --st-silver: #A1A1AA;
-  --st-silver-type: #E4E4E7;
-  --st-text: #FFFFFF;
-  --st-muted: #8A8A93;
-  --st-dim: #71717A;
+  --st-gold-bright: #E3C45B;
+  --st-silver: #9A9FA6;
+  --st-silver-type: #C7CBD1;
+  --st-text: #FCFCFE;
+  --st-muted: #858991;
+  --st-dim: #6E727A;
   --st-green: #74C991;
   --st-red: #E0687D;
   --st-diff-add: #10201A;
   --st-diff-del: #241019;
-  --st-ink: #09090B;
-  --st-paper: #FFFFFF;
-  --st-text: #FFFFFF;
-  --st-paper-panel: #FFFFFF;
-  --st-paper-border: #E4E4E7;
-  --st-void: #000000;
-  --st-gold-ink: #8A7223;
-  --st-paper-ground: #FFFFFF;
-  --st-paper-raised: #FFFFFF;
-  --st-paper-row: #F4F4F5;
-  --st-paper-seam: #E4E4E7;
-  --st-ink-muted: #71717A;
+  --st-ink: #090A0D;
+  --st-paper: #FCFCFE;
+  --st-text: #FCFCFE;
+  --st-paper-panel: #FCFCFE;
+  --st-paper-border: #E3E5E9;
+  --st-void: #040506;
+  --st-gold-ink: #806719;
+  --st-paper-ground: #FCFCFE;
+  --st-paper-raised: #FCFCFE;
+  --st-paper-row: #ECEEF3;
+  --st-paper-seam: #E3E5E9;
+  --st-ink-muted: #6E727A;
   --st-green-ink: #006933;
   --st-amber: #EB8960;
   --st-amber-ink: #8D3B19;
@@ -141,32 +141,22 @@
 :root {
   --stella-bg: var(--stella-paper-bg);
   --stella-fg: var(--stella-ink);
-  --stella-surface: #FFFFFF;
-  --stella-border: #E4E4E7;
-  --stella-muted-fg: #71717A;
+  --stella-surface: #FCFCFE;
+  --stella-border: #E3E5E9;
+  --stella-muted-fg: #6E727A;
   --stella-accent: var(--stella-brand);
   --stella-accent-text: var(--stella-brand-deep); /* gold that passes on light */
-  /* The mark itself — shapes, not text. v5.0 retires the darker light cut:
-     gold, text and ink are the only three mark colours, and the mark is the
-     same gold on both grounds. It stands on the WCAG logotype exemption
-     rather than on the 3:1 graphical floor, which is the honest reason — the
-     v3.0/v4.0 rule here stepped the mark down to a `brand-700` stop, and that
-     stop does not exist in v5.0.
-
-     This declaration used to name it anyway. `--stella-brand-700` is defined
-     nowhere in this file, so `--stella-mark-shape` resolved to nothing for
-     every light-mode consumer and each one silently fell through to the
-     literal in its own `var(--stella-mark-shape, …)` fallback. The rendered
-     colour does not change with this fix; the variable simply means something
-     again. */
-  --stella-mark-shape: var(--stella-brand);
+  /* The mark itself, shapes and not text. Gold on a light ground is always
+     darker than gold on a dark ground, so the mark takes the same ink stop as
+     gold text. */
+  --stella-mark-shape: var(--st-gold-ink);
 }
 .dark, [data-theme="dark"] {
   --stella-bg: var(--stella-ink);
   --stella-fg: var(--stella-paper);
-  --stella-surface: #18181B;
-  --stella-border: #27272A;
-  --stella-muted-fg: #A1A1AA;
+  --stella-surface: #0F1115;
+  --stella-border: #222529;
+  --stella-muted-fg: #9A9FA6;
   --stella-accent: var(--stella-brand);
   --stella-accent-text: var(--stella-brand);
   --stella-mark-shape: var(--stella-brand);
@@ -175,9 +165,9 @@
   :root:not([data-theme="light"]) {
     --stella-bg: var(--stella-ink);
     --stella-fg: var(--stella-paper);
-    --stella-surface: #18181B;
-    --stella-border: #27272A;
-    --stella-muted-fg: #A1A1AA;
+    --stella-surface: #0F1115;
+    --stella-border: #222529;
+    --stella-muted-fg: #9A9FA6;
     --stella-accent: var(--stella-brand);
     --stella-accent-text: var(--stella-brand);
     --stella-mark-shape: var(--stella-brand);
