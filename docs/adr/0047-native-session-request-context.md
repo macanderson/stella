@@ -8,7 +8,7 @@ status: proposed
 
 - Status: proposed
 - Date: 2026-11-05
-- Work: [oxageninc/product#8896](https://github.com/oxageninc/product/issues/8896)
+- Work: [Device workspace switching](https://github.com/oxageninc/product/issues/8896)
 
 ## Context
 
@@ -40,7 +40,7 @@ no workspace access by itself.
 
 Oxagen must preserve a native Stella hook ID when one is present, qualify it by
 the Stella enrollment, and reject an unknown or ambiguous route after a device
-switch. That receiver change belongs to product pull request #8897. Older
+switch. That receiver change belongs to the [workspace switch implementation](https://github.com/oxageninc/product/pull/8897). Older
 Stella releases remain unable to prove native model ownership across a switch.
 
 ## Consequences
