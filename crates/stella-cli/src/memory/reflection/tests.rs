@@ -102,7 +102,7 @@ async fn prompt_for_evidence(evidence: super::TurnEvidence<'_>) -> String {
         evidence,
         &["testing".to_string()],
         None,
-        super::ReflectionPosture::default(),
+        super::ReflectionPosture::default().into(),
     )
     .await
     .expect("the stub provider cannot fail");
@@ -383,7 +383,7 @@ async fn dispatch_shape(
         super::TurnEvidence::from_transcript(&transcript, true),
         &["testing".to_string()],
         None,
-        posture,
+        posture.into(),
     )
     .await
     .expect("the stub provider cannot fail");

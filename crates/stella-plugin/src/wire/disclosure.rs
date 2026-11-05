@@ -17,7 +17,7 @@
 //! fills a different subset: `PreToolUse`/`PostToolUse` carry the tool call
 //! and result, `Stop` the final reply, `UserPromptSubmit` the typed prompt,
 //! `Subagent` a child's task and report, the issue events tracker ids, and
-//! `SessionStart`/`PreCompact` only the workspace path. A per-*type* table
+//! `SessionStart`/`PreCompact` the workspace path and session identity. A per-*type* table
 //! would disclose the union to everyone — over-stating what `SessionStart`
 //! gets by the widest margin — so rows key on the event that carries them.
 //!
@@ -256,6 +256,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
         disclosure: Some("the absolute path of the workspace you are running in"),
     },
     HookField {
+        event: HookEvent::SessionStart,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
+    },
+    HookField {
         event: HookEvent::PreToolUse,
         path: "event",
         disclosure: None,
@@ -264,6 +269,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
         event: HookEvent::PreToolUse,
         path: "cwd",
         disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::PreToolUse,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
     },
     HookField {
         event: HookEvent::PreToolUse,
@@ -292,6 +302,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
         event: HookEvent::PostToolUse,
         path: "cwd",
         disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::PostToolUse,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
     },
     HookField {
         event: HookEvent::PostToolUse,
@@ -328,6 +343,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
     },
     HookField {
         event: HookEvent::Stop,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
+    },
+    HookField {
+        event: HookEvent::Stop,
         path: "finalText",
         disclosure: Some("the model's full reply for the turn — the same text you were shown"),
     },
@@ -342,6 +362,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
         disclosure: Some("the absolute path of the workspace you are running in"),
     },
     HookField {
+        event: HookEvent::PreCompact,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
+    },
+    HookField {
         event: HookEvent::UserPromptSubmit,
         path: "event",
         disclosure: None,
@@ -350,6 +375,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
         event: HookEvent::UserPromptSubmit,
         path: "cwd",
         disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::UserPromptSubmit,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
     },
     HookField {
         event: HookEvent::UserPromptSubmit,
@@ -365,6 +395,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
         event: HookEvent::SubagentStart,
         path: "cwd",
         disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::SubagentStart,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
     },
     HookField {
         event: HookEvent::SubagentStart,
@@ -390,6 +425,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
         event: HookEvent::SubagentStop,
         path: "cwd",
         disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::SubagentStop,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
     },
     HookField {
         event: HookEvent::SubagentStop,
@@ -438,6 +478,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
     },
     HookField {
         event: HookEvent::PreIssueWork,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
+    },
+    HookField {
+        event: HookEvent::PreIssueWork,
         path: "issue.number",
         disclosure: Some("which issue the self-driving loop is about to work"),
     },
@@ -462,6 +507,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
         event: HookEvent::PostIssueWork,
         path: "cwd",
         disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::PostIssueWork,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
     },
     HookField {
         event: HookEvent::PostIssueWork,
@@ -507,6 +557,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
     },
     HookField {
         event: HookEvent::DriveRunStart,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
+    },
+    HookField {
+        event: HookEvent::DriveRunStart,
         path: "run.runId",
         disclosure: None,
     },
@@ -519,6 +574,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
         event: HookEvent::DriveRunEnd,
         path: "cwd",
         disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::DriveRunEnd,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
     },
     HookField {
         event: HookEvent::DriveRunEnd,
@@ -542,6 +602,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
     },
     HookField {
         event: HookEvent::DriveCycleStart,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
+    },
+    HookField {
+        event: HookEvent::DriveCycleStart,
         path: "run.runId",
         disclosure: None,
     },
@@ -562,6 +627,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
     },
     HookField {
         event: HookEvent::DriveCycleEnd,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
+    },
+    HookField {
+        event: HookEvent::DriveCycleEnd,
         path: "run.runId",
         disclosure: None,
     },
@@ -579,6 +649,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
         event: HookEvent::DriveIdle,
         path: "cwd",
         disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::DriveIdle,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
     },
     HookField {
         event: HookEvent::DriveIdle,
@@ -607,6 +682,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
     },
     HookField {
         event: HookEvent::IssueCreated,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
+    },
+    HookField {
+        event: HookEvent::IssueCreated,
         path: "issue.number",
         disclosure: None,
     },
@@ -629,6 +709,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
         event: HookEvent::IssueClosed,
         path: "cwd",
         disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::IssueClosed,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
     },
     HookField {
         event: HookEvent::IssueClosed,
@@ -662,6 +747,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
     },
     HookField {
         event: HookEvent::IssueEscalated,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
+    },
+    HookField {
+        event: HookEvent::IssueEscalated,
         path: "issue.number",
         disclosure: None,
     },
@@ -692,6 +782,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
     },
     HookField {
         event: HookEvent::PullRequestOpened,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
+    },
+    HookField {
+        event: HookEvent::PullRequestOpened,
         path: "pullRequest.number",
         disclosure: None,
     },
@@ -712,6 +807,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
     },
     HookField {
         event: HookEvent::PullRequestReadyForReview,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
+    },
+    HookField {
+        event: HookEvent::PullRequestReadyForReview,
         path: "pullRequest.number",
         disclosure: None,
     },
@@ -732,6 +832,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
     },
     HookField {
         event: HookEvent::PullRequestConflicted,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
+    },
+    HookField {
+        event: HookEvent::PullRequestConflicted,
         path: "pullRequest.number",
         disclosure: None,
     },
@@ -752,6 +857,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
     },
     HookField {
         event: HookEvent::PullRequestMerged,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
+    },
+    HookField {
+        event: HookEvent::PullRequestMerged,
         path: "pullRequest.number",
         disclosure: None,
     },
@@ -772,6 +882,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
     },
     HookField {
         event: HookEvent::ChecksFailed,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
+    },
+    HookField {
+        event: HookEvent::ChecksFailed,
         path: "pullRequest.number",
         disclosure: None,
     },
@@ -792,6 +907,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
     },
     HookField {
         event: HookEvent::BaseBroken,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
+    },
+    HookField {
+        event: HookEvent::BaseBroken,
         path: "pullRequest.number",
         disclosure: None,
     },
@@ -812,6 +932,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
     },
     HookField {
         event: HookEvent::ChecksGreen,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
+    },
+    HookField {
+        event: HookEvent::ChecksGreen,
         path: "pullRequest.number",
         disclosure: None,
     },
@@ -832,6 +957,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
     },
     HookField {
         event: HookEvent::DriveBudgetExhausted,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
+    },
+    HookField {
+        event: HookEvent::DriveBudgetExhausted,
         path: "run.runId",
         disclosure: None,
     },
@@ -849,6 +979,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
         event: HookEvent::DriveRefused,
         path: "cwd",
         disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::DriveRefused,
+        path: "session_id",
+        disclosure: Some("the native session ID when the host supplies it"),
     },
     HookField {
         event: HookEvent::DriveRefused,

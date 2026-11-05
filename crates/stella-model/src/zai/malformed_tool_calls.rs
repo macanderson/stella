@@ -43,6 +43,7 @@ async fn streaming_provider(body: &'static str) -> (MockServer, ZaiProvider) {
 
 fn request() -> CompletionRequest {
     CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("read a.rs and search for fn main")],
         max_output_tokens: None,
         temperature: None,

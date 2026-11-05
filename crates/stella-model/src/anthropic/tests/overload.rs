@@ -25,6 +25,7 @@ async fn complete_maps_529_to_park_eligible_overloaded_with_the_stated_wait() {
     let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-fable-5")
         .with_base_url(server.uri());
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,
@@ -78,6 +79,7 @@ async fn a_mid_stream_overloaded_error_parks_and_keeps_the_usage_the_stream_repo
     let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-fable-5")
         .with_base_url(server.uri());
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,

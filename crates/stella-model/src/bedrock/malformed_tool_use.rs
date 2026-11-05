@@ -20,6 +20,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn request() -> CompletionRequest {
     CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("list the files")],
         max_output_tokens: Some(1024),
         temperature: None,

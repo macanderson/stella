@@ -30,6 +30,7 @@ async fn zai_identity_maps_pinned_effort_to_reasoning_effort() {
     let provider =
         ZaiProvider::new(ApiKey::new("sk-test-zai"), "glm-5.2").with_base_url(server.uri());
     let req = |reasoning, effort| CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,

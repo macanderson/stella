@@ -633,6 +633,7 @@ async fn two_calls_at_one_step_are_separable_by_their_usage_rows() {
             role: stella_protocol::ModelCallRole::Summarization,
             model_hint: "scripted".into(),
             request: stella_protocol::CompletionRequest {
+                context: None,
                 messages: vec![CompletionMessage::user("summarize")],
                 max_output_tokens: None,
                 temperature: None,

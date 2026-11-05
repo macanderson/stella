@@ -576,6 +576,16 @@ pub async fn run_deck_session(
     } else {
         agent::build_system_prompt(cfg, &cfg.workspace_root, &active_rules)
     };
+    // The other two halves of the same promise, bound beside the journal
+    // because all three name the session and all three must name the SAME one:
+    // every turn from here checkpoints into this record's sidecar, and every
+    // file the agent touches commits to this session's ref in stella's own git
+    // store. Re-bound on an in-deck session switch, below.
+    if let Some(warning) =
+        crate::durability::bind_session(&cfg.durability, &cfg.workspace_root, &session_record.id)
+    {
+        let _ = deck_tx.send(system_notice(warning));
+    }
     let mut system_prompt = agent::with_session_hook_context(bare_prompt.clone(), cfg).await;
     // What the SessionStart hooks appended, captured once: a session model
     // switch rebuilds the prompt around the NEW model line and re-appends
@@ -618,16 +628,6 @@ pub async fn run_deck_session(
             }
         },
     );
-    // The other two halves of the same promise, bound beside the journal
-    // because all three name the session and all three must name the SAME one:
-    // every turn from here checkpoints into this record's sidecar, and every
-    // file the agent touches commits to this session's ref in stella's own git
-    // store. Re-bound on an in-deck session switch, below.
-    if let Some(warning) =
-        crate::durability::bind_session(&cfg.durability, &cfg.workspace_root, &session_record.id)
-    {
-        let _ = deck_tx.send(system_notice(warning));
-    }
     // Which of the two durable stores this session's conversation comes back
     // from, decided HERE because the fresher candidate — the resume point an
     // interrupted turn left mid-flight — lives in the record the bind above

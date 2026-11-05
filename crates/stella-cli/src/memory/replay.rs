@@ -334,7 +334,7 @@ impl<'a> Replayer<'a> {
                     crate::memory::TurnEvidence::from_transcript(&transcript, turn.succeeded),
                     true,
                     None,
-                    crate::memory::ReflectionPosture::default(),
+                    crate::memory::ReflectionPosture::default().into(),
                 )
                 .await
         } else {

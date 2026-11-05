@@ -65,6 +65,7 @@ async fn streaming_provider(body: &'static str) -> (MockServer, OpenAiProvider) 
 
 fn request() -> CompletionRequest {
     CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("list the files")],
         max_output_tokens: None,
         temperature: None,

@@ -868,6 +868,10 @@ async fn run_worker(
     pause_rx: watch::Receiver<bool>,
     tap: Arc<SteeringTap>,
 ) -> (Option<i64>, f64, WorkerEnd) {
+    let lane_durability = crate::durability::SessionDurability::default();
+    let mut lane_cfg = cfg.clone();
+    lane_cfg.durability = lane_durability.clone();
+    let cfg = &lane_cfg;
     let provider = match agent::build_provider(cfg) {
         Ok(p) => p,
         Err(e) => return (None, 0.0, WorkerEnd::Failed(e)),
@@ -893,12 +897,6 @@ async fn run_worker(
         crate::rules::MidTurnAsk::Headless,
     );
 
-    let system_prompt = agent::with_session_hook_context(
-        agent::build_system_prompt(cfg, &cfg.workspace_root, &active_rules),
-        cfg,
-    )
-    .await;
-
     // This lane's own durable record — never the lead's `cfg.durability`
     // (#3233). `lane_journal_key` derives an id unique to this lane, so a
     // killed worker's transcript survives independently of the lead's, and a
@@ -911,7 +909,6 @@ async fn run_worker(
     // (`stella_store::work_journal::lane`). A lane that dies and is never
     // re-attempted therefore keeps its terminal frame for the lead to read,
     // and stops costing anything once the session it belonged to is pruned.
-    let lane_durability = crate::durability::SessionDurability::default();
     let lane_key = lane_journal_key(session_id, &spec.lane);
     if let Some(warning) =
         crate::durability::bind_session(&lane_durability, &cfg.workspace_root, &lane_key)
@@ -923,6 +920,13 @@ async fn run_worker(
             },
         });
     }
+
+    let system_prompt = agent::with_session_hook_context_for(
+        agent::build_system_prompt(cfg, &cfg.workspace_root, &active_rules),
+        cfg,
+        &lane_durability,
+    )
+    .await;
 
     // This lane's terminal frame: what it hands the lead if it dies mid-turn.
     // The engine retires the resume point on every terminal path, so without

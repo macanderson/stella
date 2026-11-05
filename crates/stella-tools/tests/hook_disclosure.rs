@@ -322,6 +322,7 @@ fn every_hook_payload_field_is_named_in_the_disclosure_table() {
     let HookPayload {
         event,
         cwd,
+        session_id,
         tool,
         tool_result,
         final_text,
@@ -394,6 +395,7 @@ fn every_hook_payload_field_is_named_in_the_disclosure_table() {
     let mut declared: Vec<&'static str> = vec![
         named("event", event),
         named("cwd", cwd),
+        named("session_id", session_id),
         named("tool.name", name),
         named("tool.input", input),
         named("tool.read_only", read_only),
@@ -468,7 +470,10 @@ fn named<T>(path: &'static str, _value: T) -> &'static str {
 #[test]
 fn each_events_rows_are_exactly_what_that_event_serializes() {
     for (event, payloads) in widest_payloads() {
-        let sent: BTreeSet<String> = payloads.iter().flat_map(wire_paths).collect();
+        let context = stella_protocol::SessionContext { session_id: "ses-native".into() };
+        let sent: BTreeSet<String> = payloads.into_iter()
+            .map(|payload| payload.with_session_context(Some(&context)))
+            .flat_map(|payload| wire_paths(&payload)).collect();
         let declared = rows_for(event);
         assert_eq!(
             sent, declared,

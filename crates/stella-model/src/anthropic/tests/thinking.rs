@@ -45,6 +45,7 @@ async fn thinking_deltas_reach_the_reasoning_channel_not_the_answer() {
     let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-fable-5")
         .with_base_url(server.uri());
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,

@@ -30,8 +30,7 @@ use crate::interactive::AskUserIo;
 /// the error message to surface.
 pub(super) async fn run(
     provider: &dyn stella_protocol::Provider,
-    workspace_root: &std::path::Path,
-    model_id: &str,
+    cfg: &crate::config::Config,
     budget_limit: Option<f64>,
     ask: &dyn AskUserIo,
     in_tx: &UnboundedSender<super::Inbound>,
@@ -42,9 +41,10 @@ pub(super) async fn run(
     let mut io = InitIo::new(agent::deck_narrator(in_tx.clone(), agent_name), Some(ask));
     let outcome = agent::init_workspace(
         Some(provider),
-        workspace_root,
-        Some(model_id),
+        &cfg.workspace_root,
+        Some(&cfg.model_id),
         budget_limit,
+        cfg.durability.session_context(),
         &mut io,
     )
     .await;

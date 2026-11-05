@@ -186,11 +186,21 @@ impl CompletionMessage {
     }
 }
 
+/// The native session that owns one request and its hook events.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionContext {
+    pub session_id: String,
+}
+
 /// A completion request — the same shape regardless of which provider
 /// adapter ultimately serves it.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CompletionRequest {
+    /// Captured by the engine before dispatch. Excluded from provider bodies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<SessionContext>,
     /// The conversation so far, in order, starting with the system message.
     pub messages: Vec<CompletionMessage>,
     /// Upper bound on generated tokens. `None` uses the provider default.
@@ -255,6 +265,8 @@ pub struct CompletionRequest {
 /// serialization shape.
 #[derive(Debug, Clone, Copy)]
 pub struct CompletionRequestRef<'a> {
+    /// The same captured session as the owning request.
+    pub context: Option<&'a SessionContext>,
     /// The conversation so far, in order, starting with the system message.
     pub messages: &'a [CompletionMessage],
     /// Upper bound on generated tokens. `None` uses the provider default.
@@ -286,6 +298,7 @@ impl CompletionRequest {
         // reaching the wire on the hot path while the owned path still carries
         // it. The two shapes cannot drift apart without the build saying so.
         let Self {
+            context,
             messages,
             max_output_tokens,
             temperature,
@@ -295,6 +308,7 @@ impl CompletionRequest {
             tools,
         } = self;
         CompletionRequestRef {
+            context: context.as_ref(),
             messages,
             max_output_tokens: *max_output_tokens,
             temperature: *temperature,
@@ -314,6 +328,7 @@ impl CompletionRequestRef<'_> {
     #[must_use]
     pub fn into_owned(self) -> CompletionRequest {
         let Self {
+            context,
             messages,
             max_output_tokens,
             temperature,
@@ -323,6 +338,7 @@ impl CompletionRequestRef<'_> {
             tools,
         } = self;
         CompletionRequest {
+            context: context.cloned(),
             messages: messages.to_vec(),
             max_output_tokens,
             temperature,
@@ -517,6 +533,9 @@ mod tests {
     #[test]
     fn completion_request_roundtrips_through_json() {
         let req = CompletionRequest {
+            context: Some(SessionContext {
+                session_id: "ses-native-42".into(),
+            }),
             messages: vec![
                 CompletionMessage::system("You are a coding agent."),
                 CompletionMessage::user("Fix the failing test."),
@@ -530,6 +549,8 @@ mod tests {
         };
         let json = serde_json::to_string(&req).expect("serialize");
         let back: CompletionRequest = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.context, req.context);
+        assert_eq!(req.as_borrowed().into_owned().context, req.context);
         assert_eq!(back.messages.len(), 2);
         assert_eq!(back.effort, Some(ReasoningEffort::High));
         assert_eq!(back.max_output_tokens, Some(4096));

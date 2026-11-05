@@ -181,6 +181,7 @@ pub(crate) async fn resolve_domains(
     workspace_root: &std::path::Path,
     model_hint: Option<&str>,
     budget_limit: Option<f64>,
+    context: Option<stella_protocol::SessionContext>,
     emit: &mut dyn FnMut(String),
 ) -> (Domains, f64) {
     let Some(provider) = provider else {
@@ -199,7 +200,7 @@ pub(crate) async fn resolve_domains(
         .or_else(|| provider.model())
         .unwrap_or(UNKNOWN_MODEL);
     emit(format!("◈ inferring domain taxonomy with {model}…"));
-    infer_domains(provider, workspace_root, model, budget_limit).await
+    infer_domains(provider, workspace_root, model, budget_limit, context).await
 }
 
 /// The shared init flow behind `stella init` and the `/init` chat command:
@@ -215,6 +216,7 @@ pub(crate) async fn init_workspace(
     workspace_root: &std::path::Path,
     model_hint: Option<&str>,
     budget_limit: Option<f64>,
+    context: Option<stella_protocol::SessionContext>,
     io: &mut InitIo<'_>,
 ) -> Result<(Domains, f64), String> {
     // The stages that narrate nothing live keep the plain `String` sink:
@@ -227,6 +229,7 @@ pub(crate) async fn init_workspace(
             workspace_root,
             model_hint,
             budget_limit,
+            context,
             &mut step,
         )
         .await
@@ -472,6 +475,7 @@ pub async fn run_init(
         &workspace_root,
         model_hint.as_deref(),
         None,
+        None,
         &mut io,
     )
     .await?;
@@ -511,6 +515,7 @@ mod tests {
     /// skip gate is judged by.
     struct CountingProvider {
         calls: AtomicUsize,
+        contexts: std::sync::Mutex<Vec<Option<stella_protocol::SessionContext>>>,
     }
 
     #[async_trait]
@@ -521,8 +526,9 @@ mod tests {
 
         async fn complete_ref(
             &self,
-            _request: CompletionRequestRef<'_>,
+            request: CompletionRequestRef<'_>,
         ) -> Result<CompletionResult, ProviderError> {
+            self.contexts.lock().unwrap().push(request.context.cloned());
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(CompletionResult {
                 upstream_provider: None,
@@ -552,6 +558,7 @@ mod tests {
         std::fs::create_dir_all(root.join("api")).expect("mkdir");
         let provider = CountingProvider {
             calls: AtomicUsize::new(0),
+            contexts: std::sync::Mutex::new(Vec::new()),
         };
 
         let mut lines: Vec<String> = Vec::new();
@@ -559,6 +566,7 @@ mod tests {
             Some(&provider),
             &root,
             Some("counting-model"),
+            None,
             None,
             &mut |line| lines.push(line),
         )
@@ -571,6 +579,7 @@ mod tests {
             Some(&provider),
             &root,
             Some("counting-model"),
+            None,
             None,
             &mut |line| lines.push(line),
         )
@@ -609,6 +618,7 @@ mod tests {
         std::fs::write(root.join("api/routes.rs"), "pub fn route() {}\n").expect("write");
         let provider = CountingProvider {
             calls: AtomicUsize::new(0),
+            contexts: std::sync::Mutex::new(Vec::new()),
         };
 
         // `(is_step, text)` — the kind is the half a `String` sink erases.
@@ -629,6 +639,7 @@ mod tests {
                 Some(&provider),
                 &root,
                 Some("counting-model"),
+                None,
                 None,
                 &mut io,
             )
@@ -716,7 +727,7 @@ mod tests {
             Some(user.path().to_path_buf()),
         );
 
-        init_workspace(None, root, None, None, &mut init_io)
+        init_workspace(None, root, None, None, None, &mut init_io)
             .await
             .expect("init");
         // The io holds the transcript sink's borrow until it is dropped.
@@ -757,6 +768,7 @@ mod tests {
         std::fs::create_dir_all(root.join("api")).expect("mkdir");
         let provider = CountingProvider {
             calls: AtomicUsize::new(0),
+            contexts: std::sync::Mutex::new(Vec::new()),
         };
 
         let mut emit = |_line: String| {};
@@ -764,6 +776,7 @@ mod tests {
             Some(&provider),
             &root,
             Some("counting-model"),
+            None,
             None,
             &mut emit,
         )
@@ -776,6 +789,7 @@ mod tests {
             &root,
             Some("counting-model"),
             None,
+            None,
             &mut emit,
         )
         .await;
@@ -785,5 +799,28 @@ mod tests {
             2,
             "a changed repo shape must re-infer"
         );
+    }
+
+    #[tokio::test]
+    async fn in_session_init_inference_keeps_the_supplied_native_identity() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("api")).unwrap();
+        let provider = CountingProvider {
+            calls: AtomicUsize::new(0),
+            contexts: std::sync::Mutex::new(Vec::new()),
+        };
+        let context = stella_protocol::SessionContext {
+            session_id: "ses-init".into(),
+        };
+        resolve_domains(
+            Some(&provider),
+            root.path(),
+            Some("counting-model"),
+            None,
+            Some(context.clone()),
+            &mut |_| {},
+        )
+        .await;
+        assert_eq!(*provider.contexts.lock().unwrap(), vec![Some(context)]);
     }
 }

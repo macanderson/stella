@@ -228,6 +228,7 @@ pub(crate) async fn complete_standalone(
             request.tools.clone(),
             (request.temperature, request.effort, request.reasoning),
             request.params,
+            request.context.clone(),
         )
     });
     let mut outcome = dispatch(provider, role, model_hint, request, &mut budget, &events).await;
@@ -241,8 +242,10 @@ pub(crate) async fn complete_standalone(
     // Every other outcome falls through unchanged. The retry emits its own
     // `StepUsage` — the honest record, since it is not free and the telemetry
     // must not imply it was.
-    if let (Ok(result), Some((raised, messages, tools, (temperature, effort, reasoning), params))) =
-        (&outcome, retry)
+    if let (
+        Ok(result),
+        Some((raised, messages, tools, (temperature, effort, reasoning), params, context)),
+    ) = (&outcome, retry)
         && starved_of_output(result)
     {
         superseded_cost = result.cost_usd;
@@ -251,6 +254,7 @@ pub(crate) async fn complete_standalone(
             role,
             model_hint,
             CompletionRequest {
+                context,
                 messages,
                 max_output_tokens: Some(raised),
                 temperature,
@@ -419,6 +423,7 @@ mod tests {
 
     fn request() -> CompletionRequest {
         CompletionRequest {
+            context: None,
             messages: Vec::new(),
             max_output_tokens: Some(32),
             temperature: None,

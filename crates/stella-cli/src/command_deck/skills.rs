@@ -475,6 +475,30 @@ pub(super) fn extract_skill_md(text: &str) -> String {
     text.trim().to_string()
 }
 
+fn skill_creation_request(
+    description: &str,
+    ranked: &[String],
+    context: Option<stella_protocol::SessionContext>,
+) -> CompletionRequest {
+    CompletionRequest {
+        context,
+        messages: vec![
+            CompletionMessage::system(SKILL_AUTHOR_SYSTEM),
+            CompletionMessage::user(build_skill_creation_prompt(description, ranked)),
+        ],
+        // Unstated on purpose — see `accounted_call::standalone_bounds`, which
+        // declares `SkillAuthor`'s output contract once and pads it with
+        // reasoning headroom. The 1,200 sent from here truncated three of the
+        // four real single-file skills it was measured against (#2444).
+        max_output_tokens: None,
+        temperature: Some(0.2),
+        effort: None,
+        tools: vec![],
+        reasoning: None,
+        params: None,
+    }
+}
+
 /// LLM-assisted skill creation: search the registry for prior art, draft one
 /// `SKILL.md` with a single accounted model call, validate, and install it as
 /// v1. Returns `(status line, created skill name)` — the name is `Some` only
@@ -486,6 +510,7 @@ async fn create_skill_llm(
     description: &str,
     workspace_root: &std::path::Path,
     budget_limit: Option<f64>,
+    context: Option<stella_protocol::SessionContext>,
 ) -> (String, Option<String>) {
     // 1. Search existing skills for inspiration (best-effort — a registry
     //    failure just means authoring from scratch).
@@ -498,22 +523,7 @@ async fn create_skill_llm(
         Ok(p) => p,
         Err(e) => return (format!("create failed: {e}"), None),
     };
-    let req = CompletionRequest {
-        messages: vec![
-            CompletionMessage::system(SKILL_AUTHOR_SYSTEM),
-            CompletionMessage::user(build_skill_creation_prompt(description, &ranked)),
-        ],
-        // Unstated on purpose — see `accounted_call::standalone_bounds`, which
-        // declares `SkillAuthor`'s output contract once and pads it with
-        // reasoning headroom. The 1,200 sent from here truncated three of the
-        // four real single-file skills it was measured against (#2444).
-        max_output_tokens: None,
-        temperature: Some(0.2),
-        effort: None,
-        tools: vec![],
-        reasoning: None,
-        params: None,
-    };
+    let req = skill_creation_request(description, &ranked, context);
     let accounted = match crate::accounted_call::complete_standalone(
         workspace_root,
         &*provider,
@@ -663,13 +673,16 @@ pub(super) fn handle_skills_input(
             let registry = registry.clone();
             let in_tx = in_tx.clone();
             let cfg = cfg.clone();
+            let context = cfg.durability.session_context();
             let scope = *scope;
             let description = description.clone();
             let root = root.clone();
             tokio::spawn(async move {
                 let (status, created) =
-                    create_skill_llm(&cfg, &registry, scope, &description, &root, budget_limit)
-                        .await;
+                    create_skill_llm(
+                        &cfg, &registry, scope, &description, &root, budget_limit, context,
+                    )
+                    .await;
                 let _ = in_tx.send(skills_snapshot_created(&root, Some(status), created));
             });
         }
@@ -679,6 +692,28 @@ pub(super) fn handle_skills_input(
 #[cfg(test)]
 mod sideband_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn queued_skill_creation_keeps_the_session_that_started_it() {
+        let store = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let binding = crate::durability::SessionDurability::default();
+        binding.bind(
+            stella_store::work_journal::WorkJournal::open_in(
+                store.path(), workspace.path(), "ses-first",
+            ).unwrap(),
+        );
+        let context = binding.session_context();
+        let pending = async move { skill_creation_request("explain logs", &[], context) };
+        binding.bind(
+            stella_store::work_journal::WorkJournal::open_in(
+                store.path(), workspace.path(), "ses-second",
+            ).unwrap(),
+        );
+        let request = pending.await;
+        assert_eq!(request.context.unwrap().session_id, "ses-first");
+        assert_eq!(binding.session_context().unwrap().session_id, "ses-second");
+    }
 
     /// Every queue-free name is a **reserved** deck name, and the
     /// turn-coupled exceptions are not on the list.

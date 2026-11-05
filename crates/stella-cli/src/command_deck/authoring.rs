@@ -197,6 +197,7 @@ async fn create_agent(
     budget_limit: Option<f64>,
 ) -> Result<(String, String), String> {
     let request = CompletionRequest {
+        context: cfg.durability.session_context(),
         messages: crate::agents_installed::creation_messages(description),
         // Unstated on purpose: `AgentAuthor`'s output contract is declared once
         // at the chokepoint (`accounted_call::standalone_bounds`) and arrives

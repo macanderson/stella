@@ -27,6 +27,7 @@ use super::*;
 /// resolve their own model through [`crate::agent::seats`].
 fn tuned_engine_config(cfg: &Config, catalog_ref: (&str, &str)) -> EngineConfig {
     let (provider_id, model_id) = catalog_ref;
+    let (session_context, checkpoint_sink) = cfg.durability.engine_binding();
     let mut engine = EngineConfig {
         cwd: cfg.workspace_root.display().to_string(),
         // Every role gets the same turn budget: the deadline it guards is the
@@ -66,7 +67,8 @@ fn tuned_engine_config(cfg: &Config, catalog_ref: (&str, &str)) -> EngineConfig 
         // resolved its session record. That is not a silent downgrade: it is
         // what stops `persist_checkpoint` from serializing a whole transcript
         // per step only to discard it.
-        checkpoint_sink: cfg.durability.sink(),
+        checkpoint_sink,
+        session_context,
         // What this session already learned its providers will fund (#3307).
         // Attached here for the same reason `lifecycle_enabled` is read here —
         // this is the one place an engine is tuned in this crate, so every role
@@ -255,8 +257,10 @@ pub(crate) fn subsession_engine_config_for(
     cfg: &Config,
     durability: &crate::durability::SessionDurability,
 ) -> EngineConfig {
+    let (session_context, checkpoint_sink) = durability.engine_binding();
     EngineConfig {
-        checkpoint_sink: durability.sink(),
+        checkpoint_sink,
+        session_context,
         ..engine_config_for(cfg)
     }
 }
@@ -295,12 +299,16 @@ pub(crate) fn engine_config_for_kind(cfg: &Config, kind: &str) -> EngineConfig {
 /// diagnostics below must reach stderr, which the no-I/O engine cannot do.
 /// `stella-parity`'s `hooks.lifecycle` row pins that no second owner grows
 /// back.
-pub(crate) async fn session_start_hook_context(cfg: &Config) -> Option<String> {
+async fn session_start_hook_context(
+    cfg: &Config,
+    durability: &crate::durability::SessionDurability,
+) -> Option<String> {
     let hooks = cfg.hooks.as_ref()?;
     let outcome = stella_core::hooks::run_hooks(
         &HostHookRunner,
         Some(hooks),
-        &stella_core::hooks::HookPayload::session_start(cfg.workspace_root.display().to_string()),
+        &stella_core::hooks::HookPayload::session_start(cfg.workspace_root.display().to_string())
+            .with_session_context(durability.session_context().as_ref()),
     )
     .await;
     // A SessionStart hook that failed stays non-fatal, but must not vanish:
@@ -343,8 +351,16 @@ pub(crate) fn clamp_hook_context(context: &str) -> String {
 /// cached prefix on every new session, which is exactly the
 /// `CacheCause::PrefixInstability` the cache panel diagnoses. The clamp
 /// bounds the cost of that mistake; it cannot remove it.
-pub(crate) async fn with_session_hook_context(mut system_prompt: String, cfg: &Config) -> String {
-    if let Some(context) = session_start_hook_context(cfg).await {
+pub(crate) async fn with_session_hook_context(system_prompt: String, cfg: &Config) -> String {
+    with_session_hook_context_for(system_prompt, cfg, &cfg.durability).await
+}
+
+pub(crate) async fn with_session_hook_context_for(
+    mut system_prompt: String,
+    cfg: &Config,
+    durability: &crate::durability::SessionDurability,
+) -> String {
+    if let Some(context) = session_start_hook_context(cfg, durability).await {
         system_prompt.push_str(SESSION_HOOK_CONTEXT_HEADER);
         system_prompt.push_str(&clamp_hook_context(&context));
     }
@@ -387,7 +403,7 @@ pub(crate) async fn user_prompt_submit_hook(cfg: &Config, prompt: &str) -> Resul
         &stella_core::hooks::HookPayload::user_prompt_submit(
             cfg.workspace_root.display().to_string(),
             prompt,
-        ),
+        ).with_session_context(cfg.durability.session_context().as_ref()),
     )
     .await;
     for diagnostic in &run.diagnostics {

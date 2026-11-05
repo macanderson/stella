@@ -232,8 +232,7 @@ pub(super) async fn run_deck_command(
             // live in `init_cmd` — this file is closed to growth.
             match init_cmd::run(
                 provider,
-                &cfg.workspace_root,
-                &cfg.model_id,
+                cfg,
                 budget_limit,
                 ask_io,
                 in_tx,

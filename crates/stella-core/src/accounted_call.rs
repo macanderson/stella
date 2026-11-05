@@ -625,6 +625,7 @@ mod tests {
             role: ModelCallRole::Summarization,
             model_hint: "configured-model".into(),
             request: CompletionRequest {
+                context: None,
                 messages: vec![CompletionMessage::user("work")],
                 max_output_tokens: None,
                 temperature: None,
@@ -749,6 +750,7 @@ mod tests {
                 role: ModelCallRole::SkillAuthor,
                 model_hint: "configured-model".into(),
                 request: CompletionRequest {
+                    context: None,
                     messages: vec![CompletionMessage::user("work")],
                     max_output_tokens: None,
                     temperature: None,
@@ -820,6 +822,7 @@ mod tests {
                 role: ModelCallRole::Summarization,
                 model_hint: "configured-model".into(),
                 request: CompletionRequest {
+                    context: None,
                     messages: vec![CompletionMessage::user("work")],
                     max_output_tokens: Some(8_192),
                     temperature: None,
@@ -880,6 +883,7 @@ mod tests {
                 role: ModelCallRole::Summarization,
                 model_hint: "configured-model".into(),
                 request: CompletionRequest {
+                    context: None,
                     messages: vec![CompletionMessage::user("work")],
                     max_output_tokens: None,
                     temperature: Some(0.35),
@@ -956,6 +960,7 @@ mod tests {
                 role: ModelCallRole::Summarization,
                 model_hint: "configured-model".into(),
                 request: CompletionRequest {
+                    context: None,
                     messages: vec![
                         CompletionMessage::system("condense this span faithfully"),
                         CompletionMessage::user("t0 t1 t2"),
@@ -1037,6 +1042,7 @@ mod tests {
                 role: ModelCallRole::SkillAuthor,
                 model_hint: "configured-model".into(),
                 request: CompletionRequest {
+                    context: None,
                     messages: vec![CompletionMessage::system("secret standalone prompt")],
                     max_output_tokens: None,
                     temperature: None,
@@ -1090,6 +1096,7 @@ mod tests {
             role,
             model_hint: "configured-model".into(),
             request: CompletionRequest {
+                context: None,
                 messages: vec![CompletionMessage::user("work")],
                 max_output_tokens: None,
                 temperature: None,
@@ -1239,6 +1246,7 @@ mod tests {
                 role: ModelCallRole::SkillAuthor,
                 model_hint: "configured-model".into(),
                 request: CompletionRequest {
+                    context: None,
                     messages: vec![CompletionMessage::user("work")],
                     max_output_tokens: None,
                     temperature: None,
@@ -1361,6 +1369,7 @@ mod tests {
                 role: ModelCallRole::Plugin,
                 model_hint: "z-ai/glm-5.2".into(),
                 request: CompletionRequest {
+                    context: None,
                     messages: vec![CompletionMessage::user("inspect the repository")],
                     max_output_tokens: None,
                     temperature: None,

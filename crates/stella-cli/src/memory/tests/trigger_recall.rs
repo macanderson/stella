@@ -101,7 +101,7 @@ async fn session_with_crossed_lessons() -> (tempfile::TempDir, SessionMemory) {
             crate::memory::TurnEvidence::from_transcript(&transcript, true),
             true,
             None,
-            crate::memory::ReflectionPosture::default(),
+            crate::memory::ReflectionPosture::default().into(),
         )
         .await;
     assert_eq!(
@@ -236,7 +236,7 @@ async fn a_paraphrase_under_a_new_trigger_is_still_a_restatement() {
             crate::memory::TurnEvidence::from_transcript(&transcript, true),
             true,
             None,
-            crate::memory::ReflectionPosture::default(),
+            crate::memory::ReflectionPosture::default().into(),
         )
         .await;
     assert!(

@@ -134,6 +134,19 @@ pub(crate) struct ReflectionPosture {
     pub(crate) effort: Option<ReasoningEffort>,
 }
 
+/// Sampling posture and the session that owns this reflection call.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ReflectionRequestContext {
+    pub posture: ReflectionPosture,
+    pub session: Option<stella_protocol::SessionContext>,
+}
+
+impl From<ReflectionPosture> for ReflectionRequestContext {
+    fn from(posture: ReflectionPosture) -> Self {
+        Self { posture, session: None }
+    }
+}
+
 /// Post-turn reflection on the cheap tier (#1847): resolve the reflection
 /// route, then run [`super::SessionMemory::reflect_and_record`] on whichever
 /// provider it lands on — the configured triage model when routable
@@ -178,7 +191,17 @@ pub(crate) async fn reflect_routed(
         None => (worker, cfg.model_id.as_str()),
     };
     memory
-        .reflect_and_record(provider, model_hint, evidence, quiet, budget_limit, posture)
+        .reflect_and_record(
+            provider,
+            model_hint,
+            evidence,
+            quiet,
+            budget_limit,
+            ReflectionRequestContext {
+                posture,
+                session: cfg.durability.session_context(),
+            },
+        )
         .await
 }
 
@@ -200,7 +223,7 @@ pub async fn reflect_on_turn(
     evidence: TurnEvidence<'_>,
     domain_names: &[String],
     budget_limit: Option<f64>,
-    posture: ReflectionPosture,
+    context: ReflectionRequestContext,
 ) -> Result<
     (ReflectionParse, Option<SelfReviewRow>, f64, Vec<AgentEvent>),
     crate::accounted_call::StandaloneCallError,
@@ -211,6 +234,7 @@ pub async fn reflect_on_turn(
     // `"tool: "` for every tool result it had ever produced. See
     // [`digest`]'s module docs for both defects and the budget that replaces
     // them.
+    let posture = context.posture;
     let digest = digest::build(evidence);
     let succeeded = evidence.succeeded;
     // The question is the counterfactual — what would you want to have been
@@ -369,6 +393,7 @@ pub async fn reflect_on_turn(
         max = MAX_LESSONS_PER_TURN,
     );
     let request = CompletionRequest {
+        context: context.session,
         messages: vec![
             CompletionMessage::system(
                 "You are a self-reflection module. Respond with only a JSON object.",

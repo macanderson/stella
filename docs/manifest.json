@@ -1,5 +1,10 @@
 {
   "documents": {
+    "adr/0047-native-session-request-context": {
+      "path": "docs/adr/0047-native-session-request-context.md",
+      "status": "proposed",
+      "title": "ADR 0047: Native session request context"
+    },
     "0001-semantic-taxonomy": {
       "path": "docs/adr/0001-semantic-taxonomy.md",
       "status": "living",

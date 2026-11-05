@@ -88,7 +88,7 @@ async fn reflection_log_at(at: i64) -> (tempfile::TempDir, String) {
             crate::memory::TurnEvidence::from_transcript(&transcript, true),
             true,
             None,
-            crate::memory::ReflectionPosture::default(),
+            crate::memory::ReflectionPosture::default().into(),
         )
         .await;
     assert_eq!(report.recorded, 1, "the scripted lesson was mined");
@@ -200,7 +200,7 @@ async fn the_context_store_shares_the_session_clock() {
             crate::memory::TurnEvidence::from_transcript(&transcript, true),
             true,
             None,
-            crate::memory::ReflectionPosture::default(),
+            crate::memory::ReflectionPosture::default().into(),
         )
         .await;
     assert_eq!(report.recorded, 1, "the scripted lesson was mined");

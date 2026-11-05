@@ -44,6 +44,7 @@ async fn streaming_provider(body: &'static str) -> (MockServer, GeminiProvider) 
 
 fn request() -> CompletionRequest {
     CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("read a.rs")],
         max_output_tokens: None,
         temperature: None,

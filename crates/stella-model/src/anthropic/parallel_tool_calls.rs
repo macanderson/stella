@@ -64,6 +64,7 @@ async fn several_tool_use_blocks_fan_in_as_several_calls() {
         .with_base_url(server.uri());
     let result = provider
         .complete(CompletionRequest {
+            context: None,
             messages: vec![CompletionMessage::user("read, search, and list")],
             max_output_tokens: None,
             temperature: None,

@@ -37,6 +37,9 @@ pub struct HookToolInfo {
 pub struct HookPayload {
     pub event: HookEvent,
     pub cwd: String,
+    /// Native session identity shared with model requests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     /// Present for `PreToolUse` / `PostToolUse`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool: Option<HookToolInfo>,
@@ -101,12 +104,22 @@ pub struct HookPayload {
 }
 
 impl HookPayload {
+    /// Attach the engine's captured identity without changing the event data.
+    pub fn with_session_context(
+        mut self,
+        context: Option<&stella_protocol::SessionContext>,
+    ) -> Self {
+        self.session_id = context.map(|context| context.session_id.clone());
+        self
+    }
+
     /// A payload carrying only the event and the workspace — the shape
     /// every non-tool event shares.
     fn bare(event: HookEvent, cwd: String) -> Self {
         Self {
             event,
             cwd,
+            session_id: None,
             tool: None,
             tool_result: None,
             final_text: None,

@@ -666,7 +666,8 @@ impl Engine<'_> {
             depth: spec.depth,
         };
         self.run_subagent_hooks(
-            HookPayload::subagent_start(self.config.cwd.clone(), subagent_info.clone()),
+            HookPayload::subagent_start(self.config.cwd.clone(), subagent_info.clone())
+                .with_session_context(self.config.session_context.as_ref()),
             events,
         )
         .await;
@@ -742,7 +743,7 @@ impl Engine<'_> {
                     cost_usd: outcome.cost_usd(),
                     steps: outcome.report().map_or(0, |report| report.steps),
                 },
-            ),
+            ).with_session_context(self.config.session_context.as_ref()),
             events,
         )
         .await;

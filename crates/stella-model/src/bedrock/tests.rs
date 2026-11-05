@@ -200,6 +200,7 @@ async fn complete_posts_a_signed_converse_request_and_parses_text() {
 
     let provider = test_provider(&server.uri());
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: Some(1024),
         temperature: Some(0.0),
@@ -245,6 +246,7 @@ async fn complete_sends_cache_points_for_claude_models() {
 
     let provider = test_provider(&server.uri());
     let req = CompletionRequest {
+        context: None,
         messages: vec![
             CompletionMessage::system("You are a coding agent."),
             CompletionMessage::user("hi"),
@@ -280,6 +282,7 @@ async fn complete_parses_tool_use_blocks_into_tool_calls() {
 
     let provider = test_provider(&server.uri());
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("read src/lib.rs")],
         max_output_tokens: None,
         temperature: None,
@@ -329,6 +332,7 @@ async fn complete_normalizes_a_no_arg_tool_use_to_an_empty_object_not_null() {
     let provider = test_provider(&server.uri());
     let result = provider
         .complete(CompletionRequest {
+            context: None,
             messages: vec![CompletionMessage::user("what time is it")],
             max_output_tokens: None,
             temperature: None,
@@ -358,6 +362,7 @@ async fn complete_maps_403_to_auth_error() {
 
     let provider = test_provider(&server.uri());
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,
@@ -384,6 +389,7 @@ async fn complete_maps_429_throttling_to_rate_limited() {
 
     let provider = test_provider(&server.uri());
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,
@@ -427,6 +433,7 @@ async fn complete_sends_the_session_token_header_when_configured() {
     .with_base_url(server.uri());
 
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,
@@ -501,6 +508,7 @@ async fn absent_params_omit_inference_config_entirely() {
     let provider = test_provider(&server.uri());
     provider
         .complete(CompletionRequest {
+            context: None,
             messages: vec![CompletionMessage::user("hi")],
             max_output_tokens: None,
             temperature: None,
@@ -539,6 +547,7 @@ async fn reasoning_true_sends_reasoning_config_and_raises_max_tokens() {
     let provider = test_provider(&server.uri());
     provider
         .complete(CompletionRequest {
+            context: None,
             messages: vec![CompletionMessage::user("think hard")],
             max_output_tokens: None,
             temperature: Some(0.3),
@@ -584,6 +593,7 @@ async fn a_cap_at_the_thinking_floor_omits_reasoning_config_not_a_400() {
     let provider = test_provider(&server.uri());
     provider
         .complete(CompletionRequest {
+            context: None,
             messages: vec![CompletionMessage::user("think hard")],
             max_output_tokens: Some(1024),
             temperature: Some(0.0),
@@ -625,6 +635,7 @@ impl ToolCallObserver for RecordingObserver {
 
 fn observed_request() -> CompletionRequest {
     CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: Some(1024),
         temperature: Some(0.0),
@@ -837,6 +848,7 @@ async fn a_bedrock_unary_body_read_timeout_is_terminal_never_a_retry_storm() {
 
     let error = provider
         .complete(CompletionRequest {
+            context: None,
             messages: vec![CompletionMessage::user("hi")],
             max_output_tokens: Some(1024),
             temperature: Some(0.0),

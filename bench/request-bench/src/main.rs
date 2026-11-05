@@ -214,6 +214,7 @@ fn tool_schemas() -> Vec<ToolSchema> {
 /// retry closure is `FnMut`.
 fn owned_clone(messages: &[CompletionMessage], tools: &[ToolSchema]) -> CompletionRequest {
     CompletionRequest {
+        context: None,
         messages: messages.to_vec(),
         max_output_tokens: Some(32_000),
         temperature: None,
@@ -230,6 +231,7 @@ fn borrowed<'a>(
     tools: &'a [ToolSchema],
 ) -> CompletionRequestRef<'a> {
     CompletionRequestRef {
+        context: None,
         messages,
         max_output_tokens: Some(32_000),
         temperature: None,

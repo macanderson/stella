@@ -469,6 +469,7 @@ mod tests {
         cfg.model_id = "claude-opus-5".to_string();
 
         let request = || CompletionRequest {
+            context: None,
             messages: vec![stella_protocol::CompletionMessage::user("say hello")],
             max_output_tokens: None,
             temperature: None,

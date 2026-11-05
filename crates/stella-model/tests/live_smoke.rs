@@ -198,6 +198,7 @@ fn armed_key(provider_id: &str, env_var: &str, aliases: &[&str]) -> Option<ApiKe
 /// short one).
 fn tiny_request(system: impl Into<String>) -> CompletionRequest {
     CompletionRequest {
+        context: None,
         messages: vec![
             CompletionMessage::system(system),
             CompletionMessage::user("Reply with the single word OK."),
