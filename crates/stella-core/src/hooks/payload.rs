@@ -402,15 +402,9 @@ impl HookPullRequestInfo {
 ///
 /// # Why the identifier and nothing else is guaranteed
 ///
-/// Only [`Self::number`] is always present. The rest is what the loop happened
-/// to have already read, and the loop reads the tracker lazily — so a hook that
-/// needs a field this does not carry should fetch it itself (`gh issue view`
-/// is one line in a shell hook) rather than have Stella fetch it on every
-/// dispatch for the hooks that do not.
-///
-/// That splits the cost the right way: an extra tracker round trip per issue,
-/// paid by the hooks that want it, beats one paid by every loop whether a hook
-/// is registered or not.
+/// Only [`Self::number`] is always present. The other fields are values the
+/// loop has read from the tracker. A hook that needs more can fetch them with
+/// `gh issue view`. Hooks that need no more fields pay for no extra read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookIssueInfo {
     /// The issue number, as the tracker spells it. Always present — it is the

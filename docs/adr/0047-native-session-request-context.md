@@ -12,44 +12,45 @@ status: proposed
 
 ## Context
 
-A person can keep a conversation open while connecting a device to another
-workspace. Oxagen must keep that conversation's hooks and model calls in its
-original workspace. Stella sends no native session identity on its Anthropic
-requests today. A process can host several sessions and worker lanes, so its
-PID cannot identify the conversation that owns a request.
+A person may switch a device to a new workspace. An old chat may still run.
+Its hooks and model calls must stay with the old workspace.
+
+Stella has an ID for each session. It does not send that ID with its model
+calls today. One process may host more than one chat. Its PID cannot tell
+Oxagen which chat made a call.
 
 ## Decision
 
-Stella carries its existing session record ID in a typed request context.
-Each engine captures that context when it is built. Completion requests,
-retries, compaction calls and hook payloads carry the captured value. Shared
-provider instances read it from the request. They hold no current-session cell.
+Stella sends the ID it already has. It puts that ID in a typed request
+context. Each engine takes a copy when it starts. Hooks and model calls use
+that copy. Retries and calls to compact the chat keep it too. A shared model
+client reads the ID from each call. It does not store the ID of the last chat.
 
-The CLI's existing session binding supplies the context. It binds before the
-SessionStart hook runs. Deck lanes and fleet attempts use their existing journal
-keys. A resumed session keeps its existing ID. A failed journal open clears the
-previous journal binding while retaining the new session's identity; it cannot
-make a new conversation write into the prior session's record.
+The CLI binds the ID before it runs the SessionStart hook. Deck lanes and
+fleet tasks use their own journal keys. A resumed chat keeps its ID.
+If a new journal will not open, Stella clears the old journal handle. It
+keeps the new ID. New work cannot write to the old chat's journal by mistake.
 
-The Anthropic adapter sends `x-oxagen-session` to a configured loopback endpoint.
-It bypasses system proxies and refuses redirects for those requests.
-It sends no session header to a remote provider. Streaming and unary dispatch
-use the same header builder. The header carries the exact ID used by hooks.
-It is an identity claim within the authenticated recorder connection and grants
-no workspace access by itself.
+The Anthropic client sends `x-oxagen-session` to the local loopback endpoint.
+Those calls bypass system proxies and refuse redirects. Both the stream and
+unary paths use the same header builder. Remote model hosts get no such
+header. The model request body and its cache prefix stay as they were.
 
-Oxagen must preserve a native Stella hook ID when one is present, qualify it by
-the Stella enrollment, and reject an unknown or ambiguous route after a device
-switch. That receiver change belongs to the [workspace switch implementation](https://github.com/oxageninc/product/pull/8897). Older
-Stella releases remain unable to prove native model ownership across a switch.
+The header states which chat made the call. It grants no right to use a
+workspace. The recorder must check the host's key. It must match the ID to
+that host's Stella enrollment. It must refuse a route it cannot prove.
 
-## Consequences
+Oxagen must keep the same ID from Stella's hooks. This is part of the
+[workspace switch work](https://github.com/oxageninc/product/pull/8897).
+An older Stella build cannot prove which native model calls belong to a chat
+after a device switch.
 
-Changing the selected device workspace cannot rewrite an engine's captured
-identity. One provider can serve concurrent sessions without sharing their IDs.
-The request body and its prompt-cache prefix remain unchanged.
+## Effects
 
-This change adds no service, scheduled task or vendor. Its monthly infrastructure
-cost is $0. It does not enable Oxagen's remote workspace switch. That feature
-still needs authenticated routing and preserved enrollment credentials in the
-product repository. Cursor's native model transport remains outside that path.
+A device switch cannot change the ID an engine has kept. Two chats can share
+one model client and still send their own IDs.
+
+This change adds no service or paid task. Its new monthly cost is $0.
+It does not turn on the remote workspace switch. Oxagen still needs to check
+each route and keep the old host keys while old chats run. Cursor's native
+model calls are outside this path.

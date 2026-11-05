@@ -39,12 +39,9 @@ use super::WrapperPoint;
 /// One field of a request that crosses to a plugin's own process, and what a
 /// consent prompt tells a human about it.
 ///
-/// [`crate::consent_text`] renders [`Self::disclosure`] verbatim (#3514). A
-/// user deciding whether to install a plugin that runs as a process is deciding
-/// what of their work that process gets to see, and the answer is a property of
-/// *this* module: writing the sentences out beside the prompt instead would put
-/// a copy of the request shape in a file that does not change when the request
-/// does.
+/// [`crate::consent_text`] shows [`Self::disclosure`] to the user. This tells
+/// them which parts of their work a plugin will see. The words live with the
+/// wire fields so a change to a field can update its consent text too.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WireField {
     /// The point whose request carries it.
