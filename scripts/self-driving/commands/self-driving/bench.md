@@ -136,7 +136,7 @@ directories are the source of truth** (`~/tb21/jobs/<run>-armA-stella`,
 Compare against the previous cycle's entry in the ledger
 (`scripts/self-driving.sh state`).
 
-- **Regressed** → file a `P0` `area:core` issue with both result files attached,
+- **Regressed** → file a `P0` `AREA:CORE` issue with both result files attached,
   and **block the ship phase**. Shipping a measured regression is the one thing
   this loop exists to prevent.
 - **Flat or better** → record it and continue.

@@ -1,0 +1,42 @@
+/*
+ * The house font roles and type classes. text-m-* is the marketing scale, for
+ * landing pages and posts, and text-a-* is the app scale, for docs and apps.
+ *
+ * A committed copy of the house kit's font roles and type classes, taken from
+ * its tokens/house-tailwind.css. Edit it by hand.
+ *
+ * The @theme block points each font role at the variable that src/brand/
+ * next-fonts.ts sets on <html>, so a change of face there reaches the site
+ * with no edit here. --font-heading reads the text face here, and global.css
+ * points it at the display face, because stella.oxagen.sh is a customer
+ * site. Each class sets a size, a line height, a face, and a
+ * weight. The size and line height read the --ox-m-* and --ox-a-* tokens in
+ * house-tokens.css, and the face reads a role below. text-m-micro and
+ * text-a-micro set the code face.
+ */
+
+/* the font roles */
+@theme {
+  --font-sans: var(--font-geist, "Geist"), system-ui, -apple-system, "Segoe UI", sans-serif; /* body, labels, buttons, tables, navigation, every app heading, and every h4 to h6 */
+  --font-display: var(--font-space-grotesk, "Space Grotesk"), "Helvetica Neue", Arial, sans-serif; /* h1 to h3 on a marketing or customer site */
+  --font-heading: var(--font-sans); /* h1 to h3 on this surface. A marketing or docs site points it at --font-display */
+  --font-mono: var(--font-monaspace-neon, "Monaspace Neon"), ui-monospace, "SF Mono", Menlo, Consolas, monospace; /* code, logs, ids, and numbers in tables */
+  --font-wordmark: var(--font-space-grotesk, "Space Grotesk"), "Helvetica Neue", Arial, sans-serif; /* a wordmark set as text rather than drawn. It is fixed */
+}
+
+/* the marketing scale */
+@utility text-m-h1 { font-size: var(--ox-m-h1); line-height: var(--ox-m-h1-leading); font-family: var(--font-display); font-weight: 700; letter-spacing: -0.03em; }
+@utility text-m-h2 { font-size: var(--ox-m-h2); line-height: var(--ox-m-h2-leading); font-family: var(--font-display); font-weight: 700; letter-spacing: -0.01em; }
+@utility text-m-h3 { font-size: var(--ox-m-h3); line-height: var(--ox-m-h3-leading); font-family: var(--font-display); font-weight: 600; }
+@utility text-m-h4 { font-size: var(--ox-m-h4); line-height: var(--ox-m-h4-leading); font-family: var(--font-sans); font-weight: 500; }
+@utility text-m-body { font-size: var(--ox-m-body); line-height: var(--ox-m-body-leading); font-family: var(--font-sans); font-weight: 400; }
+@utility text-m-micro { font-size: var(--ox-m-micro); line-height: var(--ox-m-micro-leading); font-family: var(--font-mono); font-weight: 400; font-feature-settings: "calt", "liga"; }
+
+/* the app scale */
+@utility text-a-h1 { font-size: var(--ox-a-h1); line-height: var(--ox-a-h1-leading); font-family: var(--font-heading); font-weight: 700; letter-spacing: -0.02em; }
+@utility text-a-h2 { font-size: var(--ox-a-h2); line-height: var(--ox-a-h2-leading); font-family: var(--font-heading); font-weight: 600; }
+@utility text-a-h3 { font-size: var(--ox-a-h3); line-height: var(--ox-a-h3-leading); font-family: var(--font-heading); font-weight: 600; }
+@utility text-a-h4 { font-size: var(--ox-a-h4); line-height: var(--ox-a-h4-leading); font-family: var(--font-sans); font-weight: 600; }
+@utility text-a-body { font-size: var(--ox-a-body); line-height: var(--ox-a-body-leading); font-family: var(--font-sans); font-weight: 400; }
+@utility text-a-micro { font-size: var(--ox-a-micro); line-height: var(--ox-a-micro-leading); font-family: var(--font-mono); font-weight: 400; font-feature-settings: "calt", "liga"; }
+@utility text-a-2xs { font-size: var(--ox-a-2xs); line-height: var(--ox-a-2xs-leading); font-family: var(--font-sans); font-weight: 500; }

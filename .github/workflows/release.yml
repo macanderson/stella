@@ -68,7 +68,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ matrix.target }}
 
@@ -173,7 +173,7 @@ jobs:
       - name: Upload build artifact
         id: upload
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: stella-${{ matrix.target }}
           path: |
@@ -187,7 +187,7 @@ jobs:
       # fail on a name conflict of its own making.
       - name: Upload build artifact (retry)
         if: steps.upload.outcome == 'failure'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: stella-${{ matrix.target }}
           path: |
@@ -284,7 +284,7 @@ jobs:
         run: ./scripts/repro-build.sh --locked "${REPRO_TARGET}"
 
       - name: Download the first arm's checksum
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: stella-x86_64-unknown-linux-gnu
           path: arm-a
@@ -347,7 +347,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download the artifact this release would publish
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: stella-${{ matrix.target }}
           path: published
@@ -379,7 +379,7 @@ jobs:
           fetch-tags: true
 
       - name: Download all build artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: artifacts
           pattern: stella-*
@@ -504,7 +504,32 @@ jobs:
             gh api -X DELETE "repos/{owner}/{repo}/releases/${id}"
           done
 
+      # `continue-on-error` on the first attempt is what lets the retry run,
+      # the same shape as the `Upload build artifact` retry above. v0.9.254
+      # and v0.9.264 each got past uploading assets and then hit a GitHub 5xx
+      # right here, stranding a finished build as an unpublished draft with
+      # nobody watching to re-run it (#5698).
       - name: Create / update GitHub Release
+        id: publish
+        continue-on-error: true
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        with:
+          files: |
+            artifacts/stella-*.tar.gz
+            artifacts/SHA256SUMS
+            artifacts/SHA256SUMS.bin
+          fail_on_unmatched_files: true
+          body_path: notes.md
+
+      # `overwrite_files` defaults to true, so retrying against the release
+      # object the first attempt already created (however far it got) fills in
+      # or replaces assets rather than duplicating or dropping them — a 5xx
+      # after five of six assets uploaded, as in v0.9.254, is exactly the case
+      # this covers. The step carries no `continue-on-error` of its own, so a
+      # genuine refusal (bad credentials, a malformed input) still fails the
+      # job on the second attempt the same way it would have on the first.
+      - name: Create / update GitHub Release (retry)
+        if: steps.publish.outcome == 'failure'
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           files: |
@@ -532,7 +557,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download all build artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: artifacts
           pattern: stella-*

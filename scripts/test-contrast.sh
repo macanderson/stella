@@ -139,11 +139,11 @@ entry_is() {
 }
 
 # ── U: a pairing that got worse ──────────────────────────────────────────────
-# `silver` is comfortably over AA today (7.76:1 on the canvas) and carries no
+# `silver` is comfortably over AA today (7.43:1 on the canvas) and carries no
 # baseline entry, so darkening it is a first-time violation rather than a
 # regression against a recorded number.
 r="$(new_root new_pairing)"
-repaint "$r" silver "#5A5A64"
+repaint "$r" silver "#5A5E66"
 want "U1 a first-time sub-threshold pairing is flagged" \
   expect-fail "$r" "no baseline entry"
 want "U2 --update refuses to grandfather it" \
@@ -153,17 +153,17 @@ entry_is "U3 the refused --update wrote no entry" "$r" silver bg absent
 # The other half: a pairing that IS baselined and got darker still. Seeded
 # rather than copied from the real ratchet, which now holds nothing.
 #
-# The repaint values in this section and the next are NEUTRAL greys, zinc like
-# the ramp they test. They were warm ones, cut against v6.0's warm ground; the
-# house system moved to obsidian and a neutral ramp, so a warm grey here would be
-# a fixture the palette it tests could not contain. Same cases, re-measured
-# against #09090B.
+# The repaint values in this section and the next are cool greys, like the ramp
+# they test. They were warm ones, cut against v6.0's warm ground; the house
+# system moved to soot and a cool ramp, so a warm grey here would be a fixture
+# the palette it tests could not contain. Same cases, re-measured against
+# #090A0D.
 r="$(seeded_root darkened "muted bg 4.47")"
-repaint "$r" muted "#6E6E77"
+repaint "$r" muted "#6B6F77"
 want "U4 a baselined pairing that got darker is flagged with both numbers" \
   expect-fail "$r" "darker than the 4.47:1 the ratchet holds it to"
 want "U5 --update refuses to lower a floor" \
-  expect-fail "$r" "darkened: muted on bg: 4.47:1 -> 3.94:1" "--update"
+  expect-fail "$r" "darkened: muted on bg: 4.47:1 -> 3.93:1" "--update"
 entry_is "U6 the refused --update left the floor where it was" "$r" muted bg 4.47
 
 # ── D: a pairing that got better ─────────────────────────────────────────────
@@ -173,15 +173,15 @@ entry_is "U6 the refused --update left the floor where it was" "$r" muted bg 4.4
 # `dim` rather than `comment`, which carried this case until that token was
 # retired — it was a colour with no paint site on any surface, so its ratchet
 # row guarded nothing. `dim` is the other pairing held to the 3.0 decorative
-# floor. It appears in a second pairing (`dim on paper`, at 4.5), and #56565F
-# leaves that one at 7.26:1 — well clear, so this case moves the pairing it is
+# floor. It appears in a second pairing (`dim on paper`, at 4.5), and #52565E
+# leaves that one at 7.19:1 — well clear, so this case moves the pairing it is
 # about and nothing else. Seeded with the one entry the case needs, since the
 # real ratchet has since retightened past it.
 r="$(seeded_root lightened "dim bg 2.30")"
-repaint "$r" dim "#56565F"
+repaint "$r" dim "#52565E"
 want "D1 a pairing that improved but still fails passes the check" expect-pass "$r" "held by the ratchet"
 want "D2 --update raises its floor" expect-pass "$r" "retightened to 1 pairing(s)" "--update"
-entry_is "D3 the floor is what was really measured" "$r" dim bg 2.74
+entry_is "D3 the floor is what was really measured" "$r" dim bg 2.69
 
 # Over the threshold: the entry must go, and the check must say so rather than
 # pass — a baselined pairing nobody needs is a standing permission slip.
@@ -191,8 +191,8 @@ entry_is "D3 the floor is what was really measured" "$r" dim bg 2.74
 # two leaves `dim`'s row behind — proof the file emptied for the right
 # reason, not by accident.
 r="$(seeded_root cleared "muted bg 4.47" "muted panel 4.32" "dim bg 2.30")"
-repaint "$r" muted "#8A8A93"
-repaint "$r" dim "#52525B"
+repaint "$r" muted "#878B93"
+repaint "$r" dim "#4F535B"
 want "D4 a pairing that cleared its threshold is reported, not passed" \
   expect-fail "$r" "clears its threshold now"
 want "D5 --update drops it" expect-pass "$r" "retightened to 1 pairing(s)" "--update"
@@ -210,7 +210,7 @@ r="$(new_root unchanged)"
 want "N1 an untouched tree passes" expect-pass "$r" "none darker than it allows"
 
 # An exempt pairing is reported and never failed on: gold on paper measures
-# 1.61:1 and is a logotype, which is the carve-out rule 6 rests on.
+# 2.05:1 and is a logotype, which is the carve-out rule 6 rests on.
 want "N2 the report names the exemption rather than hiding it" \
   expect-pass "$r" "logotype exemption" "--report"
 

@@ -460,7 +460,7 @@ export function ExitStation() {
       </div>
 
       <div className="eng-exit-doors">
-        <Link href="/docs/getting-started/installation" className="eng-cta">
+        <Link href="/docs/getting-started/installation" className="btn btn-primary eng-cta">
           install and authenticate
         </Link>
         <Link href="/docs" className="eng-cta-quiet">

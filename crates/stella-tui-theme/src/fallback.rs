@@ -75,8 +75,8 @@ pub fn ansi16(color: Color) -> Color {
         // One arm per distinct value. Shared tokens ride the arm of the value
         // they share: `INK` with `BG`; `INK_MUTED` with `DIM`; `PAPER`,
         // `PAPER_RAISED`, `PAPER_PANEL`, and `PAPER_GROUND` with `TEXT`;
-        // `PAPER_BORDER` and `PAPER_SEAM` with `SILVER_TYPE`. Where two roles
-        // once wanted different fallbacks, the dark-theme role wins.
+        // `PAPER_SEAM` with `PAPER_BORDER`. Where two roles once wanted
+        // different fallbacks, the dark-theme role wins.
         token::BG | token::PANEL | token::DIFF_ADD_BG | token::DIFF_DEL_BG => Color::Black,
         token::HL | token::BORDER | token::RULE => Color::DarkGray,
         token::GOLD | token::GOLD_BRIGHT => Color::LightYellow,
@@ -86,8 +86,11 @@ pub fn ansi16(color: Color) -> Color {
         token::GREEN => Color::LightGreen,
         token::RED => Color::LightRed,
         token::WARNING => Color::Yellow,
-        // The one light-theme stop with a value of its own: a row on paper.
+        // The two light-theme stops with a value of their own: a row on paper,
+        // and the hairline that edges it. The hairline keeps the stand-in it
+        // had when it shared a value with `SILVER_TYPE`.
         token::PAPER_ROW => Color::Gray,
+        token::PAPER_BORDER => Color::White,
         // Not a palette token — a caller's own colour, or one this crate does
         // not own. Passing it through is the answer: this function
         // narrows the palette, it does not police what else reaches a cell.

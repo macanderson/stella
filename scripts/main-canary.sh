@@ -60,7 +60,7 @@
 #
 # `ci.yml` runs the test suite on every push. It reports pass or fail and
 # stops there. It files nothing. It blocks nothing. `main` failed the same
-# test three times in two days. The `main-red` chain stayed silent the whole
+# test three times in two days. The `MAIN-RED` chain stayed silent the whole
 # time, because nothing in it ever asked `ci.yml` what it found. This file's
 # `compile` row only asks whether the tree BUILDS. The `ci-tests` row is the
 # join: it reads the CONCLUSION `ci.yml` already produced, instead of running
@@ -91,7 +91,7 @@ manifest_dir=""
 fixture_open_issue=""
 fixture_ci_commits=""
 fixture_ci_runs=""
-label="main-red"
+label="MAIN-RED"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -286,7 +286,7 @@ checks=(
   # finished one. It reports "ok" on every non-answer: missing, still
   # queued, cancelled, timed out, `startup_failure`. So this row can never be
   # what blocks a repair. Landing it here, not as a fourth workflow step,
-  # means a green suite closes the SAME `main-red` issue a red one opened.
+  # means a green suite closes the SAME `MAIN-RED` issue a red one opened.
   # It reuses the single-issue code below. No second actor races it to open
   # or close that issue.
   "ci-tests|./scripts/check-ci-tests.sh"
@@ -532,11 +532,13 @@ than only CI.
     else
       # Ensure the label first: `gh issue create --label` fails outright on a
       # label that does not exist, which would break the canary at the exact
-      # moment it has something to say. `--force` makes this idempotent, so it
-      # is a no-op on every run after the first.
+      # moment it has something to say. `--force` makes this idempotent.
+      #
+      # `--force` also sets the colour and the description on each run. Both
+      # match the label manifest word for word, so a run never resets them.
       gh_run label create "$label" \
-        --color B60205 \
-        --description "main is broken on the merged tree — filed by the post-merge canary" \
+        --color D5584D \
+        --description "Main is broken on the merged tree: filed by the post-merge canary" \
         --force
       gh_run issue create \
         --title "main is red: ${failed_names} fails on the merged tree" \

@@ -3893,7 +3893,6 @@ docs/prose-guidelines.md issue-reference 1
 docs/reference/diagnostics.md filler-adverb 2
 docs/reference/diagnostics.md issue-reference 8
 docs/reference/diagnostics.md rust-jargon 2
-docs/scr/README.md historical-reference 1
 docs/spec/adaptive-context/adaptive-context-plan.md filler-adverb 2
 docs/spec/adaptive-context/adaptive-context-plan.md historical-reference 1
 docs/spec/adaptive-context/adaptive-context-plan.md issue-reference 6

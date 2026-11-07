@@ -2,7 +2,8 @@
    stella — design tokens
    One color, owned: Gold on a cool near-black. Everything else is restraint.
    Drop this file in before any component styles. Pure CSS custom properties;
-   no build step required. Pair with globals.css for shadcn/ui + Tailwind v4.
+   no build step required. Keep house-tokens.css beside it, because this file
+   imports it. Pair it with house-tailwind.css for shadcn/ui and Tailwind v4.
 
    The `--st-*` block is the WHOLE palette, and is the content of
    design/tokens/stella-tokens.css, which scripts/gen-tokens.py emits from
@@ -26,80 +27,94 @@
    exactly this reason.
    ========================================================================== */
 
+/* The kit's own token sheet. The radius scale below reads it, so a change in
+   the kit's theme editor reaches this sheet with no hand edit. */
+@import "./house-tokens.css";
+
 :root {
   /* ---- brand core ------------------------------------------------------ */
-  --stella-brand: #D4AF37;       /* gold — the brand metal */
-  --stella-brand-deep: #09090B;  /* ink — brand *text* on light is never gold */
-  --stella-ink: #09090B;         /* bg — the canvas */
-  --stella-paper: #FFFFFF;       /* text — primary text on dark */
-  --stella-paper-bg: #FFFFFF;    /* paper — light-mode surface */
+  /* Roles, pointed at the ramp below. The `--st-*` values the house palette
+     owns are committed copies of the kit's. Edit them by hand. */
+  --stella-brand: var(--st-gold);      /* the brand metal */
+  --stella-brand-deep: var(--st-ink);  /* brand *text* on light is never gold */
+  --stella-ink: var(--st-bg);          /* the canvas */
+  --stella-paper: var(--st-text);      /* primary text on dark */
+  --stella-paper-bg: var(--st-paper);  /* light-mode surface */
 
   /* ---- brand ramp ------------------------------------------------------ */
-  --st-bg: #09090B;
-  --st-panel: #18181B;
-  --st-hl: #1F1F23;
-  --st-border: #27272A;
-  --st-rule: #3F3F46;
+  --st-bg: #090A0D;
+  --st-panel: #0F1115;
+  --st-hl: #16191D;
+  --st-border: #222529;
+  --st-rule: #40444A;
   --st-gold: #D4AF37;
-  --st-gold-bright: #F1CE65;
-  --st-silver: #A1A1AA;
-  --st-silver-type: #E4E4E7;
-  --st-text: #FFFFFF;
-  --st-muted: #8A8A93;
-  --st-dim: #71717A;
+  --st-gold-bright: #E3C45B;
+  --st-silver: #9A9FA6;
+  --st-silver-type: #C7CBD1;
+  --st-text: #FCFCFE;
+  --st-muted: #858991;
+  --st-dim: #6E727A;
   --st-green: #74C991;
   --st-red: #E0687D;
   --st-diff-add: #10201A;
   --st-diff-del: #241019;
-  --st-ink: #09090B;
-  --st-paper: #FFFFFF;
-  --st-text: #FFFFFF;
-  --st-paper-panel: #FFFFFF;
-  --st-paper-border: #E4E4E7;
-  --st-void: #000000;
-  --st-gold-ink: #8A7223;
-  --st-paper-ground: #FFFFFF;
-  --st-paper-raised: #FFFFFF;
-  --st-paper-row: #F4F4F5;
-  --st-paper-seam: #E4E4E7;
-  --st-ink-muted: #71717A;
+  --st-ink: #090A0D;
+  --st-paper: #FCFCFE;
+  --st-text: #FCFCFE;
+  --st-paper-panel: #FCFCFE;
+  --st-paper-border: #E3E5E9;
+  --st-void: #040506;
+  --st-gold-ink: #806719;
+  --st-paper-ground: #FCFCFE;
+  --st-paper-raised: #FCFCFE;
+  --st-paper-row: #ECEEF3;
+  --st-paper-seam: #E3E5E9;
+  --st-ink-muted: #6E727A;
   --st-green-ink: #006933;
   --st-amber: #EB8960;
   --st-amber-ink: #8D3B19;
   --st-red-ink: #952141;
 
   /* ---- typography ------------------------------------------------------ */
-  /* JetBrains Mono is the brand voice — the product lives in a terminal,
-     so the brand speaks in monospace. 800 for display, 700 for headings,
-     500 for UI, 400 for body & code. */
-  --stella-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo,
-      Consolas, "Liberation Mono", monospace;
-  --stella-font-display-weight: 800;
+  /* The house type rule of 2026-10-02, read from house-tokens.css. Space
+     Grotesk sets h1 to h3 on stella.oxagen.sh and its docs, a customer site.
+     Aeonik sets the text and h4 to h6, and Monaspace Neon sets code and
+     terminal transcripts. Space Grotesk ships 400 to 700, so display and
+     headings are 700. Every step reads a kit token, so a change to the base
+     in the kit reaches each one. */
+  --stella-font-display: var(--ox-font-display);
+  --stella-font-sans: var(--ox-font);
+  --stella-font-mono: var(--ox-font-mono);
+  --stella-font-display-weight: 700;
   --stella-font-heading-weight: 700;
   --stella-font-ui-weight: 500;
   --stella-font-body-weight: 400;
 
-  --stella-text-xs: 0.75rem;     /* 12 */
-  --stella-text-sm: 0.8125rem;   /* 13 */
-  --stella-text-base: 0.875rem;  /* 14 — terminal-native default */
-  --stella-text-md: 1rem;        /* 16 */
-  --stella-text-lg: 1.25rem;     /* 20 */
-  --stella-text-xl: 1.5rem;      /* 24 */
-  --stella-text-2xl: 1.875rem;   /* 30 */
-  --stella-text-3xl: 2.375rem;   /* 38 */
-  --stella-text-4xl: 3rem;       /* 48 */
+  --stella-text-xs: var(--ox-a-micro);    /* the micro step: badges, overlines */
+  --stella-text-sm: var(--ox-a-body);     /* the app base */
+  --stella-text-base: var(--ox-m-body);   /* the base on a customer site */
+  --stella-text-md: var(--ox-a-h4);       /* 16 */
+  --stella-text-lg: var(--ox-a-h3);       /* 20 */
+  --stella-text-xl: var(--ox-a-h2);       /* 24 */
+  --stella-text-2xl: var(--ox-m-h3);      /* 28 */
+  --stella-text-3xl: var(--ox-m-h2);      /* 40 */
+  --stella-text-4xl: var(--ox-m-h1);      /* 72 */
   --stella-tracking-tight: -0.02em;   /* display & wordmark */
   --stella-tracking-wide: 0.14em;     /* overlines, tags */
   --stella-leading-tight: 1.15;
   --stella-leading-body: 1.65;
 
   /* ---- radius ---------------------------------------------------------- */
-  --stella-radius-xs: 4px;
-  --stella-radius-sm: 6px;
-  --stella-radius-md: 10px;
-  --stella-radius-lg: 14px;
-  --stella-radius-xl: 18px;      /* cards, tiles */
-  --stella-radius-full: 999px;
+  /* The house corner scale from house-tokens.css, mapped the way the
+     website's Tailwind theme maps it in src/app/global.css. xs to lg take
+     the house step of the same name. xl is the house corner for a card, a
+     panel, or an input (--ox-radius). A pill keeps 999px. */
+  --stella-radius-xs: var(--ox-radius-xs);
+  --stella-radius-sm: var(--ox-radius-sm);
+  --stella-radius-md: var(--ox-radius-md);
+  --stella-radius-lg: var(--ox-radius-lg);
+  --stella-radius-xl: var(--ox-radius);  /* cards, panels, inputs */
+  --stella-radius-full: 999px;           /* a pill */
 
   /* ---- motion — assemble, don't spin ----------------------------------- */
   --stella-ease-arrive: cubic-bezier(0.22, 0.9, 0.35, 1);   /* trails in */
@@ -116,43 +131,32 @@
   --stella-starfield-opacity: 0.16;  /* max star opacity */
   --stella-grain-opacity: 0.045;     /* film grain overlay */
 
-  /* ---- elevation / glow ------------------------------------------------ */
-  --stella-glow-brand: 0 0 24px rgb(212 175 55 / 0.28),
-      0 0 96px rgb(212 175 55 / 0.12);
-  --stella-shadow-card: 0 1px 2px rgb(0 0 0 / 0.25),
-      0 8px 28px rgb(0 0 0 / 0.35);
+  /* ---- elevation -------------------------------------------------------- */
+  /* None here. A card or panel at rest has no shadow, and the house rules
+     retire glows. A floating surface takes --ox-shadow-pop from
+     house-tokens.css. */
 }
 
 /* ---- semantic aliases: light is default, dark by class/attr or system -- */
 :root {
   --stella-bg: var(--stella-paper-bg);
   --stella-fg: var(--stella-ink);
-  --stella-surface: #FFFFFF;
-  --stella-border: #E4E4E7;
-  --stella-muted-fg: #71717A;
+  --stella-surface: #FCFCFE;
+  --stella-border: #E3E5E9;
+  --stella-muted-fg: #6E727A;
   --stella-accent: var(--stella-brand);
   --stella-accent-text: var(--stella-brand-deep); /* gold that passes on light */
-  /* The mark itself — shapes, not text. v5.0 retires the darker light cut:
-     gold, text and ink are the only three mark colours, and the mark is the
-     same gold on both grounds. It stands on the WCAG logotype exemption
-     rather than on the 3:1 graphical floor, which is the honest reason — the
-     v3.0/v4.0 rule here stepped the mark down to a `brand-700` stop, and that
-     stop does not exist in v5.0.
-
-     This declaration used to name it anyway. `--stella-brand-700` is defined
-     nowhere in this file, so `--stella-mark-shape` resolved to nothing for
-     every light-mode consumer and each one silently fell through to the
-     literal in its own `var(--stella-mark-shape, …)` fallback. The rendered
-     colour does not change with this fix; the variable simply means something
-     again. */
-  --stella-mark-shape: var(--stella-brand);
+  /* The mark itself, shapes and not text. Gold on a light ground is always
+     darker than gold on a dark ground, so the mark takes the same ink stop as
+     gold text. */
+  --stella-mark-shape: var(--st-gold-ink);
 }
 .dark, [data-theme="dark"] {
   --stella-bg: var(--stella-ink);
   --stella-fg: var(--stella-paper);
-  --stella-surface: #18181B;
-  --stella-border: #27272A;
-  --stella-muted-fg: #A1A1AA;
+  --stella-surface: #0F1115;
+  --stella-border: #222529;
+  --stella-muted-fg: #9A9FA6;
   --stella-accent: var(--stella-brand);
   --stella-accent-text: var(--stella-brand);
   --stella-mark-shape: var(--stella-brand);
@@ -161,9 +165,9 @@
   :root:not([data-theme="light"]) {
     --stella-bg: var(--stella-ink);
     --stella-fg: var(--stella-paper);
-    --stella-surface: #18181B;
-    --stella-border: #27272A;
-    --stella-muted-fg: #A1A1AA;
+    --stella-surface: #0F1115;
+    --stella-border: #222529;
+    --stella-muted-fg: #9A9FA6;
     --stella-accent: var(--stella-brand);
     --stella-accent-text: var(--stella-brand);
     --stella-mark-shape: var(--stella-brand);

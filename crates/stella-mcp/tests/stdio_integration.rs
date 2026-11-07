@@ -22,6 +22,7 @@ fn stdio_config(name: &str, args: &[&str], env: BTreeMap<String, String>) -> Mcp
             env,
         },
         candidate_safe: false,
+        cwd: None,
     }
 }
 
@@ -430,6 +431,7 @@ async fn a_failed_server_does_not_block_a_healthy_one() {
             env: BTreeMap::new(),
         },
         candidate_safe: false,
+        cwd: None,
     };
     let good = stdio_config("fx", &[], BTreeMap::new());
     let set = McpToolSet::connect(&[bad, good], Duration::from_secs(5)).await;

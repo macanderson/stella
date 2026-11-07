@@ -1,27 +1,30 @@
 # DoD merge check (SCR-003) — caller stub.
 #
-# The implementation lives once in oxagen and is called from here. ADR-039:
-# copying the check into each repo would put five independently-drifting
-# copies of an enforcement rule into an org whose sibling check exists to
-# detect exactly that kind of drift.
+# The implementation lives once in oxageninc/.github and is called from here.
+# ADR-039 in oxageninc/product: copying the check into each repo would put
+# five independently-drifting copies of an enforcement rule into an org whose
+# sibling check exists to detect exactly that kind of drift. It lives in
+# oxageninc/.github because that repository is public, so every caller can
+# call it and check out its scripts (oxageninc/product#5183).
 #
-# There is no logic in this file. A change to *what* the check does never
-# touches it; only adding or removing a check does.
+# There is deliberately no logic in this file. A change to *what* the check
+# does never touches it; only adding or removing a check does.
 #
-# The ref is a commit SHA, not `@main`: a cross-repo `uses:` resolved through
-# a moving ref both fails `action-pins` and lets another repository change
-# what runs here without a commit in this one. Re-pin when the implementation
-# changes, which is a reviewable one-line diff naming the version it moved to.
-# The decision and what it costs are recorded in macanderson/oxagen's
+# The ref is a commit SHA, not `@main`: a cross-repo `uses:` resolved
+# through a moving ref both fails `action-pins` and lets another repository
+# change what runs here without a commit in this one. Re-pin when the
+# implementation changes, which is a reviewable one-line diff naming the
+# version it moved to.
+# The decision and what it costs are recorded in oxageninc/product's
 # docs/adr/ADR-045-pin-cross-repo-reusable-workflows.md.
 name: dod-check
 
 on:
   pull_request:
-    # `ready_for_review` because a PR opened as a draft and later marked ready
-    # never re-ran the check, so it kept whatever verdict its draft head got
-    # (oxagen#2638). The caller owns this list; the implementation cannot add
-    # an event on our behalf.
+    # `ready_for_review` because a PR opened as a draft and later marked
+    # ready never re-ran the check, so it kept whatever verdict its draft
+    # head got (oxagen#2638). The caller owns this list; the
+    # implementation cannot add an event on our behalf.
     types:
       [opened, edited, reopened, ready_for_review, synchronize, labeled, unlabeled]
 
@@ -32,4 +35,4 @@ permissions:
 
 jobs:
   dod:
-    uses: macanderson/oxagen/.github/workflows/dod-check.yml@a44c54151988534878534c8d828030b2a16432d1 # oxagen main, #2551
+    uses: oxageninc/.github/.github/workflows/dod-check.yml@c339971e0ad74bff568bc0ba1363ee980c296733 # oxageninc/.github main, oxageninc/product#5183

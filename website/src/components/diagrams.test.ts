@@ -14,8 +14,9 @@ import { DIAGRAM_DESCRIPTIONS } from "./diagram-descriptions.ts";
  * ## The trap
  *
  * Diagram text is drawn in `var(--font-mono)`, which resolves to the
- * self-hosted JetBrains Mono in `src/fonts/` — and those files are the Google
- * Fonts **latin** subset, 229 codepoints. A character outside it does not fail
+ * self-hosted Monaspace Neon in `src/fonts/monaspace-neon-latin-wght.woff2`,
+ * the kit's **latin** subset of 225 codepoints, one variable file for every
+ * weight. A character outside it does not fail
  * anywhere: the browser silently falls out to the next family in the stack for
  * that one glyph. The result is a different face, a different weight, and a
  * different advance width in the middle of a monospace string, so a label laid
@@ -26,18 +27,18 @@ import { DIAGRAM_DESCRIPTIONS } from "./diagram-descriptions.ts";
  * `—`, `…`, `↑` and `↓`, but **not `→` or `←`** — so the obvious character for
  * drawing a step sequence is exactly the one that is missing. That is how
  * this got noticed: a stage strip written `triage → recall → …` looked correct
- * in every editor and would have shipped broken. Write `->` instead — JetBrains
- * Mono ligates it into an arrow, so it draws as one and measures as two
- * ordinary characters.
+ * in every editor and would have shipped broken. Write `->` instead. The
+ * subset has no ligature for it, so it draws and measures as two ordinary
+ * characters.
  *
  * So the allowlist below is narrow — printable ASCII plus the
- * punctuation these diagrams actually use, each verified present in both
- * shipped weights. It is not derived from the font at runtime because decoding
+ * punctuation these diagrams actually use, each verified present in the
+ * shipped file. It is not derived from the font at runtime because decoding
  * a woff2 needs a parser this repo has no other use for; if the subset is ever
  * regenerated, re-verify with:
  *
- *     python3 -c "from fontTools.ttLib import TTFont; \
- *       print(sorted(TTFont('src/fonts/jetbrains-mono-latin-400-normal.woff2') \
+ *     uvx --from 'fonttools[woff]' python -c "from fontTools.ttLib import TTFont; \
+ *       print(sorted(TTFont('src/fonts/monaspace-neon-latin-wght.woff2') \
  *       .getBestCmap()))"
  *
  * Only *rendered* strings are checked. `aria-label` is read aloud rather than
@@ -46,7 +47,7 @@ import { DIAGRAM_DESCRIPTIONS } from "./diagram-descriptions.ts";
 
 const DIAGRAMS = join(dirname(fileURLToPath(import.meta.url)), "diagrams.tsx");
 
-/** Non-ASCII characters verified present in both shipped JetBrains Mono weights. */
+/** Non-ASCII characters verified present in the shipped Monaspace Neon file. */
 const ALLOWED_NON_ASCII = new Set([
   "·", // U+00B7 — the separator these diagrams use between peer items
   "×", // U+00D7 — multiplication, as in "call it N×"
@@ -114,7 +115,7 @@ test("every glyph a diagram paints is in the self-hosted font subset", () => {
   assert.deepEqual(
     offenders,
     [],
-    `diagram text uses ${offenders.length} character(s) outside the JetBrains Mono latin subset.\n` +
+    `diagram text uses ${offenders.length} character(s) outside the Monaspace Neon latin subset.\n` +
       `Each one silently falls back to another font mid-string.\n  ` +
       offenders.join("\n  "),
   );

@@ -442,7 +442,7 @@ cat >"$gh_colorish/gh" <<'STUB'
 #!/usr/bin/env bash
 set -uo pipefail
 case "$*" in
-"issue list --label main-red --state open --limit 20 --json number --jq .[].number")
+"issue list --label MAIN-RED --state open --limit 20 --json number --jq .[].number")
   echo "9001"
   ;;
 "api user --jq .login")
