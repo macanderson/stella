@@ -57,7 +57,7 @@ concurrency:
 jobs:
   compile:
     name: the macOS-only dependency table still compiles
-    runs-on: macos-14
+    runs-on: macos-15
     # The bundled C in the dependency graph (rusqlite's SQLite, the
     # tree-sitter grammars, cpal's CoreAudio bindings) is the expensive part
     # on a cold cache.
