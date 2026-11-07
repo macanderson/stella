@@ -149,68 +149,69 @@ impl Store {
             .map(|secs| sqlite_i64("manifest stall seconds", secs))
             .transpose()?;
         let mut conn = self.lock();
-        let tx = conn.transaction()?;
-        let call_seq = sqlite_i64("manifest call seq", row.call_seq)?;
-        tx.execute(
-            "INSERT OR REPLACE INTO step_receipt
-               (execution_id, turn_instance, step, call_seq, provider, upstream_provider,
-                model, call_role,
-                effective_budget_tokens, calibration_factor, estimated_input_tokens,
-                compiled_frame_id, frame_hash, stall_seconds_requested)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                execution_id,
-                turn,
-                step,
-                call_seq,
-                row.provider,
-                row.upstream_provider,
-                row.model,
-                row.call_role,
-                budget,
-                row.calibration_factor,
-                estimated,
-                row.compiled_frame_id,
-                row.frame_hash,
-                stall,
-            ],
-        )?;
-        // Clear any prior ordinals for this call before rewriting, so a
-        // shorter re-emitted manifest cannot leave stale tail rows behind.
-        // Scoped by call_seq: the auxiliary calls sharing this step keep theirs.
-        tx.execute(
-            "DELETE FROM step_manifest
-             WHERE execution_id = ? AND turn_instance = ? AND step = ? AND call_seq = ?",
-            params![execution_id, turn, step, call_seq],
-        )?;
-        // token_cost is a property of the block (context_blocks.token_cost),
-        // not of a manifest entry, so step_manifest stores only ordering, zone,
-        // and residency; the reader joins token_cost back from context_blocks.
-        for (ordinal, block) in row.blocks.iter().enumerate() {
-            let ordinal = sqlite_i64("manifest ordinal", ordinal as u64)?;
-            let resident = sqlite_i64("manifest residency", block.resident_since_step)?;
-            let message_index = sqlite_i64("manifest message index", block.message_index)?;
+        conn.transaction(|tx| {
+            let call_seq = sqlite_i64("manifest call seq", row.call_seq)?;
             tx.execute(
-                "INSERT INTO step_manifest
-                   (execution_id, turn_instance, step, call_seq, ordinal, block_id,
-                    cache_zone, resident_since_step, message_index, call_id)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO step_receipt
+                   (execution_id, turn_instance, step, call_seq, provider, upstream_provider,
+                    model, call_role,
+                    effective_budget_tokens, calibration_factor, estimated_input_tokens,
+                    compiled_frame_id, frame_hash, stall_seconds_requested)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 params![
                     execution_id,
                     turn,
                     step,
                     call_seq,
-                    ordinal,
-                    block.block_id,
-                    block.cache_zone,
-                    resident,
-                    message_index,
-                    block.call_id,
+                    row.provider,
+                    row.upstream_provider,
+                    row.model,
+                    row.call_role,
+                    budget,
+                    row.calibration_factor,
+                    estimated,
+                    row.compiled_frame_id,
+                    row.frame_hash,
+                    stall,
                 ],
             )?;
-        }
-        tx.commit()?;
-        Ok(())
+            // Clear any prior ordinals for this call before rewriting, so a
+            // shorter re-emitted manifest cannot leave stale tail rows behind.
+            // Scoped by call_seq: the auxiliary calls sharing this step keep theirs.
+            tx.execute(
+                "DELETE FROM step_manifest
+                 WHERE execution_id = ? AND turn_instance = ? AND step = ? AND call_seq = ?",
+                params![execution_id, turn, step, call_seq],
+            )?;
+            // token_cost is a property of the block (context_blocks.token_cost),
+            // not of a manifest entry, so step_manifest stores only ordering, zone,
+            // and residency; the reader joins token_cost back from context_blocks.
+            for (ordinal, block) in row.blocks.iter().enumerate() {
+                let ordinal = sqlite_i64("manifest ordinal", ordinal as u64)?;
+                let resident = sqlite_i64("manifest residency", block.resident_since_step)?;
+                let message_index = sqlite_i64("manifest message index", block.message_index)?;
+                tx.execute(
+                    "INSERT INTO step_manifest
+                       (execution_id, turn_instance, step, call_seq, ordinal, block_id,
+                        cache_zone, resident_since_step, message_index, call_id)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    params![
+                        execution_id,
+                        turn,
+                        step,
+                        call_seq,
+                        ordinal,
+                        block.block_id,
+                        block.cache_zone,
+                        resident,
+                        message_index,
+                        block.call_id,
+                    ],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
     }
 
     /// Every block registered for an execution, insertion order.

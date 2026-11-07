@@ -255,8 +255,7 @@ impl Store {
             )
         };
 
-        {
-            let tx = conn.transaction()?;
+        conn.transaction(|tx| {
             tx.execute_batch(&format!(
                 "CREATE TABLE IF NOT EXISTS {TARGETS_TABLE} (id INTEGER PRIMARY KEY);
                  DELETE FROM {TARGETS_TABLE};"
@@ -324,7 +323,7 @@ impl Store {
                 // and the caller sees only what *would* have happened. No
                 // cursor correction either — the cursor is only wrong once
                 // rows are actually gone.
-                return Ok(report);
+                return Ok(());
             }
 
             // Address the surviving watermark row by its VACUUM-stable key
@@ -349,11 +348,12 @@ impl Store {
 
             tx.execute_batch(&format!("DROP TABLE IF EXISTS {TARGETS_TABLE};"))?;
             tx.commit()?;
-        }
+            Ok(())
+        })?;
 
         // 3) Reclaim file bytes on a large (or explicitly requested) prune.
         let deleted = report.aged_out + report.ceiling_evicted + report.dependent_rows;
-        if deleted > 0 && (policy.vacuum || deleted >= LARGE_PRUNE_ROWS) {
+        if !policy.dry_run && deleted > 0 && (policy.vacuum || deleted >= LARGE_PRUNE_ROWS) {
             conn.execute_batch("VACUUM")?;
             report.vacuumed = true;
         }

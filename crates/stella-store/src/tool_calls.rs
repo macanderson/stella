@@ -711,35 +711,36 @@ impl Store {
     /// event's own transaction.
     pub fn record_tool_calls(&self, execution_id: i64, calls: &[ToolCallRow]) -> Result<()> {
         let mut conn = self.lock();
-        let tx = conn.transaction()?;
-        for (seq, row) in calls.iter().enumerate() {
-            tx.execute(
-                "INSERT OR REPLACE INTO tool_calls \
-                 (execution_id, seq, call_id, name, surface, args_json, args_digest, \
-                  reason, ok, state, error, error_class, bytes_out, duration_ms, \
-                  sub_agent_id) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                params![
-                    execution_id,
-                    seq as i64,
-                    row.call_id,
-                    row.name,
-                    row.surface,
-                    row.args_json,
-                    row.args_digest,
-                    row.reason,
-                    row.ok() as i64,
-                    row.state.as_str(),
-                    row.error,
-                    class_token(row.error_class),
-                    row.bytes_out,
-                    row.duration_ms,
-                    row.sub_agent_id,
-                ],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
+        conn.transaction(|tx| {
+            for (seq, row) in calls.iter().enumerate() {
+                tx.execute(
+                    "INSERT OR REPLACE INTO tool_calls \
+                     (execution_id, seq, call_id, name, surface, args_json, args_digest, \
+                      reason, ok, state, error, error_class, bytes_out, duration_ms, \
+                      sub_agent_id) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    params![
+                        execution_id,
+                        seq as i64,
+                        row.call_id,
+                        row.name,
+                        row.surface,
+                        row.args_json,
+                        row.args_digest,
+                        row.reason,
+                        row.ok() as i64,
+                        row.state.as_str(),
+                        row.error,
+                        class_token(row.error_class),
+                        row.bytes_out,
+                        row.duration_ms,
+                        row.sub_agent_id,
+                    ],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
     }
 
     /// Re-fold the `tool_calls` projection for one execution from its
@@ -760,10 +761,11 @@ impl Store {
     /// function is `pub(crate)`, and this doc is public.)
     pub fn materialize_tool_calls(&self, execution_id: i64) -> Result<usize> {
         let mut conn = self.lock();
-        let tx = conn.transaction()?;
-        let n = refold_tool_calls(&tx, execution_id)?;
-        tx.commit()?;
-        Ok(n)
+        conn.transaction(|tx| {
+            let n = refold_tool_calls(&tx, execution_id)?;
+            tx.commit()?;
+            Ok(n)
+        })
     }
 
     /// Every execution that was never closed out — no `finished_at` — oldest
@@ -833,24 +835,25 @@ impl Store {
     /// reopened the workspace.
     pub fn mark_execution_interrupted(&self, execution_id: i64) -> Result<()> {
         let mut conn = self.lock();
-        let tx = conn.transaction()?;
-        tx.execute(
-            "UPDATE tool_calls SET state = 'abandoned', ok = 0, error = ?2 \
-             WHERE execution_id = ?1 AND state = 'running'",
-            params![execution_id, ABANDONED],
-        )?;
-        tx.execute(
-            "UPDATE executions \
-             SET finished_at = coalesce(
-                     (SELECT max(ts) FROM events WHERE execution_id = ?1),
-                     CURRENT_TIMESTAMP),
-                 outcome = 'interrupted', \
-                 usage_complete = 0, usage_status = 'incomplete' \
-             WHERE id = ?1 AND finished_at IS NULL",
-            params![execution_id],
-        )?;
-        tx.commit()?;
-        Ok(())
+        conn.transaction(|tx| {
+            tx.execute(
+                "UPDATE tool_calls SET state = 'abandoned', ok = 0, error = ?2 \
+                 WHERE execution_id = ?1 AND state = 'running'",
+                params![execution_id, ABANDONED],
+            )?;
+            tx.execute(
+                "UPDATE executions \
+                 SET finished_at = coalesce(
+                         (SELECT max(ts) FROM events WHERE execution_id = ?1),
+                         CURRENT_TIMESTAMP),
+                     outcome = 'interrupted', \
+                     usage_complete = 0, usage_status = 'incomplete' \
+                 WHERE id = ?1 AND finished_at IS NULL",
+                params![execution_id],
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
     }
 }
 

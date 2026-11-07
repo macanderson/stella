@@ -40,21 +40,22 @@ impl UsageStore {
         workspace_id: Option<&str>,
     ) -> Result<u64> {
         let conn = self.lock();
-        let tx = conn.unchecked_transaction()?;
-        let max_rowid: i64 =
-            tx.query_row("SELECT COALESCE(MAX(rowid), 0) FROM telemetry", [], |r| {
-                r.get(0)
-            })?;
-        let changed = tx.execute(
-            "UPDATE telemetry \
-                SET rowid = rowid + ?1, \
-                    org_id = ?2, \
-                    workspace_id = COALESCE(workspace_id, ?3) \
-              WHERE project_id = ?4 AND org_id IS NULL",
-            params![max_rowid, org_id, workspace_id, project_id],
-        )?;
-        tx.commit()?;
-        Ok(changed as u64)
+        conn.unchecked_transaction(|tx| {
+            let max_rowid: i64 =
+                tx.query_row("SELECT COALESCE(MAX(rowid), 0) FROM telemetry", [], |r| {
+                    r.get(0)
+                })?;
+            let changed = tx.execute(
+                "UPDATE telemetry \
+                    SET rowid = rowid + ?1, \
+                        org_id = ?2, \
+                        workspace_id = COALESCE(workspace_id, ?3) \
+                  WHERE project_id = ?4 AND org_id IS NULL",
+                params![max_rowid, org_id, workspace_id, project_id],
+            )?;
+            tx.commit()?;
+            Ok(changed as u64)
+        })
     }
 }
 

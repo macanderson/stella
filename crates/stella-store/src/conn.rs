@@ -23,17 +23,15 @@
 //! `rusqlite::Result<..>` turbofish or `rusqlite::OptionalExtension`, stops
 //! compiling. That short list is what needed a look.
 //!
-//! This module does not wrap a transaction past its own start.
-//! `Guard::transaction` and `Guard::unchecked_transaction` name the path only
-//! if starting fails, then hand back a plain `rusqlite::Transaction`. Every
-//! transaction here runs during the open sequence, or as a short insert or
-//! update unlikely to be the first read of a damaged page.
+//! [`Guard::transaction`] runs a closure on the open transaction. Any error
+//! that leaves the closure names the file, even one from a helper it called.
+//! [`Guard::with_conn`] does the same for a helper that wants the bare link.
 
 use std::path::Path;
 
 use rusqlite::{MappedRows, Params, Row};
 
-use crate::integrity::corrupt_store_error;
+use crate::integrity::{classify_store_corruption, corrupt_store_error};
 use crate::{Result, StoreError};
 
 /// Turn a raw rusqlite failure into a `StoreError`, naming `path` when the
@@ -42,6 +40,13 @@ use crate::{Result, StoreError};
 /// over which field of `self` it holds.
 fn wrap(path: Option<&str>, error: rusqlite::Error) -> StoreError {
     corrupt_store_error(error, path.map(Path::new))
+}
+
+/// Add `path` to an error that is already a `StoreError`. The `?` inside a
+/// transaction body turns a rusqlite error into one with no path. This puts
+/// the path back once the body returns.
+fn named<T>(path: Option<&str>, result: Result<T>) -> Result<T> {
+    result.map_err(|error| classify_store_corruption(error, path.map(Path::new)))
 }
 
 /// A locked connection that knows which file backs it. `Store::lock()`,
@@ -89,30 +94,55 @@ impl<'a> Guard<'a> {
         })
     }
 
-    /// Starts a transaction. Names the path if SQLite refuses to start it.
-    /// Everything run through the returned `Transaction` is plain rusqlite.
-    /// See the module doc for why.
-    pub(crate) fn transaction(&mut self) -> Result<rusqlite::Transaction<'_>> {
+    /// Runs `body` in a transaction. `body` gets the transaction and commits
+    /// it, so a return before the commit rolls back. Any error out of `body`
+    /// names this file, even one from a helper `body` called.
+    pub(crate) fn transaction<T>(
+        &mut self,
+        body: impl FnOnce(rusqlite::Transaction<'_>) -> Result<T>,
+    ) -> Result<T> {
         let path = self.conn.path().map(str::to_string);
-        self.conn
-            .transaction()
-            .map_err(|e| wrap(path.as_deref(), e))
+        let result = match self.conn.transaction() {
+            Ok(tx) => body(tx),
+            Err(error) => Err(error.into()),
+        };
+        named(path.as_deref(), result)
     }
 
-    pub(crate) fn transaction_with_behavior(
+    /// [`Guard::transaction`] with the lock mode the caller picks.
+    pub(crate) fn transaction_with_behavior<T>(
         &mut self,
         behavior: rusqlite::TransactionBehavior,
-    ) -> Result<rusqlite::Transaction<'_>> {
+        body: impl FnOnce(rusqlite::Transaction<'_>) -> Result<T>,
+    ) -> Result<T> {
         let path = self.conn.path().map(str::to_string);
-        self.conn
-            .transaction_with_behavior(behavior)
-            .map_err(|e| wrap(path.as_deref(), e))
+        let result = match self.conn.transaction_with_behavior(behavior) {
+            Ok(tx) => body(tx),
+            Err(error) => Err(error.into()),
+        };
+        named(path.as_deref(), result)
     }
 
-    pub(crate) fn unchecked_transaction(&self) -> Result<rusqlite::Transaction<'_>> {
-        self.conn
-            .unchecked_transaction()
-            .map_err(|e| wrap(self.conn.path(), e))
+    /// [`Guard::transaction`] for a caller that holds only `&self`.
+    pub(crate) fn unchecked_transaction<T>(
+        &self,
+        body: impl FnOnce(rusqlite::Transaction<'_>) -> Result<T>,
+    ) -> Result<T> {
+        let result = match self.conn.unchecked_transaction() {
+            Ok(tx) => body(tx),
+            Err(error) => Err(error.into()),
+        };
+        named(self.conn.path(), result)
+    }
+
+    /// Runs `body` on the bare connection, for a helper that takes a
+    /// `&rusqlite::Connection`. Any error out of `body` names this file.
+    pub(crate) fn with_conn<T>(
+        &self,
+        body: impl FnOnce(&rusqlite::Connection) -> Result<T>,
+    ) -> Result<T> {
+        let conn: &rusqlite::Connection = &self.conn;
+        named(conn.path(), body(conn))
     }
 
     pub(crate) fn last_insert_rowid(&self) -> i64 {
@@ -132,9 +162,8 @@ impl crate::Store {
     /// The bare lock, for code that names the file on its own. `migrate`
     /// and `migrate_and_prepare_exports` run when the store opens. They pass
     /// each error through [`crate::integrity::classify_store_corruption`].
-    /// `integrity_check` shows what SQLite said, word for word.
-    /// `journal_preimages` also runs inside a migration, where only a bare
-    /// link fits. All other code should use `lock`.
+    /// `integrity_check` shows what SQLite said, word for word. All other
+    /// code should use `lock`.
     pub(crate) fn raw_lock(&self) -> std::sync::MutexGuard<'_, rusqlite::Connection> {
         self.conn
             .lock()

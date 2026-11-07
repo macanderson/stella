@@ -54,66 +54,67 @@ impl UsageStore {
             return Ok(0);
         }
         let conn = self.lock();
-        let tx = conn.unchecked_transaction()?;
-        let mut moved = 0u64;
-        for table in PROJECT_KEYED_TABLES {
-            // `OR IGNORE`: a row already present under the new id wins its
-            // primary-key conflict; the superseded old row is deleted below.
+        conn.unchecked_transaction(|tx| {
+            let mut moved = 0u64;
+            for table in PROJECT_KEYED_TABLES {
+                // `OR IGNORE`: a row already present under the new id wins its
+                // primary-key conflict; the superseded old row is deleted below.
+                moved += tx.execute(
+                    &format!("UPDATE OR IGNORE {table} SET project_id = ?1 WHERE project_id = ?2"),
+                    params![new_project_id, old_project_id],
+                )? as u64;
+                tx.execute(
+                    &format!("DELETE FROM {table} WHERE project_id = ?1"),
+                    params![old_project_id],
+                )?;
+            }
+            // Tool-usage buckets are additive per (tool, surface, day): a bucket
+            // present under both identities merges by summing, or the merged
+            // project would silently under-count.
             moved += tx.execute(
-                &format!("UPDATE OR IGNORE {table} SET project_id = ?1 WHERE project_id = ?2"),
+                "INSERT INTO tool_usage_rollup (project_id, tool, surface, day, calls, errors) \
+                 SELECT ?1, tool, surface, day, calls, errors \
+                   FROM tool_usage_rollup WHERE project_id = ?2 \
+                 ON CONFLICT(project_id, tool, surface, day) DO UPDATE SET \
+                   calls = calls + excluded.calls, \
+                   errors = errors + excluded.errors",
                 params![new_project_id, old_project_id],
             )? as u64;
             tx.execute(
-                &format!("DELETE FROM {table} WHERE project_id = ?1"),
+                "DELETE FROM tool_usage_rollup WHERE project_id = ?1",
                 params![old_project_id],
             )?;
-        }
-        // Tool-usage buckets are additive per (tool, surface, day): a bucket
-        // present under both identities merges by summing, or the merged
-        // project would silently under-count.
-        moved += tx.execute(
-            "INSERT INTO tool_usage_rollup (project_id, tool, surface, day, calls, errors) \
-             SELECT ?1, tool, surface, day, calls, errors \
-               FROM tool_usage_rollup WHERE project_id = ?2 \
-             ON CONFLICT(project_id, tool, surface, day) DO UPDATE SET \
-               calls = calls + excluded.calls, \
-               errors = errors + excluded.errors",
-            params![new_project_id, old_project_id],
-        )? as u64;
-        tx.execute(
-            "DELETE FROM tool_usage_rollup WHERE project_id = ?1",
-            params![old_project_id],
-        )?;
-        // The per-class split merges on the same rule as the buckets it
-        // splits, or the merged project's classified and unsplit error counts
-        // would stop reconciling.
-        moved += tx.execute(
-            "INSERT INTO tool_error_class_rollup (project_id, tool, surface, day, class, errors) \
-             SELECT ?1, tool, surface, day, class, errors \
-               FROM tool_error_class_rollup WHERE project_id = ?2 \
-             ON CONFLICT(project_id, tool, surface, day, class) DO UPDATE SET \
-               errors = errors + excluded.errors",
-            params![new_project_id, old_project_id],
-        )? as u64;
-        tx.execute(
-            "DELETE FROM tool_error_class_rollup WHERE project_id = ?1",
-            params![old_project_id],
-        )?;
-        // The cursor merges by MAX so replication continues from wherever
-        // either identity had reached — never a rewind, never a re-replication.
-        moved += tx.execute(
-            "INSERT INTO telemetry_sync_cursors (project_id, last_source_rowid) \
-             SELECT ?1, last_source_rowid FROM telemetry_sync_cursors WHERE project_id = ?2 \
-             ON CONFLICT(project_id) DO UPDATE SET \
-               last_source_rowid = MAX(last_source_rowid, excluded.last_source_rowid)",
-            params![new_project_id, old_project_id],
-        )? as u64;
-        tx.execute(
-            "DELETE FROM telemetry_sync_cursors WHERE project_id = ?1",
-            params![old_project_id],
-        )?;
-        tx.commit()?;
-        Ok(moved)
+            // The per-class split merges on the same rule as the buckets it
+            // splits, or the merged project's classified and unsplit error counts
+            // would stop reconciling.
+            moved += tx.execute(
+                "INSERT INTO tool_error_class_rollup (project_id, tool, surface, day, class, errors) \
+                 SELECT ?1, tool, surface, day, class, errors \
+                   FROM tool_error_class_rollup WHERE project_id = ?2 \
+                 ON CONFLICT(project_id, tool, surface, day, class) DO UPDATE SET \
+                   errors = errors + excluded.errors",
+                params![new_project_id, old_project_id],
+            )? as u64;
+            tx.execute(
+                "DELETE FROM tool_error_class_rollup WHERE project_id = ?1",
+                params![old_project_id],
+            )?;
+            // The cursor merges by MAX so replication continues from wherever
+            // either identity had reached — never a rewind, never a re-replication.
+            moved += tx.execute(
+                "INSERT INTO telemetry_sync_cursors (project_id, last_source_rowid) \
+                 SELECT ?1, last_source_rowid FROM telemetry_sync_cursors WHERE project_id = ?2 \
+                 ON CONFLICT(project_id) DO UPDATE SET \
+                   last_source_rowid = MAX(last_source_rowid, excluded.last_source_rowid)",
+                params![new_project_id, old_project_id],
+            )? as u64;
+            tx.execute(
+                "DELETE FROM telemetry_sync_cursors WHERE project_id = ?1",
+                params![old_project_id],
+            )?;
+            tx.commit()?;
+            Ok(moved)
+        })
     }
 }
 

@@ -148,12 +148,7 @@ impl UsageStore {
     }
 
     fn init(mut conn: Connection) -> Result<Self> {
-        conn.execute_batch(
-            "PRAGMA journal_mode=WAL;
-             PRAGMA synchronous=NORMAL;
-             PRAGMA busy_timeout=5000;",
-        )?;
-        schema::apply(&mut conn)?;
+        schema::prepare(&mut conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -173,63 +168,64 @@ impl UsageStore {
     /// holds some of the same executions.
     pub fn sync_execution(&self, r: &ExecutionRollupRow) -> Result<()> {
         let mut conn = self.lock();
-        let tx = conn.transaction()?;
-        // Upsert the project (first_seen sticks; last_seen advances).
-        tx.execute(
-            "INSERT INTO projects (project_id, name, root_path, first_seen_at, last_seen_at) \
-             VALUES (?1, ?2, ?3, ?4, ?4) \
-             ON CONFLICT(project_id) DO UPDATE SET \
-               name = excluded.name, \
-               root_path = excluded.root_path, \
-               last_seen_at = excluded.last_seen_at",
-            params![r.project_id, r.project_name, r.project_root, r.started_at],
-        )?;
-        // Claim the additive tool-day fold. Asked of `tool_fold_ledger` rather
-        // than of `execution_rollup`, which `prune` deletes from on predicates
-        // `tool_usage_rollup` does not share — see [`tool_fold`] (#3411).
-        let first_fold = tool_fold::claim(&tx, &r.project_id, r.execution_id, &r.day)?;
-        tx.execute(
-            "INSERT OR REPLACE INTO execution_rollup \
-             (project_id, execution_id, kind, prompt_digest, prompt_preview, model, provider, \
-              outcome, cost_usd, input_tokens, output_tokens, duration_ms, tool_calls, \
-              files_written, produced_output, self_rating, started_at, usage_complete) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                r.project_id,
-                r.execution_id,
-                r.kind,
-                r.prompt_digest,
-                r.prompt_preview,
-                r.model,
-                r.provider,
-                r.outcome,
-                r.cost_usd,
-                r.input_tokens,
-                r.output_tokens,
-                r.duration_ms,
-                r.tool_calls,
-                r.files_written,
-                r.produced_output as i64,
-                r.self_rating,
-                r.started_at,
-                r.usage_complete as i64,
-            ],
-        )?;
-        if first_fold {
-            for b in &r.tool_histogram {
-                tx.execute(
-                    "INSERT INTO tool_usage_rollup (project_id, tool, surface, day, calls, errors) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
-                     ON CONFLICT(project_id, tool, surface, day) DO UPDATE SET \
-                       calls = calls + excluded.calls, \
-                       errors = errors + excluded.errors",
-                    params![r.project_id, b.tool, b.surface, r.day, b.calls, b.errors],
-                )?;
+        conn.transaction(|tx| {
+            // Upsert the project (first_seen sticks; last_seen advances).
+            tx.execute(
+                "INSERT INTO projects (project_id, name, root_path, first_seen_at, last_seen_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?4) \
+                 ON CONFLICT(project_id) DO UPDATE SET \
+                   name = excluded.name, \
+                   root_path = excluded.root_path, \
+                   last_seen_at = excluded.last_seen_at",
+                params![r.project_id, r.project_name, r.project_root, r.started_at],
+            )?;
+            // Claim the additive tool-day fold. Asked of `tool_fold_ledger` rather
+            // than of `execution_rollup`, which `prune` deletes from on predicates
+            // `tool_usage_rollup` does not share — see [`tool_fold`] (#3411).
+            let first_fold = tool_fold::claim(&tx, &r.project_id, r.execution_id, &r.day)?;
+            tx.execute(
+                "INSERT OR REPLACE INTO execution_rollup \
+                 (project_id, execution_id, kind, prompt_digest, prompt_preview, model, provider, \
+                  outcome, cost_usd, input_tokens, output_tokens, duration_ms, tool_calls, \
+                  files_written, produced_output, self_rating, started_at, usage_complete) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    r.project_id,
+                    r.execution_id,
+                    r.kind,
+                    r.prompt_digest,
+                    r.prompt_preview,
+                    r.model,
+                    r.provider,
+                    r.outcome,
+                    r.cost_usd,
+                    r.input_tokens,
+                    r.output_tokens,
+                    r.duration_ms,
+                    r.tool_calls,
+                    r.files_written,
+                    r.produced_output as i64,
+                    r.self_rating,
+                    r.started_at,
+                    r.usage_complete as i64,
+                ],
+            )?;
+            if first_fold {
+                for b in &r.tool_histogram {
+                    tx.execute(
+                        "INSERT INTO tool_usage_rollup (project_id, tool, surface, day, calls, errors) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+                         ON CONFLICT(project_id, tool, surface, day) DO UPDATE SET \
+                           calls = calls + excluded.calls, \
+                           errors = errors + excluded.errors",
+                        params![r.project_id, b.tool, b.surface, r.day, b.calls, b.errors],
+                    )?;
+                }
+                class_rollup::fold(&tx, &r.project_id, &r.day, &r.error_class_histogram)?;
             }
-            class_rollup::fold(&tx, &r.project_id, &r.day, &r.error_class_histogram)?;
-        }
-        tx.commit()?;
-        Ok(())
+            tx.commit()?;
+            Ok(())
+        })
     }
 
     /// Number of projects known to the aggregate.
@@ -306,54 +302,55 @@ impl UsageStore {
             return Ok(0);
         }
         let mut conn = self.lock();
-        let tx = conn.transaction()?;
-        let mut max_rowid: i64 = 0;
-        for row in rows {
-            let t = &row.telemetry;
+        conn.transaction(|tx| {
+            let mut max_rowid: i64 = 0;
+            for row in rows {
+                let t = &row.telemetry;
+                tx.execute(
+                    "INSERT OR REPLACE INTO telemetry \
+                     (project_id, source_rowid, org_id, workspace_id, repo_id, execution_id, \
+                      stream_seq, \
+                      recorded_at, provider, call_role, model, input_tokens, estimated_input_tokens, \
+                      output_tokens, cache_read_tokens, cache_miss_tokens, cache_write_tokens, \
+                      cost_usd, duration_ms, retries, tool_calls, usage_complete) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    params![
+                        scope.project_id,
+                        row.source_rowid,
+                        scope.org_id,
+                        scope.workspace_id,
+                        scope.repo_id,
+                        row.execution_id,
+                        t.stream_seq as i64,
+                        row.recorded_at,
+                        t.provider,
+                        t.call_role,
+                        t.model,
+                        t.input_tokens as i64,
+                        t.estimated_input_tokens as i64,
+                        t.output_tokens as i64,
+                        t.cache_read_tokens as i64,
+                        t.cache_miss_tokens as i64,
+                        t.cache_write_tokens as i64,
+                        t.cost_usd,
+                        t.duration_ms as i64,
+                        t.retries,
+                        t.tool_calls as i64,
+                        t.usage_complete,
+                    ],
+                )?;
+                max_rowid = max_rowid.max(row.source_rowid);
+            }
             tx.execute(
-                "INSERT OR REPLACE INTO telemetry \
-                 (project_id, source_rowid, org_id, workspace_id, repo_id, execution_id, \
-                  stream_seq, \
-                  recorded_at, provider, call_role, model, input_tokens, estimated_input_tokens, \
-                  output_tokens, cache_read_tokens, cache_miss_tokens, cache_write_tokens, \
-                  cost_usd, duration_ms, retries, tool_calls, usage_complete) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                params![
-                    scope.project_id,
-                    row.source_rowid,
-                    scope.org_id,
-                    scope.workspace_id,
-                    scope.repo_id,
-                    row.execution_id,
-                    t.stream_seq as i64,
-                    row.recorded_at,
-                    t.provider,
-                    t.call_role,
-                    t.model,
-                    t.input_tokens as i64,
-                    t.estimated_input_tokens as i64,
-                    t.output_tokens as i64,
-                    t.cache_read_tokens as i64,
-                    t.cache_miss_tokens as i64,
-                    t.cache_write_tokens as i64,
-                    t.cost_usd,
-                    t.duration_ms as i64,
-                    t.retries,
-                    t.tool_calls as i64,
-                    t.usage_complete,
-                ],
+                "INSERT INTO telemetry_sync_cursors (project_id, last_source_rowid) \
+                 VALUES (?1, ?2) \
+                 ON CONFLICT(project_id) DO UPDATE SET \
+                   last_source_rowid = MAX(last_source_rowid, excluded.last_source_rowid)",
+                params![scope.project_id, max_rowid],
             )?;
-            max_rowid = max_rowid.max(row.source_rowid);
-        }
-        tx.execute(
-            "INSERT INTO telemetry_sync_cursors (project_id, last_source_rowid) \
-             VALUES (?1, ?2) \
-             ON CONFLICT(project_id) DO UPDATE SET \
-               last_source_rowid = MAX(last_source_rowid, excluded.last_source_rowid)",
-            params![scope.project_id, max_rowid],
-        )?;
-        tx.commit()?;
-        Ok(rows.len() as u64)
+            tx.commit()?;
+            Ok(rows.len() as u64)
+        })
     }
 
     /// Hub rows for one org not yet acknowledged by the cloud, oldest first
@@ -463,42 +460,43 @@ impl UsageStore {
         advance_to_hub_rowid: i64,
     ) -> Result<()> {
         let mut conn = self.lock();
-        let tx = conn.transaction()?;
-        let t = &event.telemetry;
-        tx.execute(
-            "INSERT INTO cloud_quarantine \
-             (org_id, project_id, source_rowid, workspace_id, repo_id, hub_rowid, recorded_at, \
-              provider, model, input_tokens, output_tokens, cost_usd, reason, http_status) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(org_id, project_id, source_rowid) DO UPDATE SET \
-               hub_rowid = excluded.hub_rowid, \
-               reason = excluded.reason, \
-               http_status = excluded.http_status",
-            params![
-                event.org_id,
-                event.project_id,
-                event.source_rowid,
-                event.workspace_id,
-                event.repo_id,
-                event.hub_rowid,
-                event.recorded_at,
-                t.provider,
-                t.model,
-                t.input_tokens as i64,
-                t.output_tokens as i64,
-                t.cost_usd,
-                reason.detail(),
-                reason.http_status,
-            ],
-        )?;
-        tx.execute(
-            "INSERT INTO cloud_sync_cursors (org_id, last_hub_rowid) VALUES (?1, ?2) \
-             ON CONFLICT(org_id) DO UPDATE SET \
-               last_hub_rowid = MAX(last_hub_rowid, excluded.last_hub_rowid)",
-            params![event.org_id, advance_to_hub_rowid.max(event.hub_rowid)],
-        )?;
-        tx.commit()?;
-        Ok(())
+        conn.transaction(|tx| {
+            let t = &event.telemetry;
+            tx.execute(
+                "INSERT INTO cloud_quarantine \
+                 (org_id, project_id, source_rowid, workspace_id, repo_id, hub_rowid, recorded_at, \
+                  provider, model, input_tokens, output_tokens, cost_usd, reason, http_status) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                 ON CONFLICT(org_id, project_id, source_rowid) DO UPDATE SET \
+                   hub_rowid = excluded.hub_rowid, \
+                   reason = excluded.reason, \
+                   http_status = excluded.http_status",
+                params![
+                    event.org_id,
+                    event.project_id,
+                    event.source_rowid,
+                    event.workspace_id,
+                    event.repo_id,
+                    event.hub_rowid,
+                    event.recorded_at,
+                    t.provider,
+                    t.model,
+                    t.input_tokens as i64,
+                    t.output_tokens as i64,
+                    t.cost_usd,
+                    reason.detail(),
+                    reason.http_status,
+                ],
+            )?;
+            tx.execute(
+                "INSERT INTO cloud_sync_cursors (org_id, last_hub_rowid) VALUES (?1, ?2) \
+                 ON CONFLICT(org_id) DO UPDATE SET \
+                   last_hub_rowid = MAX(last_hub_rowid, excluded.last_hub_rowid)",
+                params![event.org_id, advance_to_hub_rowid.max(event.hub_rowid)],
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
     }
 
     /// How many rows the cloud drain has dead-lettered for one org — the count
@@ -610,9 +608,7 @@ impl UsageStore {
         // only when it is NULL-org or already acked by the cloud drain.
         let prunable = prunable_predicate(policy.force);
 
-        {
-            let tx = conn.transaction()?;
-
+        conn.transaction(|tx| {
             // 1) GC unregistered, gone-root projects. The caller supplies the
             //    set whose checkout is missing; we drop only those with no
             //    org-scoped rows (all-NULL-org → never drained → safe).
@@ -721,7 +717,7 @@ impl UsageStore {
 
             if policy.dry_run {
                 // Roll back: `tx` drops un-committed, so nothing is deleted.
-                return Ok(report);
+                return Ok(());
             }
 
             // Clamp every cloud cursor to the surviving max `rowid`. Deleting the
@@ -740,13 +736,14 @@ impl UsageStore {
             )?;
 
             tx.commit()?;
-        }
+            Ok(())
+        })?;
 
         // 4) Reclaim file bytes on a large (or explicitly requested) prune, and
         //    re-anchor the cloud cursors that `VACUUM` would otherwise strand.
         let deleted =
             report.aged_out + report.ceiling_evicted + report.gc_rows + report.rollups_aged_out;
-        if deleted > 0 && (policy.vacuum || deleted >= LARGE_PRUNE_ROWS) {
+        if !policy.dry_run && deleted > 0 && (policy.vacuum || deleted >= LARGE_PRUNE_ROWS) {
             Self::vacuum_and_reanchor(&conn)?;
             report.vacuumed = true;
         }
@@ -787,26 +784,27 @@ impl UsageStore {
         // Re-anchor every cursor atomically: a partial update (an error or crash
         // mid-loop) would otherwise leave some orgs pointing at stale pre-VACUUM
         // rowids while others are correct.
-        let tx = conn.unchecked_transaction()?;
-        for (org_id, key) in boundaries {
-            let new_cursor: i64 = match key {
-                Some((project_id, source_rowid)) => tx
-                    .query_row(
-                        "SELECT rowid FROM telemetry \
-                         WHERE project_id = ?1 AND source_rowid = ?2",
-                        params![project_id, source_rowid],
-                        |r| r.get(0),
-                    )
-                    .unwrap_or(0),
-                None => 0,
-            };
-            tx.execute(
-                "UPDATE cloud_sync_cursors SET last_hub_rowid = ?1 WHERE org_id = ?2",
-                params![new_cursor, org_id],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
+        conn.unchecked_transaction(|tx| {
+            for (org_id, key) in boundaries {
+                let new_cursor: i64 = match key {
+                    Some((project_id, source_rowid)) => tx
+                        .query_row(
+                            "SELECT rowid FROM telemetry \
+                             WHERE project_id = ?1 AND source_rowid = ?2",
+                            params![project_id, source_rowid],
+                            |r| r.get(0),
+                        )
+                        .unwrap_or(0),
+                    None => 0,
+                };
+                tx.execute(
+                    "UPDATE cloud_sync_cursors SET last_hub_rowid = ?1 WHERE org_id = ?2",
+                    params![new_cursor, org_id],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
     }
 }
 

@@ -859,27 +859,27 @@ impl Store {
     /// leaving the execution with a truncated file list, and the batch costs
     /// one WAL commit rather than one per row on the turn-finalize path.
     pub fn record_files_touched(&self, execution_id: i64, files: &[FileTouchRow]) -> Result<()> {
-        let mut conn = self.lock();
-        let tx = conn.transaction()?;
-        for row in files {
-            let lines_added = sqlite_i64("file lines added", row.lines_added)?;
-            let lines_removed = sqlite_i64("file lines removed", row.lines_removed)?;
-            tx.execute(
-                "INSERT INTO files_touched \
-                 (execution_id, path, ops, lines_added, lines_removed, events) \
-                 VALUES (?, ?, ?, ?, ?, ?)",
-                params![
-                    execution_id,
-                    row.path,
-                    row.ops,
-                    lines_added,
-                    lines_removed,
-                    row.events_json,
-                ],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
+        self.lock().transaction(|tx| {
+            for row in files {
+                let lines_added = sqlite_i64("file lines added", row.lines_added)?;
+                let lines_removed = sqlite_i64("file lines removed", row.lines_removed)?;
+                tx.execute(
+                    "INSERT INTO files_touched \
+                     (execution_id, path, ops, lines_added, lines_removed, events) \
+                     VALUES (?, ?, ?, ?, ?, ?)",
+                    params![
+                        execution_id,
+                        row.path,
+                        row.ops,
+                        lines_added,
+                        lines_removed,
+                        row.events_json,
+                    ],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
     }
 
     /// Persist one citation row per execution/memory pair. One transaction —
@@ -893,24 +893,24 @@ impl Store {
         execution_id: i64,
         citations: &[MemoryCitationRow],
     ) -> Result<()> {
-        let mut conn = self.lock();
-        let tx = conn.transaction()?;
-        for row in citations {
-            tx.execute(
-                "INSERT INTO memory_citations \
-                 (execution_id, memory_id, useful_score, truthful, remark) \
-                 VALUES (?, ?, ?, ?, ?)",
-                params![
-                    execution_id,
-                    row.memory_id,
-                    row.useful_score,
-                    row.truthful,
-                    row.remark,
-                ],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
+        self.lock().transaction(|tx| {
+            for row in citations {
+                tx.execute(
+                    "INSERT INTO memory_citations \
+                     (execution_id, memory_id, useful_score, truthful, remark) \
+                     VALUES (?, ?, ?, ?, ?)",
+                    params![
+                        execution_id,
+                        row.memory_id,
+                        row.useful_score,
+                        row.truthful,
+                        row.remark,
+                    ],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
     }
 
     /// Record the skills applied in one execution — one row per skill at its
@@ -918,17 +918,17 @@ impl Store {
     /// of [`Self::record_agent_uses`] for the SKILLS tab. One transaction —
     /// see [`Self::record_files_touched`].
     pub fn record_skill_usage(&self, execution_id: i64, skills: &[SkillUsageRow]) -> Result<()> {
-        let mut conn = self.lock();
-        let tx = conn.transaction()?;
-        for row in skills {
-            tx.execute(
-                "INSERT INTO skill_usage (execution_id, skill, version, reason) \
-                 VALUES (?, ?, ?, ?)",
-                params![execution_id, row.skill, row.version as i64, row.reason],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
+        self.lock().transaction(|tx| {
+            for row in skills {
+                tx.execute(
+                    "INSERT INTO skill_usage (execution_id, skill, version, reason) \
+                     VALUES (?, ?, ?, ?)",
+                    params![execution_id, row.skill, row.version as i64, row.reason],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
     }
 
     /// Per-memory citation aggregates ([`MemoryCitationStats`]) — the data

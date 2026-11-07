@@ -306,13 +306,12 @@ impl Store {
     /// Index the execution's `tool_start` / `tool_result` / `text` events into a
     /// preimage lookup. Mirrors [`Store::materialize_tool_calls`]'s read shape.
     ///
-    /// Raw, not `self.lock()`. The free function below also runs from inside
-    /// a migration's transaction. `&rusqlite::Transaction` derefs to
-    /// `&Connection`, so the function takes a bare connection, not the
-    /// path-carrying guard. A corruption error from this one path is still
-    /// `StoreError::Corrupt`. It just does not yet name the file.
+    /// A migration calls the free function below with its own transaction.
+    /// So it takes a bare link. `with_conn` hands it one. If it fails, the
+    /// error names the file.
     fn journal_preimages(&self, execution_id: i64) -> Result<JournalPreimages> {
-        journal_preimages(&self.raw_lock(), execution_id)
+        let conn = self.lock();
+        conn.with_conn(|bare| journal_preimages(bare, execution_id))
     }
 
     /// The era stamped on an execution row. An execution that is not there at

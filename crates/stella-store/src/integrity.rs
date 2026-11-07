@@ -986,6 +986,109 @@ mod tests {
         }
     }
 
+    /// Check that `error` is a corrupt-file error that gives the remedy and
+    /// names `file`.
+    fn assert_names_the_file(error: &StoreError, file: &str) {
+        assert!(
+            matches!(error, StoreError::Corrupt { .. }),
+            "corruption must be Corrupt, not a bare SQLite failure: {error:?}"
+        );
+        let message = error.to_string();
+        assert!(message.contains("stella doctor"), "the remedy: {message}");
+        assert!(message.contains(file), "the file: {message}");
+    }
+
+    /// A write in a transaction must name the file too. A `?` inside the
+    /// transaction body turned the error into one with no path, so it said
+    /// "a stella SQLite database" and no more.
+    ///
+    /// `materialize_tool_calls` hands its transaction to a helper that scans
+    /// the padded `events` table. That scan is the first read to reach the
+    /// damaged pages.
+    #[test]
+    fn corruption_inside_a_transaction_names_the_store_file() {
+        let (dir, db_path, execution_id) = workspace_at_the_current_schema(4_000);
+        shred_pages_past_the_header(&db_path);
+        let store = Store::open(dir.path())
+            .expect("a store at the current schema opens even with damage past page 1");
+
+        match store.materialize_tool_calls(execution_id) {
+            Ok(count) => panic!("folding {count} calls off shredded pages must fail"),
+            Err(error) => assert_names_the_file(&error, "store.db"),
+        }
+    }
+
+    /// Rebuilding a model call reads the event journal on a bare connection.
+    /// That read must name the file as well.
+    #[test]
+    fn corruption_in_the_journal_read_names_the_store_file() {
+        let (dir, db_path, execution_id) = workspace_at_the_current_schema(4_000);
+        shred_pages_past_the_header(&db_path);
+        let store = Store::open(dir.path())
+            .expect("a store at the current schema opens even with damage past page 1");
+
+        // The premise: the two reads before the journal read still work, so
+        // the failure below comes from the journal read.
+        store
+            .step_manifest(execution_id, 0, 0, 0)
+            .expect("the manifest read works");
+        store
+            .context_blocks(execution_id)
+            .expect("the context block read works");
+
+        match store.reconstruct_worker_step(execution_id, 0, 0) {
+            Ok(_) => panic!("reading the journal off shredded pages must fail"),
+            Err(error) => assert_names_the_file(&error, "store.db"),
+        }
+    }
+
+    /// The usage.db side of the transaction witness above.
+    /// `adopt_project_identity` moves every telemetry row to the new project
+    /// id, so its transaction walks the damaged pages.
+    #[test]
+    fn corruption_inside_a_transaction_names_the_usage_file() {
+        let (dir, db_path) = usage_hub_with_padded_telemetry(4_000);
+        shred_pages_past_the_header(&db_path);
+        let hub = crate::usage::UsageStore::open_at(&dir.path().join("usage.db"))
+            .expect("a hub at the current schema opens even with damage past page 1");
+
+        match hub.adopt_project_identity("proj_a", "proj_b") {
+            Ok(moved) => panic!("moving {moved} rows off shredded pages must fail"),
+            Err(error) => assert_names_the_file(&error, "usage.db"),
+        }
+    }
+
+    /// A usage.db whose header is gone fails on the first pragma at open.
+    /// That error must name the file, as `Store::open` does for store.db.
+    #[test]
+    fn a_usage_file_that_cannot_open_is_named() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("usage.db");
+        let hub = crate::usage::UsageStore::open_at(&db_path).expect("usage store");
+        drop(hub);
+        shred_header(&db_path);
+
+        match crate::usage::UsageStore::open_at(&db_path) {
+            Ok(_) => panic!("a usage.db with a shredded header must not open"),
+            Err(error) => assert_names_the_file(&error, "usage.db"),
+        }
+    }
+
+    /// The same for catalog.db, which holds the model prices.
+    #[test]
+    fn a_catalog_file_that_cannot_open_is_named() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("catalog.db");
+        let catalog = crate::catalog::CatalogStore::open(&db_path).expect("catalog");
+        drop(catalog);
+        shred_header(&db_path);
+
+        match crate::catalog::CatalogStore::open(&db_path) {
+            Ok(_) => panic!("a catalog.db with a shredded header must not open"),
+            Err(error) => assert_names_the_file(&error, "catalog.db"),
+        }
+    }
+
     #[test]
     fn healthy_store_reports_clean() {
         let (dir, db_path) = healthy_workspace();

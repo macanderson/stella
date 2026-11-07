@@ -53,22 +53,23 @@ impl Store {
     /// transaction — see [`Store::record_files_touched`].
     pub fn record_agent_uses(&self, execution_id: i64, uses: &[AgentUseRow]) -> Result<()> {
         let mut conn = self.lock();
-        let tx = conn.transaction()?;
-        for row in uses {
-            tx.execute(
-                "INSERT INTO agent_uses (execution_id, agent, version, reason, kind) \
-                 VALUES (?, ?, ?, ?, ?)",
-                params![
-                    execution_id,
-                    row.agent,
-                    row.version as i64,
-                    row.reason,
-                    row.kind
-                ],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
+        conn.transaction(|tx| {
+            for row in uses {
+                tx.execute(
+                    "INSERT INTO agent_uses (execution_id, agent, version, reason, kind) \
+                     VALUES (?, ?, ?, ?, ?)",
+                    params![
+                        execution_id,
+                        row.agent,
+                        row.version as i64,
+                        row.reason,
+                        row.kind
+                    ],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
     }
 }
 
