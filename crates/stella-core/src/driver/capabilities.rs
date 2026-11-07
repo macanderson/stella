@@ -576,7 +576,10 @@ mod tests {
             let engine = Engine::assemble(&provider, &tools, config, &sleeper, seams);
 
             assert_eq!(engine.with_turn_instance(2).lane(), lane.as_ref());
-            assert_eq!(engine.with_turn_halt(Arc::new(NeverHalts)).lane(), lane.as_ref());
+            assert_eq!(
+                engine.with_turn_halt(Arc::new(NeverHalts)).lane(),
+                lane.as_ref()
+            );
         }
     }
 
