@@ -109,7 +109,9 @@ is nearest today — split it before it crosses.
 | [`src/plan.rs`](src/plan.rs) | `Plan`/`Task`/`Isolation` and the pure DAG scheduling: `validate`, `topological_order`, `ready_tasks`, cycle detection. No I/O, no async — open it to change how waves are formed or what a plan may declare. |
 | [`src/fleet.rs`](src/fleet.rs) | `Fleet::dispatch` (the seam), `run_wave`, `run_plan`, the claim/control RAII guards, and the per-task pause/resume/stop verbs. The biggest file and the one that orders everything else. |
 | [`src/fleet/notice.rs`](src/fleet/notice.rs) | `handle_notices` — the per-handle warning lines (`ledger_error`, `lease_loss`, #1677) the `stella fleet` report prints; composed here because `fleet_cmd.rs` is at its file-size ceiling. |
-| [`src/ledger.rs`](src/ledger.rs) | `fleet.db`: schema, migrations, and every read/write of runs, tasks, attempts, commits, lineage and spend. |
+| [`src/ledger.rs`](src/ledger.rs) | `fleet.db`'s write side and core types: open/init, `record_run`/`record_task`/`start_attempt`/`finish_attempt`/`record_lineage`, and orphan reporting. |
+| [`src/ledger/migrations.rs`](src/ledger/migrations.rs) | The version ladder and DDL: `SCHEMA_VERSION`, `migrate`, and every `MIGRATION_V<n>`. |
+| [`src/ledger/query.rs`](src/ledger/query.rs) | `fleet.db`'s read side: spend sums, lineage lookups, attempt status, and the two warmth-signal timestamps. |
 | [`src/ledger/lease.rs`](src/ledger/lease.rs) | Dispatch claims (#1136): the check-and-set, expiring lease on one unit of dispatch — `claim_dispatch` / `renew_dispatch` / `release_dispatch` and the reads a human or a dispatcher asks "who is on this?" with. |
 | [`src/git.rs`](src/git.rs) | The `GitCli` port, `SystemGitCli`, and `WorktreeManager` — worktree create/remove/discard/list plus the pathspec-only commit helper. `with_worktrees_root`/`with_branch_prefix` move a caller out of the `.stella/worktrees/` + `fleet/` namespace `gc.rs` reclaims by, and `discard` force-removes where `remove` refuses: both exist for `stella-cli`'s best-of-N candidate substrate (#3892), whose output is uncommitted bytes by construction and whose losers are meant to be thrown away. |
 | [`src/git/worktree_lock.rs`](src/git/worktree_lock.rs) | The one door every `git worktree …` command in this crate goes through. Git takes no lock on `.git/worktrees/`, so two overlapping `worktree add` calls can read each other's half-written bookkeeping; this holds them apart with a per-repo-root mutex in the process and an `O_CREAT|O_EXCL` lock file under `.stella/private/` across processes, and retries once on git's transient signatures. |
@@ -300,7 +302,7 @@ Two gaps:
   backfilling a column does not — the `IF NOT EXISTS` guard silently skips it
   on an existing file, which is exactly how a schema change becomes a runtime
   `INSERT` failure. That change must land as a numbered `MIGRATION_V<n>` with a
-  matching `version < n` arm; `migrate` ([`migrate`](src/ledger.rs))
+  matching `version < n` arm; `migrate` ([`migrate`](src/ledger/migrations.rs))
   stamps `PRAGMA user_version` in the same transaction as the DDL it applies,
   the way `MIGRATION_V2` rebuilt `lineage` to add its uniqueness constraint.
 - **A `stella fleet` run never removes its own worktree or branch.** Neither
@@ -376,7 +378,7 @@ and skip with a printed note when `git` is not on `PATH`.
 
 Adding a ledger column, table or constraint — the case with a real footgun:
 
-1. Add a `MIGRATION_V<n>` const in [`src/ledger.rs`](src/ledger.rs) holding
+1. Add a `MIGRATION_V<n>` const in [`src/ledger/migrations.rs`](src/ledger/migrations.rs) holding
    only the new steps. Reshaping an existing table (a new column, a new
    constraint) needs the full rebuild dance `MIGRATION_V2` shows —
    `CREATE`/`INSERT … SELECT`/`DROP`/`RENAME`, plus recreating the indexes the
