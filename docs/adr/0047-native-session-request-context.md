@@ -31,6 +31,13 @@ fleet tasks use their own journal keys. A resumed chat keeps its ID.
 If a new journal will not open, Stella clears the old journal handle. It
 keeps the new ID. New work cannot write to the old chat's journal by mistake.
 
+When the deck switches to another chat, it runs the SessionStart hook again.
+What the hook prints replaces the old chat's text in the prompt.
+
+The self-driving loop runs no chat of its own. A drive names its own session
+ID on the hooks it fires, the same ID its audit log records. A one-shot verb
+has no ID to send, so its hooks leave the field out.
+
 The Anthropic client sends `x-oxagen-session` to the local loopback endpoint.
 Those calls bypass system proxies and refuse redirects. Both the stream and
 unary paths use the same header builder. Remote model hosts get no such

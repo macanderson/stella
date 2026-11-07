@@ -587,10 +587,10 @@ pub async fn run_deck_session(
         let _ = deck_tx.send(system_notice(warning));
     }
     let mut system_prompt = agent::with_session_hook_context(bare_prompt.clone(), cfg).await;
-    // What the SessionStart hooks appended, captured once: a session model
-    // switch rebuilds the prompt around the NEW model line and re-appends
-    // this verbatim — hooks run once per session, not once per switch.
-    let hook_context_suffix = system_prompt[bare_prompt.len()..].to_string();
+    // What the SessionStart hooks appended for the bound session. A model
+    // switch rebuilds the prompt around the NEW model line and re-appends this
+    // verbatim. A session switch runs the hooks again and replaces it.
+    let mut hook_context_suffix = system_prompt[bare_prompt.len()..].to_string();
     // The persona-free prompt an assumed agent's block is appended to
     // (`WorkspaceInput::AgentAssume`), so assuming twice never stacks.
     let mut base_system_prompt = system_prompt.clone();
@@ -1437,6 +1437,22 @@ pub async fn run_deck_session(
                                 ) {
                                     let _ = deck_tx.send(chrome_note(warning));
                                 }
+                                // After the bind, because the hook payload names
+                                // the session bound there. Before the restore
+                                // below, because that seeds this prompt.
+                                session_override::adopt_session_hook_context(
+                                    cfg,
+                                    session_override::PromptPlane {
+                                        base_system_prompt: &mut base_system_prompt,
+                                        system_prompt: &mut system_prompt,
+                                        messages: &mut messages,
+                                    },
+                                    &mut hook_context_suffix,
+                                    assumed_persona.as_deref(),
+                                    pipeline_persona,
+                                    &active_rules,
+                                )
+                                .await;
 
                                 // Blank the lead pane, replay the adopted
                                 // transcript in its place (direct sends — a

@@ -53,6 +53,13 @@
 //! would be strictly worse than declining, so the reason is reported and the
 //! issue is skipped — an operator reading the loop's output learns the same
 //! thing they would have been asked.
+//!
+//! # Which session these events name
+//!
+//! No engine runs in this process, so nothing here holds a chat's ID. A drive
+//! opens a session for the audit log, and every event it fires names that
+//! session, so a subscriber can join the two. A one-shot verb opens none, and
+//! its events leave `session_id` out.
 
 use std::path::Path;
 
@@ -92,7 +99,7 @@ pub(super) fn before_issue_work(
     };
     let payload = HookPayload::pre_issue_work(root.display().to_string(), issue.clone());
 
-    let run = match dispatch(&payload, hooks) {
+    let run = match dispatch(payload, hooks) {
         Ok(run) => run,
         // The runtime itself could not be started. Fails closed with the rest,
         // per this module's header: the hook exists to withhold work, so "we
@@ -168,7 +175,7 @@ pub(super) fn report(settings: &Settings, payload: HookPayload) {
     let Some(hooks) = registered(settings, event) else {
         return;
     };
-    match dispatch(&payload, hooks) {
+    match dispatch(payload, hooks) {
         Ok(run) => {
             for diagnostic in &run.diagnostics {
                 eprintln!("  ! {event}: {diagnostic}");
@@ -257,15 +264,19 @@ fn registered(settings: &Settings, event: HookEvent) -> Option<&stella_core::hoo
 /// `self_driving_cmd`'s issue-provider call: these verbs are otherwise
 /// synchronous, and a hook chain is a handful of bounded subprocesses rather
 /// than something that needs the multi-threaded scheduler.
+///
+/// Every loop event passes through here, so this is where it takes the drive's
+/// session ID. A caller cannot leave the ID off.
 fn dispatch(
-    payload: &HookPayload,
+    payload: HookPayload,
     hooks: &stella_core::hooks::Hooks,
 ) -> Result<stella_core::hooks::decision::DecisionRun, String> {
+    let payload = payload.with_session_context(super::audit::session_context().as_ref());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|error| format!("could not start a runtime for the hook: {error}"))?;
-    Ok(runtime.block_on(run_decision_hooks(&HostHookRunner, Some(hooks), payload)))
+    Ok(runtime.block_on(run_decision_hooks(&HostHookRunner, Some(hooks), &payload)))
 }
 
 /// A hook's own words when it gave any, and a description of what happened

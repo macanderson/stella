@@ -200,8 +200,36 @@ pub(super) fn override_role_pins(cfg: &Config) -> Vec<(PipelineRole, RolePin)> {
     )]
 }
 
+/// Run `SessionStart` for the session the deck just switched to, and rebuild
+/// the prompt plane around what its hooks print.
+///
+/// Hooks run once per session. A model switch stays in the session, so it keeps
+/// their text. A session switch leaves it: that text came from a hook told the
+/// old session's ID, and the new session's model calls must not carry it.
+///
+/// The hook reads the session ID from `cfg.durability`, so call this after the
+/// new session is bound there.
+pub(super) async fn adopt_session_hook_context(
+    cfg: &Config,
+    mut prompts: PromptPlane<'_>,
+    hook_suffix: &mut String,
+    persona: Option<&str>,
+    pipeline_persona: bool,
+    active_rules: &crate::rules::ResolvedRules,
+) {
+    *hook_suffix = crate::agent::with_session_hook_context(String::new(), cfg).await;
+    refresh_prompts(
+        cfg,
+        &mut prompts,
+        hook_suffix,
+        persona,
+        pipeline_persona,
+        active_rules,
+    );
+}
+
 /// Rebuild the prompt plane from the current `cfg`: the base prompt (with the
-/// startup hook suffix re-appended, never re-run), the full prompt (persona
+/// session's hook suffix re-appended, never re-run), the full prompt (persona
 /// re-appended when one is assumed), and the seeded system message.
 pub(super) fn refresh_prompts(
     cfg: &Config,
@@ -635,5 +663,57 @@ mod tests {
 
         let unrestricted = agent_scope_policy(&base, None);
         assert!(unrestricted.allows("bash") && unrestricted.allows("read_file"));
+    }
+
+    /// A session switch runs `SessionStart` for the session it adopts. What the
+    /// hook prints replaces the old session's text in every prompt, and an
+    /// assumed persona stays in place.
+    #[tokio::test]
+    async fn a_session_switch_replaces_the_hook_text_of_the_session_it_left() {
+        use crate::durability::bind_session_in;
+        use stella_core::hooks::{HookAction, HookMatcher, Hooks};
+
+        let (td, _guard) = scratch();
+        let workspace = td.path().join("repo");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let mut cfg = test_config(workspace.clone());
+        // `cat` prints the payload, so the prompt shows the session the hook
+        // was told it runs for.
+        cfg.hooks = Some(Hooks {
+            session_start: Some(vec![HookMatcher {
+                matcher: None,
+                hooks: vec![HookAction::new("cat")],
+            }]),
+            ..Hooks::default()
+        });
+        let store = tempfile::tempdir().unwrap();
+
+        assert!(bind_session_in(&cfg.durability, store.path(), &workspace, "ses-first").is_none());
+        let mut suffix = crate::agent::with_session_hook_context(String::new(), &cfg).await;
+        assert!(suffix.contains("ses-first"), "{suffix}");
+
+        assert!(bind_session_in(&cfg.durability, store.path(), &workspace, "ses-second").is_none());
+        let mut base = String::new();
+        let mut system = String::new();
+        let mut messages = vec![stella_protocol::CompletionMessage::system("seed")];
+        adopt_session_hook_context(
+            &cfg,
+            PromptPlane {
+                base_system_prompt: &mut base,
+                system_prompt: &mut system,
+                messages: &mut messages,
+            },
+            &mut suffix,
+            Some("PERSONA"),
+            false,
+            &crate::rules::ResolvedRules::default(),
+        )
+        .await;
+
+        for prompt in [&suffix, &base, &system, &messages[0].content] {
+            assert!(prompt.contains("ses-second"), "{prompt}");
+            assert!(!prompt.contains("ses-first"), "{prompt}");
+        }
+        assert!(system.ends_with("\n\nPERSONA"), "{system}");
     }
 }

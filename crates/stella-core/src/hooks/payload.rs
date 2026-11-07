@@ -37,7 +37,8 @@ pub struct HookToolInfo {
 pub struct HookPayload {
     pub event: HookEvent,
     pub cwd: String,
-    /// Native session identity shared with model requests.
+    /// Native session identity shared with model requests. An event from the
+    /// self-driving loop names its drive here, when a drive is open.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
     /// Present for `PreToolUse` / `PostToolUse`.

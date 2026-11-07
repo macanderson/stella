@@ -186,6 +186,18 @@ pub(super) fn begin_session() -> String {
         .clone()
 }
 
+/// This process's drive session, in the form a hook payload carries.
+///
+/// A loop event sits outside any turn, so no engine holds an ID for it. The
+/// drive owns the event. A one-shot verb opens no drive, so its events have no
+/// ID to send.
+pub(super) fn session_context() -> Option<stella_protocol::SessionContext> {
+    SESSION
+        .get()
+        .cloned()
+        .map(|session_id| stella_protocol::SessionContext { session_id })
+}
+
 /// Record an action: print it, then append it.
 ///
 /// Printed first, deliberately. If the append fails the operator has still
