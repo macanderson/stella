@@ -101,12 +101,16 @@ duplicate section:
   roll writes a pointer to the releases page rather than a heading with an
   empty body — the failure mode above, which would otherwise recur once per
   line.
-- **It is idempotent.** If the version already has a section, the roll leaves
-  the file alone. That matters because it runs at two call sites per release,
-  and because a maintainer may have written the section by hand in the release
-  PR — a minor release is a considered event, and "CI writes this file" exists
-  to stop per-PR bullets accumulating in inconsistent voices, not to overwrite
-  a section someone sat down and wrote. Whoever got there first wins.
+- **It is idempotent.** The roll runs at two call sites per release, and a
+  maintainer may have written the section by hand in the release PR. A minor
+  release is a considered event. The "CI writes this file" rule keeps one voice
+  in the file. It does not exist to overwrite a section someone sat down and
+  wrote. When the version already has a section, the roll keeps every line of
+  it and writes no second heading. It adds only draft bullets whose PR refs the
+  section does not cite. It leaves out a draft bullet that cites no PR, or any
+  PR the section already cites, and it leaves out the draft's own prose. A
+  bullet that lands makes its refs cited. The second call site then finds
+  nothing new and leaves the file as it is.
 
 `make changelog-roll-test` (hermetic, not part of `make gate`) pins both rules.
 
@@ -202,7 +206,18 @@ the outcome — the version-sync PR opened and auto-merged, `CHANGELOG.md` rolle
 and every manifest was stamped. Only the last two jobs of `release.yml` skipped.
 Every surface a maintainer glances at said "released" (#1464).
 
-Three checks now catch it, each on a different failure:
+The `Create / update GitHub Release` step in `release.yml` now retries once
+on a mid-publish GitHub 5xx, the same shape as the `Upload build artifact`
+step above it. `v0.9.254` and `v0.9.264` both finished every build. Each then
+hit a 5xx right after its assets were uploaded, leaving a draft nobody had
+asked to re-run. The retry targets the same tag. `overwrite_files` is on by
+default, so it fills in or replaces whatever the first attempt left behind
+instead of duplicating it. When the tag already has a published release, the
+step replaces that release's body and assets. A real refusal, such as bad
+credentials or a release asset the build did not produce, fails the same way on
+both attempts.
+
+Three checks catch what the retry cannot, each on a different failure:
 
 - **`smoke`** (in `release.yml`) unpacks the artifact and runs it before
   anything is published, so a release that *builds* but does not *work* cannot
@@ -259,7 +274,7 @@ different failures:
 
 | State | What happened | What to do |
 |---|---|---|
-| `draft` | The build ran and the assets are attached, but a `5xx` killed the publish step before the release left draft. | List the draft's assets. Publish it if the set is complete; delete it and re-run the tag if it is not. |
+| `draft` | The build ran and the assets are attached. A `5xx` beat the publish step's own retry (*When a release fails* above) and killed both attempts before the release left draft. | List the draft's assets. Publish it if the set is complete; delete it and re-run the tag if it is not. |
 | `absent` | No release object exists — a build job died, often in `actions/upload-artifact`. | Re-run `release.yml` on the tag, but read the version guard below first. |
 | gone | The build finished, and the run itself was killed after the fact. Build artifacts expire after 7 days, so an old one has nothing left to publish. | Grandfather the tag with a note. Rebuilding a version a hundred releases behind buys nothing. |
 

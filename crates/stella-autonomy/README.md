@@ -84,7 +84,8 @@ the CLI does — so the dashboard and the terminal cannot disagree.
 | [`src/deliver.rs`](src/deliver.rs) | The per-PR delivery machine: `PrState`/`Observation`/`deliver_next`, the fix/rebase ceilings, and the escalation reasons. |
 | [`src/doctrine.rs`](src/doctrine.rs) | The policy knobs a human sets: `Doctrine`, `ForeignBreakage`, contention policy and `contention_verdict`. |
 | [`src/priority.rs`](src/priority.rs) | `triage`: rank by the ladder the repo actually uses, with unassessed issues distinct from unrankable ones. |
-| [`src/ready.rs`](src/ready.rs) | `ready_queue`: which backlog issues may be taken next, and in what order. `Blocked by: #N` lines, the `status:ready` override, and the escalation cooldown. |
+| [`src/labels.rs`](src/labels.rs) | `same`: whether two label names name one label. It ignores case, and it reads an old name such as `bug` as its new one, `KIND:BUG` (ADR 0046). Every label check in the loop goes through it. |
+| [`src/ready.rs`](src/ready.rs) | `ready_queue`: which backlog issues may be taken next, and in what order. `Blocked by: #N` lines, the `STATUS:READY` override, and the escalation cooldown. |
 | [`src/escalation.rs`](src/escalation.rs) | Escalation as a cooldown: `classify` reads an abort message, `retry_after` says how long to wait, `park_after` says when waiting ends. The record is written into the issue body and read back from it. |
 | [`src/gate.rs`](src/gate.rs) | Which checks are allowed to block a merge, and which have stopped earning that right. |
 | [`src/supply.rs`](src/supply.rs) | Where the loop looks when the ranked queue is empty: `WorkSupply`, `SupplyPolicy` (every switch off), the `rearm` rule that re-opens a dry ladder against a moved base, `Reading`/`read`, which turn a lens command's output into findings with no model, and `novel`, which drops a finding the seen set already holds. |

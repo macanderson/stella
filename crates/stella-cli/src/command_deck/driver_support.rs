@@ -45,7 +45,7 @@ pub(super) fn spawn_mcp_connect(
     release_splash: impl FnOnce() + Send + 'static,
 ) -> bool {
     let plan = agent::load_mcp_plan(&cfg);
-    let configured = matches!(plan, agent::McpPlan::Servers(..));
+    let configured = matches!(plan, agent::McpPlan::Servers { .. });
     tokio::spawn(async move {
         match plan {
             agent::McpPlan::None => {}
@@ -56,7 +56,11 @@ pub(super) fn spawn_mcp_connect(
                     status: AgentStatus::WaitingInput,
                 });
             }
-            agent::McpPlan::Servers(servers, notices) => {
+            agent::McpPlan::Servers {
+                servers,
+                notices,
+                granted,
+            } => {
                 // Whose server was dropped, and whose package's file did not
                 // parse — before the connect, so the report below is read
                 // against a list the human knows was narrowed.
@@ -70,20 +74,13 @@ pub(super) fn spawn_mcp_connect(
                 match crate::mcp_cmd::oauth_manager(&cfg.workspace_root) {
                     Ok(auth) => {
                         // The plan is what actually reaches connect (plugin
-                        // contributions included), so the grant set is built
-                        // from it rather than from `mcp.toml` alone.
-                        let grants_now =
-                            crate::mcp_cmd::initial_grants(&cfg.workspace_root, &servers);
-                        {
-                            let mut set = session.grants.lock().unwrap_or_else(|p| p.into_inner());
-                            set.extend(
-                                grants_now
-                                    .lock()
-                                    .unwrap_or_else(|p| p.into_inner())
-                                    .iter()
-                                    .cloned(),
-                            );
-                        }
+                        // contributions included), and its grant set came
+                        // from the same read of the files as its servers.
+                        session
+                            .grants
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .extend(granted);
                         let set = agent::connect_mcp_servers(
                             &servers,
                             registry.clone(),

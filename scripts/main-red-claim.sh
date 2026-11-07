@@ -15,7 +15,7 @@
 # happened to compose, because identical edits resolve cleanly. So it cost
 # duplicated work, not correctness. It could as easily not have.
 #
-# Nobody was wrong. `main-canary.yml` files one `main-red` issue and
+# Nobody was wrong. `main-canary.yml` files one `MAIN-RED` issue and
 # `main-red-hold.yml` consumes it to hold merges — and with the hold in place
 # every session holding an open PR notices the red at once, reaches the same
 # correct conclusion, and writes the same patch. The signal said "main is
@@ -45,7 +45,7 @@
 # cannot be answered by the login. It was not, and on 2026-09-02 three sessions
 # all running as one author each read their peers' claims as their own, each
 # proceeded, and each opened a pull request splitting the same file the same
-# way, eight minutes apart, against the one open `main-red` issue. That issue
+# way, eight minutes apart, against the one open `MAIN-RED` issue. That issue
 # carried five claim comments from one login in fifteen minutes.
 #
 # So a claim carries a third fact, a session word:
@@ -64,7 +64,7 @@
 # ## Fail-open at every unknown
 #
 # Anything this cannot answer means PROCEED, loudly. An unreachable tracker, a
-# `gh` that is not installed, an identity it cannot read, two open `main-red`
+# `gh` that is not installed, an identity it cannot read, two open `MAIN-RED`
 # issues at once: each says so and exits 0. A missing tool says the most,
 # because it is the case where nothing was asked at all — see
 # `scripts/lib/claim-tools.sh`. That is not caution about
@@ -106,7 +106,7 @@
 # either way.
 set -uo pipefail
 
-label="main-red"
+label="MAIN-RED"
 marker="main-red-claim:"
 mode=""
 window_minutes=20
@@ -336,7 +336,7 @@ if [ -z "$open_issues" ]; then
   proceed "ok  no open \`$label\` issue — main is not known-broken."
 fi
 
-# More than one open `main-red` issue means the canary filed twice, or a human
+# More than one open `MAIN-RED` issue means the canary filed twice, or a human
 # filed alongside it. Which one a claim belongs on is then a judgement, and
 # guessing it would put the claim where the next session does not look.
 case "$open_issues" in

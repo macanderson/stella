@@ -195,7 +195,7 @@ them `Defect`, `Feature`, `Epic`, `Other`, and GitHub's shipped manifest
 instead — so a manifest written from the draft classed every issue as `Other`,
 silently. The draft's `Epic` is not a class here: a container issue is one
 carrying a container label, which
-`stella_autonomy::ready::DEFAULT_CONTAINER_LABELS` spells `epic`, and §5 works
+`stella_autonomy::ready::DEFAULT_CONTAINER_LABELS` spells `EPIC`, and §5 works
 it that way rather than through the type.
 
 **What is absent, and why:** priority (a human steering signal
@@ -247,7 +247,7 @@ task    = ["Task", "Chore", "Migration"]
 # whether `Other` may be worked.
 #
 # A container issue is not a class. It is an issue carrying a container label
-# (`stella_autonomy::ready::DEFAULT_CONTAINER_LABELS` ships `epic`), and §5
+# (`stella_autonomy::ready::DEFAULT_CONTAINER_LABELS` ships `EPIC`), and §5
 # works it through that label.
 
 # ── Every reachable status maps to exactly one of three buckets ──

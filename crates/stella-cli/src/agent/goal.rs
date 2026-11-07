@@ -315,7 +315,7 @@ pub(crate) async fn run_raw_one_shot(
     let started_unix = crate::memory::unix_now_secs();
     // Machine-wide presence: findable in the deck's SESSIONS overlay and
     // replayable from its journal after this process exits.
-    let mut presence = SessionPresence::announce(cfg, prompt);
+    let mut presence = SessionPresence::announce(cfg, Some(prompt));
     // Agent whistle: this door runs in non-interactive mode (no deck, no
     // `stella-serve`), so until now it had nowhere to steer from — `stella
     // whistle` reaches it over this session's own control socket, into the
@@ -774,7 +774,7 @@ pub async fn run_goal_cmd(
     let started_unix = crate::memory::unix_now_secs();
     // Machine-wide presence: a goal run is exactly the long-lived headless
     // session the SESSIONS overlay + replay exist for.
-    let mut presence = SessionPresence::announce(cfg, goal);
+    let mut presence = SessionPresence::announce(cfg, Some(goal));
     // Agent whistle (#4769): one listener for the whole arc rather than one
     // per round. Held for the arc's duration; its `Drop` unbinds and removes
     // the socket.

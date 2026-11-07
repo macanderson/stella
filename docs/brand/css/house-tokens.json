@@ -1,0 +1,765 @@
+{
+  "version": "2.7.0",
+  "name": "oxagen house system",
+  "built_on": "oxagen brand kit (Space Grotesk), on soot and bone with one gold",
+  "icons": {
+    "oxagen": {
+      "kind": "hive",
+      "cells": [
+        {
+          "col": 0,
+          "row": 0,
+          "kind": "ink"
+        },
+        {
+          "col": 1,
+          "row": 0,
+          "kind": "ink"
+        },
+        {
+          "col": 0,
+          "row": 1,
+          "kind": "ink"
+        },
+        {
+          "col": 1,
+          "row": 1,
+          "kind": "gold"
+        },
+        {
+          "col": 0,
+          "row": 2,
+          "kind": "gold-half"
+        },
+        {
+          "col": 1,
+          "row": 2,
+          "kind": "ink"
+        }
+      ],
+      "cell": {
+        "r": 6.08,
+        "w": 5.8,
+        "px": 13.08,
+        "py": 10.24,
+        "stroke": 1.0
+      },
+      "half": 0.55,
+      "colours": 2,
+      "note": "outlines take the surface's ink; the two lit cells take the metal"
+    },
+    "stella": {
+      "kind": "glyph",
+      "text": "*",
+      "family": "Space Grotesk",
+      "weight": 600,
+      "colours": 1,
+      "note": "the metal"
+    }
+  },
+  "gold": {
+    "hex": "#D4AF37",
+    "oklch": {
+      "L": 0.7665,
+      "C": 0.1387,
+      "H": 91.06
+    },
+    "bright_oklch": {
+      "L": 0.8267121330762407,
+      "C": 0.12867709763957946,
+      "H": 92.94266490075604
+    },
+    "deep_oklch": {
+      "L": 0.5243677520719066,
+      "C": 0.09727075212824353,
+      "H": 89.95309195972186
+    },
+    "bright": "#E3C45B",
+    "deep": "#806719",
+    "on_ink": 9.41,
+    "deep_on_paper": 5.29
+  },
+  "tokens": {
+    "gold": "#D4AF37",
+    "gold-bright": "#E3C45B",
+    "gold-deep": "#806719",
+    "gold-text-ink": "#806719",
+    "ink": "#090A0D",
+    "void": "#040506",
+    "panel": "#0F1115",
+    "hl": "#16191D",
+    "border": "#222529",
+    "rule": "#40444A",
+    "paper": "#FCFCFE",
+    "paper-void": "#F8F9FB",
+    "paper-panel": "#FFFFFF",
+    "paper-hl": "#ECEEF3",
+    "paper-border": "#E3E5E9",
+    "paper-rule": "#CBCED3",
+    "text": "#FCFCFE",
+    "text-body": "#C7CBD1",
+    "muted": "#9A9FA6",
+    "dim": "#858991",
+    "text-ink": "#090A0D",
+    "text-ink-body": "#353941",
+    "muted-ink": "#4F545D",
+    "muted-text-ink": "#4F545D",
+    "dim-ink": "#858991"
+  },
+  "states": {
+    "allowed": {
+      "ink": "#5FBF9F",
+      "paper": "#19704F",
+      "use": "a request a rule allowed",
+      "text_ink": "#60C0A0",
+      "text_paper": "#19704F"
+    },
+    "approval": {
+      "ink": "#7AA2F0",
+      "paper": "#2E5FBF",
+      "use": "a request routed to a person",
+      "text_ink": "#81AAF9",
+      "text_paper": "#2E5FBF"
+    },
+    "denied": {
+      "ink": "#E5596E",
+      "paper": "#B3283F",
+      "use": "a request a rule denied",
+      "text_ink": "#FF7688",
+      "text_paper": "#B3283F"
+    },
+    "proven": {
+      "ink": "#4FB3A9",
+      "paper": "#1C6F68",
+      "use": "a result a named check proved",
+      "text_ink": "#5CBEB4",
+      "text_paper": "#1C6F68"
+    },
+    "failed": {
+      "ink": "#E5596E",
+      "paper": "#B3283F",
+      "use": "a check that did not hold",
+      "text_ink": "#FF7688",
+      "text_paper": "#B3283F"
+    },
+    "critical": {
+      "ink": "#E5596E",
+      "paper": "#B3283F",
+      "use": "a run that needs a person now",
+      "text_ink": "#FF7688",
+      "text_paper": "#B3283F"
+    }
+  },
+  "destructive": {
+    "ink": "#EC5F74",
+    "paper": "#B3283F",
+    "lift": 0.02,
+    "text_ink": "#FF7689",
+    "text_paper": "#B3283F"
+  },
+  "state_text": {
+    "rule": "a word in a state's colour takes its text stop; a badge or a dot takes the bare stop",
+    "l_on_ink": 0.74,
+    "oklch": {
+      "allowed": {
+        "dark": {
+          "L": 0.74,
+          "C": 0.103,
+          "H": 169.3
+        },
+        "light": {
+          "L": 0.486,
+          "C": 0.096,
+          "H": 162.6
+        }
+      },
+      "approval": {
+        "dark": {
+          "L": 0.74,
+          "C": 0.123,
+          "H": 262.9
+        },
+        "light": {
+          "L": 0.506,
+          "C": 0.16,
+          "H": 262.0
+        }
+      },
+      "denied": {
+        "dark": {
+          "L": 0.74,
+          "C": 0.174,
+          "H": 14.3
+        },
+        "light": {
+          "L": 0.508,
+          "C": 0.174,
+          "H": 17.4
+        }
+      },
+      "proven": {
+        "dark": {
+          "L": 0.74,
+          "C": 0.094,
+          "H": 186.4
+        },
+        "light": {
+          "L": 0.492,
+          "C": 0.077,
+          "H": 186.7
+        }
+      },
+      "failed": {
+        "dark": {
+          "L": 0.74,
+          "C": 0.174,
+          "H": 14.3
+        },
+        "light": {
+          "L": 0.508,
+          "C": 0.174,
+          "H": 17.4
+        }
+      },
+      "critical": {
+        "dark": {
+          "L": 0.74,
+          "C": 0.174,
+          "H": 14.3
+        },
+        "light": {
+          "L": 0.508,
+          "C": 0.174,
+          "H": 17.4
+        }
+      },
+      "destructive": {
+        "dark": {
+          "L": 0.74,
+          "C": 0.174,
+          "H": 14.1
+        },
+        "light": {
+          "L": 0.508,
+          "C": 0.174,
+          "H": 17.4
+        }
+      }
+    },
+    "surfaces": {
+      "dark": {
+        "ink": "#090A0D",
+        "panel": "#0F1115",
+        "hl": "#16191D"
+      },
+      "light": {
+        "paper": "#FCFCFE",
+        "paper-hl": "#ECEEF3"
+      }
+    }
+  },
+  "semantic": {
+    "light": {
+      "background": "var(--ox-paper)",
+      "foreground": "var(--ox-text-ink)",
+      "card": "var(--ox-paper-panel)",
+      "card-foreground": "var(--ox-text-ink)",
+      "popover": "var(--ox-paper-panel)",
+      "popover-foreground": "var(--ox-text-ink)",
+      "primary": "var(--ox-ink)",
+      "primary-foreground": "var(--ox-paper)",
+      "secondary": "var(--ox-paper-hl)",
+      "secondary-foreground": "var(--ox-text-ink)",
+      "muted": "var(--ox-paper-hl)",
+      "muted-foreground": "var(--ox-muted-text-ink)",
+      "accent": "var(--ox-paper-hl)",
+      "accent-foreground": "var(--ox-text-ink)",
+      "destructive": "var(--ox-destructive-ink)",
+      "destructive-foreground": "var(--ox-paper)",
+      "border": "var(--ox-paper-border)",
+      "input": "var(--ox-paper-rule)",
+      "ring": "var(--ox-rust-ink)",
+      "gold": "var(--ox-gold)",
+      "gold-foreground": "var(--ox-on-gold)",
+      "gold-text": "var(--ox-rust-text-ink)",
+      "sidebar": "var(--ox-paper-void)",
+      "sidebar-foreground": "var(--ox-text-ink-body)",
+      "sidebar-primary": "var(--ox-ink)",
+      "sidebar-primary-foreground": "var(--ox-paper)",
+      "sidebar-accent": "var(--ox-paper-hl)",
+      "sidebar-accent-foreground": "var(--ox-text-ink)",
+      "sidebar-border": "var(--ox-paper-border)",
+      "sidebar-ring": "var(--ox-rust-ink)"
+    },
+    "dark": {
+      "background": "var(--ox-ink)",
+      "foreground": "var(--ox-text)",
+      "card": "var(--ox-panel)",
+      "card-foreground": "var(--ox-text)",
+      "popover": "var(--ox-panel)",
+      "popover-foreground": "var(--ox-text)",
+      "primary": "var(--ox-text)",
+      "primary-foreground": "var(--ox-ink)",
+      "secondary": "var(--ox-hl)",
+      "secondary-foreground": "var(--ox-text)",
+      "muted": "var(--ox-hl)",
+      "muted-foreground": "var(--ox-muted)",
+      "accent": "var(--ox-hl)",
+      "accent-foreground": "var(--ox-text)",
+      "destructive": "var(--ox-destructive)",
+      "destructive-foreground": "var(--ox-ink)",
+      "border": "var(--ox-border)",
+      "input": "var(--ox-rule)",
+      "ring": "var(--ox-gold)",
+      "gold": "var(--ox-gold)",
+      "gold-foreground": "var(--ox-on-gold)",
+      "gold-text": "var(--ox-rust-text)",
+      "sidebar": "var(--ox-void)",
+      "sidebar-foreground": "var(--ox-text-body)",
+      "sidebar-primary": "var(--ox-text)",
+      "sidebar-primary-foreground": "var(--ox-ink)",
+      "sidebar-accent": "var(--ox-panel)",
+      "sidebar-accent-foreground": "var(--ox-text)",
+      "sidebar-border": "var(--ox-border)",
+      "sidebar-ring": "var(--ox-gold)"
+    }
+  },
+  "type": {
+    "family": "Geist",
+    "display_family": "Space Grotesk",
+    "mono_family": "Monaspace Neon",
+    "weights": {
+      "display": 700,
+      "logo": 600,
+      "heading": 600,
+      "subheading": 500,
+      "ui": 500,
+      "body": 400
+    },
+    "logo_weight": 600,
+    "logo_em": 131.657,
+    "faces": {
+      "wordmark": {
+        "family": "Space Grotesk",
+        "job": "the oxagen and stella wordmarks and Stella's asterisk, set as text. It is fixed",
+        "stack": "\"Space Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "next_var": "--font-space-grotesk",
+        "files": [
+          {
+            "file": "space-grotesk-latin-400.woff2",
+            "weight": "400",
+            "style": "normal"
+          },
+          {
+            "file": "space-grotesk-latin-500.woff2",
+            "weight": "500",
+            "style": "normal"
+          },
+          {
+            "file": "space-grotesk-latin-600.woff2",
+            "weight": "600",
+            "style": "normal"
+          },
+          {
+            "file": "space-grotesk-latin-700.woff2",
+            "weight": "700",
+            "style": "normal"
+          }
+        ],
+        "features": "normal"
+      },
+      "display": {
+        "family": "Space Grotesk",
+        "job": "h1 to h3 on a marketing or customer site",
+        "stack": "\"Space Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "next_var": "--font-space-grotesk",
+        "files": [
+          {
+            "file": "space-grotesk-latin-400.woff2",
+            "weight": "400",
+            "style": "normal"
+          },
+          {
+            "file": "space-grotesk-latin-500.woff2",
+            "weight": "500",
+            "style": "normal"
+          },
+          {
+            "file": "space-grotesk-latin-600.woff2",
+            "weight": "600",
+            "style": "normal"
+          },
+          {
+            "file": "space-grotesk-latin-700.woff2",
+            "weight": "700",
+            "style": "normal"
+          }
+        ],
+        "features": "normal"
+      },
+      "sans": {
+        "family": "Geist",
+        "job": "body, labels, buttons, tables, navigation, every app heading, and every h4 to h6",
+        "stack": "\"Geist\", system-ui, -apple-system, \"Segoe UI\", sans-serif",
+        "next_var": "--font-geist",
+        "files": [
+          {
+            "file": "geist-latin-wght.woff2",
+            "weight": "100 900",
+            "style": "normal"
+          }
+        ],
+        "features": "normal"
+      },
+      "mono": {
+        "family": "Monaspace Neon",
+        "job": "code, terminal output, logs, digests, paths, ids, and numbers in tables",
+        "stack": "\"Monaspace Neon\", ui-monospace, \"SF Mono\", Menlo, Consolas, monospace",
+        "next_var": "--font-monaspace-neon",
+        "files": [
+          {
+            "file": "monaspace-neon-latin-wght.woff2",
+            "weight": "200 800",
+            "style": "normal"
+          }
+        ],
+        "features": "\"calt\", \"liga\""
+      }
+    },
+    "extra_faces": [
+      {
+        "family": "Aeonik",
+        "job": "loads for a page that names it. No role reads it yet",
+        "stack": "\"Aeonik\", system-ui, -apple-system, \"Segoe UI\", sans-serif",
+        "next_var": "--font-aeonik",
+        "files": [
+          {
+            "file": "aeonik-wght.woff2",
+            "weight": "100 900",
+            "style": "normal"
+          },
+          {
+            "file": "aeonik-italic-wght.woff2",
+            "weight": "100 900",
+            "style": "italic"
+          }
+        ],
+        "features": "normal"
+      },
+      {
+        "family": "Aeonik Mono",
+        "job": "loads for a page that names it. No role reads it yet",
+        "stack": "\"Aeonik Mono\", ui-monospace, \"SF Mono\", Menlo, Consolas, monospace",
+        "next_var": "--font-aeonik-mono",
+        "files": [
+          {
+            "file": "aeonik-mono-wght.woff2",
+            "weight": "100 900",
+            "style": "normal"
+          }
+        ],
+        "features": "normal"
+      },
+      {
+        "family": "Aeonik Fono",
+        "job": "loads for a page that names it. No role reads it yet",
+        "stack": "\"Aeonik Fono\", ui-monospace, \"SF Mono\", Menlo, Consolas, monospace",
+        "next_var": "--font-aeonik-fono",
+        "files": [
+          {
+            "file": "aeonik-fono-wght.woff2",
+            "weight": "100 900",
+            "style": "normal"
+          }
+        ],
+        "features": "normal"
+      }
+    ],
+    "roles": {
+      "sans": {
+        "css_var": "--font-sans",
+        "face": "sans",
+        "family": "Geist",
+        "job": "body, labels, buttons, tables, navigation, every app heading, and every h4 to h6"
+      },
+      "display": {
+        "css_var": "--font-display",
+        "face": "display",
+        "family": "Space Grotesk",
+        "job": "h1 to h3 on a marketing or customer site"
+      },
+      "heading": {
+        "css_var": "--font-heading",
+        "face": "sans",
+        "family": "Geist",
+        "job": "h1 to h3 on this surface. A marketing or docs site points it at --font-display",
+        "reads": "--font-sans"
+      },
+      "mono": {
+        "css_var": "--font-mono",
+        "face": "mono",
+        "family": "Monaspace Neon",
+        "job": "code, logs, ids, and numbers in tables"
+      },
+      "wordmark": {
+        "css_var": "--font-wordmark",
+        "face": "wordmark",
+        "family": "Space Grotesk",
+        "job": "a wordmark set as text rather than drawn. It is fixed"
+      }
+    },
+    "marketing_headings": "--font-heading: var(--font-display)",
+    "tracking": {
+      "hero": "-0.03em",
+      "display": "-0.02em",
+      "heading": "-0.01em",
+      "none": "0"
+    },
+    "routing": [
+      {
+        "elements": "h1, h2, h3",
+        "role": "heading",
+        "family": "Geist"
+      },
+      {
+        "elements": "h4, h5, h6",
+        "role": "sans",
+        "family": "Geist"
+      },
+      {
+        "elements": "body, button, input, select, textarea, label, nav",
+        "role": "sans",
+        "family": "Geist"
+      },
+      {
+        "elements": "pre, code, kbd, samp, [data-mono]",
+        "role": "mono",
+        "family": "Monaspace Neon"
+      }
+    ],
+    "text_scale": {
+      "file": "tokens/house-text-scale.css",
+      "sizes": {
+        "text-xs": "--ox-a-2xs",
+        "text-sm": "--ox-a-micro",
+        "text-base": "--ox-a-body",
+        "text-lg": "--ox-a-h4",
+        "text-xl": "--ox-a-h3",
+        "text-2xl": "--ox-a-h2",
+        "text-3xl": "--ox-a-h1"
+      }
+    },
+    "scales": {
+      "marketing": {
+        "utility_prefix": "text-m-",
+        "use": "landing pages and posts read once: large and spaced",
+        "base": "1rem",
+        "base_px": 16.0,
+        "base_var": "--ox-m-base",
+        "steps": [
+          {
+            "step": "h1",
+            "role": "display",
+            "family": "Space Grotesk",
+            "ratio": 4.5,
+            "size": "calc(var(--ox-m-base) * 4.5)",
+            "px": 72.0,
+            "line_height": 1.05,
+            "weight": 700,
+            "tracking": "-0.03em"
+          },
+          {
+            "step": "h2",
+            "role": "display",
+            "family": "Space Grotesk",
+            "ratio": 2.5,
+            "size": "calc(var(--ox-m-base) * 2.5)",
+            "px": 40.0,
+            "line_height": 1.2,
+            "weight": 700,
+            "tracking": "-0.01em"
+          },
+          {
+            "step": "h3",
+            "role": "display",
+            "family": "Space Grotesk",
+            "ratio": 1.75,
+            "size": "calc(var(--ox-m-base) * 1.75)",
+            "px": 28.0,
+            "line_height": 1.3,
+            "weight": 600,
+            "tracking": "0"
+          },
+          {
+            "step": "h4",
+            "role": "sans",
+            "family": "Geist",
+            "ratio": 1.25,
+            "size": "calc(var(--ox-m-base) * 1.25)",
+            "px": 20.0,
+            "line_height": 1.4,
+            "weight": 500,
+            "tracking": "0"
+          },
+          {
+            "step": "body",
+            "role": "sans",
+            "family": "Geist",
+            "ratio": 1,
+            "size": "var(--ox-m-base)",
+            "px": 16.0,
+            "line_height": 1.625,
+            "weight": 400,
+            "tracking": "0"
+          },
+          {
+            "step": "micro",
+            "role": "mono",
+            "family": "Monaspace Neon",
+            "ratio": 0.875,
+            "size": "calc(var(--ox-m-base) * 0.875)",
+            "px": 14.0,
+            "line_height": 1.5,
+            "weight": 400,
+            "tracking": "0"
+          }
+        ]
+      },
+      "app": {
+        "utility_prefix": "text-a-",
+        "use": "dashboards, panels, tables, terminals, logs: dense",
+        "base": "0.925rem",
+        "base_px": 14.8,
+        "base_var": "--ox-a-base",
+        "steps": [
+          {
+            "step": "h1",
+            "role": "heading",
+            "family": "Geist",
+            "ratio": 2.142857,
+            "size": "calc(var(--ox-a-base) * 2.142857)",
+            "px": 31.71,
+            "line_height": 1.15,
+            "weight": 700,
+            "tracking": "-0.02em"
+          },
+          {
+            "step": "h2",
+            "role": "heading",
+            "family": "Geist",
+            "ratio": 1.714286,
+            "size": "calc(var(--ox-a-base) * 1.714286)",
+            "px": 25.37,
+            "line_height": 1.2,
+            "weight": 600,
+            "tracking": "0"
+          },
+          {
+            "step": "h3",
+            "role": "heading",
+            "family": "Geist",
+            "ratio": 1.428571,
+            "size": "calc(var(--ox-a-base) * 1.428571)",
+            "px": 21.14,
+            "line_height": 1.25,
+            "weight": 600,
+            "tracking": "0"
+          },
+          {
+            "step": "h4",
+            "role": "sans",
+            "family": "Geist",
+            "ratio": 1.142857,
+            "size": "calc(var(--ox-a-base) * 1.142857)",
+            "px": 16.91,
+            "line_height": 1.4,
+            "weight": 600,
+            "tracking": "0"
+          },
+          {
+            "step": "body",
+            "role": "sans",
+            "family": "Geist",
+            "ratio": 1,
+            "size": "var(--ox-a-base)",
+            "px": 14.8,
+            "line_height": 1.5,
+            "weight": 400,
+            "tracking": "0"
+          },
+          {
+            "step": "micro",
+            "role": "mono",
+            "family": "Monaspace Neon",
+            "ratio": 0.857143,
+            "size": "calc(var(--ox-a-base) * 0.857143)",
+            "px": 12.69,
+            "line_height": 1.4,
+            "weight": 400,
+            "tracking": "0"
+          },
+          {
+            "step": "2xs",
+            "role": "sans",
+            "family": "Geist",
+            "ratio": 0.714286,
+            "size": "calc(var(--ox-a-base) * 0.714286)",
+            "px": 10.57,
+            "line_height": 1.4,
+            "weight": 500,
+            "tracking": "0"
+          }
+        ]
+      }
+    }
+  },
+  "radius": {
+    "base": "0.45rem",
+    "steps": {
+      "xs": 0.4,
+      "sm": 0.6,
+      "md": 0.8,
+      "lg": 1,
+      "xl": 1.4,
+      "2xl": 1.8,
+      "3xl": 2.2,
+      "4xl": 2.6
+    },
+    "card": "2xl",
+    "site": "0.75rem"
+  },
+  "shadow": {
+    "ui": {
+      "ink": "0 1px 2px oklch(0.15 0 0 / 0.07)",
+      "paper": "0 1px 2px oklch(0.15 0 0 / 0.07)"
+    },
+    "pop": {
+      "ink": "0 25px 50px -12px rgb(0 0 0 / 0.6)",
+      "paper": "0 25px 50px -12px color-mix(in srgb, var(--ox-ink) 25%, transparent)"
+    }
+  },
+  "spacing": {
+    "unit": "0.25rem",
+    "wrap": "1180px"
+  },
+  "wordmarks": {
+    "oxagen": {
+      "text": "oxagen",
+      "accent": "x",
+      "box": [
+        453.868,
+        93.246
+      ],
+      "baseline": 66.915
+    },
+    "stella": {
+      "text": "stella*",
+      "accent": "*",
+      "box": [
+        405.544,
+        94.003
+      ],
+      "baseline": 92.16
+    }
+  }
+}

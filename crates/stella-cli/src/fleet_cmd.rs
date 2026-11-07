@@ -431,7 +431,7 @@ fn load_plan(prompts: &[String], plan_file: Option<&Path>) -> Result<Plan, Strin
             .iter()
             .enumerate()
             .map(|(i, prompt)| {
-                let title: String = prompt.chars().take(48).collect();
+                let title = crate::session_name::session_name(prompt);
                 Task::new(format!("t{}", i + 1), title, prompt.clone())
             })
             .collect(),

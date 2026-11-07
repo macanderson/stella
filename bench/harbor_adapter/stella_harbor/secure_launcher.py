@@ -3316,8 +3316,7 @@ def _verifier_env_name() -> str:
 
 def _validate_claim_environment(environ: Mapping[str, str]) -> tuple[Path, str]:
     """Validate immutable claim controls and the exact host Stella artifact."""
-    # Inverted by #2411: this used to require the exact frozen cap, and now
-    # requires that there be none. A claim run is where a per-trial ceiling
+    # A claim run must carry no spend cap (#2411). It is where a per-trial ceiling
     # does the most damage — it measures an agent in order to publish the
     # number, and a trial the guard stops publishes our ceiling as the agent's
     # limit.

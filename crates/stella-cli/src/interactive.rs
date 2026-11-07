@@ -88,9 +88,9 @@ pub trait AskUserIo: Send + Sync {
 /// Production io: prints the card to stdout and asks the shared stdin reader
 /// for one line.
 ///
-/// Safe to **abandon**: this used to own an uncancellable `spawn_blocking`
-/// read, so an approval that hit its TTL left a parked reader that ate the
-/// person's next message (#4219). [`crate::stdin_lines`] carries the argument.
+/// Safe to **abandon**: the read belongs to the shared stdin reader, so an
+/// approval that hits its TTL leaves no parked reader to eat the person's next
+/// message (#4219). [`crate::stdin_lines`] carries the argument.
 ///
 /// Safe to use while a turn is in flight, too — the REPL's own read loop is
 /// suspended awaiting the turn, so stdin has exactly one reader.

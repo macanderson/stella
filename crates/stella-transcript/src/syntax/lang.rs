@@ -723,10 +723,10 @@ mod tests {
             "stop_reason = \"end_turn\"  # __all__",
             "prose with _emphasis_ and __bold__ and snake_case_name",
             "MAX__DOUBLE__UNDERSCORE and a_b_c_d_e",
-            // #4469: fourteen characters the TSX grammar never finishes
-            // parsing. Fixed here rather than left to the property, because a
-            // regression in the budget that guards it must fail every run and
-            // not one in however-many-thousand.
+            // #4469: fourteen characters that hung the TSX grammar under
+            // tree-sitter 0.27.0. Fixed here rather than left to the property,
+            // so a release that brings the loop back fails every run and not
+            // one in however-many-thousand.
             "(s1.']z]9:A|8=",
         ] {
             for lang in ALL_LANGS {

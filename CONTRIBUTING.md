@@ -28,12 +28,12 @@ Every one of these is genuinely valued — pick the one that fits your energy:
 
 | Contribution | Where to start | Effort |
 |---|---|---|
-| 🐛 **A bug report with a repro** | [Bug report form](https://github.com/macanderson/stella/issues/new?template=bug_report.yml) | 10 minutes |
+| 🐛 **A bug report with a repro** | [Request form](https://github.com/macanderson/stella/issues/new?template=request.yml) | 10 minutes |
 | 🧭 **Docs & examples** — fix a lie in the docs before it fools someone else | `website/content/docs/**.mdx` for anything a *user* reads, `docs/**` for contributor-facing specs, plus `README.md`, `--help` text, doc comments | Small |
 | 🔌 **A new provider adapter** — Stella is BYOK; every model provider we speak makes it more useful | `crates/stella-model/src/` — copy the shape of an existing adapter | Medium |
 | 🛠 **A new built-in tool** | `crates/stella-tools/src/` — implement the tool trait, register it in `ToolRegistry`, then declare one line in [`catalog.rs`](crates/stella-tools/src/catalog.rs) | Medium |
-| 🌐 **A Context Graph Protocol (CGP) provider** — implement it in your language and prove it green | [macanderson/context-graph-protocol](https://github.com/macanderson/context-graph-protocol) — its own repo, no Stella code required | Medium |
-| 🏗 **Core engine work** | `good first issue` / `help wanted` labels | Varies |
+| 🌐 **A Context Graph Protocol (CGP) provider** — implement it in your language and prove it green | [oxageninc/context-graph-protocol](https://github.com/oxageninc/context-graph-protocol) — its own repo, no Stella code required | Medium |
+| 🏗 **Core engine work** | `GOOD FIRST ISSUE` / `HELP WANTED` labels | Varies |
 
 If you're not sure where something fits, open an issue first — a ten-line
 sketch of the idea saves a thousand-line PR that can't merge.
@@ -93,6 +93,7 @@ python3 ./scripts/check-guard-trigger-coverage.py
 python3 ./scripts/check-priority-scheme.py
 python3 ./scripts/check-cargo-flags.py
 python3 ./scripts/check-release-wiring.py
+python3 ./scripts/check-release-retry.py
 ./scripts/check-left-behind.sh
 python3 ./scripts/check-retired-model-keys.py
 ./scripts/check-stat-portability.sh
@@ -155,6 +156,16 @@ a prose-only diff,
 which is the diff `prose` is about — beside the hermetic suites that prove a
 guard can still fail (#3820, #4427). `gate-parity` now also fails when a gate
 step is named in the `Makefile` and run by no workflow at all.
+
+**Name every test you delete in the PR description.** On a pull request,
+`ci.yml` runs `scripts/check-deleted-tests.sh` on the merge result. It fails
+when a `#[test]` or `#[tokio::test]` from the base branch is missing and
+nothing in the description names it. A renamed test counts as a deleted one
+under its old name. A commit message also counts, but only while that commit
+is the branch tip, so use the description. The guard compares two trees, so it
+is not a `make gate` step. `make deleted-tests-test` is its test suite. It
+builds throwaway histories and checks that the guard still fails an unnamed
+deletion.
 
 One more workflow, `deck-fit.yml`, measures every slide of every deck under
 `website/public/presentations/` against the fixed 1600x900 canvas they are
@@ -257,7 +268,7 @@ rule of thumb is one sentence each:
 | Compute a unified diff | `stella-diff` |
 | Strip ANSI escape sequences from tool output | `stella-ansi` (a leaf with no dependencies at all, so `stella-tui` and `stella-observatory` can share it) |
 | Turn text into a vector, or compare two vectors | `stella-embed` |
-| The Context Graph Protocol (wire types / host / conformance) | external repo: [`context-graph-protocol`](https://github.com/macanderson/context-graph-protocol) |
+| The Context Graph Protocol (wire types / host / conformance) | external repo: [`context-graph-protocol`](https://github.com/oxageninc/context-graph-protocol) |
 
 Verification is opt-in on every door via `stella run --pipeline <variant>`,
 naming an installed wrapper plugin — the built-in staged pipeline this flag
@@ -382,13 +393,16 @@ normal part of the loop here, not a rejection.
 
 ## Issues and labels
 
-- **[Bug report](https://github.com/macanderson/stella/issues/new?template=bug_report.yml)** — include `stella --version`, OS, provider/model, and a repro.
-- **[Feature request](https://github.com/macanderson/stella/issues/new?template=feature_request.yml)** — say what you're trying to do, not just what to add.
+- **[Request](https://github.com/macanderson/stella/issues/new?template=request.yml)**: one form for a bug, a feature, or a question. For a bug, include `stella --version`, OS, provider/model, and a repro. For a feature, say what you're trying to do, not just what to add.
+- **[Task](https://github.com/macanderson/stella/issues/new?template=task.yml)**: a unit of work with a definition of done the closer checks line by line.
 
-Labels you'll see: `area:*` routes an issue to a crate; a `P` label is priority,
-and [SCR-005](docs/scr/SCR-005-triage-separation-of-duties.md) names the levels;
-`good first issue` and `help wanted` mean what they say; `needs-witness` means
-a PR is waiting on its witness test.
+Both forms apply the `TRIAGE` label, and triage replaces it. Labels you'll
+see after that:
+
+- `AREA:*` routes an issue to a crate.
+- A `P` label is priority. The priority scheme in [`AGENTS.md`](AGENTS.md) names the levels.
+- `GOOD FIRST ISSUE` and `HELP WANTED` mean what they say.
+- `NEEDS-WITNESS` means a PR is waiting on its witness test.
 
 ## Security
 
@@ -417,15 +431,20 @@ If some clause in the CLA is a blocker for you, say so in the PR or email
 
 ## Shared workflow updates
 
+The shared DoD workflows live in the public
+[`oxageninc/.github`](https://github.com/oxageninc/.github/tree/main/tools/scripts)
+repository. Any repository can call a public repository's workflows and check
+out its scripts.
+
 Dependabot checks GitHub Actions weekly. What it skips is the Oxagen reusable
 workflows that the callers in `.github/workflows/` reference, excluded by the
-`macanderson/oxagen/.github/workflows/*` ignore pattern. That pattern names a
+`oxageninc/.github/.github/workflows/*` ignore pattern. That pattern names a
 remote dependency, so the caller files themselves are not exempt: every other
 action they pin is still updated automatically. The Oxagen pins are the
-exception because they are maintained together across Stella, ArenaBench,
-cgp-website, and context-graph-protocol. When a shared workflow changes, open
-the caller updates together and verify Oxagen's `scr-corpus-check` after they
-merge.
+exception because they are maintained together across oxageninc/product,
+Stella, ArenaBench, cgp-website, and context-graph-protocol. When a shared
+workflow changes, open the caller updates together and verify product's
+`scr-corpus-check` after they merge.
 
 The parity check is `check-dod-stub-parity.mjs`, a second step in that same
 job rather than a workflow of its own. It compares the workflow files each
@@ -434,6 +453,10 @@ files pass.
 
 The pin is a commit SHA rather than `@main` so that no repository can change
 a required check in another without a commit to review there. The cost is a
-re-pin in every caller, and the failure mode is paying it in three of four.
-[Oxagen ADR-045](https://github.com/macanderson/oxagen/blob/main/docs/adr/ADR-045-pin-cross-repo-reusable-workflows.md)
+re-pin in every caller, and the failure mode is paying it in four of five.
+[Oxagen ADR-045](https://github.com/oxageninc/product/blob/main/docs/adr/ADR-045-pin-cross-repo-reusable-workflows.md)
 records that decision.
+
+The shared workflows lived in `oxageninc/product` until it became private on
+2026-10-01. A public repo cannot call a workflow in a private one, so they
+moved to the public `oxageninc/.github` on 2026-10-02.

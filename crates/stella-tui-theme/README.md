@@ -41,12 +41,12 @@ implementation departs from SPEC 3.2's literal wording — and it does so to mak
 the spec's own argument satisfiable.
 
 SPEC 3.2 states one rule over "every color in the gold role", including
-`b <= 0.35 r`. SPEC 3.1's own `gold_bright` `#F1CE65` measures `0.433`. That is
+`b <= 0.35 r`. SPEC 3.1's own `gold_bright` `#E3C45B` measures `0.401`. That is
 not a bad colour; it is a geometry problem, and the test
 `the_resting_blue_ceiling_is_unsatisfiable_above_this_lightness` pins it: in a
 gold, lightness is `(r + b) / 510`, so `b <= 0.35 r` caps lightness at
 `(255 + 89) / 510 = 0.6745` — for **any** colour, gold or not. `gold_bright`
-sits at `0.6941`. Above that line the ceiling is a rule nothing can satisfy, so
+sits at `0.6235`. Above that line the ceiling is a rule nothing can satisfy, so
 a lift could never have been held to it.
 
 The two clauses were never doing the same job, so they are stated where each is

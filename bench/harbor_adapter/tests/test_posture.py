@@ -371,11 +371,9 @@ class TestRetiredAttemptCountArms:
         `config::trusted_engine_config_shape_is_strict` shares its vocabulary
         with `settings::ENGINE_ROOT_FIELDS`, so an unrecognised key here is not
         dropped — the trial dies at launch. Checked against the vocabulary
-        parsed from `unknown.rs` (#2033). This used to argue for a literal
-        copy ("a shared constant would drift together with the thing it
-        catches drifting"), but the argument runs backwards for the direction
-        that costs money: a key REMOVED from the Rust side left the literal
-        green while every run refused at launch. The parsed set moves with
+        parsed from `unknown.rs` (#2033) rather than copied as a literal: a
+        literal stays green when a key is REMOVED from the Rust side, while
+        every run refuses at launch. The parsed set moves with
         the authority, which is exactly what makes a removal fail here.
         """
         posture, _normalized, _digest = _benchmark_engine_posture(
@@ -853,15 +851,11 @@ class TestWitnessArmEndToEnd:
     ) -> None:
         """The treatment arm, end to end, now ends at the refusal (#4103).
 
-        This used to assert the whole hop — env knob → posture → container →
-        metadata — and the interesting middle one was that
-        `_secure_exec_with_credential_fd` *recomputes* the posture from argv at
-        the process boundary rather than trusting the caller (#1007).
-
-        That hop is no longer reachable and asserting it would be asserting a
-        fiction. The engine has one role, so the author this knob pins reaches
-        no model call; a run that proceeded would put a control arm's
-        configuration in the container under a treatment arm's digest, which is
+        The whole hop — env knob → posture → container → metadata — is
+        unreachable, and asserting it would be asserting a fiction. The engine
+        has one role, so the author this knob pins reaches no model call; a run
+        that proceeded would put a control arm's configuration in the container
+        under a treatment arm's digest, which is
         #1147 with the guard that used to catch it deleted (#3865). So the
         end-to-end claim this test makes is the one that is still true and
         still worth guarding: **asking for the arm stops the run, and stops it

@@ -29,6 +29,7 @@ async fn startup(server_uri: &str, store_dir: &std::path::Path) -> McpToolSet {
             headers: BTreeMap::new(),
         },
         candidate_safe: false,
+        cwd: None,
     }];
     McpToolSet::connect_with_auth(&configs, Duration::from_secs(5), Some(manager)).await
 }
