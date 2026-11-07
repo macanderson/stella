@@ -65,13 +65,16 @@ fi
 # to them — and the wire form is the *primary* one for this socket, which makes
 # it the contract that most needs a committed fixed point.
 #
-# One exporter, three artifacts. The first two do not subsume one another
-# (#3532): `wrapper.wire.json` is a corpus that pins the exact bytes of every
-# message, and `wrapper.schema.json` is JSON Schema derived by schemars, which
+# One exporter, five artifacts. The first three do not subsume one another
+# (#3532). `wrapper.wire.json` is a corpus that pins the exact bytes of every
+# message. `wrapper.schema.json` is JSON Schema derived by schemars, which
 # states the two things a corpus cannot show — a widened scalar and a string
 # format constraint. `wrapper.d.ts` is that schema as TypeScript declarations,
 # printed by the same `stella_protocol::schema_export` the other two `.d.ts`
-# artifacts use (#4535). All three are diffed below.
+# artifacts use (#4535). `driver.schema.json` and `driver.d.ts` are the same
+# split, for the driver channel. Its request and response roots carry no
+# untagged union. The host-call channel's does, so it stays corpus-only.
+# All five are diffed below.
 if ! build_log="$(cargo run --quiet -p stella-plugin --features schema \
   --bin export-wrapper-wire -- "$tmp" 2>&1)"; then
   echo "check-wire-schema: FAIL — the wrapper-socket exporter did not run." >&2
@@ -82,7 +85,8 @@ fi
 status=0
 for artifact in agentevent.schema.json agentevent.d.ts \
                 serveframe.schema.json serveinbound.schema.json serveframe.d.ts \
-                wrapper.wire.json wrapper.schema.json wrapper.d.ts; do
+                wrapper.wire.json wrapper.schema.json wrapper.d.ts \
+                driver.schema.json driver.d.ts; do
   if [ ! -f "$committed/$artifact" ]; then
     echo "check-wire-schema: FAIL — $committed/$artifact is missing." >&2
     status=1

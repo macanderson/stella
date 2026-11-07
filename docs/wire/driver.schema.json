@@ -1,0 +1,1605 @@
+{
+  "$defs": {
+    "AbandonArgs": {
+      "additionalProperties": false,
+      "description": "Why a unit is being released.\n\nA sentence rather than a code, because the audience is a human reading the\nloop's ledger afterwards. A release with no reason is the silence\n`doc:backlog-self-driving` §3.7 refuses at the session's own terminal, one\nlevel down: a loop that gives an issue back without saying why teaches\nnobody anything.",
+      "properties": {
+        "reason": {
+          "description": "What a human reads in the ledger.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "type": "object"
+    },
+    "BacklogEntry": {
+      "additionalProperties": false,
+      "description": "One issue, as the driver channel carries it.\n\nFour fields, and not `stella_protocol::Issue`. A plugin holds\nno forge token, so what it needs is the identity to name in its next ask,\nthe line a human reads in its log, and the labels its own policy branches\non. The body is the field this must not carry: issue text is written by\nwhoever can file an issue, and pushing it through a plugin's process would\nmake untrusted prose the plugin's problem to handle rather than the host's\n(`doc:agent-native-delivery` §10.2).",
+      "properties": {
+        "key": {
+          "description": "The tracker's own identifier, as the tracker spells it — `\"1234\"`,\n`\"STELLA-42\"`. Opaque: a driver hands it back and never parses it.",
+          "type": "string"
+        },
+        "labels": {
+          "default": [],
+          "description": "The labels the tracker carries, verbatim. Priority and area live here.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "description": "The issue's one-line title.",
+          "type": "string"
+        },
+        "url": {
+          "default": "",
+          "description": "Where a human would go to read it, or empty when the tracker offers no\naddress.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "title"
+      ],
+      "type": "object"
+    },
+    "BacklogPage": {
+      "additionalProperties": false,
+      "description": "The ranked queue one [`DriverCall::BacklogNext`] read produced.\n\nA page rather than a single issue, because a loop that skips a unit it\ncannot take needs the next one without spending a second ask, and because a\ndriver seeing only the top of the ranking could not tell one unit of work\nfrom a backlog with one issue in it.",
+      "properties": {
+        "issues": {
+          "default": [],
+          "description": "The open issues the host read, most-ready first. Empty means the\ntracker answered and had nothing ready — a failed read is a\n[`HostCallFailure`], never an empty page.",
+          "items": {
+            "$ref": "#/$defs/BacklogEntry"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "ClaimReport": {
+      "additionalProperties": false,
+      "description": "Who holds a unit of backlog, after [`DriverCall::BacklogClaim`] asked.\n\nThree answers, and they are different facts a loop branches on: the ask\ntook the lease, a live peer already holds it, or the ledger could not say.\nThe third is not the second — an unopenable ledger is not a peer, and a\nloop that read it as one would stop working on its own crash — so\n[`Self::holder`] is empty exactly when nobody was named.",
+      "properties": {
+        "held": {
+          "description": "Whether this session now holds the lease.",
+          "type": "boolean"
+        },
+        "holder": {
+          "description": "Who holds it instead, or empty when nobody was named — either because\nthis session took it, or because the ledger could not answer.",
+          "type": "string"
+        },
+        "issue": {
+          "description": "The unit the ask named, echoed so a pipelined driver can join it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue",
+        "held"
+      ],
+      "type": "object"
+    },
+    "DecideArgs": {
+      "additionalProperties": false,
+      "description": "What `deliver_next` decides over: one reading, and what this loop has spent\non this pull request so far.\n\nThe counts are the driver's own. The host keeps no memory of a driver's\nearlier cycles. A session is one conversation, and a loop that pushed two\nfixes across two days is the only party that knows it.",
+      "properties": {
+        "fixes": {
+          "default": 0,
+          "description": "Fix pushes already made against this pull request's own red build.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "observation": {
+          "$ref": "#/$defs/DeliverObservation",
+          "description": "What the driver read."
+        },
+        "rebases": {
+          "default": 0,
+          "description": "Rebases already made against a moved base.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "observation"
+      ],
+      "type": "object"
+    },
+    "DeliverAction": {
+      "description": "The single next thing to do.",
+      "oneOf": [
+        {
+          "const": "wait",
+          "description": "Read again later. The right answer far more often than the others.",
+          "type": "string"
+        },
+        {
+          "const": "push_fix",
+          "description": "Write a fix for this pull request's own failure, and push it.",
+          "type": "string"
+        },
+        {
+          "const": "rebase",
+          "description": "Rebase onto the moved base and push.",
+          "type": "string"
+        },
+        {
+          "const": "mark_ready",
+          "description": "Take it out of draft.",
+          "type": "string"
+        },
+        {
+          "const": "merge",
+          "description": "Merge it.",
+          "type": "string"
+        },
+        {
+          "const": "escalate",
+          "description": "Stop, and tell a human why. [`DeliverDecision::escalation`] says what\nran out.",
+          "type": "string"
+        }
+      ]
+    },
+    "DeliverCi": {
+      "description": "What one read of the forge said about a pull request's checks.\n\nThree, not a forge's whole vocabulary. A cancelled run, a skipped run and a\nrun that never started all mean \"no answer yet\" here.",
+      "oneOf": [
+        {
+          "const": "pending",
+          "description": "No answer yet. Waiting is the only thing left to do.",
+          "type": "string"
+        },
+        {
+          "const": "green",
+          "description": "Every check that may block passed.",
+          "type": "string"
+        },
+        {
+          "const": "red",
+          "description": "At least one of them failed.",
+          "type": "string"
+        }
+      ]
+    },
+    "DeliverDecision": {
+      "additionalProperties": false,
+      "description": "What the machine decided, given one reading.",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/DeliverAction",
+          "description": "The one next action."
+        },
+        "escalation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeliverEscalation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What ran out, when the action is [`DeliverAction::Escalate`].\n\nAbsent otherwise. A reason on a `wait` would be a sentence about an\nescalation that never happened."
+        },
+        "pr": {
+          "description": "The pull request this is about.",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/DeliverState",
+          "description": "Where it now stands."
+        }
+      },
+      "required": [
+        "pr",
+        "state",
+        "action"
+      ],
+      "type": "object"
+    },
+    "DeliverEscalation": {
+      "description": "Why the machine gave up.\n\nTyped, because a human reading an escalation needs to know what to do next.\nFix something, wait for something, or raise a ceiling are three different\nmoves.",
+      "oneOf": [
+        {
+          "const": "fix_ceiling_reached",
+          "description": "The same build kept failing after the ceiling.",
+          "type": "string"
+        },
+        {
+          "const": "rebase_ceiling_reached",
+          "description": "The branch kept conflicting after the ceiling.",
+          "type": "string"
+        },
+        {
+          "const": "review_needs_human",
+          "description": "A reviewer asked for something the loop may not decide.",
+          "type": "string"
+        }
+      ]
+    },
+    "DeliverMergeability": {
+      "description": "Whether the branch merges as it stands.",
+      "oneOf": [
+        {
+          "const": "clean",
+          "description": "No conflict with the base.",
+          "type": "string"
+        },
+        {
+          "const": "conflicted",
+          "description": "The base moved under it.",
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "The forge has not worked it out yet. Apart from [`Self::Clean`], and the\ndefault. Reading \"not known yet\" as \"clean\" is how a merge runs into a\nconflict.",
+          "type": "string"
+        }
+      ]
+    },
+    "DeliverObservation": {
+      "additionalProperties": false,
+      "description": "One read of the forge. Facts only. The decision is [`DeliverDecision`].\n\nEvery fact a decision reads is required on the wire. Leave one out and the\ndecision runs over a default nobody observed. The default that matters most\nis an unknown mergeability, and it reads as \"wait\".",
+      "properties": {
+        "base_ci": {
+          "$ref": "#/$defs/DeliverCi",
+          "description": "What the *same* checks said on the base branch.\n\nThe whole comparison rests on this. Without it a red build looks the\nsame as an inherited one. A loop then spends its budget fixing somebody\nelse's breakage."
+        },
+        "ci": {
+          "$ref": "#/$defs/DeliverCi",
+          "description": "What this pull request's checks said."
+        },
+        "draft": {
+          "default": false,
+          "description": "Whether it is still a draft.",
+          "type": "boolean"
+        },
+        "mergeable": {
+          "$ref": "#/$defs/DeliverMergeability",
+          "description": "Whether the branch still merges cleanly."
+        },
+        "pr": {
+          "description": "The pull request this is about, echoed back so a driver can join it.",
+          "type": "string"
+        },
+        "review": {
+          "$ref": "#/$defs/DeliverReview",
+          "description": "What review has said."
+        },
+        "settled": {
+          "default": false,
+          "description": "Whether it has already merged or closed.\n\nBeside the facts rather than among them. The machine does not decide\nover it. A merged pull request reports an unknown mergeability, which\nreads as \"wait\" forever.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "pr",
+        "ci",
+        "base_ci",
+        "mergeable",
+        "review"
+      ],
+      "type": "object"
+    },
+    "DeliverReview": {
+      "description": "What human review has said, if anything.",
+      "oneOf": [
+        {
+          "const": "none",
+          "description": "Nobody has reviewed it.",
+          "type": "string"
+        },
+        {
+          "const": "changes_requested",
+          "description": "A reviewer asked for changes. Outranks a green build.",
+          "type": "string"
+        },
+        {
+          "const": "approved",
+          "description": "A reviewer approved it.",
+          "type": "string"
+        }
+      ]
+    },
+    "DeliverState": {
+      "description": "Where a pull request the loop opened now stands.",
+      "oneOf": [
+        {
+          "const": "draft",
+          "description": "Opened, not yet pushed for checks.",
+          "type": "string"
+        },
+        {
+          "const": "ci_pending",
+          "description": "Checks are running, or the forge has not worked out whether it merges.\nBoth mean \"no answer yet\".",
+          "type": "string"
+        },
+        {
+          "const": "ci_red",
+          "description": "Its checks failed and the base is green. This one is ours.",
+          "type": "string"
+        },
+        {
+          "const": "base_broken",
+          "description": "Its checks failed and so does the base. This one is not ours.",
+          "type": "string"
+        },
+        {
+          "const": "conflicted",
+          "description": "The base moved under it.",
+          "type": "string"
+        },
+        {
+          "const": "ready_for_review",
+          "description": "Green, out of draft, waiting on review.",
+          "type": "string"
+        },
+        {
+          "const": "review_changes_requested",
+          "description": "A reviewer asked for changes.",
+          "type": "string"
+        },
+        {
+          "const": "approved",
+          "description": "Cleared to merge.",
+          "type": "string"
+        },
+        {
+          "const": "merged",
+          "description": "Landed.",
+          "type": "string"
+        },
+        {
+          "const": "escalated",
+          "description": "Handed to a human.",
+          "type": "string"
+        }
+      ]
+    },
+    "DriveNext": {
+      "description": "What a driver asks to happen after this session.\n\nTwo answers, both of them terminal for the session and neither of them a\nsilence. `Sleep` is `doc:backlog-self-driving` §3.7's `Watch`, reduced to the\nonly wake condition B0 can honestly serve — a duration. The condition-shaped\nwakes (`WakeCondition`) arrive with the supply model in B4.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Re-open a session after this many seconds.",
+          "properties": {
+            "sleep": {
+              "properties": {
+                "secs": {
+                  "description": "How long to wait. The host clamps it; a driver cannot buy an\nunbounded absence by asking for one.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "secs"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "sleep"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Stop, and say why. Reached for a spent budget, a revoked grant, an\noperator stop, or work the driver declines to continue.",
+          "properties": {
+            "halt": {
+              "properties": {
+                "reason": {
+                  "description": "The sentence a human reads in the loop's ledger.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "reason"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "halt"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "DrivePoint": {
+      "description": "The one point a driver session dispatches.\n\nA closed single-case enum rather than a bare string, so `\"point\":\n\"before_turn\"` written into a driver session is a decode error rather than\nsomething a reader shrugs at. A second driver point would be a reviewable\naddition here.",
+      "oneOf": [
+        {
+          "const": "drive",
+          "description": "The driver session itself.",
+          "type": "string"
+        }
+      ]
+    },
+    "DriveRequest": {
+      "additionalProperties": false,
+      "description": "The host's opening of a driver session: `{\"point\": \"drive\", \"body\": {…}}`.\n\nThe body carries the session identity and nothing else at B0. The loop state\n`doc:backlog-self-driving` §3.0 sketches beside it is `LoopState`, which is\nB2's — pure, in `stella-autonomy`, and not yet written. Naming a field for\nit here would be pinning a wire shape to a type that does not exist.",
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/DriveSession",
+          "description": "The session body."
+        },
+        "point": {
+          "$ref": "#/$defs/DrivePoint",
+          "description": "Which point is open. Always [`DrivePoint::Drive`]; present so the\nrequest is self-describing on the wire."
+        }
+      },
+      "required": [
+        "point",
+        "body"
+      ],
+      "title": "DriveRequest",
+      "type": "object"
+    },
+    "DriveResponse": {
+      "additionalProperties": false,
+      "description": "The response that ends a driver session. `point` is always \"drive\", and `body.next` says what the driver wants to happen next. `call`, `id` and `args` belong to a capability ask, so a response carries them only as null.",
+      "properties": {
+        "args": {
+          "type": "null"
+        },
+        "body": {
+          "additionalProperties": false,
+          "properties": {
+            "next": {
+              "$ref": "#/$defs/DriveNext"
+            }
+          },
+          "required": [
+            "next"
+          ],
+          "type": "object"
+        },
+        "call": {
+          "type": "null"
+        },
+        "id": {
+          "type": "null"
+        },
+        "point": {
+          "$ref": "#/$defs/DrivePoint"
+        }
+      },
+      "required": [
+        "point",
+        "body"
+      ],
+      "title": "DriveResponse",
+      "type": "object"
+    },
+    "DriveSession": {
+      "additionalProperties": false,
+      "description": "What the host tells a driver when it opens the session.",
+      "properties": {
+        "session": {
+          "description": "The host's identifier for this session, echoed into its telemetry.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session"
+      ],
+      "type": "object"
+    },
+    "DriverCall": {
+      "description": "The capabilities a **driver** may ask the host for.\n\nClosed, and [`DriverGrant::calls`] declares which of them a given driver may\nuse. The entries in [`DriverCall::all`] are exactly the verbs\n`doc:backlog-self-driving` §3.1–§3.5 tabulates, in five families:\n\n- **`backlog`** (§3.1) — the provider-agnostic issue port that replaces\n  three hardcoded `gh` call sites. Every other family depends on it: `work`\n  needs a unit, `sweep` needs somewhere to file, `deliver` needs something\n  to close.\n- **`work`** (§3.2) — one unit of backlog through Stella's own staged\n  pipeline, in `candidate_ws.rs`'s shadow worktree, with the pipeline's\n  verdict as the definition of done.\n- **`deliver`** (§3.3) — branch, PR, CI, draft, review, merge, driven by a\n  pure state machine that buys no model call.\n- **`sweep`** (§3.4) — where the next question comes from.\n- **`curate`** (§3.5) — proposals for tools, context records and skills,\n  which the loop may *propose* and never grant itself (§7).\n\nTwo things are absent, and both are `doc:backlog-self-driving`\n§3.6's own rules rather than an oversight: there is **no `release` verb** at\nB0–B6, and there is **no verb that edits a driver's own grant** — a\ncapability that could widen `calls` would make the grant advisory.\n\nEvery verb is its own case rather than a family with a mode parameter,\nbecause AGENTS.md #9 governs a capability the same way it governs a tool: a\nparameter may scope an operation, never select one. `curate accept` and\n`curate reject` would be two calls, not one with a boolean — which is why\nthe latter is simply not here yet.",
+      "oneOf": [
+        {
+          "const": "backlog_next",
+          "description": "The ranked readiness queue.",
+          "type": "string"
+        },
+        {
+          "const": "backlog_claim",
+          "description": "Take a cooperative lease on an issue, or report who holds it.",
+          "type": "string"
+        },
+        {
+          "const": "backlog_file",
+          "description": "File a finding as an issue, deduplicated by fingerprint.",
+          "type": "string"
+        },
+        {
+          "const": "backlog_close",
+          "description": "Close an issue with a receipt naming the evidence.",
+          "type": "string"
+        },
+        {
+          "const": "backlog_link",
+          "description": "Bind an `execution_id` to an issue key, so spend is attributable.",
+          "type": "string"
+        },
+        {
+          "const": "work_start",
+          "description": "Run one unit of backlog through the turn loop the host is driving.",
+          "type": "string"
+        },
+        {
+          "const": "work_status",
+          "description": "The in-flight unit: stage, spend, elapsed, checkpoint.",
+          "type": "string"
+        },
+        {
+          "const": "work_abandon",
+          "description": "Release the claim and the worktree, recording why.",
+          "type": "string"
+        },
+        {
+          "const": "deliver_open",
+          "description": "Branch, commit, push, and open the pull request as a draft.",
+          "type": "string"
+        },
+        {
+          "const": "deliver_observe",
+          "description": "One read of the forge — CI, reviews, mergeability, base drift.",
+          "type": "string"
+        },
+        {
+          "const": "deliver_next",
+          "description": "The deterministic next action, given the observation.",
+          "type": "string"
+        },
+        {
+          "const": "deliver_ready",
+          "description": "Take the pull request out of draft, when and only when `deliver_next`\nsays so.",
+          "type": "string"
+        },
+        {
+          "const": "deliver_merge",
+          "description": "Merge, when and only when `deliver_next` says so.",
+          "type": "string"
+        },
+        {
+          "const": "sweep_audit",
+          "description": "Run the open lens's tooling and emit the findings not yet seen.",
+          "type": "string"
+        },
+        {
+          "const": "sweep_regress",
+          "description": "Re-run the witnesses named by closed issues' receipts.",
+          "type": "string"
+        },
+        {
+          "const": "sweep_meta",
+          "description": "Fold the ledger and emit the loop's own pathologies as findings.",
+          "type": "string"
+        },
+        {
+          "const": "curate_propose",
+          "description": "Emit a proposal — a tool, a context record, a skill — with evidence.",
+          "type": "string"
+        },
+        {
+          "const": "curate_list",
+          "description": "Pending proposals and their evidence counts.",
+          "type": "string"
+        },
+        {
+          "const": "curate_accept",
+          "description": "Apply a proposal, if the workspace's declared authority permits it.",
+          "type": "string"
+        }
+      ]
+    },
+    "DriverCallRequest": {
+      "description": "One capability ask a driver writes mid-session. `id` is the driver's own number for the ask. The host echoes it on the answer, so a driver that sends two asks at once can tell the answers apart. A call that reads arguments sends `args` with one member, named for that call, and any other member only as null. A call that reads none sends no member. `point` and `body` belong to a session response, so an ask carries them only as null.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "args": {
+              "additionalProperties": false,
+              "properties": {
+                "backlog_claim": {
+                  "$ref": "#/$defs/UnitArgs",
+                  "description": "Which unit [`DriverCall::BacklogClaim`] should take the lease on."
+                },
+                "deliver_merge": {
+                  "type": "null"
+                },
+                "deliver_next": {
+                  "type": "null"
+                },
+                "deliver_observe": {
+                  "type": "null"
+                },
+                "deliver_ready": {
+                  "type": "null"
+                },
+                "work_abandon": {
+                  "type": "null"
+                },
+                "work_start": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "backlog_claim"
+              ],
+              "type": "object"
+            },
+            "body": {
+              "type": "null"
+            },
+            "call": {
+              "const": "backlog_claim",
+              "description": "Take a cooperative lease on an issue, or report who holds it.",
+              "type": "string"
+            },
+            "id": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "point": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "id",
+            "call",
+            "args"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "args": {
+              "additionalProperties": false,
+              "properties": {
+                "backlog_claim": {
+                  "type": "null"
+                },
+                "deliver_merge": {
+                  "type": "null"
+                },
+                "deliver_next": {
+                  "type": "null"
+                },
+                "deliver_observe": {
+                  "type": "null"
+                },
+                "deliver_ready": {
+                  "type": "null"
+                },
+                "work_abandon": {
+                  "type": "null"
+                },
+                "work_start": {
+                  "$ref": "#/$defs/UnitArgs",
+                  "description": "Which unit [`DriverCall::WorkStart`] should work."
+                }
+              },
+              "required": [
+                "work_start"
+              ],
+              "type": "object"
+            },
+            "body": {
+              "type": "null"
+            },
+            "call": {
+              "const": "work_start",
+              "description": "Run one unit of backlog through the turn loop the host is driving.",
+              "type": "string"
+            },
+            "id": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "point": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "id",
+            "call",
+            "args"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "args": {
+              "additionalProperties": false,
+              "properties": {
+                "backlog_claim": {
+                  "type": "null"
+                },
+                "deliver_merge": {
+                  "type": "null"
+                },
+                "deliver_next": {
+                  "type": "null"
+                },
+                "deliver_observe": {
+                  "type": "null"
+                },
+                "deliver_ready": {
+                  "type": "null"
+                },
+                "work_abandon": {
+                  "$ref": "#/$defs/AbandonArgs",
+                  "description": "Why [`DriverCall::WorkAbandon`] is releasing the session's unit."
+                },
+                "work_start": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "work_abandon"
+              ],
+              "type": "object"
+            },
+            "body": {
+              "type": "null"
+            },
+            "call": {
+              "const": "work_abandon",
+              "description": "Release the claim and the worktree, recording why.",
+              "type": "string"
+            },
+            "id": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "point": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "id",
+            "call",
+            "args"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "args": {
+              "additionalProperties": false,
+              "properties": {
+                "backlog_claim": {
+                  "type": "null"
+                },
+                "deliver_merge": {
+                  "type": "null"
+                },
+                "deliver_next": {
+                  "type": "null"
+                },
+                "deliver_observe": {
+                  "$ref": "#/$defs/PullRequestArgs",
+                  "description": "Which pull request [`DriverCall::DeliverObserve`] should read."
+                },
+                "deliver_ready": {
+                  "type": "null"
+                },
+                "work_abandon": {
+                  "type": "null"
+                },
+                "work_start": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "deliver_observe"
+              ],
+              "type": "object"
+            },
+            "body": {
+              "type": "null"
+            },
+            "call": {
+              "const": "deliver_observe",
+              "description": "One read of the forge — CI, reviews, mergeability, base drift.",
+              "type": "string"
+            },
+            "id": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "point": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "id",
+            "call",
+            "args"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "args": {
+              "additionalProperties": false,
+              "properties": {
+                "backlog_claim": {
+                  "type": "null"
+                },
+                "deliver_merge": {
+                  "type": "null"
+                },
+                "deliver_next": {
+                  "$ref": "#/$defs/DecideArgs",
+                  "description": "What [`DriverCall::DeliverNext`] should decide over."
+                },
+                "deliver_observe": {
+                  "type": "null"
+                },
+                "deliver_ready": {
+                  "type": "null"
+                },
+                "work_abandon": {
+                  "type": "null"
+                },
+                "work_start": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "deliver_next"
+              ],
+              "type": "object"
+            },
+            "body": {
+              "type": "null"
+            },
+            "call": {
+              "const": "deliver_next",
+              "description": "The deterministic next action, given the observation.",
+              "type": "string"
+            },
+            "id": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "point": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "id",
+            "call",
+            "args"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "args": {
+              "additionalProperties": false,
+              "properties": {
+                "backlog_claim": {
+                  "type": "null"
+                },
+                "deliver_merge": {
+                  "type": "null"
+                },
+                "deliver_next": {
+                  "type": "null"
+                },
+                "deliver_observe": {
+                  "type": "null"
+                },
+                "deliver_ready": {
+                  "$ref": "#/$defs/PullRequestArgs",
+                  "description": "Which pull request [`DriverCall::DeliverReady`] should take out of\ndraft."
+                },
+                "work_abandon": {
+                  "type": "null"
+                },
+                "work_start": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "deliver_ready"
+              ],
+              "type": "object"
+            },
+            "body": {
+              "type": "null"
+            },
+            "call": {
+              "const": "deliver_ready",
+              "description": "Take the pull request out of draft, when and only when `deliver_next`\nsays so.",
+              "type": "string"
+            },
+            "id": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "point": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "id",
+            "call",
+            "args"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "args": {
+              "additionalProperties": false,
+              "properties": {
+                "backlog_claim": {
+                  "type": "null"
+                },
+                "deliver_merge": {
+                  "$ref": "#/$defs/PullRequestArgs",
+                  "description": "Which pull request [`DriverCall::DeliverMerge`] should merge."
+                },
+                "deliver_next": {
+                  "type": "null"
+                },
+                "deliver_observe": {
+                  "type": "null"
+                },
+                "deliver_ready": {
+                  "type": "null"
+                },
+                "work_abandon": {
+                  "type": "null"
+                },
+                "work_start": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "deliver_merge"
+              ],
+              "type": "object"
+            },
+            "body": {
+              "type": "null"
+            },
+            "call": {
+              "const": "deliver_merge",
+              "description": "Merge, when and only when `deliver_next` says so.",
+              "type": "string"
+            },
+            "id": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "point": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "id",
+            "call",
+            "args"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "args": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "backlog_claim": {
+                      "type": "null"
+                    },
+                    "deliver_merge": {
+                      "type": "null"
+                    },
+                    "deliver_next": {
+                      "type": "null"
+                    },
+                    "deliver_observe": {
+                      "type": "null"
+                    },
+                    "deliver_ready": {
+                      "type": "null"
+                    },
+                    "work_abandon": {
+                      "type": "null"
+                    },
+                    "work_start": {
+                      "type": "null"
+                    }
+                  },
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "body": {
+              "type": "null"
+            },
+            "call": {
+              "oneOf": [
+                {
+                  "const": "backlog_next",
+                  "description": "The ranked readiness queue.",
+                  "type": "string"
+                },
+                {
+                  "const": "backlog_file",
+                  "description": "File a finding as an issue, deduplicated by fingerprint.",
+                  "type": "string"
+                },
+                {
+                  "const": "backlog_close",
+                  "description": "Close an issue with a receipt naming the evidence.",
+                  "type": "string"
+                },
+                {
+                  "const": "backlog_link",
+                  "description": "Bind an `execution_id` to an issue key, so spend is attributable.",
+                  "type": "string"
+                },
+                {
+                  "const": "work_status",
+                  "description": "The in-flight unit: stage, spend, elapsed, checkpoint.",
+                  "type": "string"
+                },
+                {
+                  "const": "deliver_open",
+                  "description": "Branch, commit, push, and open the pull request as a draft.",
+                  "type": "string"
+                },
+                {
+                  "const": "sweep_audit",
+                  "description": "Run the open lens's tooling and emit the findings not yet seen.",
+                  "type": "string"
+                },
+                {
+                  "const": "sweep_regress",
+                  "description": "Re-run the witnesses named by closed issues' receipts.",
+                  "type": "string"
+                },
+                {
+                  "const": "sweep_meta",
+                  "description": "Fold the ledger and emit the loop's own pathologies as findings.",
+                  "type": "string"
+                },
+                {
+                  "const": "curate_propose",
+                  "description": "Emit a proposal — a tool, a context record, a skill — with evidence.",
+                  "type": "string"
+                },
+                {
+                  "const": "curate_list",
+                  "description": "Pending proposals and their evidence counts.",
+                  "type": "string"
+                },
+                {
+                  "const": "curate_accept",
+                  "description": "Apply a proposal, if the workspace's declared authority permits it.",
+                  "type": "string"
+                }
+              ]
+            },
+            "id": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "point": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "id",
+            "call"
+          ],
+          "type": "object"
+        }
+      ],
+      "title": "DriverCallRequest"
+    },
+    "DriverCallResponse": {
+      "description": "The host's answer to one capability ask: `result`, the id the ask carried, plus exactly one of `ok` (what the host did) or `err` (why it would not or could not). The other key of the two may appear only as null.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "err": {
+              "type": "null"
+            },
+            "ok": {
+              "$ref": "#/$defs/DriverOk"
+            },
+            "result": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "result",
+            "ok"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "err": {
+              "$ref": "#/$defs/HostCallFailure"
+            },
+            "ok": {
+              "type": "null"
+            },
+            "result": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "result",
+            "err"
+          ],
+          "type": "object"
+        }
+      ],
+      "title": "DriverCallResponse"
+    },
+    "DriverOk": {
+      "additionalProperties": false,
+      "description": "What a successful capability ask returned.\n\nOne member per verb the host performs, and nothing for the verbs it does\nnot. That is the rule this module's header sets, and [`BacklogPage`] is the\nfirst thing to land under it: a result shape is written when the verb\nreporting it is served, so no field here describes behaviour no host code\ncan produce.\n\nEvery member is omitted when absent, so an answer to a verb that reports\nnothing is `{}` on the wire — the bytes every driver written against B0\nalready reads. The table denies unknown fields, so a host answering with a\npayload the contract does not have is a decode error on the driver's side\nrather than a value silently dropped.",
+      "properties": {
+        "backlog": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BacklogPage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What [`DriverCall::BacklogNext`] answered with: the tracker's open\nqueue, in the order the loop should take it.\n\nAbsent for every other verb. An `Option` rather than an empty page\nbecause \"no queue was asked for\" and \"the queue is empty\" are different\nfacts, and a loop branches on both."
+        },
+        "claim": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ClaimReport"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What [`DriverCall::BacklogClaim`] answered with: who holds the unit\nnow.\n\nAbsent for every other verb, on [`Self::backlog`]'s terms."
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeliverDecision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What [`DriverCall::DeliverNext`] answered with: the one next action."
+        },
+        "merge": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MergeReport"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What [`DriverCall::DeliverMerge`] answered with: the pull request that\nlanded."
+        },
+        "observation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeliverObservation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What [`DriverCall::DeliverObserve`] answered with: one read of the\nforge."
+        },
+        "pull_request": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OpenReport"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What [`DriverCall::DeliverOpen`] answered with: the pull request it\npushed the session's unit into."
+        },
+        "ready": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReadyReport"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What [`DriverCall::DeliverReady`] answered with: the pull request that\nis now out of draft."
+        },
+        "sweep": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SweepReport"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What [`DriverCall::SweepRegress`] and [`DriverCall::SweepMeta`]\nanswered with: one draw from one supply.\n\nOne member for both verbs, and [`SweepReport::supply`] says which one\nanswered. The two report the same counts over different records, so a\nmember each would be one shape wearing two names."
+        },
+        "work": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkReport"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the three `work` verbs answered with: the session's unit, and what\nthe tree holds for it."
+        }
+      },
+      "type": "object"
+    },
+    "HostCallFailure": {
+      "additionalProperties": false,
+      "description": "Why a host call did not return a result.\n\nThe code is closed so a plugin can branch on it; the detail is the sentence a\nhuman reads when the plugin reports what it could not get.",
+      "properties": {
+        "detail": {
+          "description": "Why, in words — for the plugin's log and the host's report. Never the\nthing a plugin branches on.",
+          "type": "string"
+        },
+        "refusal": {
+          "$ref": "#/$defs/HostCallRefusal",
+          "description": "Which refusal, as the plugin's own `match` reads it."
+        }
+      },
+      "required": [
+        "refusal",
+        "detail"
+      ],
+      "type": "object"
+    },
+    "HostCallRefusal": {
+      "description": "The closed set of reasons a host call comes back empty.\n\nEach one is a different thing for a plugin to do next, which is why they are\nnot one code with a message: an [`Undeclared`](Self::Undeclared) call is the\nplugin author's manifest to fix, a [`Forbidden`](Self::Forbidden) one is an\nask no manifest can buy, an [`Unsupported`](Self::Unsupported) one is\nthis host's gap, an [`AllowanceSpent`](Self::AllowanceSpent) one means stop\nasking and answer, [`Unavailable`](Self::Unavailable) means the capability\nexists but this host has no plane behind it, and [`Failed`](Self::Failed)\nmeans the host tried.",
+      "oneOf": [
+        {
+          "const": "undeclared",
+          "description": "The plugin's manifest does not declare the thing that was asked for —\nthis capability in `[loop] calls`, or, for `child_turn`, the role\nintent in `[roles]`. Refused the way an undeclared hook is never\ninvoked, and the same remedy either way: declare it, and let a human\nread it at install.",
+          "type": "string"
+        },
+        {
+          "const": "forbidden",
+          "description": "The host will not perform this ask **whatever the manifest says**, and\ndeclaring harder will not change the answer.\n\nDistinct from [`Undeclared`](Self::Undeclared) because the remedy is\ndifferent: there the plugin author edits the manifest, here they must\nask for something else. The standing case is verifier independence — a\n`child_turn` whose role intent resolves to the **worker's** seat would\nlet a plugin grade the work with the model that did it, which is the\nself-grading the staged pipeline's roster reported on\n(`crates/stella-pipeline`, deleted in #3865) and which a plugin may not\nbuy at all.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported",
+          "description": "This host does not implement the capability at all. A declared gap on\nthe host's side, not a fault of the plugin's.",
+          "type": "string"
+        },
+        {
+          "const": "allowance-spent",
+          "description": "The per-point host-call allowance is spent. The plugin's declared\n`max_calls` is an ask; this is the clamp answering.",
+          "type": "string"
+        },
+        {
+          "const": "unavailable",
+          "description": "The capability is implemented but this host has nothing behind it — no\ncontext plane configured, no candidate workspace for this run.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "The host performed the call and it failed.",
+          "type": "string"
+        }
+      ]
+    },
+    "MergeReport": {
+      "additionalProperties": false,
+      "description": "The pull request `deliver_merge` merged.\n\nOne field. The ask succeeding is the whole answer. A merge that did not\nhappen comes back as a refusal naming what the host saw, not as a report\nwith a false flag in it. The number is here so a driver that sent two asks\ncan tell which one landed.",
+      "properties": {
+        "pr": {
+          "description": "The pull request that merged.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pr"
+      ],
+      "type": "object"
+    },
+    "OpenReport": {
+      "additionalProperties": false,
+      "description": "The pull request `deliver_open` opened.",
+      "properties": {
+        "branch": {
+          "description": "The branch it carries.",
+          "type": "string"
+        },
+        "issue": {
+          "description": "The unit it closes.",
+          "type": "string"
+        },
+        "pr": {
+          "description": "The pull request, as the forge numbers it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue",
+        "pr",
+        "branch"
+      ],
+      "type": "object"
+    },
+    "PullRequestArgs": {
+      "additionalProperties": false,
+      "description": "Which pull request an ask is about: the forge's own number, as a string, opaque to the driver — a second forge numbers differently, and a driver hands back what the host gave it.",
+      "properties": {
+        "pr": {
+          "description": "The pull request.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pr"
+      ],
+      "type": "object"
+    },
+    "ReadyReport": {
+      "additionalProperties": false,
+      "description": "The pull request `deliver_ready` took out of draft.\n\nOne field, on [`MergeReport`]'s terms: the ask succeeding is the whole\nanswer, and a pull request that stayed a draft comes back as a refusal\nnaming what the host saw.",
+      "properties": {
+        "pr": {
+          "description": "The pull request that is now out of draft.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pr"
+      ],
+      "type": "object"
+    },
+    "SweepReceipts": {
+      "additionalProperties": false,
+      "description": "How much of the closure ledger one `sweep_regress` draw could re-ask.",
+      "properties": {
+        "checked": {
+          "description": "Those whose cited change could be looked for on the base.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "skipped": {
+          "description": "Those that could not be, one entry per reason.",
+          "items": {
+            "$ref": "#/$defs/SweepSkip"
+          },
+          "type": "array"
+        },
+        "total": {
+          "description": "Receipts on file.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "total",
+        "checked"
+      ],
+      "type": "object"
+    },
+    "SweepReport": {
+      "additionalProperties": false,
+      "description": "What one draw from one supply produced.\n\nThree counts and the keys, because a driver decides what to do next from\nthem. A sweep that offered nothing means the supply is dry and the loop\nshould watch. A sweep that offered plenty and filed none means the seen set\nis holding it all back. Those are different states and call for different\nanswers.",
+      "properties": {
+        "filed": {
+          "description": "The tracker keys the sweep filed, as the tracker spells them.\n\nShorter than [`Self::fresh`] when a filing was refused or read as a\nrepeat. Both are ordinary answers, and neither is an error.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "fresh": {
+          "description": "How many of those the seen set did not already hold.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "offered": {
+          "description": "How many findings the supply offered, before the seen set was read.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "receipts": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SweepReceipts"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the closure ledger could answer, for the supply that reads one.\n\nAbsent for `sweep_meta`, which folds the cycle ledger and reads no\nreceipts."
+        },
+        "supply": {
+          "$ref": "#/$defs/SweptSupply",
+          "description": "Which supply this is a report about."
+        }
+      },
+      "required": [
+        "supply",
+        "offered",
+        "fresh"
+      ],
+      "type": "object"
+    },
+    "SweepSkip": {
+      "additionalProperties": false,
+      "description": "One reason receipts could not be re-checked, and how many carried it.",
+      "properties": {
+        "count": {
+          "description": "How many receipts this reason accounts for.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "$ref": "#/$defs/SweepSkipReason",
+          "description": "Why."
+        }
+      },
+      "required": [
+        "reason",
+        "count"
+      ],
+      "type": "object"
+    },
+    "SweepSkipReason": {
+      "description": "Why one closed issue's receipt could not be re-checked.\n\nA receipt says what a closure cited and whether that change was on the base\nbranch at the time. Missing either fact makes *gone* and *never seen* look\nalike, and filing the wrong one of those costs a person an hour.",
+      "oneOf": [
+        {
+          "const": "no_change_cited",
+          "description": "The closure cited no change at all.",
+          "type": "string"
+        },
+        {
+          "const": "unknown_at_close",
+          "description": "The host could not tell whether the change was on the base at the time.",
+          "type": "string"
+        },
+        {
+          "const": "absent_at_close",
+          "description": "The change was already absent when the issue closed.",
+          "type": "string"
+        }
+      ]
+    },
+    "SweptSupply": {
+      "description": "Which supply a sweep drew from.\n\nEchoed on the answer, so a driver that pipelines two asks can read one\nreport without joining it back to the ask that produced it.",
+      "oneOf": [
+        {
+          "const": "regress",
+          "description": "The closed issues this loop has claimed to fix.",
+          "type": "string"
+        },
+        {
+          "const": "meta",
+          "description": "The loop's own cycle ledger.",
+          "type": "string"
+        }
+      ]
+    },
+    "UnitArgs": {
+      "additionalProperties": false,
+      "description": "The unit of backlog an ask is about.\n\nThe tracker's own key, as [`BacklogEntry::key`] spelled it. Opaque to the\ndriver, which hands back what the host handed it and never parses it — a\nsecond tracker spells its keys `STELLA-42` and the loop's policy must not\nhave an opinion about that.",
+      "properties": {
+        "issue": {
+          "description": "The tracker key.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue"
+      ],
+      "type": "object"
+    },
+    "WorkReport": {
+      "additionalProperties": false,
+      "description": "The session's unit of work, as the three `work` verbs report it.",
+      "properties": {
+        "branch": {
+          "description": "The branch the work sits on, for `deliver` to push. Empty unless the\ntree holds a change.",
+          "type": "string"
+        },
+        "detail": {
+          "description": "What the turn said, or why the unit did not finish. Empty when there is\nnothing to add.",
+          "type": "string"
+        },
+        "issue": {
+          "description": "The unit, or empty when the session holds none.",
+          "type": "string"
+        },
+        "stat": {
+          "description": "The summary line `git` printed for what the turn left behind. Empty\nunless the tree holds a change.",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/WorkState",
+          "description": "Where the unit stands."
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "type": "object"
+    },
+    "WorkState": {
+      "description": "Where a unit of work stands.\n\n[`Self::NoChange`] is **not** a failure and the two are separate cases for\nthat reason: an issue the loop cannot act on is a real answer, and folding\nit into failure is how a loop learns to report noise\n(`crates/stella-cli/src/self_driving_cmd/work.rs` argues it at the door\nthat produces it).",
+      "oneOf": [
+        {
+          "const": "idle",
+          "description": "This session holds no unit. The answer to a `work_status` asked before\nanything was started, and after a `work_abandon`.",
+          "type": "string"
+        },
+        {
+          "const": "changed",
+          "description": "The turn ran and left a change on the branch.",
+          "type": "string"
+        },
+        {
+          "const": "no_change",
+          "description": "The turn ran and changed nothing.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "The turn did not complete.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The four messages the driver channel carries, and every payload they carry. DriveRequest opens a session; DriverCallRequest is a capability ask a driver makes mid-session; DriverCallResponse is the host's answer to one; DriveResponse ends the session, naming what should happen next. This document is a definitions container, not a union: the four are not interchangeable. The host-call channel crosses the same pipes and stays corpus-only in wrapper.wire.json, because one of its answers is an untagged union — see crates/stella-plugin/src/wire_schema.rs.",
+  "title": "StellaDriverChannel"
+}

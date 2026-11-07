@@ -894,6 +894,7 @@ pub struct RecallFrame {
 /// human reads when the plugin reports what it could not get.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct HostCallFailure {
     /// Which refusal, as the plugin's own `match` reads it.
     pub refusal: HostCallRefusal,
@@ -931,6 +932,7 @@ impl std::fmt::Display for HostCallFailure {
 /// means the host tried.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum HostCallRefusal {
     /// The plugin's manifest does not declare the thing that was asked for —
     /// this capability in `[loop] calls`, or, for `child_turn`, the role

@@ -899,6 +899,14 @@ async fn an_ask_carrying_another_verbs_arguments_is_refused() {
         .expect_err("work_status reads no arguments");
     assert_eq!(unread.refusal, HostCallRefusal::Failed);
     assert!(unread.detail.contains("work_start"), "{unread}");
+
+    // backlog_next reads no table either, so a table sent with it is refused.
+    let dropped = host
+        .perform(DriverCall::BacklogNext, work_on("41"))
+        .await
+        .expect_err("backlog_next reads no arguments");
+    assert_eq!(dropped.refusal, HostCallRefusal::Failed);
+    assert!(dropped.detail.contains("work_start"), "{dropped}");
 }
 
 /// Abandoning records why. A release with nothing said about it teaches the
