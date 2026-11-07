@@ -235,6 +235,11 @@
       "status": "implemented",
       "title": "ADR 0046: One uppercase label scheme"
     },
+    "adr/0048-an-appraisal-reads-a-window-of-control-trials": {
+      "path": "docs/adr/0048-an-appraisal-reads-a-window-of-control-trials.md",
+      "status": "implemented",
+      "title": "ADR 0048: An appraisal reads a window of control trials"
+    },
     "agent-monitor-protocol": {
       "path": "docs/spec/agent-monitor-protocol.md",
       "status": "living",

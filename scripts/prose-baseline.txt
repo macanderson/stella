@@ -1015,6 +1015,16 @@ crates/stella-cli/src/memory/recall.rs interface-jargon 4
 crates/stella-cli/src/memory/recall.rs issue-reference 42
 crates/stella-cli/src/memory/recall.rs ranking-flourish 1
 crates/stella-cli/src/memory/recall.rs rust-jargon 1
+crates/stella-cli/src/memory/recall/control.rs filler-adverb 1
+crates/stella-cli/src/memory/recall/control.rs historical-reference 1
+crates/stella-cli/src/memory/recall/control.rs interface-jargon 1
+crates/stella-cli/src/memory/recall/control.rs issue-reference 3
+crates/stella-cli/src/memory/recall/frames.rs filler-adverb 1
+crates/stella-cli/src/memory/recall/frames.rs historical-reference 3
+crates/stella-cli/src/memory/recall/frames.rs issue-reference 12
+crates/stella-cli/src/memory/recall/frames.rs ranking-flourish 1
+crates/stella-cli/src/memory/recall/render.rs issue-reference 3
+crates/stella-cli/src/memory/recall/render.rs rust-jargon 1
 crates/stella-cli/src/memory/reflection.rs empty-epigram 1
 crates/stella-cli/src/memory/reflection.rs filler-adverb 4
 crates/stella-cli/src/memory/reflection.rs historical-reference 2
