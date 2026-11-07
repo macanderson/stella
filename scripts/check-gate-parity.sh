@@ -113,7 +113,7 @@ number_word() {
   50) echo fifty ;; 51) echo fifty-one ;; 52) echo fifty-two ;;
   53) echo fifty-three ;; 54) echo fifty-four ;; 55) echo fifty-five ;;
   56) echo fifty-six ;; 57) echo fifty-seven ;; 58) echo fifty-eight ;;
-  59) echo fifty-nine ;; 60) echo sixty ;;
+  59) echo fifty-nine ;; 60) echo sixty ;; 61) echo sixty-one ;;
   *) echo "" ;;
   esac
 }
@@ -169,6 +169,7 @@ step_command() {
   guard-trigger-coverage) echo 'check-guard-trigger-coverage' ;;
   cargo-flags) echo 'check-cargo-flags' ;;
   release-wiring) echo 'check-release-wiring' ;;
+  release-retry) echo 'check-release-retry' ;;
   priority-scheme) echo 'check-priority-scheme' ;;
   prose) echo 'check-prose' ;;
   line-citations) echo 'check-line-citations' ;;

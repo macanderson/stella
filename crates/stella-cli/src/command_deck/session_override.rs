@@ -406,6 +406,7 @@ mod tests {
             provider,
             turn_timeout: None,
             max_output_tokens: None,
+            max_steps: None,
             plan_mode: false,
             minimal_prompt: false,
             model_pinned_by_flag: false,

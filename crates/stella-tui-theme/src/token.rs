@@ -109,52 +109,52 @@ pub const GOLD_SHADE_ANCHOR: &str = "gold";
 /// The widest spread of channels a neutral may have: max - min.
 ///
 /// One neutral clamp for the whole system, ink to paper. The house system's
-/// zinc ramp leans a few units blue (its 500 step has b - r = 9).
+/// blue-grey ramp leans a few units blue (its muted-ink stop spreads 14).
 ///
 /// A black-and-gold scheme must not let a grey carry a hue: a tan grey competes
 /// with the gold, a blue one fights it. A bound on the spread of the channels
-/// says exactly that, in both directions. 12 is the tightest bound the zinc
-/// ramp clears with room (its widest stop spreads 9) and the loosest that still
-/// rejects a sepia grey spreading 13.
+/// says exactly that, in both directions. 12 is the loosest bound that still
+/// rejects a sepia grey spreading 13, and every stop of the cool ramp clears it
+/// except the kit's two secondary greys on paper, which take the nearest value inside it.
 pub const NEUTRAL_SPREAD: u8 = 12;
 
 // ── Tokens ─────────────────────────────────────────────────────────
 
-/// Canvas. `#09090B`
-pub const BG: Color = Color::Rgb(0x09, 0x09, 0x0B);
+/// Canvas. `#090A0D`
+pub const BG: Color = Color::Rgb(0x09, 0x0A, 0x0D);
 
-/// Panels, cards, code blocks. `#18181B`
-pub const PANEL: Color = Color::Rgb(0x18, 0x18, 0x1B);
+/// Panels, cards, code blocks. `#0F1115`
+pub const PANEL: Color = Color::Rgb(0x0F, 0x11, 0x15);
 
-/// Selected and hover rows. `#1F1F23`
-pub const HL: Color = Color::Rgb(0x1F, 0x1F, 0x23);
+/// Selected and hover rows. `#16191D`
+pub const HL: Color = Color::Rgb(0x16, 0x19, 0x1D);
 
-/// Hairlines, dividers, unfilled meter track. `#27272A`
-pub const BORDER: Color = Color::Rgb(0x27, 0x27, 0x2A);
+/// Hairlines, dividers, unfilled meter track. `#222529`
+pub const BORDER: Color = Color::Rgb(0x22, 0x25, 0x29);
 
-/// Section rules, turn boundaries. `#3F3F46`
-pub const RULE: Color = Color::Rgb(0x3F, 0x3F, 0x46);
+/// Section rules, turn boundaries. `#40444A`
+pub const RULE: Color = Color::Rgb(0x40, 0x44, 0x4A);
 
 /// The brand metal: actions, active states, money, the mark. `#D4AF37`
 pub const GOLD: Color = Color::Rgb(0xD4, 0xAF, 0x37);
 
-/// Tiny live indicators only: spinner, hot marker, drift glyph. `#F1CE65`
-pub const GOLD_BRIGHT: Color = Color::Rgb(0xF1, 0xCE, 0x65);
+/// Tiny live indicators only: spinner, hot marker, drift glyph. `#E3C45B`
+pub const GOLD_BRIGHT: Color = Color::Rgb(0xE3, 0xC4, 0x5B);
 
-/// Secondary emphasis, incoming context, syntax strings. `#A1A1AA`
-pub const SILVER: Color = Color::Rgb(0xA1, 0xA1, 0xAA);
+/// Secondary emphasis, incoming context, syntax strings. `#9A9FA6`
+pub const SILVER: Color = Color::Rgb(0x9A, 0x9F, 0xA6);
 
-/// Syntax types, tertiary labels. `#E4E4E7`
-pub const SILVER_TYPE: Color = Color::Rgb(0xE4, 0xE4, 0xE7);
+/// Syntax types, tertiary labels. `#C7CBD1`
+pub const SILVER_TYPE: Color = Color::Rgb(0xC7, 0xCB, 0xD1);
 
-/// Primary text on the dark canvas, in the deck and off it. `#FFFFFF`
-pub const TEXT: Color = Color::Rgb(0xFF, 0xFF, 0xFF);
+/// Primary text on the dark canvas, in the deck and off it. `#FCFCFE`
+pub const TEXT: Color = Color::Rgb(0xFC, 0xFC, 0xFE);
 
-/// Secondary text. `#8A8A93`
-pub const MUTED: Color = Color::Rgb(0x8A, 0x8A, 0x93);
+/// Secondary text. `#858991`
+pub const MUTED: Color = Color::Rgb(0x85, 0x89, 0x91);
 
-/// Hints, captions, line numbers. `#71717A`
-pub const DIM: Color = Color::Rgb(0x71, 0x71, 0x7A);
+/// Hints, captions, line numbers. `#6E727A`
+pub const DIM: Color = Color::Rgb(0x6E, 0x72, 0x7A);
 
 /// Pass, additive diff sign. `#74C991`
 pub const GREEN: Color = Color::Rgb(0x74, 0xC9, 0x91);
@@ -168,32 +168,32 @@ pub const DIFF_ADD_BG: Color = Color::Rgb(0x10, 0x20, 0x1A);
 /// Removed diff row background. `#241019`
 pub const DIFF_DEL_BG: Color = Color::Rgb(0x24, 0x10, 0x19);
 
-/// Primary text on light surfaces (web light mode only). `#09090B`
-pub const INK: Color = Color::Rgb(0x09, 0x09, 0x0B);
+/// Primary text on light surfaces (web light mode only). `#090A0D`
+pub const INK: Color = Color::Rgb(0x09, 0x0A, 0x0D);
 
-/// The warm light canvas. `#FFFFFF`
-pub const PAPER: Color = Color::Rgb(0xFF, 0xFF, 0xFF);
+/// The light canvas. `#FCFCFE`
+pub const PAPER: Color = Color::Rgb(0xFC, 0xFC, 0xFE);
 
-/// Light panel. `#FFFFFF`
-pub const PAPER_PANEL: Color = Color::Rgb(0xFF, 0xFF, 0xFF);
+/// Light panel. `#FCFCFE`
+pub const PAPER_PANEL: Color = Color::Rgb(0xFC, 0xFC, 0xFE);
 
-/// Light border. `#E4E4E7`
-pub const PAPER_BORDER: Color = Color::Rgb(0xE4, 0xE4, 0xE7);
+/// Light border. `#E3E5E9`
+pub const PAPER_BORDER: Color = Color::Rgb(0xE3, 0xE5, 0xE9);
 
-/// The warm paper page ground, one step under the panel. `#FFFFFF`
-pub const PAPER_GROUND: Color = Color::Rgb(0xFF, 0xFF, 0xFF);
+/// The paper page ground, one step under the panel. `#FCFCFE`
+pub const PAPER_GROUND: Color = Color::Rgb(0xFC, 0xFC, 0xFE);
 
-/// Light surface raised above the page ground. `#FFFFFF`
-pub const PAPER_RAISED: Color = Color::Rgb(0xFF, 0xFF, 0xFF);
+/// Light surface raised above the page ground. `#FCFCFE`
+pub const PAPER_RAISED: Color = Color::Rgb(0xFC, 0xFC, 0xFE);
 
-/// Light hover and selected rows. `#F4F4F5`
-pub const PAPER_ROW: Color = Color::Rgb(0xF4, 0xF4, 0xF5);
+/// Light hover and selected rows. `#ECEEF3`
+pub const PAPER_ROW: Color = Color::Rgb(0xEC, 0xEE, 0xF3);
 
-/// Light seam: the hairline under a border. `#E4E4E7`
-pub const PAPER_SEAM: Color = Color::Rgb(0xE4, 0xE4, 0xE7);
+/// Light seam: the hairline under a border. `#E3E5E9`
+pub const PAPER_SEAM: Color = Color::Rgb(0xE3, 0xE5, 0xE9);
 
-/// Secondary text on light surfaces. `#71717A`
-pub const INK_MUTED: Color = Color::Rgb(0x71, 0x71, 0x7A);
+/// Secondary text on light surfaces. `#6E727A`
+pub const INK_MUTED: Color = Color::Rgb(0x6E, 0x72, 0x7A);
 
 /// Warning: the one status the core palette does not name. `#EB8960`
 pub const WARNING: Color = Color::Rgb(0xEB, 0x89, 0x60);

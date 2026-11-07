@@ -400,6 +400,9 @@ want_plan "the light tier caps the batch at 5 whatever the queue holds" \
 # ---------------------------------------------------------------------------
 head_ "queue — ranked P0 > P1 > P2, oldest first inside a rank"
 
+# 103 carries the uppercase `KIND:BUG` and the others the old `bug`. The loop
+# reads both as one label, so the ranking below holds for either spelling.
+
 QFIX="$ROOT/queue-fixture.json"
 cat > "$QFIX" <<'JSON'
 [
@@ -408,7 +411,7 @@ cat > "$QFIX" <<'JSON'
   {"number": 102, "title": "aged P1",   "createdAt": "2026-01-01T00:00:00Z", "url": "u",
    "labels": [{"name": "bug"}, {"name": "P1"}]},
   {"number": 103, "title": "the P0",    "createdAt": "2026-08-01T00:00:00Z", "url": "u",
-   "labels": [{"name": "bug"}, {"name": "P0"}]},
+   "labels": [{"name": "KIND:BUG"}, {"name": "P0"}]},
   {"number": 104, "title": "untriaged", "createdAt": "2025-01-01T00:00:00Z", "url": "u",
    "labels": [{"name": "triage"}]},
   {"number": 105, "title": "a feature", "createdAt": "2025-01-01T00:00:00Z", "url": "u",

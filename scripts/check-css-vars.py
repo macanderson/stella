@@ -25,6 +25,15 @@ guesses at the cascade would produce false failures on the files it is least
 able to reason about, and a guard that cries wolf gets deleted rather than
 fixed.
 
+**A sheet's own ``@import`` counts as part of it.** ``docs/brand/css/tokens.css``
+reads the corner scale from the house kit's ``house-tokens.css``, which the
+brand sync copies in beside it, and it says so with
+``@import "./house-tokens.css"``. That import is written in the sheet, so this
+check follows it with no guess about a page's cascade: a declaration in an
+imported file counts as declared. Only a relative path is followed. An import
+that names a missing file is a failure, because the browser drops it and every
+``var()`` that leaned on it.
+
 Compiles nothing, so it is a ``guards-fast`` step.
 
     ./scripts/check-css-vars.py [file ...]
@@ -52,6 +61,8 @@ SHEETS = (
 COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 DECL_RE = re.compile(r"(--[A-Za-z0-9_-]+)\s*:")
 REF_RE = re.compile(r"var\(\s*(--[A-Za-z0-9_-]+)")
+# `@import "./x.css";` or `@import url("./x.css");`, with either quote.
+IMPORT_RE = re.compile(r"""@import\s+(?:url\(\s*)?["']([^"']+)["']""")
 
 
 def blank_comments(text: str) -> str:
@@ -65,17 +76,46 @@ def blank_comments(text: str) -> str:
     return COMMENT_RE.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
 
 
+def display(path: Path) -> Path | str:
+    """*path* relative to the repository when it sits inside it."""
+    try:
+        return path.relative_to(REPO_ROOT)
+    except ValueError:
+        return path
+
+
+def imported_declarations(path: Path, text: str, failures: list[str], seen: set[Path]) -> set[str]:
+    """The properties declared by every file *text* imports by a relative path.
+
+    Follows imports of imports, and visits each file once, so a cycle ends.
+    An import of a missing file adds a line to *failures*.
+    """
+    declared: set[str] = set()
+    for target in IMPORT_RE.findall(text):
+        if not target.startswith(("./", "../")):
+            continue
+        child = (path.parent / target).resolve()
+        if child in seen:
+            continue
+        seen.add(child)
+        if not child.is_file():
+            failures.append(f"  {display(path)}  @import {target} -- no such file beside the sheet")
+            continue
+        child_text = blank_comments(child.read_text(encoding="utf-8"))
+        declared |= set(DECL_RE.findall(child_text))
+        declared |= imported_declarations(child, child_text, failures, seen)
+    return declared
+
+
 def check(path: Path) -> list[str]:
     """Return one line per dangling reference in *path*."""
-    try:
-        rel: Path | str = path.relative_to(REPO_ROOT)
-    except ValueError:
-        rel = path
+    rel = display(path)
 
     text = blank_comments(path.read_text(encoding="utf-8"))
-    declared = set(DECL_RE.findall(text))
-
     failures: list[str] = []
+    declared = set(DECL_RE.findall(text))
+    declared |= imported_declarations(path, text, failures, {path.resolve()})
+
     seen: set[str] = set()
     for lineno, line in enumerate(text.splitlines(), start=1):
         for name in REF_RE.findall(line):

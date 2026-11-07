@@ -295,13 +295,15 @@ else
   esac
 fi
 
-# Unverified, nothing open yet: opens one, labelled `main-unverified` rather
-# than `main-red`. "Nothing verified this commit" is not "this commit is
+# Unverified, nothing open yet: opens one, labelled `MAIN-UNVERIFIED` rather
+# than `MAIN-RED`. "Nothing verified this commit" is not "this commit is
 # broken." main-red-hold.yml must not arm on an absence of information.
 want_announce "an unverified commit with nothing open creates an issue" expect-fail \
   "$unverified_commits" "$unverified_runs" "gh issue create"
-want_announce "...labelled main-unverified, not main-red" expect-fail \
-  "$unverified_commits" "$unverified_runs" "main-unverified"
+want_announce "...labelled MAIN-UNVERIFIED, not MAIN-RED" expect-fail \
+  "$unverified_commits" "$unverified_runs" "--label MAIN-UNVERIFIED"
+want_announce "...after it makes the label in the manifest's colour" expect-fail \
+  "$unverified_commits" "$unverified_runs" "gh label create MAIN-UNVERIFIED --color D5584D"
 want_announce "...naming the commit nothing verified" expect-fail \
   "$unverified_commits" "$unverified_runs" "${A:0:8}"
 want_announce "...with a Definition of done section" expect-fail \
@@ -384,6 +386,51 @@ case "$out" in
     fail=$((fail + 1)); echo "FAIL a pending run with nothing open touched the tracker:"; echo "$out" ;;
   *) pass=$((pass + 1)); echo "ok   ...and a pending run with nothing open files nothing" ;;
 esac
+
+# A stale list has rows, but not the new ones. On 2026-09-14, 2026-09-15 and
+# 2026-09-24 a list like that named all ten commits as missing. Each had a
+# green `ci` run a day old. The read by commit is the second source. These
+# cases pin what each of its answers does.
+stale_commits="$(commit $A 'a merge the list did not hold')"
+stale_runs="$B completed success $(long_ago)"
+found_by_commit="$A completed success $(now_iso)"
+
+want_announce "a run the list missed but the read by commit found is verified" expect-pass \
+  "$stale_commits" "$stale_runs" "green, nothing open to close" \
+  --fixture-direct "$found_by_commit"
+want_announce "...and the log says the list missed it" expect-pass \
+  "$stale_commits" "$stale_runs" "did not hold these commits" \
+  --fixture-direct "$found_by_commit"
+want_announce "...and prints what the list held" expect-pass \
+  "$stale_commits" "$stale_runs" "The ci run list held 1 row(s)" \
+  --fixture-direct "$found_by_commit"
+want_announce "...and closes the issue a stale list opened" expect-pass \
+  "$stale_commits" "$stale_runs" "gh issue close 42" \
+  --fixture-direct "$found_by_commit" --fixture-open-issue 42
+
+# The read by commit judges a run the way the list does. A queued run it
+# finds is pending.
+want_announce "a queued run found by commit is pending" expect-pass \
+  "$stale_commits" "$stale_runs" "PENDING" \
+  --fixture-direct "$A queued none $(now_iso)"
+
+# An empty answer confirms the gap. The second read must not turn a real
+# absence into green.
+want_announce "a commit neither read found a run for is still missing" expect-fail \
+  "$stale_commits" "$stale_runs" "missing" \
+  --fixture-direct "$B completed success $(now_iso)"
+want_announce "...and still files the issue" expect-fail \
+  "$stale_commits" "$stale_runs" "gh issue create" \
+  --fixture-direct ""
+want_announce "...and the log shows what the list held" expect-fail \
+  "$stale_commits" "$stale_runs" "The ci run list held 1 row(s)"
+
+# A failed read by commit changes nothing. The list's answer stands, and the
+# log says so.
+want_announce "a failed read by commit leaves the commit missing" expect-fail \
+  "$stale_commits" "$stale_runs" "missing" --fixture-direct-fails
+want_announce "...and says the read failed" expect-fail \
+  "$stale_commits" "$stale_runs" "read by commit failed" --fixture-direct-fails
 
 # ── the real repository ──────────────────────────────────────────────────────
 # It must not fabricate against real history. Skipped without `gh`, because

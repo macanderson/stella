@@ -209,6 +209,11 @@ Every flag below works in either position: `stella --spend-limit 5 run "…"` an
     clamped to the real ceiling rather than sent as written, and wins over
     `[models.output_caps]` and per-agent `params.max_tokens`. Env `STELLA_MAX_OUTPUT_TOKENS`.
   </OptionCard>
+  <OptionCard name="--max-steps <n>" defaultValue="no step cap">
+    Stop a turn after this many steps, for a CI job or a scripted batch that must end after
+    a known number of model calls. Applies to every role and stops between steps, never
+    mid-tool. `0` is refused. Env `STELLA_MAX_STEPS`.
+  </OptionCard>
   <OptionCard name="--plain" defaultValue="off">
     Use the plain line-based REPL for chat instead of the Command Deck. Also
     auto-selected on a non-TTY. Env `STELLA_PLAIN=1`.

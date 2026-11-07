@@ -804,13 +804,9 @@ mod tests {
     /// scope pointed at an empty directory inside it — so what this file says
     /// is what `Settings::load` sees.
     ///
-    /// This used to claim the user scope was "already inert under
-    /// `cfg(test)`", citing the `settings::user_home_dir` thread-local. It was
-    /// not: that thread-local fed the *extension* loaders, while the settings
-    /// chain resolved `~/.stella/settings.json` from the ambient `HOME` — so
-    /// every assertion here quietly depended on the developer's own user-scope
-    /// settings, and passed in CI only because the runner has none (#1139).
-    /// One seam now, and the redirect is real.
+    /// `crate::paths::test_user_home` moves the settings chain and the
+    /// extension loaders together. So no test here reads your own user
+    /// settings (#1139).
     fn workspace(settings: &str) -> (tempfile::TempDir, crate::paths::TestHomeGuard) {
         let dir = tempfile::tempdir().expect("workspace");
         std::fs::create_dir_all(dir.path().join(".stella")).expect("dot dir");

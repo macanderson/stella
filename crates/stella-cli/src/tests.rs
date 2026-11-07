@@ -469,6 +469,35 @@ fn session_flags_parse_after_subcommand() {
     }
 }
 
+/// `--max-steps` is a session flag, so it parses after `run` like every other
+/// one and lands at the root.
+#[test]
+fn max_steps_parses_after_run_as_a_session_flag() {
+    let cli = Cli::try_parse_from(["stella", "run", "fix the build", "--max-steps", "40"])
+        .expect("`--max-steps 40` after `run` must parse");
+    assert_eq!(cli.globals.max_steps, Some(40));
+
+    let absent = Cli::try_parse_from(["stella", "run", "fix the build"]).expect("bare run parses");
+    assert_eq!(absent.globals.max_steps, None, "the flag is opt-in");
+}
+
+/// `0` is refused at the door, naming the flag, with the sentence
+/// `stella-serve` answers a `max_steps: 0` turn with. A zero cap would
+/// run a zero-iteration turn that aborts with "reached the step cap (0)",
+/// which reads as the model failing rather than the caller mistyping.
+#[test]
+fn a_zero_step_cap_is_refused_naming_the_flag() {
+    let err = Cli::try_parse_from(["stella", "run", "fix the build", "--max-steps", "0"])
+        .err()
+        .expect("a zero step cap must not parse");
+    let message = err.to_string();
+    assert!(message.contains("--max-steps"), "{message}");
+    assert!(
+        message.contains("max_steps must be at least 1"),
+        "{message}"
+    );
+}
+
 /// `stella fleet clean` is a maintenance verb on `fleet`, not a prompt, and
 /// it parses with no tasks despite `tasks` being otherwise required (#1217).
 /// The escape hatch matters as much: a prompt that genuinely begins with the

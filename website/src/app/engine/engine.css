@@ -13,7 +13,9 @@
  * `--color-fd-*`) resolve against whichever mode the reader has selected, so
  * using one here would paint light-mode text on this page's ink ground. The
  * `--eng-*` tokens below are therefore derived from the **raw, non-flipping**
- * palette in tokens.css only, and the rest of the file uses nothing else.
+ * palette in tokens.css only, and the rest of the file uses no other colour.
+ * Corners, the page wrap, and the display type read the kit's house tokens
+ * (`--ox-*`), which hold one value in both themes.
  *
  * No hex literals — the site's standing rule. Tints are `color-mix()` over
  * palette tokens (releases.css and global.css already rely on it), so the
@@ -35,16 +37,19 @@
   --eng-bg: var(--stella-canvas);
   --eng-fg: var(--stella-text);
 
-  /* Text ramp on ink. neutral-400 lands ~7.5:1, neutral-500 ~5.8:1 — both
-   * clear AA for body text; neutral-600 (~4:1) is reserved for seams and
-   * large type, never for prose. */
-  --eng-muted: var(--stella-neutral-400);
+  /* Text ramp on ink. `--stella-text-2` is 8.58:1 on the canvas and
+   * `--stella-text-3` is 4.79:1, so both clear AA for body text.
+   * `--eng-muted` once named the retired neutral ramp, which no sheet
+   * declares any more, so every muted line fell back to the tour's white. */
+  --eng-muted: var(--stella-text-2);
   --eng-faint: var(--stella-text-3);
 
   /* Structure. `--eng-rule` is decorative; `--eng-rule-strong` is the one
-   * allowed to carry structure alone. */
+   * allowed to carry structure alone. It once named the retired neutral ramp
+   * too, which dropped every border written with it: the ring's track and
+   * nodes, the ladder's rungs, and the rails list drew no border at all. */
   --eng-rule: color-mix(in srgb, var(--stella-text) 12%, var(--stella-canvas));
-  --eng-rule-strong: var(--stella-neutral-700);
+  --eng-rule-strong: var(--st-rule);
 
   /* Lifted surfaces, warm rather than grey — ink with paper mixed in. */
   --eng-surface: color-mix(in srgb, var(--stella-text) 4%, var(--stella-canvas));
@@ -67,17 +72,30 @@
     var(--stella-canvas)
   );
 
+  /* The tour's ground is ink in both site themes, so a focus ring around
+   * its primary button takes the bright gold. */
+  --button-primary-ring: var(--stella-signal);
+
+  /* The feed's choreography: the first line waits for the station to
+   * arrive, and each line after it follows by one step. */
+  --eng-feed-delay: 400ms;
+  --eng-feed-step: 110ms;
+
   /* Layout constants the stations and the HUD both measure against. */
   --eng-hud-h: 3.25rem;
   --eng-rail-h: 3.5rem;
   --eng-measure: 62ch;
-  --eng-gutter: 1.5rem;
+  --eng-gutter: calc(var(--ox-space) * 6);
 
   position: relative;
   min-height: 100vh;
   background: var(--eng-bg);
   color: var(--eng-fg);
-  font-family: var(--font-mono);
+  /* By the house type rule, the tour's text is Aeonik, the text face, and its
+   * h1 to h3 take the display face from the heading rule in global.css. The
+   * code face is kept for what reads as code or a terminal, in the rule
+   * below. */
+  font-family: var(--font-sans);
   font-size: var(--stella-type-base);
   line-height: 1.65;
 
@@ -96,6 +114,26 @@
 
 /* The kit's terminal grid, at the kit's 5% — decoration behind every station
  * (z-index 0, under `.eng-main`) and under `pointer-events: none`. */
+/* The code face, for what reads as code or a terminal: the goal's command
+ * line, the event feed, tool names, file paths, a test's FAIL or PASS, and
+ * the station and rung numbers and rail stops, which are styled as a CLI.
+ * The brand name in running text is set in it too, as on the landing page.
+ * The terminal panels and deck shots carry the code face from global.css.
+ * No other rule in this sheet sets the code face. */
+.eng-goal,
+.eng-feed-body,
+.eng-bay-tool,
+.eng-gov-path,
+.eng-flip-state,
+.eng-overline,
+.eng-rail-stop,
+.eng-rail-compact,
+.eng-rail-hint,
+.eng-ladder-num,
+.eng-brand-face {
+  font-family: var(--font-mono);
+}
+
 .eng-tour::before {
   content: "";
   position: fixed;
@@ -118,7 +156,12 @@
   outline: none;
 }
 
-.eng-tour a {
+/* The default for a link on the tour. `:where()` keeps it at one class of
+ * specificity, so any link class later in either sheet wins over it. Written
+ * as `.eng-tour a`, it beat `.eng-cta`, `.eng-cta-quiet`, and
+ * `.eng-rail-stop`: the primary button's label drew gold on its gold fill,
+ * and the rail stops drew gold and underlined. */
+.eng-tour :where(a) {
   color: var(--eng-accent);
   text-decoration: underline;
   text-decoration-thickness: 1px;
@@ -129,7 +172,7 @@
     transparent
   );
 }
-.eng-tour a:hover {
+.eng-tour :where(a):hover {
   text-decoration-color: currentColor;
 }
 .eng-tour :focus-visible {
@@ -151,7 +194,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: calc(var(--ox-space) * 4);
   padding: 0 var(--eng-gutter);
   border-bottom: 1px solid var(--eng-rule);
   background: color-mix(in srgb, var(--stella-canvas) 82%, transparent);
@@ -165,7 +208,7 @@
 .eng-hud-lockup {
   display: inline-flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: calc(var(--ox-space) * 2.4);
   text-decoration: none;
   color: var(--eng-fg);
 }
@@ -191,7 +234,7 @@
 .eng-hud-exit {
   display: flex;
   align-items: center;
-  gap: 1.25rem;
+  gap: calc(var(--ox-space) * 5);
   font-size: var(--stella-type-xs);
 }
 .eng-hud-exit a {
@@ -219,7 +262,7 @@
   min-height: var(--eng-rail-h);
   display: flex;
   align-items: center;
-  gap: 1.25rem;
+  gap: calc(var(--ox-space) * 5);
   padding: 0 var(--eng-gutter);
   border-top: 1px solid var(--eng-rule);
   background: color-mix(in srgb, var(--stella-canvas) 82%, transparent);
@@ -233,19 +276,18 @@
 /* The travelled distance, as a gold hairline along the top edge. */
 .eng-rail-progress {
   position: absolute;
-  top: -1px;
+  top: calc(var(--ox-space) * -0.25);
   inset-inline-start: 0;
   height: 1px;
   width: var(--eng-progress, 0%);
   background: var(--eng-accent);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--eng-accent) 60%, transparent);
   transition: width var(--stella-duration-slow) var(--stella-ease-arrive);
 }
 
 .eng-rail-stops {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: calc(var(--ox-space) * 1);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -261,9 +303,9 @@
 .eng-rail-stop {
   display: inline-flex;
   align-items: baseline;
-  gap: 0.45rem;
-  padding: 0.35rem 0.6rem;
-  border-radius: 0.375rem;
+  gap: calc(var(--ox-space) * 1.8);
+  padding: calc(var(--ox-space) * 1.4) calc(var(--ox-space) * 2.4);
+  border-radius: var(--ox-radius-md);
   text-decoration: none;
   color: var(--eng-faint);
   white-space: nowrap;
@@ -301,7 +343,7 @@
 .eng-rail-compact {
   display: none;
   align-items: baseline;
-  gap: 0.5rem;
+  gap: calc(var(--ox-space) * 2);
   margin: 0;
   flex: 1;
   color: var(--eng-accent);
@@ -325,8 +367,8 @@
   display: flex;
   align-items: center;
   min-height: 100vh;
-  padding: calc(var(--eng-hud-h) + 3.5rem) var(--eng-gutter)
-    calc(var(--eng-rail-h) + 3.5rem);
+  padding: calc(var(--eng-hud-h) + var(--ox-space) * 14) var(--eng-gutter)
+    calc(var(--eng-rail-h) + var(--ox-space) * 14);
   border-bottom: 1px solid var(--eng-rule);
   scroll-margin-top: var(--eng-hud-h);
 }
@@ -347,7 +389,7 @@
 
 .eng-station-inner {
   width: 100%;
-  max-width: 68rem;
+  max-width: var(--ox-wrap);
   margin: 0 auto;
 }
 
@@ -363,7 +405,7 @@
 }
 
 .eng-tour[data-eng-js="true"] .eng-station[data-inview] .eng-station-inner > * {
-  animation: eng-arrive 620ms var(--stella-ease-arrive) both;
+  animation: eng-arrive var(--stella-duration-enter) var(--stella-ease-arrive) both;
   animation-delay: var(--eng-stagger, 0ms);
 }
 
@@ -397,15 +439,15 @@
 /* ── station head ─────────────────────────────────────────────────────────── */
 
 .eng-head {
-  margin-bottom: 1.5rem;
+  margin-bottom: calc(var(--ox-space) * 6);
 }
 
 .eng-overline {
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
-  gap: 0.75rem;
-  margin: 0 0 0.9rem;
+  gap: calc(var(--ox-space) * 3);
+  margin: 0 0 calc(var(--ox-space) * 3.6);
   font-size: var(--stella-type-xs);
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -418,30 +460,32 @@
   color: var(--eng-faint);
 }
 .eng-overline-badge {
-  padding: 0.1rem 0.5rem;
+  padding: calc(var(--ox-space) * 0.4) calc(var(--ox-space) * 2);
   border: 1px solid var(--eng-accent-dim);
-  border-radius: 0.25rem;
+  border-radius: var(--ox-radius-sm);
   color: var(--eng-accent);
   font-size: var(--stella-type-2xs);
   letter-spacing: 0.14em;
 }
 
-/* Display type, sized so a station's heading lands in two or three lines
- * rather than four. The ceiling matters more than the floor here: at the old
- * 3.25rem/4.5rem every heading ran to four lines on a 1440×900 screen and
- * pushed each station's actual content — the ring, the ladder, the deck —
- * below the fold, so the first thing a reader saw at every stop was type. */
+/* Display type, on the kit's marketing scale, sized so a station's heading
+ * lands in two or three lines rather than four. The ceiling matters more
+ * than the floor here: at the old 3.25rem/4.5rem every heading ran to four
+ * lines on a 1440×900 screen and pushed each station's actual content — the
+ * ring, the ladder, the deck — below the fold, so the first thing a reader
+ * saw at every stop was type. So the display title stops at five sixths of
+ * the marketing h1, which is 60px at the kit's 72px. */
 .eng-title {
   margin: 0;
-  font-size: clamp(1.6rem, 3.6vw, 2.75rem);
+  font-size: clamp(var(--ox-m-h3), 3.6vw, var(--ox-m-h2));
   line-height: 1.1;
   letter-spacing: -0.03em;
-  font-weight: 800;
+  font-weight: 700;
   text-wrap: balance;
   max-width: 26ch;
 }
 .eng-title-display {
-  font-size: clamp(2.1rem, 5.6vw, 3.75rem);
+  font-size: clamp(var(--ox-m-h2), 5.6vw, calc(var(--ox-m-h1) * 5 / 6));
   max-width: 17ch;
 }
 /* The one word each station is actually about. */
@@ -450,10 +494,10 @@
 }
 
 .eng-lead {
-  margin: 0 0 2rem;
+  margin: 0 0 calc(var(--ox-space) * 8);
   max-width: var(--eng-measure);
-  font-size: var(--stella-type-md);
-  line-height: 1.7;
+  font-size: var(--ox-m-body);
+  line-height: var(--ox-m-body-leading);
   color: var(--eng-muted);
 }
 .eng-lead em {
@@ -471,11 +515,11 @@
 /* ── fact panels ──────────────────────────────────────────────────────────── */
 
 .eng-fact {
-  padding: 1rem 0 0;
+  padding: calc(var(--ox-space) * 4) 0 0;
   border-top: 1px solid var(--eng-rule);
 }
 .eng-fact-title {
-  margin: 0 0 0.4rem;
+  margin: 0 0 calc(var(--ox-space) * 1.6);
   font-size: var(--stella-type-sm);
   font-weight: 700;
   letter-spacing: -0.01em;
@@ -496,7 +540,7 @@
  * below it. The figure paints its own frame (see .deck-shot in global.css),
  * so this only places it and sets the caption's measure. */
 .eng-deck {
-  margin: 2.5rem 0 0;
+  margin: calc(var(--ox-space) * 10) 0 0;
 }
 
 .eng-deck .deck-shot-cap {
@@ -504,16 +548,16 @@
 }
 
 .eng-feed {
-  margin: 2.5rem 0 0;
+  margin: calc(var(--ox-space) * 10) 0 0;
   border: 1px solid var(--eng-rule);
-  border-radius: 0.5rem;
+  border-radius: var(--ox-radius);
   background: var(--eng-surface);
   overflow: hidden;
 }
 
 .eng-feed-body {
   margin: 0;
-  padding: 0.9rem 1rem;
+  padding: calc(var(--ox-space) * 3.6) calc(var(--ox-space) * 4);
   font-size: var(--stella-type-xs);
   line-height: 1.9;
   color: var(--eng-muted);
@@ -528,8 +572,8 @@
   opacity: 0;
 }
 .eng-tour[data-eng-js="true"] .eng-station[data-inview] .eng-feed-line {
-  animation: eng-feed-line 320ms var(--stella-ease-arrive) both;
-  animation-delay: calc(400ms + var(--eng-i) * 110ms);
+  animation: eng-feed-line var(--stella-duration-reveal) var(--stella-ease-arrive) both;
+  animation-delay: calc(var(--eng-feed-delay) + var(--eng-i) * var(--eng-feed-step));
 }
 @keyframes eng-feed-line {
   from {
@@ -543,7 +587,7 @@
 }
 
 .eng-feed-caption {
-  padding: 0.5rem 1rem;
+  padding: calc(var(--ox-space) * 2) calc(var(--ox-space) * 4);
   border-top: 1px solid var(--eng-rule);
   font-size: var(--stella-type-2xs);
   letter-spacing: 0.08em;
@@ -564,17 +608,17 @@
 
 @media (max-width: 48rem) {
   .eng-tour {
-    --eng-gutter: 1.1rem;
+    --eng-gutter: calc(var(--ox-space) * 4.4);
   }
   .eng-station {
     min-height: auto;
-    padding: calc(var(--eng-hud-h) + 2.5rem) var(--eng-gutter) 3rem;
+    padding: calc(var(--eng-hud-h) + var(--ox-space) * 10) var(--eng-gutter) calc(var(--ox-space) * 12);
   }
   .eng-station:first-child {
     min-height: 100vh;
   }
   .eng-station:last-child {
-    padding-bottom: calc(var(--eng-rail-h) + 3rem);
+    padding-bottom: calc(var(--eng-rail-h) + var(--ox-space) * 12);
   }
   .eng-rail-stops {
     display: none;

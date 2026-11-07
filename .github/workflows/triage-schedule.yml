@@ -1,14 +1,14 @@
 name: Scheduled triage
 
-# SCR-005 splits creating an issue from sizing one: a creator applies `triage`
+# SCR-005 splits creating an issue from sizing one: a creator applies `TRIAGE`
 # and nothing else, and a triage authority assigns the priority. Until this
 # workflow existed the second half ran only when a person remembered. It did
 # not get remembered — the queue reached 128 issues, and 29 of them were P1
 # work nobody could see because the queue label was hiding it.
 #
 # This is the sizing half, on a clock. It reads the issues carrying the bare
-# `triage` label, asks a model to size each one against the repository's own
-# label taxonomy, applies the labels it validated, and takes `triage` off as
+# `TRIAGE` label, asks a model to size each one against the repository's own
+# label taxonomy, applies the labels it validated, and takes `TRIAGE` off as
 # its last write per issue — the ordering `issue-triage.yml` explains, so an
 # interrupted run leaves an issue in the queue rather than half-sized and
 # invisible.
@@ -16,6 +16,17 @@ name: Scheduled triage
 # It refuses out loud. A missing credential, an API rejection, or a reply it
 # cannot parse fails the run, because a sweep that could not size anything
 # must not read like a sweep that found nothing to size.
+#
+# An API rejection also says which kind it is, on the run page, so nobody has
+# to open the job log to find out. `scripts/lib/anthropic-refusal.sh` reads
+# the status and the body. A 400 whose `error.type` is `invalid_request_error`
+# and whose message says the credit balance is too low is reported as
+# `ANTHROPIC CREDIT REFUSAL`: the account needs credit, and no code change
+# will help. Any other non-200 is reported as `ANTHROPIC API REFUSAL` with its
+# status, `error.type` and `error.message`, or with a note that the body was
+# not the API's error JSON. Both land in the step summary and as an error note
+# on the run, and both still fail the run. The report lives in a file of its
+# own, not inline here, so `scripts/test-anthropic-refusal.sh` can drive it.
 
 on:
   schedule:
@@ -46,18 +57,23 @@ jobs:
   triage:
     runs-on: ubuntu-latest
     steps:
-      # Checked out for one file: the SCR that names the priority levels. The
-      # sweep reads them at run time rather than carrying its own copy, which
-      # is what `scripts/check-priority-scheme.py` asks of every file but the
-      # one derived copy in `triage-guard.yml`.
+      # Checked out for `AGENTS.md`, whose standing-decisions block names the
+      # priority levels, and for `scripts/lib/anthropic-refusal.sh`, which
+      # reports an API refusal. The sweep reads the levels at run time rather
+      # than carrying its own copy, which is what
+      # `scripts/check-priority-scheme.py` asks of every file but the one
+      # derived copy in `triage-guard.yml`.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Size every issue in the triage queue
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          SCR: docs/scr/SCR-005-triage-separation-of-duties.md
+          SCHEME_HOME: AGENTS.md
         run: |
           set -euo pipefail
+
+          # shellcheck source=scripts/lib/anthropic-refusal.sh
+          . scripts/lib/anthropic-refusal.sh
 
           if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
             echo "ANTHROPIC_API_KEY: UNAVAILABLE — THIS SWEEP DID NOT RUN" >&2
@@ -65,15 +81,15 @@ jobs:
           fi
 
           # The levels and their meanings, quoted from their only home. An
-          # empty read means the SCR moved or its heading changed, and a sweep
-          # that cannot state what it is sizing against must not size.
-          scheme=$(sed -n '/^Priority scheme:/,/never both\./p' "$SCR")
+          # empty read means the paragraph moved or its heading changed, and a
+          # sweep that cannot state what it is sizing against must not size.
+          scheme=$(sed -n '/^Priority scheme:/,/never both\./p' "$SCHEME_HOME")
           if [ -z "$scheme" ]; then
-            echo "$SCR: the priority scheme did not parse — THIS SWEEP DID NOT RUN" >&2
+            echo "$SCHEME_HOME: the priority scheme did not parse — THIS SWEEP DID NOT RUN" >&2
             exit 1
           fi
 
-          queue=$(gh issue list --repo "$REPO" --state open --label triage \
+          queue=$(gh issue list --repo "$REPO" --state open --label TRIAGE \
             --limit "$MAX_ISSUES" --json number --jq '[.[].number] | join(" ")')
 
           if [ -z "$queue" ]; then
@@ -84,10 +100,54 @@ jobs:
           # The taxonomy is read from the repository rather than written here,
           # so a label added or renamed upstream reaches this sweep without an
           # edit, and a label the model invents fails validation below.
+          #
+          # Each axis is read without regard to case, under its new prefix and
+          # its older one. GitHub keeps one spelling per label, and the rename
+          # from `use-model:` to `MODEL:` and from `size/` to `SIZE:` happens
+          # after this file merges. The sweep reads whichever spelling the
+          # repository holds on the day it runs. Before the rename the kinds
+          # are the plain `bug`, `feature`, `chore`, and `documentation`.
+          #
+          # Each axis gets its own file, and an answer is checked against the
+          # file for its own axis. Checking it against the whole label list let
+          # a reply apply any label the repository carries, such as `MAIN-RED`,
+          # which holds every open pull request. An issue body is public text,
+          # and it can steer the model.
+          #
+          # `grep` exits 1 when nothing matches, and under `pipefail` that
+          # ended the sweep with no message. An empty axis is now named. Pain
+          # may be empty, since an issue may carry none.
           gh label list --repo "$REPO" --limit 300 --json name --jq '.[].name' > /tmp/labels.txt
-          areas=$(grep '^area:' /tmp/labels.txt | paste -sd, -)
-          models=$(grep '^use-model:' /tmp/labels.txt | paste -sd, -)
-          pains=$(grep '^pain:' /tmp/labels.txt | paste -sd, -)
+          axis() { # axis <name> <grep arguments...>
+            local name=$1
+            shift
+            { grep -i "$@" /tmp/labels.txt || true; } > "/tmp/axis-$name.txt"
+          }
+          axis area '^area:'
+          axis model -e '^model:' -e '^use-model:'
+          axis size -e '^size:' -e '^size/'
+          axis kind -e '^kind:' -e '^bug$' -e '^feature$' -e '^chore$' -e '^documentation$'
+          axis pain '^pain:'
+          for required in area model size kind; do
+            if [ ! -s "/tmp/axis-$required.txt" ]; then
+              echo "the repository has no $required labels, so THIS SWEEP DID NOT RUN" >&2
+              exit 1
+            fi
+          done
+          joined() { paste -sd, - < "/tmp/axis-$1.txt"; }
+          areas=$(joined area)
+          models=$(joined model)
+          sizes=$(joined size)
+          kinds=$(joined kind)
+          pains=$(joined pain)
+          # The reply example names labels the repository holds today, so a
+          # reply that copies its shape still passes validation.
+          first() { head -n 1 "/tmp/axis-$1.txt"; }
+          ex_model=$(first model)
+          ex_size=$(first size)
+          ex_kind=$(first kind)
+          ex_area=$(first area)
+          ex_pain=$(first pain)
 
           sized=0
           for n in $queue; do
@@ -104,7 +164,14 @@ jobs:
               --arg scheme "$scheme" \
               --arg areas "$areas" \
               --arg models "$models" \
+              --arg sizes "$sizes" \
+              --arg kinds "$kinds" \
               --arg pains "$pains" \
+              --arg ex_model "$ex_model" \
+              --arg ex_size "$ex_size" \
+              --arg ex_kind "$ex_kind" \
+              --arg ex_area "$ex_area" \
+              --arg ex_pain "$ex_pain" \
               '{
                 model: $model,
                 max_tokens: 400,
@@ -112,21 +179,42 @@ jobs:
                   role: "user",
                   content: (
                     "Size this GitHub issue for the stella repository. Reply with JSON only, no prose.\n\n" +
-                    "priority — pick exactly one level from this scheme, which is quoted from the " +
+                    "priority: exactly one level from this scheme, quoted from the " +
                     "repository policy that defines it:\n" + $scheme + "\n\n" +
-                    "area — one or more, from exactly this list: " + $areas + "\n" +
-                    "use-model — exactly one, from: " + $models + ". Judge by the hardest step the issue implies: " +
-                    "cheap for mechanical work, balanced for routine work against a clear spec, pro for cross-crate " +
-                    "design or subtle correctness, ultra for architecture-critical or novel design.\n" +
-                    "pain — one or more, from exactly this list: " + $pains + "\n\n" +
-                    "Reply as {\"priority\":\"<one level from the scheme>\",\"area\":[\"area:cli\"]," +
-                    "\"use_model\":\"use-model:balanced\",\"pain\":[\"pain:maintainability\"]," +
+                    "model: exactly one tier, from exactly this list: " + $models + "\n" +
+                    "Pick the tier by the hardest step in the issue. " +
+                    "T1 is the Haiku tier, for mechanical, fully specified work. " +
+                    "T2 is the Sonnet tier, for routine implementation from a clear spec. " +
+                    "T3 is the Opus tier, for judgment across crates, invariants, security, or migrations. " +
+                    "T4 is the Fable tier, for architecture-critical or novel design. " +
+                    "If the list holds older names, cheap is T1, balanced is T2, pro is T3, and ultra is T4.\n" +
+                    "size: exactly one, from exactly this list: " + $sizes + "\n" +
+                    "Size is the agent minutes to a merge-ready pull request. " +
+                    "XS (extra small) is 30 or fewer. S (small) is 31 to 90. M (medium) is 91 to 240. " +
+                    "L (large) is 241 to 480. XL (extra large) is more than 480.\n" +
+                    "kind: exactly one, from exactly this list: " + $kinds + "\n" +
+                    "A bug is something that exists and behaves wrongly. " +
+                    "A feature is a new capability a person can use, where none of it exists yet. " +
+                    "An improvement makes an existing capability better. " +
+                    "A chore is maintenance with no visible change. " +
+                    "Documentation is docs, specs, or help text as the main deliverable. " +
+                    "DevOps is CI, workflows, deploys, releases, or developer tooling. " +
+                    "If the list holds only bug, feature, chore, and documentation, pick the nearest.\n" +
+                    "area: exactly one, from exactly this list: " + $areas + "\n" +
+                    "pain: zero or more, from exactly this list: " + $pains + "\n\n" +
+                    "Reply as {\"priority\":\"<one level from the scheme>\",\"model\":\"" + $ex_model + "\"," +
+                    "\"size\":\"" + $ex_size + "\",\"kind\":\"" + $ex_kind + "\",\"area\":\"" + $ex_area + "\"," +
+                    "\"pain\":" + (if $ex_pain == "" then "[]" else "[\"" + $ex_pain + "\"]" end) + "," +
                     "\"why\":\"one short sentence\"}\n\n" +
                     "TITLE: " + $title + "\n\nBODY:\n" + $body
                   )
                 }]
               }' > /tmp/req.json
 
+            # Emptied first. curl writes the file only when a body arrives,
+            # so an empty reply would leave the last issue's 200 in it, and
+            # the report would quote that body as this refusal's.
+            : > /tmp/resp.json
             status=$(curl -sS -o /tmp/resp.json -w '%{http_code}' https://api.anthropic.com/v1/messages \
               -H "x-api-key: $ANTHROPIC_API_KEY" \
               -H 'anthropic-version: 2023-06-01' \
@@ -135,72 +223,89 @@ jobs:
 
             if [ "$status" != "200" ]; then
               echo "issue $n: the API answered $status — THIS SWEEP DID NOT FINISH" >&2
-              head -c 400 /tmp/resp.json >&2
+              report_anthropic_refusal "$status" /tmp/resp.json
               exit 1
             fi
 
             verdict=$(jq -r '.content[0].text' /tmp/resp.json \
               | sed -e 's/^```json//' -e 's/^```//' -e 's/```$//')
 
-            if ! echo "$verdict" | jq -e . >/dev/null 2>&1; then
-              echo "issue $n: the reply was not JSON — skipping, queue label kept" >&2
+            # The reply must be a JSON object. Other JSON, such as a bare
+            # string, made the reads below fail, and `set -e` then ended the
+            # whole sweep.
+            if ! echo "$verdict" | jq -e 'type == "object"' >/dev/null 2>&1; then
+              echo "issue $n: the reply was not a JSON object. Skipping, queue label kept." >&2
               continue
             fi
 
-            labels=$(echo "$verdict" | jq -r '[.priority, .use_model] + (.area // []) + (.pain // []) | join("\n")')
-
-            # Every label is checked against the live list before it is written.
-            # A name the model invented is dropped here rather than failing the
-            # `gh` call halfway through a partial edit.
-            valid=""
+            # Each answer is checked against the file for its own axis, and the
+            # match ignores case, as GitHub does when it adds a label by name.
+            # An answer may be one string or a list. A name not on its axis's
+            # list is dropped here, before any write. Each kept label is one
+            # `<axis><TAB><label>` line in /tmp/valid.txt.
             : > /tmp/valid.txt
-            while IFS= read -r label; do
-              [ -z "$label" ] && continue
-              if grep -qxF "$label" /tmp/labels.txt; then
-                valid="${valid:+$valid,}$label"
-                printf '%s\n' "$label" >> /tmp/valid.txt
-              else
-                echo "issue $n: dropping unknown label '$label'" >&2
-              fi
-            done <<< "$labels"
+            pick() { # pick <axis> <jq path>
+              echo "$verdict" \
+                | jq -r "($2) // [] | if type == \"array\" then .[] else . end | select(type == \"string\" and . != \"\")" \
+                | while IFS= read -r label; do
+                    if grep -qixF -- "$label" "/tmp/axis-$1.txt"; then
+                      printf '%s\t%s\n' "$1" "$label" >> /tmp/valid.txt
+                    else
+                      echo "issue $n: dropping '$label', which is not a $1 label" >&2
+                    fi
+                  done
+            }
+            pick model .model
+            pick size .size
+            pick kind .kind
+            pick area .area
+            pick pain .pain
 
-            # A priority has to have survived validation, and the levels come
-            # from the scheme read above rather than from a pattern spelled
-            # here. A reply naming a level the scheme does not carry lands in
-            # neither list and the issue stays queued.
-            priority=$(echo "$verdict" | jq -r '.priority // ""')
+            # A priority has to be a level the scheme names and a label the
+            # repository carries. The levels come from the scheme read above
+            # rather than from a pattern spelled here. A reply naming a level
+            # the scheme does not carry fails here and the issue stays queued.
+            priority=$(echo "$verdict" | jq -r '.priority // "" | strings')
             if [ -z "$priority" ] \
               || ! echo "$scheme" | grep -qF "\`$priority\`" \
-              || ! echo ",$valid," | grep -qF ",$priority,"; then
-              echo "issue $n: no priority the scheme recognises — skipping, queue label kept" >&2
+              || ! grep -qixF -- "$priority" /tmp/labels.txt; then
+              echo "issue $n: no priority the scheme recognises. Skipping, queue label kept." >&2
               continue
             fi
 
-            # A sizing is four axes, and the taxonomy names all four: the
-            # priority above, at least one `area:`, exactly one `use-model:`,
-            # at least one `pain:`. Gating on the priority alone let a reply
-            # that lost its other three to validation still pass, and the
-            # write that follows is the one unrecoverable step here — `triage`
-            # comes off, the issue leaves the queue, and no later sweep
-            # reconsiders it, so a half-sized issue is as unfindable as the
-            # unsized one this workflow exists to rescue.
-            n_area=$(grep -c '^area:' /tmp/valid.txt || true)
-            n_model=$(grep -c '^use-model:' /tmp/valid.txt || true)
-            n_pain=$(grep -c '^pain:' /tmp/valid.txt || true)
-            if [ "$n_area" -lt 1 ] || [ "$n_model" -ne 1 ] || [ "$n_pain" -lt 1 ]; then
-              echo "issue $n: sized $n_area area / $n_model use-model / $n_pain pain," \
-                "which is not a complete sizing — skipping, queue label kept" >&2
+            # A sizing is six axes, and the label manifest sets the count for
+            # each. The priority above is exactly one. The model tier, the
+            # size, the kind, and the area are exactly one each. Pain labels
+            # are signals. An issue may carry any number of them, or none.
+            #
+            # Gating on the priority alone let a reply that lost its other
+            # axes to validation still pass. The write that follows is the one
+            # step here that cannot be undone. `TRIAGE` comes off, the issue
+            # leaves the queue, and no later sweep looks at it again. A
+            # half-sized issue is as hard to find as the unsized one this
+            # workflow exists to rescue.
+            count() { grep -c "^$1"$'\t' /tmp/valid.txt || true; }
+            n_model=$(count model)
+            n_size=$(count size)
+            n_kind=$(count kind)
+            n_area=$(count area)
+            n_pain=$(count pain)
+            if [ "$n_model" -ne 1 ] || [ "$n_size" -ne 1 ] || [ "$n_kind" -ne 1 ] \
+              || [ "$n_area" -ne 1 ]; then
+              echo "issue $n: sized $n_model model / $n_size size / $n_kind kind / $n_area area / $n_pain pain." \
+                "That is not a complete sizing. Skipping, queue label kept." >&2
               continue
             fi
+            valid=$( { printf '%s\n' "$priority"; cut -f2 /tmp/valid.txt; } | paste -sd, -)
 
             why=$(echo "$verdict" | jq -r '.why // "sized by the scheduled triage sweep"')
 
-            # `triage` comes off last, as its own write: an interrupted run
+            # `TRIAGE` comes off last, as its own write: an interrupted run
             # leaves the issue in the queue for the next sweep rather than
             # sized-but-unfindable.
             gh issue edit "$n" --repo "$REPO" --add-label "$valid"
             gh issue comment "$n" --repo "$REPO" --body "Triage (scheduled sweep): $valid — $why"
-            gh issue edit "$n" --repo "$REPO" --remove-label triage
+            gh issue edit "$n" --repo "$REPO" --remove-label TRIAGE
             sized=$((sized + 1))
             echo "issue $n: $valid"
           done

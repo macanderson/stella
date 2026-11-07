@@ -1015,6 +1015,16 @@ crates/stella-cli/src/memory/recall.rs interface-jargon 4
 crates/stella-cli/src/memory/recall.rs issue-reference 42
 crates/stella-cli/src/memory/recall.rs ranking-flourish 1
 crates/stella-cli/src/memory/recall.rs rust-jargon 1
+crates/stella-cli/src/memory/recall/control.rs filler-adverb 1
+crates/stella-cli/src/memory/recall/control.rs historical-reference 1
+crates/stella-cli/src/memory/recall/control.rs interface-jargon 1
+crates/stella-cli/src/memory/recall/control.rs issue-reference 3
+crates/stella-cli/src/memory/recall/frames.rs filler-adverb 1
+crates/stella-cli/src/memory/recall/frames.rs historical-reference 3
+crates/stella-cli/src/memory/recall/frames.rs issue-reference 12
+crates/stella-cli/src/memory/recall/frames.rs ranking-flourish 1
+crates/stella-cli/src/memory/recall/render.rs issue-reference 3
+crates/stella-cli/src/memory/recall/render.rs rust-jargon 1
 crates/stella-cli/src/memory/reflection.rs empty-epigram 1
 crates/stella-cli/src/memory/reflection.rs filler-adverb 4
 crates/stella-cli/src/memory/reflection.rs historical-reference 2
@@ -3893,7 +3903,6 @@ docs/prose-guidelines.md issue-reference 1
 docs/reference/diagnostics.md filler-adverb 2
 docs/reference/diagnostics.md issue-reference 8
 docs/reference/diagnostics.md rust-jargon 2
-docs/scr/README.md historical-reference 1
 docs/spec/adaptive-context/adaptive-context-plan.md filler-adverb 2
 docs/spec/adaptive-context/adaptive-context-plan.md historical-reference 1
 docs/spec/adaptive-context/adaptive-context-plan.md issue-reference 6

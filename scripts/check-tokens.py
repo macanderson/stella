@@ -220,8 +220,8 @@ def channel(text: str) -> int:
     return int(text, 16) if text[:2].lower() == "0x" else int(text)
 
 
-# A token's CSS name with a hex beside it: `--st-bg: #09090B`, `<td>--st-bg</td>
-# <td>#09090B</td>`, `` `--st-bg` | `#09090B` ``. One line, because every one of
+# A token's CSS name with a hex beside it: `--st-bg: #090A0D`, `<td>--st-bg</td>
+# <td>#090A0D</td>`, `` `--st-bg` | `#090A0D` ``. One line, because every one of
 # the citations in the tree writes the name and the value together and the widest
 # gap between them is twelve characters -- so the window below is four times what
 # any real citation needs and still cannot reach across a table row.
@@ -287,7 +287,7 @@ PAINT_BLIND = (
 )
 
 # A token being *used*, in the two notations this tree writes. A declaration --
-# `--st-bg: #09090B` in a mirrored stylesheet -- is not one of them:
+# `--st-bg: #090A0D` in a mirrored stylesheet -- is not one of them:
 # `comment` had four of those and no reader ever saw the colour.
 VAR_USE = re.compile(r"var\(\s*(--st-[a-z0-9-]+)")
 RUST_USE = re.compile(r"\btoken::([A-Z][A-Z0-9_]*)\b")

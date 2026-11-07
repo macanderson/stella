@@ -556,19 +556,19 @@ fn render_dashboard(
      verdicts; the old block painted cost in --warn, which told every reader
      that spending money was a fault condition. */
   :root {{
-    --void: #000000; --ground: #09090B; --surface: #18181B; --raised: #27272A;
-    --hairline: #27272A; --hairline-strong: #35353D;
-    --identity: #D4AF37; --identity-ink: #09090B;
-    --text: #FFFFFF; --text-2: #A1A1AA; --text-3: #A1A1AA;
+    --void: #040506; --ground: #090A0D; --surface: #0F1115; --raised: #222529;
+    --hairline: #222529; --hairline-strong: #32363D;
+    --identity: #D4AF37; --identity-ink: #090A0D;
+    --text: #FCFCFE; --text-2: #9A9FA6; --text-3: #9A9FA6;
     --ok: #74C991; --warn: #EB8960; --bad: #E0687D;
-    --c1: #FFFFFF; --c2: #A1A1AA; --c3: #A1A1AA; --c4: #71717A;
-    --neutral-mark: #71717A;
-    --ink: #09090B;
-    --accent: #FFFFFF;
-    --accent-wash: rgba(255,255,255,.08);
-    --accent-edge: rgba(255,255,255,.38);
-    --sunken: #09090B;
-    --control-edge: #A1A1AA;
+    --c1: #FCFCFE; --c2: #9A9FA6; --c3: #9A9FA6; --c4: #6E727A;
+    --neutral-mark: #6E727A;
+    --ink: #090A0D;
+    --accent: #FCFCFE;
+    --accent-wash: rgba(252,252,254,.08);
+    --accent-edge: rgba(252,252,254,.38);
+    --sunken: #090A0D;
+    --control-edge: #9A9FA6;
 
     /* One face. The product lives in a terminal, so the brand speaks in
        monospace — and this artifact is a measurement, where a proportional
@@ -608,12 +608,12 @@ fn render_dashboard(
      black page on a white desktop.
 
      Contrast, computed against WCAG 2.1 relative luminance, worst case on
-     --surface (#F7F7FA):
+     --surface (#F6F7FA):
 
        --text 18.97:1  --text-2 7.49:1  --text-3 3.10:1
        --ok 5.91:1     --warn 5.99:1    --bad 6.74:1    --identity 8.33:1
 
-     and dark against --raised (#27272A):
+     and dark against --raised (#222529):
 
        --text 16.13:1  --text-2 7.31:1  --text-3 3.70:1
        --ok 8.52:1     --warn 7.81:1    --bad 6.17:1    --identity 6.34:1
@@ -631,40 +631,40 @@ fn render_dashboard(
      `each_surface_declares_one_scheme_per_gate` is what makes that true. It
      was a sentence here and nothing else until #4942, and the Observatory is
      what a sentence buys: its two gates drifted seventeen roles apart, and an
-     OS-light reader read #E4E4E7 on paper at 1.68:1 (#4296). */
+     OS-light reader read pale grey text on paper at 1.68:1 (#4296). */
   @media (prefers-color-scheme: light) {{
     :root:not([data-theme="dark"]) {{
       color-scheme: light;
-      --void: #FFFFFF; --ground: #FFFFFF; --surface: #F7F7FA; --raised: #FFFFFF;
-      --hairline: #E9E9EE; --hairline-strong: #D0D0D8;
-      --identity: #8a7223; --identity-ink: #FFFFFF;
-      --text: #09090B; --text-2: #71717A; --text-3: #A1A1AA;
+      --void: #FCFCFE; --ground: #FCFCFE; --surface: #F6F7FA; --raised: #FCFCFE;
+      --hairline: #E7EAEE; --hairline-strong: #CDD1D8;
+      --identity: #806719; --identity-ink: #FCFCFE;
+      --text: #090A0D; --text-2: #6E727A; --text-3: #858991;
       --ok: #006933; --warn: #8d3b19; --bad: #952141;
-      --c1: #09090B; --c2: #71717A; --c3: #A1A1AA; --c4: #A1A1AA;
-      --neutral-mark: #A1A1AA;
-      --ink: #FFFFFF;
-      --accent: #09090B;
-      --accent-wash: rgba(9,9,11,.06);
-      --accent-edge: rgba(9,9,11,.28);
-      --sunken: #F7F7FA;
-      --control-edge: #A1A1AA;
+      --c1: #090A0D; --c2: #6E727A; --c3: #858991; --c4: #858991;
+      --neutral-mark: #858991;
+      --ink: #FCFCFE;
+      --accent: #090A0D;
+      --accent-wash: rgba(9,10,13,.06);
+      --accent-edge: rgba(9,10,13,.28);
+      --sunken: #F6F7FA;
+      --control-edge: #858991;
     }}
   }}
   :root[data-theme="light"] {{
     color-scheme: light;
-    --void: #FFFFFF; --ground: #FFFFFF; --surface: #F7F7FA; --raised: #FFFFFF;
-    --hairline: #E9E9EE; --hairline-strong: #D0D0D8;
-    --identity: #8a7223; --identity-ink: #FFFFFF;
-    --text: #09090B; --text-2: #71717A; --text-3: #A1A1AA;
+    --void: #FCFCFE; --ground: #FCFCFE; --surface: #F6F7FA; --raised: #FCFCFE;
+    --hairline: #E7EAEE; --hairline-strong: #CDD1D8;
+    --identity: #806719; --identity-ink: #FCFCFE;
+    --text: #090A0D; --text-2: #6E727A; --text-3: #858991;
     --ok: #006933; --warn: #8d3b19; --bad: #952141;
-    --c1: #09090B; --c2: #71717A; --c3: #A1A1AA; --c4: #A1A1AA;
-    --neutral-mark: #A1A1AA;
-    --ink: #FFFFFF;
-    --accent: #09090B;
-    --accent-wash: rgba(9,9,11,.06);
-    --accent-edge: rgba(9,9,11,.28);
-    --sunken: #F7F7FA;
-    --control-edge: #A1A1AA;
+    --c1: #090A0D; --c2: #6E727A; --c3: #858991; --c4: #858991;
+    --neutral-mark: #858991;
+    --ink: #FCFCFE;
+    --accent: #090A0D;
+    --accent-wash: rgba(9,10,13,.06);
+    --accent-edge: rgba(9,10,13,.28);
+    --sunken: #F6F7FA;
+    --control-edge: #858991;
   }}
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
   html {{ color-scheme: dark; }}
@@ -684,7 +684,7 @@ fn render_dashboard(
      here that it means something.
 
      So the asterisk carries the identity and the word does not. It inverts
-     with the theme for free: --text is #FFFFFF on the dark ground and #09090B
+     with the theme for free: --text is #FCFCFE on the dark ground and #090A0D
      on the light one, which is the "white text, or black on a light
      background" the brand asks for, without this rule naming either. */
   h1 {{ font-size: var(--fs-xl); font-weight: 600; letter-spacing: -.02em; margin-bottom: 4px; color: var(--text); }}
@@ -775,10 +775,10 @@ fn render_dashboard(
      cartridge. */
   @media print {{
     :root {{
-      --ground: #FFFFFF; --surface: #FFFFFF; --raised: #FFFFFF; --sunken: #FFFFFF;
-      --hairline: #D0D0D8; --hairline-strong: #777782;
-      --text: #09090B; --text-2: #333333; --text-3: #555555;
-      --accent: #09090B; --ink: #FFFFFF; --identity: #8a7223;
+      --ground: #FCFCFE; --surface: #FCFCFE; --raised: #FCFCFE; --sunken: #FCFCFE;
+      --hairline: #CDD1D8; --hairline-strong: #737882;
+      --text: #090A0D; --text-2: #333333; --text-3: #555555;
+      --accent: #090A0D; --ink: #FCFCFE; --identity: #806719;
       --accent-wash: transparent;
     }}
     body {{ padding: 0; }}

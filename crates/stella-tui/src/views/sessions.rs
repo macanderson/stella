@@ -5,19 +5,19 @@
 //!
 //! ```text
 //! ╭ sessions · 2 live · 3 recent ──────────────────── n new · h 12 more ╮
-//! │ ◐ stella: wire the dedup digest              this session · 3h ago │
-//! │   Wired a dedup digest into the finding store and its tests.       │
+//! │ ◐ Wire the dedup digest                      this session · 3h ago │
 //! │   14 turns · $0.45 · glm-5.2                                       │
-//! │ ○ stella: fix the parser                                 ↩ 2d ago │
+//! │ ○ Fix the parser                                         ↩ 2d ago │
 //! │   …                                                                │
 //! ╰ ↑↓ select · ↵ resume · n new · h all · a archive · x delete · esc ╯
 //! ```
 //!
-//! Three rows per session: the title with its phase glyph and age, the
-//! one-sentence description the driver wrote for it (the session's own
-//! summary until then), and its numbers — turns, spend, the model. The rows
-//! come from [`crate::deck_ui::sessions::visible_session_rows`], so what is
-//! listed and in what order is decided once, for the keys and the paint.
+//! Two rows per session. The first is the session name with its phase glyph
+//! and age. The second is its numbers: turns, spend, and the model. The name
+//! is the short subject Stella drew from the first prompt, so the overlay
+//! carries no summary line under it. The rows come from
+//! [`crate::deck_ui::sessions::visible_session_rows`], so what is listed and
+//! in what order is decided once, for the keys and the paint.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -32,7 +32,7 @@ use crate::deck_ui::sessions::{hidden_session_rows, is_live, visible_session_row
 use crate::envelope::SessionPhase;
 
 /// Rows one session spends.
-const ROWS_PER_SESSION: usize = 3;
+const ROWS_PER_SESSION: usize = 2;
 
 /// Draw the overlay over `area`.
 pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer) {
@@ -106,23 +106,6 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
         }
         head.push(Span::styled(tag, if session.mine { muted } else { dim }));
         lines.push(Line::from(head));
-
-        let about = session
-            .description
-            .as_deref()
-            .filter(|d| !d.is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| {
-                if session.summary.is_empty() {
-                    "no work recorded yet".to_string()
-                } else {
-                    session.summary.clone()
-                }
-            });
-        lines.push(Line::from(vec![
-            Span::raw("    "),
-            Span::styled(truncate(&about, inner_w.saturating_sub(4)), muted),
-        ]));
 
         let mut stats: Vec<Span<'static>> = vec![Span::raw("    ")];
         stats.push(Span::styled(
@@ -272,11 +255,11 @@ mod tests {
         }
     }
 
-    /// A row states what the session did and what it cost — the description
-    /// when the driver has written one, the summary until then — and the
-    /// registry's history is counted behind `h`, never listed over it.
+    /// A row names the session and states what it cost. The summary and the
+    /// description stay off the list. The registry's older history is counted
+    /// behind `h` and is not listed.
     #[test]
-    fn a_row_carries_description_turns_spend_and_model() {
+    fn a_row_carries_the_name_turns_spend_and_model() {
         let mut model = WorkspaceModel::new();
         model.now_ms = 40 * 24 * 60 * 60 * 1000;
         let mut ui = DeckUi {
@@ -304,8 +287,10 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render(&model, &ui, area, &mut buf);
         let frame = text(&buf);
-        assert!(frame.contains("Wired a dedup digest"), "{frame}");
-        assert!(frame.contains("summary of parser"), "{frame}");
+        assert!(frame.contains("stella: digest"), "{frame}");
+        assert!(frame.contains("stella: parser"), "{frame}");
+        assert!(!frame.contains("Wired a dedup digest"), "{frame}");
+        assert!(!frame.contains("summary of parser"), "{frame}");
         assert!(frame.contains("14 turns · $0.45 · glm-5.2"), "{frame}");
         assert!(frame.contains("this session"), "{frame}");
         assert!(frame.contains("↩ resume · 2d ago"), "{frame}");

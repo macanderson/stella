@@ -1,3 +1,4 @@
+import type { ComponentProps } from "react";
 import { DIAGRAM_DESCRIPTIONS } from "@/components/diagram-descriptions";
 /**
  * Inline-SVG diagrams for the docs.
@@ -24,6 +25,22 @@ import { DIAGRAM_DESCRIPTIONS } from "@/components/diagram-descriptions";
  * - Server-safe: pure SVG, no client JS, and no per-diagram `<style>` tag —
  *   the `sdg-` (stella diagram) rules live once in src/app/global.css.
  */
+
+/**
+ * The outer frame of every diagram: the `<svg>` inside a box that scrolls
+ * sideways. Each drawing is 720 units wide, and the frame keeps it at that
+ * width or wider, so its labels never render smaller than the size they are
+ * drawn at. On a phone the drawing scrolls instead of shrinking to half size.
+ */
+function Drawing({ children, ...props }: ComponentProps<"svg">) {
+  return (
+    <div className="sdg-frame">
+      <svg className="sdg" {...props}>
+        {children}
+      </svg>
+    </div>
+  );
+}
 
 /** Arrowhead shared by every wire. Defined per-SVG because ids are document-scoped. */
 function Defs() {
@@ -198,8 +215,7 @@ function Glyph({
 /** Landing page: you → stella → your provider, telemetry staying local. */
 export function HeroFlowDiagram() {
   return (
-    <svg
-      className="sdg"
+    <Drawing
       viewBox="0 0 720 190"
       role="img"
       aria-label={DIAGRAM_DESCRIPTIONS.HeroFlowDiagram}
@@ -213,15 +229,14 @@ export function HeroFlowDiagram() {
       <Wire d="M440 80 H578" />
       <Wire d="M360 120 V148" arrow={false} />
       <Node x={285} y={150} w={150} h={32} sub=".stella/ — telemetry stays here" />
-    </svg>
+    </Drawing>
   );
 }
 
 /** Context engine: the recall → work → cite/reflect loop around the stores. */
 export function RecallLoopDiagram() {
   return (
-    <svg
-      className="sdg"
+    <Drawing
       viewBox="0 0 720 200"
       role="img"
       aria-label={DIAGRAM_DESCRIPTIONS.RecallLoopDiagram}
@@ -240,7 +255,7 @@ export function RecallLoopDiagram() {
       <text className="sdg-sub" x="360" y="176" textAnchor="middle">
         citations · reflections · episodes — memory that earns its place
       </text>
-    </svg>
+    </Drawing>
   );
 }
 
@@ -252,8 +267,7 @@ export function FleetFanoutDiagram() {
     { y: 140, label: "fleet/t3" },
   ];
   return (
-    <svg
-      className="sdg"
+    <Drawing
       viewBox="0 0 720 180"
       role="img"
       aria-label={DIAGRAM_DESCRIPTIONS.FleetFanoutDiagram}
@@ -281,7 +295,7 @@ export function FleetFanoutDiagram() {
       <text className="sdg-sub" x="648" y="118" textAnchor="middle">
         merge on your terms
       </text>
-    </svg>
+    </Drawing>
   );
 }
 
@@ -294,8 +308,7 @@ export function QuickstartDiagram() {
     ["run", "ship a change"],
   ];
   return (
-    <svg
-      className="sdg"
+    <Drawing
       viewBox="0 0 720 132"
       role="img"
       aria-label={DIAGRAM_DESCRIPTIONS.QuickstartDiagram}
@@ -314,7 +327,7 @@ export function QuickstartDiagram() {
       <text className="sdg-sub" x="360" y="116" textAnchor="middle">
         about two minutes, end to end — no account, no proxy
       </text>
-    </svg>
+    </Drawing>
   );
 }
 
@@ -332,8 +345,7 @@ export function CredentialChainDiagram() {
     "interactive prompt — saved, so it asks once",
   ];
   return (
-    <svg
-      className="sdg"
+    <Drawing
       viewBox="0 0 720 228"
       role="img"
       aria-label={DIAGRAM_DESCRIPTIONS.CredentialChainDiagram}
@@ -363,7 +375,7 @@ export function CredentialChainDiagram() {
       <text className="sdg-sub" x={204} y={214} textAnchor="middle">
         nothing below the first hit is ever read
       </text>
-    </svg>
+    </Drawing>
   );
 }
 
@@ -379,8 +391,7 @@ export function SettingsCascadeDiagram() {
     ["user — ~/.stella/settings.json", "your defaults, always applied", false],
   ];
   return (
-    <svg
-      className="sdg"
+    <Drawing
       viewBox="0 0 720 216"
       role="img"
       aria-label={DIAGRAM_DESCRIPTIONS.SettingsCascadeDiagram}
@@ -401,7 +412,7 @@ export function SettingsCascadeDiagram() {
         most specific wins — except that an org &ldquo;off&rdquo; can be narrowed further, never
         re-opened
       </text>
-    </svg>
+    </Drawing>
   );
 }
 
@@ -411,8 +422,7 @@ export function SettingsCascadeDiagram() {
  */
 export function PermissionGateDiagram() {
   return (
-    <svg
-      className="sdg"
+    <Drawing
       viewBox="0 0 720 200"
       role="img"
       aria-label={DIAGRAM_DESCRIPTIONS.PermissionGateDiagram}
@@ -437,7 +447,7 @@ export function PermissionGateDiagram() {
       <text className="sdg-sub" x="248" y="188" textAnchor="middle">
         enforced at the tool boundary — never by prompt discipline
       </text>
-    </svg>
+    </Drawing>
   );
 }
 
@@ -459,8 +469,7 @@ export function EngineOwnershipDiagram() {
     ["retry class · loop detect · caps", false],
   ];
   return (
-    <svg
-      className="sdg"
+    <Drawing
       viewBox="0 0 720 232"
       role="img"
       aria-label={DIAGRAM_DESCRIPTIONS.EngineOwnershipDiagram}
@@ -510,7 +519,7 @@ export function EngineOwnershipDiagram() {
       <text className="sdg-sub" x="360" y="212" textAnchor="middle">
         no HTTP client, no TLS stack, no provider adapter — it cannot leak a key it never holds
       </text>
-    </svg>
+    </Drawing>
   );
 }
 
@@ -521,8 +530,7 @@ export function EngineOwnershipDiagram() {
  */
 export function EngineTestHarnessDiagram() {
   return (
-    <svg
-      className="sdg"
+    <Drawing
       viewBox="0 0 720 196"
       role="img"
       aria-label={DIAGRAM_DESCRIPTIONS.EngineTestHarnessDiagram}
@@ -540,7 +548,7 @@ export function EngineTestHarnessDiagram() {
       <text className="sdg-sub" x="360" y="186" textAnchor="middle">
         one of those two paths costs nothing and finishes in milliseconds — that is the one CI runs
       </text>
-    </svg>
+    </Drawing>
   );
 }
 
@@ -552,8 +560,7 @@ export function EngineTestHarnessDiagram() {
  */
 export function EngineGateDiagram() {
   return (
-    <svg
-      className="sdg"
+    <Drawing
       viewBox="0 0 720 244"
       role="img"
       aria-label={DIAGRAM_DESCRIPTIONS.EngineGateDiagram}
@@ -575,7 +582,7 @@ export function EngineGateDiagram() {
       <text className="sdg-sub" x="360" y="230" textAnchor="middle">
         the deterministic half is allowed to block; the model-quality half is only allowed to inform
       </text>
-    </svg>
+    </Drawing>
   );
 }
 
@@ -592,8 +599,7 @@ export function LoopVerdictDiagram() {
     ["tool calls happened; the verifier said no", "ran (unsolved)", false],
   ];
   return (
-    <svg
-      className="sdg"
+    <Drawing
       viewBox="0 0 720 224"
       role="img"
       aria-label={DIAGRAM_DESCRIPTIONS.LoopVerdictDiagram}
@@ -630,7 +636,7 @@ export function LoopVerdictDiagram() {
       <text className="sdg-sub" x="296" y="212" textAnchor="middle">
         loop health, not pass rate — a task nobody solves still passes, provided the loop ran
       </text>
-    </svg>
+    </Drawing>
   );
 }
 
@@ -641,8 +647,7 @@ export function LoopVerdictDiagram() {
  */
 export function TelemetryFlowDiagram() {
   return (
-    <svg
-      className="sdg"
+    <Drawing
       viewBox="0 0 720 196"
       role="img"
       aria-label={DIAGRAM_DESCRIPTIONS.TelemetryFlowDiagram}
@@ -661,7 +666,7 @@ export function TelemetryFlowDiagram() {
       <text className="sdg-sub" x="275" y="184" textAnchor="middle">
         no arrow leaves this picture — there is no endpoint, so there is nothing to opt out of
       </text>
-    </svg>
+    </Drawing>
   );
 }
 
@@ -675,8 +680,7 @@ export function TelemetryFlowDiagram() {
  */
 export function McpTopologyDiagram() {
   return (
-    <svg
-      className="sdg"
+    <Drawing
       viewBox="0 0 720 252"
       role="img"
       aria-label={DIAGRAM_DESCRIPTIONS.McpTopologyDiagram}
@@ -740,7 +744,7 @@ export function McpTopologyDiagram() {
         each connect is isolated, with a ten-second budget — a server that hangs costs you its
         tools, not your session
       </text>
-    </svg>
+    </Drawing>
   );
 }
 
@@ -752,8 +756,7 @@ export function McpTopologyDiagram() {
  */
 export function HookLifecycleDiagram() {
   return (
-    <svg
-      className="sdg"
+    <Drawing
       viewBox="0 0 720 224"
       role="img"
       aria-label={DIAGRAM_DESCRIPTIONS.HookLifecycleDiagram}
@@ -785,7 +788,7 @@ export function HookLifecycleDiagram() {
         only one of the three can stop anything — and it fails closed: a hook that times out also
         blocks
       </text>
-    </svg>
+    </Drawing>
   );
 }
 
@@ -797,8 +800,7 @@ export function HookLifecycleDiagram() {
  */
 export function SingleThreadDiagram() {
   return (
-    <svg
-      className="sdg"
+    <Drawing
       viewBox="0 0 720 226"
       role="img"
       aria-label={DIAGRAM_DESCRIPTIONS.SingleThreadDiagram}
@@ -868,7 +870,7 @@ export function SingleThreadDiagram() {
       <text className="sdg-sub" x="360" y="214" textAnchor="middle">
         the swarm failure modes are not mitigated on the right — they are unrepresentable
       </text>
-    </svg>
+    </Drawing>
   );
 }
 
@@ -880,8 +882,7 @@ export function SingleThreadDiagram() {
  */
 export function EventContractDiagram() {
   return (
-    <svg
-      className="sdg"
+    <Drawing
       viewBox="0 0 720 232"
       role="img"
       aria-label={DIAGRAM_DESCRIPTIONS.EventContractDiagram}
@@ -917,7 +918,7 @@ export function EventContractDiagram() {
         one try/catch per line collapses these two into the first — a loud failure becomes silent
         data loss
       </text>
-    </svg>
+    </Drawing>
   );
 }
 
@@ -929,8 +930,7 @@ export function EventContractDiagram() {
  */
 export function BudgetGuardDiagram() {
   return (
-    <svg
-      className="sdg"
+    <Drawing
       viewBox="0 0 720 220"
       role="img"
       aria-label={DIAGRAM_DESCRIPTIONS.BudgetGuardDiagram}
@@ -961,7 +961,7 @@ export function BudgetGuardDiagram() {
         the meter is read between steps, never inside a tool call — an abort leaves work, not
         wreckage
       </text>
-    </svg>
+    </Drawing>
   );
 }
 
@@ -979,8 +979,7 @@ export function CostChainDiagram() {
     ["… --diff --only system", "what changed since the last one"],
   ];
   return (
-    <svg
-      className="sdg"
+    <Drawing
       viewBox="0 0 720 246"
       role="img"
       aria-label={DIAGRAM_DESCRIPTIONS.CostChainDiagram}
@@ -1020,7 +1019,7 @@ export function CostChainDiagram() {
       <text className="sdg-sub" x="345" y="234" textAnchor="middle">
         every rung reads .stella/private/store.db and never writes it — no network, no API key
       </text>
-    </svg>
+    </Drawing>
   );
 }
 
@@ -1032,8 +1031,7 @@ export function CostChainDiagram() {
  */
 export function ClaimLockDiagram() {
   return (
-    <svg
-      className="sdg"
+    <Drawing
       viewBox="0 0 720 218"
       role="img"
       aria-label={DIAGRAM_DESCRIPTIONS.ClaimLockDiagram}
@@ -1064,7 +1062,7 @@ export function ClaimLockDiagram() {
         the collision surfaces at dispatch, not at integration — and undeclared paths are claimed
         on first write too
       </text>
-    </svg>
+    </Drawing>
   );
 }
 
@@ -1084,8 +1082,7 @@ export function EngineSequenceDiagram() {
     [296, false, "turn_complete — text, cost, and it is over"],
   ];
   return (
-    <svg
-      className="sdg"
+    <Drawing
       viewBox="0 0 720 346"
       role="img"
       aria-label={DIAGRAM_DESCRIPTIONS.EngineSequenceDiagram}
@@ -1119,7 +1116,7 @@ export function EngineSequenceDiagram() {
       <text className="sdg-sub" x="360" y="334" textAnchor="middle">
         the engine never opens a socket — it emits a request and parks until your app answers
       </text>
-    </svg>
+    </Drawing>
   );
 }
 
@@ -1155,8 +1152,7 @@ export function EnginePathsDiagram() {
     [324, 104, "stella fleet", "N workers, DAG"],
   ];
   return (
-    <svg
-      className="sdg"
+    <Drawing
       viewBox="0 0 720 382"
       role="img"
       aria-label={DIAGRAM_DESCRIPTIONS.EnginePathsDiagram}
@@ -1180,13 +1176,11 @@ export function EnginePathsDiagram() {
       <text className="sdg-label" x={222} y={140} textAnchor="middle">
         stella-runtime :: WrapperDispatch
       </text>
-      {/* `->`, not U+2192 — and this is not a downgrade. The self-hosted
-       * JetBrains Mono is the latin subset, which carries ↑ and ↓ but no →, so
-       * a real arrow falls out to a system font for that one glyph: different
-       * face, different advance, tofu where nothing fills in. JetBrains Mono
-       * ligates `->` into an arrow anyway, so this *renders* as → while staying
-       * two in-subset characters on a stable monospace advance. Guarded by
-       * diagrams.test.ts. */}
+      {/* `->`, not U+2192. The self-hosted Monaspace Neon is the latin
+       * subset, which carries ↑ and ↓ but no →, so a real arrow falls out to
+       * a system font for that one glyph: different face, different advance,
+       * tofu where nothing fills in. `->` stays two in-subset characters on a
+       * stable monospace advance. Guarded by diagrams.test.ts. */}
       <text className="sdg-sub" x={222} y={160} textAnchor="middle">
         optional — only with --pipeline &lt;variant&gt;
       </text>
@@ -1223,6 +1217,6 @@ export function EnginePathsDiagram() {
       <text className="sdg-sub" x={360} y={368} textAnchor="middle">
         with no --pipeline flag, run · goal · fleet drive the loop directly
       </text>
-    </svg>
+    </Drawing>
   );
 }

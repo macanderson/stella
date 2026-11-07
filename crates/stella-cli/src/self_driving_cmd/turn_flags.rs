@@ -90,6 +90,8 @@ pub(crate) struct TurnFlags {
     pub(crate) turn_timeout: Option<Duration>,
     /// `--max-output-tokens` — the per-step output ceiling.
     pub(crate) max_output_tokens: Option<u32>,
+    /// `--max-steps` — the per-turn step cap.
+    pub(crate) max_steps: Option<usize>,
 }
 
 impl TurnFlags {
@@ -111,6 +113,7 @@ impl TurnFlags {
             spend_limit: globals.spend_limit,
             turn_timeout: globals.turn_timeout,
             max_output_tokens: globals.max_output_tokens,
+            max_steps: globals.max_steps,
         })
     }
 
@@ -162,6 +165,9 @@ impl TurnFlags {
         }
         if let Some(cap) = self.max_output_tokens {
             cmd.arg("--max-output-tokens").arg(cap.to_string());
+        }
+        if let Some(cap) = self.max_steps {
+            cmd.arg("--max-steps").arg(cap.to_string());
         }
     }
 }

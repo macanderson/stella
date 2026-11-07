@@ -1113,9 +1113,9 @@ mod tests {
         assert!(effort_levels("zai", Dialect::OpenaiCompatible, Some(false)).is_empty());
         // GLM pairs its on/off `thinking` switch with a `reasoning_effort` of
         // the OpenAI-compatible low/medium/high shape (verified against
-        // glm-5.2, 2026-08-04), so a reasoning GLM offers that vocabulary
-        // rather than the empty set this used to return — an empty set here
-        // made the wire-level effort support unreachable from config.
+        // glm-5.2, 2026-08-04), so a reasoning GLM offers that vocabulary.
+        // An empty set here would make the wire-level effort support
+        // unreachable from config.
         assert_eq!(
             effort_levels("zai", Dialect::OpenaiCompatible, Some(true)),
             &["low", "medium", "high"]

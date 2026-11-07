@@ -714,14 +714,14 @@ deploy_watch = "off"
         assert!(!load(ws.path()).deploy_watch);
     }
 
-    /// The tracking-label default is `epic` for a workspace that declares
+    /// The tracking-label default is `EPIC` for a workspace that declares
     /// nothing, and an operator's own list replaces it wholesale — the
     /// same rule `[self_driving.triage]`'s lists already follow.
     #[test]
     fn container_labels_default_to_epic_and_can_be_overridden() {
         assert_eq!(
             load(workspace().path()).container_labels,
-            vec!["epic".to_owned()],
+            vec!["EPIC".to_owned()],
             "an unconfigured workspace still skips the built-in tracking label"
         );
 

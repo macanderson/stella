@@ -300,14 +300,13 @@ test("the site's brand tokens are the kit's, value for value", () => {
 
   // And the other direction: every token the palette declares has a row here.
   //
-  // This used to be `ramp.length >= 20`, a floor on the count — which cannot
-  // see a token that was never mirrored in the first place, and twelve had not
-  // been. The sheet carried 20 of the palette's 32, and the missing twelve were
-  // the entire warm-paper half plus `void`: the two documents a designer reads
-  // to learn the palette did not contain the light scheme (#4978). A count
-  // could not have found that, and no other check over this file could either
-  // — `check-tokens.py` asks whether every hex here is a live token, never
-  // whether a live token is absent.
+  // A floor on the count, such as `ramp.length >= 20`, cannot see a token
+  // that was never mirrored in the first place: a sheet carrying 20 of the
+  // palette's 32 passes it while missing the whole warm-paper half plus
+  // `void`, which is the light scheme a designer reads to learn the palette
+  // (#4978). A count could not find that, and no other check over this file
+  // could either — `check-tokens.py` asks whether every hex here is a live
+  // token, never whether a live token is absent.
   //
   // Equality rather than a floor, because the kit is the kit. A published
   // *subset* is a defensible thing for the marketing site to be, and it is not
@@ -482,7 +481,7 @@ test("the site's logo SVGs are byte-identical to the kit's", () => {
       read(join(siteDir, name)),
       read(join(kitDir, name)),
       `public/brand/${name} has drifted from docs/brand/logo/svg/${name} — ` +
-        `run \`make brand-sync\` rather than editing either side`,
+        `edit both copies by hand so they match`,
     );
   }
 });
@@ -516,16 +515,15 @@ test("the animated lockup's motion is the kit's spinner", () => {
     assert.equal(
       Number(mirrored),
       Number(stated),
-      `SWEEP has drifted from the kit's ${label} (${stated}) — run ` +
-        `\`node scripts/sync-brand-assets.mjs\``,
+      `SWEEP has drifted from the kit's ${label} (${stated}) — update ` +
+        `brand-marks.generated.ts to match`,
     );
   }
 });
 
 test("the PWA icons are byte-identical to the kit's", () => {
   // The site renames the kit's two maskables; every other file keeps its name.
-  // `scripts/sync-brand-assets.mjs` performs this exact mapping; this table is
-  // the check on its work.
+  // This table maps each site file to its copy under docs/brand/pwa/.
   const PAIRS: Array<[site: string, kit: string]> = [
     ["favicon-16.png", "favicon-16.png"],
     ["favicon-32.png", "favicon-32.png"],
@@ -543,7 +541,7 @@ test("the PWA icons are byte-identical to the kit's", () => {
     assert.ok(
       mine.equals(theirs),
       `public/icons/${siteName} has drifted from docs/brand/pwa/${kitName} — ` +
-        `run \`node scripts/sync-brand-assets.mjs\` when the kit regenerates`,
+        `copy the file again so the two match`,
     );
   }
 });
@@ -607,8 +605,7 @@ test("favicon.ico carries the kit's art in an RGBA encoding", () => {
     assert.ok(
       mine.pixels.equals(theirs.pixels),
       `favicon.ico entry ${i} (${mine.width}×${mine.height}) does not carry ` +
-        `the kit's art — re-run \`node scripts/sync-brand-assets.mjs\`, ` +
-        `\`make brand-sync\` (the RGBA re-encode lives in the sync)`,
+        `the kit's art. Re-encode the kit's favicon as RGBA and commit it`,
     );
   }
 });
@@ -635,13 +632,25 @@ test("every icon the manifest advertises exists", () => {
 });
 
 test("the manifest's theme colours are the kit's ink", () => {
-  const manifest = read(join(SITE, "app", "manifest.ts")).toLowerCase();
-  const ink = tokens(read(join(KIT, "css", "tokens.css"))).get("--stella-ink");
-  assert.ok(ink, "the kit defines --stella-ink");
+  // manifest.ts reads both colours from HOUSE_COLORS, which is a committed
+  // copy of the kit's colours. So check the reference, then check the value it reads.
+  const manifest = read(join(SITE, "app", "manifest.ts"));
   for (const key of ["background_color", "theme_color"]) {
     assert.ok(
-      manifest.includes(`${key}: "${ink}"`),
-      `manifest.ts ${key} must be the kit's ink (${ink})`,
+      manifest.includes(`${key}: HOUSE_COLORS.ink`),
+      `manifest.ts ${key} must be HOUSE_COLORS.ink`,
     );
   }
+
+  const kit = tokens(read(join(KIT, "css", "tokens.css")));
+  const ink = resolve(kit.get("--stella-ink") ?? "", kit);
+  const generated = read(join(SITE, "components", "brand-marks.generated.ts"));
+  const house = /"ink": "(#[0-9A-Fa-f]{6})"/.exec(generated)?.[1];
+  assert.ok(house, "brand-marks.generated.ts carries HOUSE_COLORS.ink");
+  assert.equal(
+    house.toLowerCase(),
+    ink,
+    `HOUSE_COLORS.ink must be the kit's ink (${ink}). Update ` +
+      `brand-marks.generated.ts`,
+  );
 });

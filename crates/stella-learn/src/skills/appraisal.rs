@@ -33,6 +33,12 @@
 //!   leave nothing paired at all; with one key nothing is dropped and the
 //!   comparison degrades to the unpaired two-sample test it actually is.
 //!
+//! # The live window
+//!
+//! A live sweep judges [`live_window`], not the whole history: the newest
+//! trials back to a full window in each arm, so a long good record cannot
+//! outvote the turns since a skill stopped helping.
+//!
 //! # Four verdicts, and why `Inert` is separate from `Harms`
 //!
 //! A skill that makes turns *worse* and a skill that changes nothing are both
@@ -52,14 +58,11 @@
 //! behind, so restore works. The caller owns both halves; nothing here does
 //! I/O.
 //!
-//! # The kind rides along, the names do not — yet
+//! # The kind rides along
 //!
-//! [`SkillAppraisal`] now carries [`ArtifactKind`] beside the id, the same
-//! key [`crate::ledger::ArtifactTrial`] uses. A memory and a skill sharing an
-//! id appraise as two rows, not one. The types keep their old names for now.
-//! Renaming `SkillAppraisal` and its siblings is a second, mechanical pass
-//! across `stella-learn` and `stella-cli`. Doing the re-key first lets a
-//! reviewer read that change on its own.
+//! [`SkillAppraisal`] carries [`ArtifactKind`] beside the id, the same key
+//! [`crate::ledger::ArtifactTrial`] uses, so a memory and a skill sharing an
+//! id appraise as two rows. The types keep their skill-era names.
 
 use serde::{Deserialize, Serialize};
 
@@ -124,6 +127,10 @@ pub struct AppraisalConfig {
     /// confident negative can be acted on early, but retiring a skill for
     /// having produced no measurement needs a window long enough that "no
     /// measurement" means something.
+    ///
+    /// Also the length of the live window: [`live_window`] keeps the newest
+    /// trials that hold this many in each arm. One number, so a full window
+    /// always holds both arms `Inert` asks for.
     pub window: usize,
 }
 
@@ -275,6 +282,44 @@ pub fn appraise(
         report,
         harm: None,
     }
+}
+
+/// The newest trials of one artifact's live history, back to the one that
+/// gives both arms `window` trials.
+///
+/// `trials` is oldest first, as the ledger holds it. The result is a suffix of
+/// it. Each arm in it holds `window` trials, or every trial of that arm when
+/// there are fewer. A history where either arm is short of `window` comes back
+/// whole. A `window` of zero keeps nothing.
+///
+/// Either arm can be the rare one. A skill is held back on few of its turns,
+/// so its control arm is rare. A rule that fits the prompt budget once in ten
+/// turns is shown on few of its turns, so its with-skill arm is rare. The span
+/// stretches until the rarer arm is full, so neither arm is left below the
+/// floor a verdict needs. Both arms come from that one span, so the baseline
+/// is from the same turns it judges.
+/// `doc:adr/0048-an-appraisal-reads-a-window-of-control-trials` records why
+/// this is a count and not a span of time.
+///
+/// For the live caller only. An offline task set has no order, so its oldest
+/// row is not its stalest.
+#[must_use]
+pub fn live_window(trials: &[SkillTrial], window: usize) -> &[SkillTrial] {
+    if window == 0 {
+        return &[];
+    }
+    let (mut shown, mut withheld) = (0, 0);
+    for (at, trial) in trials.iter().enumerate().rev() {
+        if trial.selected {
+            shown += 1;
+        } else {
+            withheld += 1;
+        }
+        if shown >= window && withheld >= window {
+            return &trials[at..];
+        }
+    }
+    trials
 }
 
 /// Neither direction won. That is `Inert` — demotable — only once **both**

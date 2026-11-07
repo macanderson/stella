@@ -170,7 +170,7 @@ def check_clamp(
     if clamp == "neutral":
         # One clamp for every neutral in the system: a grey carries no hue, in
         # either direction. v6.0 held the ramp warm (r >= g >= b); the house
-        # system's zinc ramp leans a few units blue, so the law is the spread.
+        # system's cool ramp leans a few units blue, so the law is the spread.
         spread = max(r, g, b) - min(r, g, b)
         if spread > spec["spread"]:
             return (

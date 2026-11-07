@@ -42,7 +42,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     command-docs website-inputs brand-case file-size god-files gate-parity \
                     schema-tier-parity \
                     guard-trigger-coverage priority-scheme cargo-flags \
-                    release-wiring left-behind \
+                    release-wiring release-retry left-behind \
                     retired-model-keys \
                     stat-portability module-reachability core-reachability \
                     core-no-io \
@@ -352,13 +352,6 @@ website-inputs: ## Assert every website/ path a Rust source reads is declared an
 brand-case: ## Assert docs prose spells the wordmark lowercase (#1500)
 	@./scripts/check-brand-case.sh
 
-.PHONY: brand-sync
-brand-sync: ## Pull the Oxagen house brand kit into docs/brand/ and website/
-	@node scripts/sync-brand-assets.mjs
-
-.PHONY: brand-check
-brand-check: ## Fail if a vendored brand asset has drifted from the kit
-	@node scripts/sync-brand-assets.mjs --check
 
 # The generated per-tool reference. Deliberately NOT scoped by CARGO_SCOPE:
 # the artifact is derived from stella-tools' catalog and stella-cli's session
@@ -876,8 +869,23 @@ release-wiring: ## Assert auto-tag.yml still asks for a run on the commit it mer
 release-wiring-test: ## Test the release-wiring guard's failure directions (hermetic; not part of `gate`)
 	@python3 ./scripts/test-release-wiring.py
 
+# `release.yml`'s `Create / update GitHub Release` step survived a build but
+# not a GitHub 5xx mid-publish: v0.9.254 and v0.9.264 both uploaded every
+# asset and then stranded a finished release as an unpublished draft with
+# nobody watching to re-run it (#5698). This holds the retry the step now
+# gets to the same shape as the `Upload build artifact` retry above it —
+# `continue-on-error` and an `id` on the first attempt, a second step gated
+# on that id's outcome, and both pinning the same action with the same inputs.
+.PHONY: release-retry
+release-retry: ## Assert the release-publish step survives a mid-publish 5xx (#5698)
+	@python3 ./scripts/check-release-retry.py
+
+.PHONY: release-retry-test
+release-retry-test: ## Test the release-retry guard's failure directions (hermetic; not part of `gate`)
+	@python3 ./scripts/test-release-retry.py
+
 .PHONY: priority-scheme
-priority-scheme: ## Assert the issue priority scheme is stated once, in SCR-005 (#5216)
+priority-scheme: ## Assert the issue priority scheme is stated once, in AGENTS.md (#5216)
 	@python3 ./scripts/check-priority-scheme.py
 
 .PHONY: priority-scheme-test
@@ -1000,7 +1008,7 @@ main-canary-test: ## Test the post-merge canary, announcements included (not par
 	./scripts/test-main-canary.sh
 
 .PHONY: deleted-tests-test
-deleted-tests-test: ## Test the deleted-test guard's live-vs-stale PR body handling (hermetic; not part of `gate`; #4495)
+deleted-tests-test: ## Test that the deleted-test guard still fails an unnamed deletion (hermetic; not part of `gate`)
 	./scripts/test-deleted-tests.sh
 
 # Deliberately not a gate step, for the same reason as the one above: it
@@ -1057,8 +1065,17 @@ dispatch-main-verification-test: ## Test the main-tip dispatcher (hermetic; not 
 wait-for-armed-merge-test: ## Test the armed-auto-merge wait (hermetic; not part of `gate`)
 	./scripts/test-wait-for-armed-merge.sh
 
+# The one issue-lifecycle for a version write-back that did not merge in a
+# given run (`#5673`). auto-tag.yml's four warning branches (a red or
+# unreported check, the 45-minute timeout, an unresolvable Cargo.lock, and
+# an armed-but-unmerged auto-merge) all call this instead of writing their
+# own `gh issue` calls, so they report through one label and one issue.
+.PHONY: version-writeback-defer-test
+version-writeback-defer-test: ## Test the version write-back's deferred-issue reporting (hermetic; not part of `gate`)
+	./scripts/test-version-writeback-defer.sh
+
 .PHONY: main-red-hold
-main-red-hold: ## Ask whether an open `main-red` issue should hold a PR (reads the tracker)
+main-red-hold: ## Ask whether an open `MAIN-RED` issue should hold a PR (reads the tracker)
 	@./scripts/check-main-red-hold.sh
 
 .PHONY: main-red-hold-test
@@ -1136,6 +1153,28 @@ dependabot-pip-dirs-test: ## Test the dependabot pip-directory guard (hermetic; 
 .PHONY: codeql-canary-test
 codeql-canary-test: ## Test the CodeQL canary, announcing included (hermetic; not part of `gate`)
 	./scripts/test-codeql-canary.sh
+
+# The triage sweep's report on a non-200 from the Anthropic API. It tells a
+# credit refusal, which needs billing, from every other refusal, which may
+# need code. The workflow sources scripts/lib/anthropic-refusal.sh, so the
+# report has no command of its own to run by hand, and only the suite gets a
+# target.
+.PHONY: anthropic-refusal-test
+anthropic-refusal-test: ## Test the triage sweep's Anthropic refusal report (hermetic; not part of `gate`)
+	./scripts/test-anthropic-refusal.sh
+
+# One issue per red scheduled workflow. scheduled-red.yml runs the reporter
+# after every scheduled run, with that run's conclusion. The coverage check
+# holds its workflow_run list to the workflows that run on a schedule. It is
+# not a gate step: test-scheduled-red.sh runs it on this tree, from
+# guard-self-tests.yml, on every pull request.
+.PHONY: scheduled-red-coverage
+scheduled-red-coverage: ## Assert scheduled-red.yml listens to every scheduled workflow, and only those
+	@./scripts/check-scheduled-red-coverage.sh
+
+.PHONY: scheduled-red-test
+scheduled-red-test: ## Test the scheduled-run reporter and its coverage check (hermetic; not part of `gate`)
+	./scripts/test-scheduled-red.sh
 
 .PHONY: check
 check: $(CHECK_STEPS) ## Reduced pre-push gate: every guard + lock resolve + fmt + clippy (default and schema features), no rustdoc and no tests
@@ -1233,7 +1272,7 @@ releases-published-test: ## Test the tag/release reconciliation rule (hermetic; 
 	./scripts/test-releases-published.sh
 
 .PHONY: releases-published-pagination-test
-releases-published-pagination-test: ## Witness that the release fetch has no fixed count cap (#5555; hermetic)
+releases-published-pagination-test: ## Witness that the release fetch has no fixed count cap (#5555) and rechecks an empty list (hermetic)
 	./scripts/test-releases-published-pagination.sh
 
 .PHONY: tap-current
@@ -1243,6 +1282,14 @@ tap-current: ## Assert the Homebrew tap formula serves the newest published rele
 .PHONY: tap-current-test
 tap-current-test: ## Test the tap staleness rule (hermetic; not part of `gate`)
 	./scripts/test-tap-current.sh
+
+.PHONY: merged-branch-drift
+merged-branch-drift: ## Assert no merged pull request's branch is still on origin, ahead of its merge (#2658)
+	@./scripts/check-merged-branch-drift.sh
+
+.PHONY: merged-branch-drift-test
+merged-branch-drift-test: ## Test the merged-branch drift rule (hermetic; not part of `gate`)
+	./scripts/test-check-merged-branch-drift.sh
 
 .PHONY: hooks
 hooks: ## Install the pre-push gate hook (runs `make gate`, scoped to the diff, on every push)

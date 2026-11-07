@@ -29,7 +29,7 @@ file and line.
 
 ## Related
 
-- [**The Context Graph Protocol: Advantages and Uniqueness**](https://github.com/macanderson/context-graph-protocol/blob/main/docs/protocol-advantages.md)
+- [**The Context Graph Protocol: Advantages and Uniqueness**](https://github.com/oxageninc/context-graph-protocol/blob/main/docs/protocol-advantages.md)
   — standalone analysis of the CGP's trust architecture: the seven advantages
   (provenance, budget honesty, consent enforcement, conformance verification,
   citation guarantees, version stability, temporal validity) and why the

@@ -42,5 +42,5 @@ and CI fails the build on any dependency outside it.
 
 The Context Graph Protocol crates (contextgraph-types, contextgraph-host,
 contextgraph-trace, contextgraph-conformance) are maintained separately at
-https://github.com/macanderson/context-graph-protocol under Apache-2.0, and are
+https://github.com/oxageninc/context-graph-protocol under Apache-2.0, and are
 intentionally NOT covered by this program's AGPL terms.

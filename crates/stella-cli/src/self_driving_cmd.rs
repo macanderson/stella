@@ -278,7 +278,7 @@ pub(crate) enum SelfDrivingCmd {
 
         /// Seed the loop from the ready backlog instead of the defect queue.
         ///
-        /// Ready means the issue carries the `status:ready` label, or every
+        /// Ready means the issue carries the `STATUS:READY` label, or every
         /// `Blocked by: #N` line in its body names a closed issue. This
         /// generator drains a whole backlog, feature work included, and
         /// records each delivered issue as a cycle in the ledger.

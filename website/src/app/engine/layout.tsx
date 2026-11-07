@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { Viewport } from "next";
+import { HOUSE_COLORS } from "@/components/brand-marks.generated";
 import "./engine.css";
 import "./engine-stations.css";
 
@@ -27,14 +28,14 @@ import "./engine-stations.css";
  * The tour is a window into the machine, so its ground is ALWAYS ink — the
  * same law as `.term` and the docs' code blocks. The browser chrome should
  * agree with it in both site themes, hence a route-level themeColor override
- * (the root layout's is per-scheme). The hex mirrors `--stella-ink` in
- * tokens.css, the same way the root layout's viewport block does — a CSS
- * custom property cannot reach a meta tag.
+ * (the root layout's is per-scheme). A CSS custom property cannot reach a
+ * meta tag, so the value is the kit's ink as data, the same as the root
+ * layout's viewport block.
  */
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#09090b", // --stella-ink
+  themeColor: HOUSE_COLORS.ink,
 };
 
 export default function Layout({ children }: { children: ReactNode }) {

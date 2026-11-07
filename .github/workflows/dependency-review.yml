@@ -38,9 +38,9 @@ jobs:
         with:
           fail-on-severity: high
           comment-summary-in-pr: on-failure
-          # Two exemptions, each for code that reaches nothing this project
+          # One exemption, for code that reaches nothing this project
           # distributes. Vulnerability review still applies to every package
-          # named here — this input excludes them from the LICENSE check only.
+          # named here. This input excludes it from the license check only.
           #
           # Swatinem/rust-cache is LGPL-3.0 and has been in ci.yml, release.yml
           # and live-smoke.yml since long before this gate existed — the action
@@ -50,21 +50,24 @@ jobs:
           # touches is distributed, so the AGPL/dual-license reasoning in the
           # header does not apply to it.
           #
-          # The @img/sharp-* tuples that used to sit here arrived through
-          # arenabench/web's lockfile; that folder left with the ejection to
-          # its own repository (#2380), so the exemption left with it.
+          # The docs site's @img/sharp-* packages have no entry because the
+          # site does not install them. `next` pulls in sharp for every
+          # platform, and fourteen of its packages ship LGPL-3.0 libvips. The
+          # site never optimizes images, so website/pnpm-workspace.yaml drops
+          # sharp with the pnpm override `sharp: "-"`, and
+          # website/src/lib/no-sharp.test.ts fails if sharp comes back.
+          #
+          # This list cannot hold that family. purlsMatch (the action's
+          # src/purl.ts) compares namespace/name case-insensitively and ignores
+          # the version, so re-pinning rust-cache never touches this list. It
+          # has no globs, and a namespace-only `pkg:npm/%40img` parses to the
+          # name "img" and matches nothing. Each LGPL platform package would
+          # need its own line, and each new one would fail this check on
+          # whatever pull request brought it in.
           #
           # Must stay ABOVE `allow-licenses`: check-license-allowlist-parity.sh
           # reads that key's folded scalar by consuming every following indented
-          # line, so a sibling key underneath it — and now a whole folded list
-          # of purls — would be parsed as SPDX ids.
-          #
-          # purlsMatch (the action's src/purl.ts) compares namespace/name
-          # case-insensitively and ignores the version, so re-pinning the action
-          # or bumping sharp never touches this list. It has no globs, and a
-          # namespace-only `pkg:npm/%40img` parses to the name "img" and matches
-          # nothing — so a NEW libvips tuple reds this gate again and has to be
-          # added by hand. #2532 tracks removing the recurrence instead.
+          # line, so a sibling key underneath it would be parsed as SPDX ids.
           allow-dependencies-licenses: >-
             pkg:githubactions/Swatinem/rust-cache
           allow-licenses: >-

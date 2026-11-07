@@ -50,7 +50,7 @@ members = [
 exclude = [".stella-examples"]
 
 [workspace.package]
-version = "0.9.437"
+version = "0.9.511"
 edition = "2024"
 rust-version = "1.90"
 license = "AGPL-3.0-only"
@@ -92,7 +92,7 @@ serde_json = "1"
 # whole record digest is narrower: stella's preimage also drops `null`-valued
 # object members, and CGP's keeps them, so the two agree on a record whose
 # objects carry no such member. `stella_protocol::hash` pins that boundary.
-serde_json_canonicalizer = "0.3.2"
+serde_json_canonicalizer = "0.4.1"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "process", "fs", "io-util", "sync"] }
 async-trait = "0.1"
@@ -117,6 +117,12 @@ toml = "1.1"
 # of the user's file byte-identical. MIT OR Apache-2.0, same license pair and
 # same maintainer as `toml` itself. See stella-cli/src/settings/toml_io.rs.
 toml_edit = { version = "0.25", features = ["serde"] }
+# Reads the YAML frontmatter of Oxagen's `steering-record/v1` files. The code
+# reads that frontmatter into a struct. `serde_norway` is a kept-up fork of
+# `serde_yaml` with the same API. `serde_yaml` is archived, and `serde_yml` has
+# a RustSec advisory. Both would fail `cargo deny`. MIT OR Apache-2.0. It adds
+# one crate, `unsafe-libyaml-norway`, which is MIT.
+serde_norway = "0.9.42"
 # Vetted dotenv parser (quotes, escapes, multi-line values, `export` prefixes),
 # used as a non-mutating iterator so the CLI keeps control of precedence and
 # never overrides the live shell. See stella-cli/src/env_files.rs.
@@ -174,6 +180,9 @@ scraper = { version = "0.27", default-features = false, features = ["errors"] }
 rusqlite = { version = "0.40", features = ["bundled"] }
 hmac = "0.13"
 sha2 = "0.11"
+# Verifies the enterprise enrollment certificate in `stella-cli`. Already in
+# the lock through `contextgraph-types`, so this adds no crate to the tree.
+ed25519-dalek = { version = "2.2", default-features = false, features = ["std"] }
 tempfile = "3"
 # Snapshot review for the TUI v2 golden frames. The v1 deck's own golden
 # harness (`crates/stella-tui/tests/deck_render_snapshots.rs`) deliberately
@@ -193,7 +202,7 @@ tree-sitter-go = "0.25"
 tree-sitter-java = "0.23"
 tree-sitter-c = "0.24"
 tree-sitter-cpp = "0.23"
-tree-sitter-php = "0.24"
+tree-sitter-php = "0.25"
 
 # stella-tui reads process stats and nothing else (`Pid`, `ProcessRefreshKind`,
 # `ProcessesToUpdate`, `System` — see stella-tui/src/resource.rs). sysinfo's
