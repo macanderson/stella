@@ -217,7 +217,9 @@ impl SessionDurability {
     }
 
     /// Capture identity and checkpoint destination from one binding.
-    pub fn engine_binding(&self) -> (
+    pub fn engine_binding(
+        &self,
+    ) -> (
         Option<stella_protocol::SessionContext>,
         Option<Arc<dyn CheckpointSink>>,
     ) {
@@ -634,17 +636,22 @@ pub fn bind_session_in(
     workspace_root: &Path,
     session_id: &str,
 ) -> Option<String> {
-    durability.begin_session(session_id);
+    // Open first, then publish the identity and its journal in one write. An
+    // engine built while the journal opens takes the old pair whole. It never
+    // takes the new identity with nowhere to save its transcript.
     match WorkJournal::open_in(store_root, workspace_root, session_id) {
         Ok(journal) => {
             // `bind` establishes this session's tree baseline; see its doc.
             durability.bind(journal);
             None
         }
-        Err(e) => Some(format!(
-            "durable work record unavailable ({e}) — this session's turns will \
-             not be recoverable from stella's own history"
-        )),
+        Err(e) => {
+            durability.begin_session(session_id);
+            Some(format!(
+                "durable work record unavailable ({e}) — this session's turns will \
+                 not be recoverable from stella's own history"
+            ))
+        }
     }
 }
 

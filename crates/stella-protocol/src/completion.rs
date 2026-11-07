@@ -556,6 +556,16 @@ mod tests {
         assert_eq!(back.max_output_tokens, Some(4096));
     }
 
+    /// The encoded session identity is part of the wire, so a fixed string pins
+    /// it. A decoded value alone would pass after a change to the encoding.
+    #[test]
+    fn session_context_roundtrips_byte_for_byte() {
+        let json = r#"{"session_id":"ses-native-42"}"#;
+        let context: SessionContext = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(context.session_id, "ses-native-42");
+        assert_eq!(serde_json::to_string(&context).expect("serialize"), json);
+    }
+
     #[test]
     fn completion_result_roundtrips_and_defaults_empty_tool_calls() {
         let result = CompletionResult {

@@ -209,6 +209,48 @@ fn a_retarget_keeps_the_pool_the_session_has_been_spending_against() {
     );
 }
 
+/// A driver binds its session after this dispatcher installs, and the deck can
+/// switch sessions later. A child takes the session bound when it is
+/// dispatched, so its model calls and hooks name the session that asked for it.
+#[test]
+fn a_child_takes_the_session_bound_when_it_is_dispatched() {
+    use crate::durability::{SessionDurability, bind_session_in};
+
+    let store = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let binding = SessionDurability::default();
+    let registry = registry();
+    let dispatcher = SessionSubAgents::new(
+        Arc::new(NamedProvider("session-model")),
+        &registry,
+        EngineConfig::default(),
+        stella_protocol::BudgetMode::Observed,
+    )
+    .with_session_binding(Some(binding.clone()));
+    let child_session = || {
+        let (_, config) = dispatcher.wiring_for(None);
+        config.session_context.map(|context| context.session_id)
+    };
+    assert_eq!(child_session(), None);
+
+    for session in ["ses-first", "ses-second"] {
+        assert!(bind_session_in(&binding, store.path(), workspace.path(), session).is_none());
+        assert_eq!(child_session().as_deref(), Some(session));
+    }
+
+    // A model switch hands over a config built earlier. The binding still wins.
+    dispatcher.retarget(
+        Arc::new(NamedProvider("picked-model")),
+        EngineConfig {
+            session_context: Some(stella_protocol::SessionContext {
+                session_id: "ses-stale".into(),
+            }),
+            ..EngineConfig::default()
+        },
+    );
+    assert_eq!(child_session().as_deref(), Some("ses-second"));
+}
+
 /// The seat name is opaque, and this is the test that says so out loud: a name
 /// core has never heard of routes exactly as well as one it has, because there
 /// is no list of accepted roles to fail against. A future change that
@@ -662,6 +704,7 @@ fn the_delegate_tool_is_always_advertised_and_never_read_only() {
         super::ChildToolPosture {
             policy: stella_tools::policy::ToolPolicy::allow_all(),
             gate: Arc::new(stella_core::ports::NoAuthz),
+            session: None,
         },
     );
     assert_eq!(

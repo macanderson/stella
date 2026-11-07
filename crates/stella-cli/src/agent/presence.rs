@@ -194,9 +194,73 @@ impl SessionPresence {
     }
 }
 
+/// A driver that returns through `?` never reaches [`SessionPresence::finish`],
+/// so its record still says a turn is running. The read side only corrects that
+/// where it can check a pid, and it cannot check one on every platform. A
+/// session waiting on a person, or one `finish` already closed, keeps its status.
+impl Drop for SessionPresence {
+    fn drop(&mut self) {
+        if self.record.status == stella_store::SessionStatus::InProgress {
+            self.record.status = stella_store::SessionStatus::Error;
+            let _ = self.registry.upsert(&self.record);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::SessionPresence;
+
+    fn presence_in(registry: &stella_store::SessionRegistry) -> SessionPresence {
+        SessionPresence::begin(
+            registry.clone(),
+            stella_store::SessionRecord::new("/w/stella", "stella"),
+            "stella".to_string(),
+            crate::durability::SessionDurability::default(),
+            false,
+            Some("fix the flaky parser test"),
+        )
+    }
+
+    /// A run that left through `?` stops reading as a live turn.
+    #[test]
+    fn a_run_that_left_without_finishing_reads_as_an_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = stella_store::SessionRegistry::open(dir.path());
+        let presence = presence_in(&registry);
+        let id = presence.id().to_string();
+        drop(presence);
+        assert_eq!(
+            registry.get(&id).expect("registered").status,
+            stella_store::SessionStatus::Error
+        );
+    }
+
+    /// `finish` wrote the run's own answer, and waiting on a person is no
+    /// failure. Neither status changes when the session ends.
+    #[test]
+    fn a_closed_or_waiting_session_keeps_its_status() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = stella_store::SessionRegistry::open(dir.path());
+
+        let mut closed = presence_in(&registry);
+        let closed_id = closed.id().to_string();
+        closed.finish(stella_store::SessionStatus::Stopped, None);
+        drop(closed);
+        assert_eq!(
+            registry.get(&closed_id).expect("registered").status,
+            stella_store::SessionStatus::Stopped
+        );
+
+        let mut waiting = presence_in(&registry);
+        let waiting_id = waiting.id().to_string();
+        waiting.needs_input();
+        drop(waiting);
+        assert_eq!(
+            registry.get(&waiting_id).expect("registered").status,
+            stella_store::SessionStatus::NeedsInput
+        );
+    }
 
     /// The first prompt names the session. A later prompt refreshes the
     /// summary and keeps the name.
