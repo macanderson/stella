@@ -1307,6 +1307,7 @@ fn deck_render_snapshots_pin_the_armed_deadline_statline() {
             // 12m 34s — long enough to exercise the minutes form, and not a
             // round number, so a golden that silently truncated would show it.
             deadline_remaining_ms: Some(754_000),
+            rejected_spend_figures: 0,
         },
     });
     let frame = render_frame(&model, &mut ui, W, H);

@@ -84,15 +84,20 @@ impl StreamProgress {
     /// `select` polls the call first and never polls the watch again, so
     /// [`Self::degenerated`] is never given the chance to report it.
     ///
-    /// The second is an answer the watch never saw. An adapter whose stream
-    /// recovery has latched sends a unary request. It returns the whole
-    /// answer and never calls the observer. Nothing was fed, so the worst
-    /// answer of all reads as clean. Feeding the returned text here closes
-    /// that, and covers an adapter nobody has written yet.
+    /// The second is an answer the watch did not see in full. The observer
+    /// is advisory, and the returned result is the definitive answer. An
+    /// adapter whose stream recovery has latched sends a unary request,
+    /// returns the whole answer, and never calls the observer. Another may
+    /// announce a benign opening and leave the rest unannounced. Either way
+    /// the worst answer of all reads as clean to the watch. So the returned
+    /// text is always read, on its own and from the start, by
+    /// [`degenerate::answer_degenerates`]. That covers an adapter nobody has
+    /// written yet, too.
     ///
-    /// Only when the watch saw nothing. A streamed answer arrived fragment by
-    /// fragment already, and reading it a second time would count every run
-    /// twice.
+    /// Reading it apart from the watch is what keeps a streamed answer from
+    /// counting twice. The watch saw it fragment by fragment, and the same
+    /// text comes back on the result. Feeding it to the watch again would
+    /// join the two copies of a long rule into one run.
     ///
     /// A failed dispatch beside a tripped watch is replaced too. A retryable
     /// spelling would buy the broken host the same call again.
@@ -103,19 +108,27 @@ impl StreamProgress {
     /// to carry them, because the result they were attached to is being
     /// thrown away. A failed dispatch keeps whatever accounting its own error
     /// already held.
+    ///
+    /// The carrier is a [`PartialUsage`], and that type promises its inner
+    /// `reported` is always `false`, so no partial can pass
+    /// [`stella_protocol::CompletionUsage::is_complete`]. The provider's
+    /// attestation moves to `input_reported`, the field the type keeps for
+    /// it, and the counts travel unchanged.
     pub(crate) fn settle(
         &self,
         result: Result<CompletionResult, ProviderError>,
     ) -> Result<CompletionResult, ProviderError> {
-        if let Ok(completed) = &result
-            && self.0.watch.saw_nothing()
-        {
-            self.0.watch.feed(&completed.text);
-        }
-        if self.0.watch.is_tripped() {
+        let answer_tripped = matches!(
+            &result,
+            Ok(completed) if degenerate::answer_degenerates(&completed.text)
+        );
+        if answer_tripped || self.0.watch.is_tripped() {
             let spent = match &result {
                 Ok(completed) => Some(PartialUsage {
-                    usage: completed.usage,
+                    usage: stella_protocol::CompletionUsage {
+                        reported: false,
+                        ..completed.usage
+                    },
                     cost_usd: completed.cost_usd,
                     input_reported: completed.usage.reported,
                 }),
@@ -183,7 +196,8 @@ where
         // A dispatch that finished gets the second look
         // `StreamProgress::settle` describes. That look reads the latch, for
         // a trip that landed in the poll the call returned in. It also reads
-        // the returned text, for an answer no observer ever saw.
+        // the returned text, which the observer may have announced only in
+        // part or not at all.
         futures_util::future::Either::Left((result, _)) => progress.settle(result),
         futures_util::future::Either::Right(((), _)) => Err(degenerate::degenerate_error(None)),
     }

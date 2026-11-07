@@ -291,11 +291,16 @@ agent_event_tags! {
     // re-emits one from the session guard, so the remaining budget on the wire
     // is the session's. Drop that consumer and a nested report's ceiling
     // reaches the caller as if it were the session's.
+    //
+    // `Surface::Interactive`: the status bar reads two HUD fields that only
+    // this tag sets. One is the deadline cell. The other is the count of
+    // refused figures beside the spend (`views/status_bar.rs::spend_cell`).
+    // Drop the tick and the bar calls a short total whole.
     BudgetTick => "budget_tick",
         ConsumerPosture::Behavioral {
             site: "stella-cli/src/agent/budget.rs::settle_reflection_budget",
         },
-        &[];
+        &[Surface::Interactive];
     // The metering record. `Behavioral`: `persist_event_detailed` writes the
     // per-call usage row every cost, cache and token figure is later read
     // from, and carries `complete` up into the execution's accounting bit.

@@ -318,6 +318,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 session_spent_usd: Some(0.021),
                 session_limit_usd: Some(7.50),
                 deadline_remaining_ms: None,
+                rejected_spend_figures: 0,
             },
         ),
         // ── two subagents are dispatched ────────────────────────────────
@@ -447,6 +448,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 session_spent_usd: Some(0.039),
                 session_limit_usd: Some(7.50),
                 deadline_remaining_ms: None,
+                rejected_spend_figures: 0,
             },
         ),
         // The board moves: the triggers task completes, the workflows task
@@ -580,6 +582,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 session_spent_usd: None,
                 session_limit_usd: None,
                 deadline_remaining_ms: None,
+                rejected_spend_figures: 0,
             },
         ),
         ev(

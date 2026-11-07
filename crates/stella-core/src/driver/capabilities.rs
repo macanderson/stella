@@ -308,6 +308,25 @@ impl<'a> Engine<'a> {
             provider_override: Arc::new(std::sync::OnceLock::new()),
         }
     }
+
+    /// The lane this engine was assembled with, or `None` when the assembling
+    /// [`TurnCapabilities`] wrote `lane: None`.
+    ///
+    /// Public for the host that loops over [`Engine::run_step`] itself rather
+    /// than calling [`Engine::drive`]. That host frames its own turn, so it
+    /// emits `agent.turn.started` through
+    /// [`turn_started_payload`](super::lifecycle::turn_started_payload), which
+    /// takes the lane. [`Engine::assemble`] is the only way to set the lane,
+    /// so without this reader the host could write it and never read it back,
+    /// and would keep its own copy of a value it does not own. That is the
+    /// reason [`Engine::call_role`] is public, and it applies here unchanged.
+    ///
+    /// It lives here rather than beside `call_role` in `driver.rs` because
+    /// that file is a grandfathered god file closed to growth.
+    #[must_use]
+    pub fn lane(&self) -> Option<&TurnLane> {
+        self.lane.as_ref()
+    }
 }
 
 #[cfg(test)]
@@ -488,6 +507,38 @@ mod tests {
         assert!(engine.outcomes.is_none());
         assert!(engine.fallback.is_none());
         assert_eq!(engine.call_role, ModelCallRole::Worker);
+    }
+
+    /// The lane witness: the lane an engine was assembled with reads
+    /// back off it, and an engine assembled with no lane reads back `None`.
+    ///
+    /// Through the public reader, not the private field, because the reader is
+    /// the thing an out-of-tree host has. This does not compile before
+    /// `Engine::lane` exists.
+    #[test]
+    fn the_assembled_lane_reads_back_through_the_public_reader() {
+        use stella_protocol::BuiltinLane;
+
+        let provider = crate::subagent::tests::ScriptedProvider::new(vec![]);
+        let tools = crate::subagent::tests::MixedTools::default();
+        let sleeper = crate::tests::PausedSleeper;
+        let fleet = TurnLane::Builtin(BuiltinLane::FleetWorker);
+
+        let seams = TurnCapabilities {
+            lane: Some(fleet.clone()),
+            ..TurnCapabilities::none()
+        };
+        let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
+        assert_eq!(engine.lane(), Some(&fleet));
+
+        let bare = Engine::assemble(
+            &provider,
+            &tools,
+            EngineConfig::default(),
+            &sleeper,
+            TurnCapabilities::none(),
+        );
+        assert_eq!(bare.lane(), None);
     }
 
     /// **The deletion witness.** No per-seam builder survives on `Engine`,

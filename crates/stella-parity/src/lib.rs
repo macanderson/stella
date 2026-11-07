@@ -112,6 +112,9 @@ pub const COMPOSITION_SEAMS: &[&str] = &[
     // framing, and the `agent.turn.started` payload names the role — so it
     // reads the engine's rather than keeping a second copy of the default.
     "call_role",
+    // The lane reader, for the same host and the same reason as `call_role`:
+    // `agent.turn.started` names the lane, and `assemble` is the only writer.
+    "lane",
     "with_turn_instance",
     "max_steps",
 ];

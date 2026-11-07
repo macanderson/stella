@@ -601,7 +601,7 @@ pub async fn run_deck_session(
         // already spent (its journal's last `BudgetTick`), so spend stays
         // monotone across interruptions. Same seam as the in-deck session
         // switch (`SessionResume` in the driver loop below).
-        budget.reseed_session_spend(rs.spent_usd.unwrap_or(0.0));
+        budget.switch_session(rs.spent_usd.unwrap_or(0.0), rs.rejected_spend_figures);
     }
 
     // The supervisor channel: `task_assign` spawn requests (tap → driver)
@@ -644,6 +644,7 @@ pub async fn run_deck_session(
             std::mem::take(&mut rs.history),
             &system_prompt,
         );
+        let (spent_usd, refused) = restored.budget_meter(rs);
         messages = restored.messages;
         resume_note = Some(restored.note);
         // `--spend-limit` means THIS session on every resume path: the guard's
@@ -652,17 +653,10 @@ pub async fn run_deck_session(
         // seam as the in-deck session switch (`SessionResume` in the driver
         // loop below).
         //
-        // Two meters can answer that, and the larger wins. The journal's last
-        // `BudgetTick` and the checkpoint's step-boundary snapshot are written
-        // at different moments of the same turn, so either can be the later
-        // one — and spend only ever goes up, so taking the max cannot
-        // over-count, while taking the wrong one silently hands a resumed
-        // session budget it already spent.
-        budget.reseed_session_spend(
-            rs.spent_usd
-                .unwrap_or(0.0)
-                .max(restored.spent_usd.unwrap_or(0.0)),
-        );
+        // Two meters can answer that, the journal's last `BudgetTick` and the
+        // checkpoint, and `budget_meter` takes the larger of each. The count
+        // of refused figures comes along, so a short total stays marked.
+        budget.switch_session(spent_usd, refused);
     }
     // The flush point for a build made with an aborting profile, where no
     // `Drop` and no catch runs. Every profile here unwinds, so the journal is
@@ -1467,6 +1461,7 @@ pub async fn run_deck_session(
                                     rs.history.take(),
                                     &system_prompt,
                                 );
+                                let (spent_usd, refused) = adopted.budget_meter(&rs);
                                 messages = adopted.messages;
                                 // Interrupted prompts (any lane's unsettled
                                 // dispatch) go back at the FRONT, ahead of the
@@ -1492,14 +1487,9 @@ pub async fn run_deck_session(
                                 // emitted; the next real turn's ticks
                                 // reflect the reseeded guard naturally.
                                 // The larger of the journal's last tick and the
-                                // adopted checkpoint's step-boundary meter —
-                                // see the startup resume for why max, not
-                                // either one.
-                                budget.reseed_session_spend(
-                                    rs.spent_usd
-                                        .unwrap_or(0.0)
-                                        .max(adopted.spent_usd.unwrap_or(0.0)),
-                                );
+                                // adopted checkpoint, for the spend and for
+                                // the count of refused figures alike.
+                                budget.switch_session(spent_usd, refused);
 
                                 // Fresh meta over the replayed one (pid, model,
                                 // clock), back to waiting-on-you, and a fresh

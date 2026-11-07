@@ -977,7 +977,8 @@ pub trait CheckpointSink: Send + Sync + std::fmt::Debug {
 ///
 /// The guard keeps its fields private (it is a meter, not a record) and is not
 /// itself `Serialize`, so this mirrors it through the public accessors and
-/// rebuilds it through the public constructor. Keeping the mirror here rather
+/// rebuilds it through the public constructor and doors, plus one
+/// crate-private seam for the refusal count. Keeping the mirror here rather
 /// than deriving `Serialize` on the guard is deliberate: a checkpoint is a
 /// wire format with a version, and the meter should not have to keep its
 /// private layout wire-stable to serve it.
@@ -993,6 +994,17 @@ pub struct BudgetSnapshot {
     pub turn_spent_usd: f64,
     /// Spend since the guard was constructed.
     pub session_spent_usd: f64,
+    /// Dollar figures the guard refused and counted as zero. Carried
+    /// so a resumed turn's ticks keep reporting that its totals are short.
+    /// Omitted at zero and defaulted on decode, so a checkpoint with nothing
+    /// to report is byte-identical to one written before this field existed.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rejected_spend_figures: u32,
+}
+
+/// `skip_serializing_if` for [`BudgetSnapshot::rejected_spend_figures`].
+fn is_zero(count: &u32) -> bool {
+    *count == 0
 }
 
 impl BudgetSnapshot {
@@ -1005,6 +1017,7 @@ impl BudgetSnapshot {
             session_limit_usd: budget.session_limit_usd(),
             turn_spent_usd: budget.spent_usd(),
             session_spent_usd: budget.session_spent_usd(),
+            rejected_spend_figures: budget.rejected_spend_figures(),
         }
     }
 
@@ -1013,12 +1026,15 @@ impl BudgetSnapshot {
     /// `record_spend` moves both axes together, so the turn axis is set first
     /// and the session axis is then overwritten with the seam the resume path
     /// already exists for (`reseed_session_spend`) — the same two calls
-    /// `stella resume` makes when it reopens a session.
+    /// `stella resume` makes when it reopens a session. The refusal count is
+    /// added on top, so a snapshot whose own figures are unreadable reports
+    /// those refusals as well as the ones it carried.
     #[must_use]
     pub fn restore(&self) -> BudgetGuard {
         let mut budget = BudgetGuard::new(self.mode, self.turn_limit_usd, self.session_limit_usd);
         let _ = budget.record_spend(self.turn_spent_usd);
         budget.reseed_session_spend(self.session_spent_usd);
+        budget.carry_rejected_spend_figures(self.rejected_spend_figures);
         budget
     }
 }

@@ -47,6 +47,7 @@ pub struct StatusSource {
     saved_usd: f64,
     inbox: u32,
     deadline_remaining_ms: Option<u64>,
+    rejected_spend_figures: u32,
 }
 
 impl StatusSource {
@@ -72,6 +73,12 @@ impl StatusSource {
             // the bar only while it is armed, so the `Option` is the whole
             // signal and must not be flattened to a number here.
             deadline_remaining_ms: focused.and_then(|a| a.model.hud.deadline_remaining_ms),
+            // Summed over every agent, like the spend beside it
+            // (`total_cost`). One lane's refused cost makes the total short,
+            // whichever lane has focus.
+            rejected_spend_figures: model.agents.iter().fold(0, |sum, a| {
+                sum.saturating_add(a.model.hud.rejected_spend_figures)
+            }),
         }
     }
 
@@ -86,6 +93,7 @@ impl StatusSource {
             saved_usd: self.saved_usd,
             inbox: self.inbox,
             deadline_remaining_ms: self.deadline_remaining_ms,
+            rejected_spend_figures: self.rejected_spend_figures,
         }
     }
 }

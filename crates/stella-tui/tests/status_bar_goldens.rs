@@ -180,6 +180,7 @@ fn demo() -> Status<'static> {
         // The rendering shows no deadline, because nothing was timing that
         // session. `None` is that fact, and it is not the same fact as `0`.
         deadline_remaining_ms: None,
+        rejected_spend_figures: 0,
     }
 }
 
@@ -375,6 +376,31 @@ fn the_meter_tracks_the_number_printed_beside_it() {
             }
         }
     }
+}
+
+// ── a spend the budget guard could not read ─────────────────────────────────
+
+/// A refused cost makes the spend a floor. The spend cell says so in
+/// amber. A clean session shows the bare figure.
+#[test]
+fn a_refused_cost_qualifies_the_spend_and_a_clean_session_does_not() {
+    let clean = flat(&demo());
+    assert_eq!(clean[3], "$0.45", "a clean session's spend: {clean:?}");
+    assert!(!clean.iter().any(|c| c.contains("unreadable")), "{clean:?}");
+
+    let refused = Status {
+        rejected_spend_figures: 2,
+        ..demo()
+    };
+    let bar = flat(&refused);
+    assert_eq!(bar.len(), clean.len(), "the warning rides the spend cell");
+    assert_eq!(bar[3], "$0.45 +2 unreadable");
+    let warning = cells(&refused)[3]
+        .last()
+        .expect("the warning span")
+        .style
+        .fg;
+    assert_eq!(warning, Some(token::WARNING), "amber, never red");
 }
 
 // ── the conditional cell: an armed task deadline (#4126) ────────────────────

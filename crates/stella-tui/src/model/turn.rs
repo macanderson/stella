@@ -371,6 +371,11 @@ pub struct Hud {
     /// (`AgentEvent::BudgetTick::deadline_remaining_ms`), and this struct is a
     /// fold of the stream, not a reinterpretation of it.
     pub deadline_remaining_ms: Option<u64>,
+    /// Dollar figures the budget guard refused and counted as zero, as the
+    /// last `BudgetTick` reported them. Nonzero means
+    /// [`Hud::spent_usd`] is short of the bill by an amount nobody knows, and
+    /// the status bar says so beside the spend.
+    pub rejected_spend_figures: u32,
     /// The stage the turn is in. [`StageName`], not [`StageKind`]: a
     /// contributed stage is what the statline must be able to name.
     pub stage: Option<StageName>,

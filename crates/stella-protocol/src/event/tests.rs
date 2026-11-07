@@ -141,6 +141,7 @@ fn budget_tick_roundtrips_with_session_and_deadline_axes() {
         session_spent_usd: Some(1.75),
         session_limit_usd: Some(10.0),
         deadline_remaining_ms: Some(842_137),
+        rejected_spend_figures: 2,
     };
     let json = serde_json::to_string(&event).unwrap();
     let back: AgentEvent = serde_json::from_str(&json).unwrap();
@@ -152,6 +153,7 @@ fn budget_tick_roundtrips_with_session_and_deadline_axes() {
             session_spent_usd,
             session_limit_usd,
             deadline_remaining_ms,
+            rejected_spend_figures,
         } => {
             assert_eq!(spent_usd, 0.42);
             assert_eq!(limit_usd, Some(2.5));
@@ -161,6 +163,7 @@ fn budget_tick_roundtrips_with_session_and_deadline_axes() {
             // Byte-for-byte (AGENTS.md #4) — the reason the axis is a
             // whole-millisecond integer and not a float of seconds.
             assert_eq!(deadline_remaining_ms, Some(842_137));
+            assert_eq!(rejected_spend_figures, 2);
         }
         other => panic!("unexpected case: {other:?}"),
     }
@@ -177,6 +180,7 @@ fn budget_tick_without_session_or_deadline_fields_parses_with_none() {
             session_spent_usd,
             session_limit_usd,
             deadline_remaining_ms,
+            rejected_spend_figures,
             ..
         }) => {
             assert_eq!(session_spent_usd, None);
@@ -185,9 +189,34 @@ fn budget_tick_without_session_or_deadline_fields_parses_with_none() {
             // not say whether a deadline was armed, and `Some(0)` would be
             // this parser inventing "already out of time".
             assert_eq!(deadline_remaining_ms, None);
+            assert_eq!(rejected_spend_figures, 0);
         }
         other => panic!("old stream must parse: {other:?}"),
     }
+}
+
+/// A tick with nothing refused has no count in its JSON. A clean journal
+/// stays as it was, byte for byte.
+#[test]
+fn a_budget_tick_with_nothing_refused_omits_the_count() {
+    let tick = |rejected_spend_figures| AgentEvent::BudgetTick {
+        spent_usd: 0.42,
+        limit_usd: None,
+        mode: BudgetMode::Enforced,
+        session_spent_usd: None,
+        session_limit_usd: None,
+        deadline_remaining_ms: None,
+        rejected_spend_figures,
+    };
+    assert_eq!(
+        serde_json::to_string(&tick(0)).unwrap(),
+        r#"{"type":"budget_tick","spent_usd":0.42,"limit_usd":null,"mode":"enforced","session_spent_usd":null,"session_limit_usd":null,"deadline_remaining_ms":null}"#
+    );
+    assert!(
+        serde_json::to_string(&tick(1))
+            .unwrap()
+            .ends_with(r#","rejected_spend_figures":1}"#)
+    );
 }
 
 #[test]
