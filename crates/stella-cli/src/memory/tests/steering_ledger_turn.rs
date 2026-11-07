@@ -228,7 +228,7 @@ mod tests;
 fn before() { ledger.spend(1); }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used, reason = \"fixture\")]
 mod inline {
     fn helper() {
         ledger.spend(2);
