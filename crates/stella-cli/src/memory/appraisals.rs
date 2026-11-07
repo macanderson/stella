@@ -280,8 +280,8 @@ fn stored_trials(workspace_root: &Path) -> Vec<ArtifactTrial> {
 ///
 /// Each artifact is judged on its live window
 /// ([`stella_learn::skills::appraisal::live_window`]), not its whole history:
-/// the newest trials back to a full control arm. A skill that helped for
-/// months and stopped last week is judged on last week's turns and the
+/// the newest trials back to a full window in each arm. A skill that helped
+/// for months and stopped last week is judged on last week's turns and the
 /// baseline beside them, so a long good record does not keep it in selection.
 ///
 /// The kind is a filter rather than a fan-out because each surface retires on

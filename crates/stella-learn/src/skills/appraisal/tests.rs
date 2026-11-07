@@ -480,11 +480,11 @@ fn the_live_window_judges_a_skill_on_what_it_did_lately() {
     );
 }
 
-/// The window starts at the control trial that fills it, so a with-skill
-/// trial older than every baseline it keeps is dropped. History short of one
-/// window comes back whole, and a zero window keeps nothing.
+/// The window starts at the trial that fills its rarer arm. When controls are
+/// rare, that is a control trial. History short of one window in either arm
+/// comes back whole, and a zero window keeps nothing.
 #[test]
-fn the_live_window_is_counted_in_control_trials() {
+fn the_live_window_holds_a_full_window_of_each_arm() {
     let trials = vec![
         trial("live", true, true),
         trial("live", false, true),
@@ -498,6 +498,50 @@ fn the_live_window_is_counted_in_control_trials() {
     assert_eq!(live_window(&trials, 3), &trials[..]);
     assert!(live_window(&trials, 0).is_empty());
     assert!(live_window(&[], 5).is_empty());
+}
+
+/// A rule that fits the prompt budget once in a while is shown on few of its
+/// turns. The window reaches back to the second time it was shown. Stopping
+/// at two controls would keep no shown trial at all, and the rule could never
+/// be judged.
+#[test]
+fn the_live_window_reaches_back_when_the_with_skill_arm_is_rare() {
+    let trials = vec![
+        trial("live", false, true),
+        trial("live", true, true),
+        trial("live", false, true),
+        trial("live", false, true),
+        trial("live", false, true),
+        trial("live", true, true),
+        trial("live", false, true),
+        trial("live", false, true),
+    ];
+    assert_eq!(live_window(&trials, 2), &trials[1..]);
+}
+
+/// The live window keeps a rarely shown artifact judgeable. Shown on one turn
+/// in ten, it harms every time. Bounded at one window of controls, it would
+/// keep two shown turns, below the evidence floor, so it would stay
+/// `Insufficient` for good.
+#[test]
+fn a_rarely_shown_artifact_that_harms_is_still_judged_on_its_live_window() {
+    let config = AppraisalConfig::default();
+    let mut trials = Vec::new();
+    for _ in 0..config.window {
+        trials.push(trial("live", true, false));
+        for _ in 0..9 {
+            trials.push(trial("live", false, true));
+        }
+    }
+    let recent = live_window(&trials, config.window);
+    let shown = recent.iter().filter(|t| t.selected).count();
+    assert_eq!(shown, config.window, "the rare arm fills its window");
+    let windowed = appraise(ArtifactKind::Rule, "rare", recent, &config);
+    assert!(
+        matches!(windowed.verdict, SkillVerdict::Harms { .. }),
+        "got {:?}",
+        windowed.verdict
+    );
 }
 
 fn arb_trial() -> impl Strategy<Value = SkillTrial> {
@@ -552,20 +596,25 @@ proptest! {
         }
     }
 
-    /// The live window is a suffix of the history holding `window` control
-    /// trials, or all of them when there are fewer, and it starts on a
-    /// control trial whenever it drops anything.
+    /// The live window is a suffix of the history. Each arm in it holds
+    /// `window` trials, or all of that arm's trials when there are fewer.
+    /// When it drops anything, its first trial is the one that filled the
+    /// last arm, so it is the shortest such suffix.
     #[test]
-    fn the_live_window_is_the_suffix_holding_a_full_control_arm(
+    fn the_live_window_is_the_shortest_suffix_holding_both_arms(
         trials in proptest::collection::vec(arb_trial(), 0..80),
         window in 0usize..30,
     ) {
         let recent = live_window(&trials, window);
         prop_assert!(trials.ends_with(recent));
-        let controls = |ts: &[SkillTrial]| ts.iter().filter(|t| !t.selected).count();
-        prop_assert_eq!(controls(recent), controls(&trials).min(window));
+        let in_arm = |ts: &[SkillTrial], selected: bool| {
+            ts.iter().filter(|t| t.selected == selected).count()
+        };
+        for selected in [true, false] {
+            prop_assert!(in_arm(recent, selected) >= in_arm(&trials, selected).min(window));
+        }
         if recent.len() < trials.len() && !recent.is_empty() {
-            prop_assert!(!recent[0].selected);
+            prop_assert_eq!(in_arm(recent, recent[0].selected), window);
         }
     }
 

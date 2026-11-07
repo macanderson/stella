@@ -36,8 +36,8 @@
 //! # The live window
 //!
 //! A live sweep judges [`live_window`], not the whole history: the newest
-//! trials back to a full control arm, so a long good record cannot outvote
-//! the turns since a skill stopped helping.
+//! trials back to a full window in each arm, so a long good record cannot
+//! outvote the turns since a skill stopped helping.
 //!
 //! # Four verdicts, and why `Inert` is separate from `Harms`
 //!
@@ -128,9 +128,9 @@ pub struct AppraisalConfig {
     /// having produced no measurement needs a window long enough that "no
     /// measurement" means something.
     ///
-    /// Also the length of the live window, in control trials: [`live_window`]
-    /// keeps the newest trials that hold this many. One number, so a full
-    /// window always holds the control arm `Inert` asks for.
+    /// Also the length of the live window: [`live_window`] keeps the newest
+    /// trials that hold this many in each arm. One number, so a full window
+    /// always holds both arms `Inert` asks for.
     pub window: usize,
 }
 
@@ -285,21 +285,19 @@ pub fn appraise(
 }
 
 /// The newest trials of one artifact's live history, back to the one that
-/// brings the control arm to `window`.
+/// gives both arms `window` trials.
 ///
 /// `trials` is oldest first, as the ledger holds it. The result is a suffix of
-/// it. It holds `window` control trials, or every control trial when there
-/// are fewer, and every with-skill trial recorded since the oldest one it
-/// keeps. A with-skill trial older than that is dropped: nothing in the
-/// window could serve as its baseline.
+/// it. Each arm in it holds `window` trials, or every trial of that arm when
+/// there are fewer. A history where either arm is short of `window` comes back
+/// whole. A `window` of zero keeps nothing.
 ///
-/// A history with fewer than `window` control trials comes back whole. A
-/// `window` of zero keeps nothing.
-///
-/// Counted in control trials because the control arm is the scarce one, and
-/// how scarce varies by kind and by setting. The span therefore stretches to
-/// hold a full control arm at any rate, and both arms come from that one span,
-/// so the baseline is contemporaneous with the turns it judges.
+/// Either arm can be the rare one. A skill is held back on few of its turns,
+/// so its control arm is rare. A rule that fits the prompt budget once in ten
+/// turns is shown on few of its turns, so its with-skill arm is rare. The span
+/// stretches until the rarer arm is full, so neither arm is left below the
+/// floor a verdict needs. Both arms come from that one span, so the baseline
+/// is from the same turns it judges.
 /// `doc:adr/0048-an-appraisal-reads-a-window-of-control-trials` records why
 /// this is a count and not a span of time.
 ///
@@ -310,13 +308,15 @@ pub fn live_window(trials: &[SkillTrial], window: usize) -> &[SkillTrial] {
     if window == 0 {
         return &[];
     }
-    let mut controls = 0;
+    let (mut shown, mut withheld) = (0, 0);
     for (at, trial) in trials.iter().enumerate().rev() {
-        if !trial.selected {
-            controls += 1;
-            if controls == window {
-                return &trials[at..];
-            }
+        if trial.selected {
+            shown += 1;
+        } else {
+            withheld += 1;
+        }
+        if shown >= window && withheld >= window {
+            return &trials[at..];
         }
     }
     trials

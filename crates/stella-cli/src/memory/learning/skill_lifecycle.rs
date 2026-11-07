@@ -443,8 +443,8 @@ async fn a_promoted_skill_that_stops_helping_is_demoted_and_no_longer_selected()
 /// Appraising the whole ledger, the old successes outvote the new failures:
 /// the with-skill arm still leads, and the verdict says the skill helps. The
 /// longer the good history, the harder that is to overturn. The live window
-/// ends that. It spans the newest `window` control trials, and here those are
-/// exactly the turns after the skill stopped helping.
+/// ends that. It spans the newest `window` trials of each arm, and here those
+/// are exactly the turns after the skill stopped helping.
 #[tokio::test]
 async fn a_skill_that_helped_for_a_long_time_is_still_demoted_once_it_stops() {
     let dir = workspace_with_log();
