@@ -37,6 +37,10 @@ pub struct HookToolInfo {
 pub struct HookPayload {
     pub event: HookEvent,
     pub cwd: String,
+    /// Native session identity shared with model requests. An event from the
+    /// self-driving loop names its drive here, when a drive is open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     /// Present for `PreToolUse` / `PostToolUse`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool: Option<HookToolInfo>,
@@ -101,12 +105,22 @@ pub struct HookPayload {
 }
 
 impl HookPayload {
+    /// Attach the engine's captured identity without changing the event data.
+    pub fn with_session_context(
+        mut self,
+        context: Option<&stella_protocol::SessionContext>,
+    ) -> Self {
+        self.session_id = context.map(|context| context.session_id.clone());
+        self
+    }
+
     /// A payload carrying only the event and the workspace — the shape
     /// every non-tool event shares.
     fn bare(event: HookEvent, cwd: String) -> Self {
         Self {
             event,
             cwd,
+            session_id: None,
             tool: None,
             tool_result: None,
             final_text: None,
@@ -389,15 +403,9 @@ impl HookPullRequestInfo {
 ///
 /// # Why the identifier and nothing else is guaranteed
 ///
-/// Only [`Self::number`] is always present. The rest is what the loop happened
-/// to have already read, and the loop reads the tracker lazily — so a hook that
-/// needs a field this does not carry should fetch it itself (`gh issue view`
-/// is one line in a shell hook) rather than have Stella fetch it on every
-/// dispatch for the hooks that do not.
-///
-/// That splits the cost the right way: an extra tracker round trip per issue,
-/// paid by the hooks that want it, beats one paid by every loop whether a hook
-/// is registered or not.
+/// Only [`Self::number`] is always present. The other fields are values the
+/// loop has read from the tracker. A hook that needs more can fetch them with
+/// `gh issue view`. Hooks that need no more fields pay for no extra read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookIssueInfo {
     /// The issue number, as the tracker spells it. Always present — it is the

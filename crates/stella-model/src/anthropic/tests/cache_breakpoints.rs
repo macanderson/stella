@@ -126,6 +126,7 @@ fn minimal_sse() -> &'static str {
 
 fn simple_request() -> CompletionRequest {
     CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,
@@ -233,6 +234,7 @@ fn conversation(system: &str, turns: &[(&str, &str)]) -> CompletionRequest {
         messages.push(CompletionMessage::assistant(*answer));
     }
     CompletionRequest {
+        context: None,
         messages,
         max_output_tokens: None,
         temperature: None,

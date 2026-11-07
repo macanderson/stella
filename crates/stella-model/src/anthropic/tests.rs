@@ -143,7 +143,7 @@ async fn complete_reassembles_a_large_multi_fragment_tool_call() {
             speculation_safe: false,
         }],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let result = provider.complete(req).await.expect("should succeed");
@@ -196,7 +196,7 @@ async fn complete_surfaces_a_truncated_tool_call_instead_of_silent_null() {
             speculation_safe: false,
         }],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let err = provider.complete(req).await.unwrap_err();
@@ -247,7 +247,7 @@ async fn malformed_but_complete_tool_json_falls_back_to_the_null_repair_sentinel
             effort: None,
             tools: vec![],
             reasoning: None,
-            params: None,
+            ..CompletionRequest::default()
         })
         .await
         .expect("a repairable malformed call must not abort the turn");
@@ -286,7 +286,7 @@ async fn a_tool_call_with_no_arguments_cut_at_max_tokens_is_terminal() {
             effort: None,
             tools: vec![],
             reasoning: None,
-            params: None,
+            ..CompletionRequest::default()
         })
         .await
         .unwrap_err();
@@ -336,7 +336,7 @@ async fn truncation_is_blamed_on_the_call_that_was_cut_not_an_earlier_broken_one
             effort: None,
             tools: vec![],
             reasoning: None,
-            params: None,
+            ..CompletionRequest::default()
         })
         .await
         .unwrap_err();
@@ -692,7 +692,7 @@ async fn fable5_sends_adaptive_shape_and_drops_budget_tokens_and_sampling() {
             effort: Some(stella_protocol::ReasoningEffort::Max),
             tools: vec![],
             reasoning: Some(true),
-            params: None,
+            ..CompletionRequest::default()
         })
         .await
         .expect("adaptive request should match and stream a reply");
@@ -748,7 +748,7 @@ async fn legacy_model_still_sends_budget_tokens_and_no_output_config() {
             effort: Some(stella_protocol::ReasoningEffort::High),
             tools: vec![],
             reasoning: Some(true),
-            params: None,
+            ..CompletionRequest::default()
         })
         .await
         .expect("legacy request should stream a reply");
@@ -804,7 +804,7 @@ async fn complete_streams_and_aggregates_text_deltas_from_a_mock_server() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let result = provider
@@ -852,7 +852,7 @@ async fn complete_reports_cache_write_tokens_from_the_usage_envelope() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let result = provider.complete(req).await.expect("should succeed");
@@ -912,7 +912,7 @@ async fn complete_reassembles_a_streamed_tool_use_block() {
             speculation_safe: false,
         }],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let result = provider.complete(req).await.expect("should succeed");
@@ -987,7 +987,7 @@ async fn complete_observed_streams_answer_deltas_in_order_never_thinking() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let observer = RecordingObserver::new();
@@ -1043,7 +1043,7 @@ async fn complete_observed_announces_a_tool_call_at_its_block_stop() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let observer = RecordingObserver::new();
@@ -1106,7 +1106,7 @@ async fn complete_observed_never_announces_a_block_whose_json_is_broken() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let observer = RecordingObserver::new();
@@ -1192,7 +1192,7 @@ async fn complete_maps_401_to_auth_error() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let err = provider.complete(req).await.unwrap_err();
@@ -1230,7 +1230,7 @@ async fn complete_maps_403_to_auth_error() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let err = provider.complete(req).await.unwrap_err();
@@ -1267,7 +1267,7 @@ async fn complete_honors_retry_after_header_on_a_429() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let err = provider.complete(req).await.unwrap_err();
@@ -1307,7 +1307,7 @@ async fn complete_computes_nonzero_cost_from_catalog_pricing() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let result = provider.complete(req).await.expect("should succeed");
@@ -1356,7 +1356,7 @@ async fn complete_forwards_temperature_to_the_request_body() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let result = provider.complete(req).await.expect("should succeed");
@@ -1381,7 +1381,7 @@ async fn complete_maps_5xx_to_retryable_transport() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let err = provider.complete(req).await.unwrap_err();
@@ -1415,7 +1415,7 @@ async fn complete_returns_err_on_mid_stream_error_event_not_truncated_ok() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let err = provider.complete(req).await.unwrap_err();
@@ -1453,7 +1453,7 @@ async fn complete_returns_transport_err_on_clean_eof_without_message_stop() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let err = provider.complete(req).await.unwrap_err();
@@ -1503,7 +1503,7 @@ async fn a_dropped_stream_carries_out_the_usage_it_had_already_been_told() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let err = provider.complete(req).await.unwrap_err();
@@ -1555,7 +1555,7 @@ async fn a_failure_before_dispatch_reports_no_recovered_usage() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let err = provider.complete(req).await.unwrap_err();
@@ -1609,7 +1609,6 @@ async fn generation_params_forward_top_p_and_top_k_and_drop_the_rest() {
     provider
         .complete(CompletionRequest {
             messages: vec![CompletionMessage::user("hi")],
-            max_output_tokens: None,
             temperature: None,
             effort: None,
             tools: vec![],
@@ -1625,6 +1624,7 @@ async fn generation_params_forward_top_p_and_top_k_and_drop_the_rest() {
                 verbosity: None,
                 service_tier: None,
             }),
+            ..CompletionRequest::default()
         })
         .await
         .expect("should succeed");
@@ -1661,7 +1661,7 @@ async fn reasoning_true_enables_thinking_raises_max_tokens_and_omits_temperature
             effort: Some(stella_protocol::ReasoningEffort::Max),
             tools: vec![],
             reasoning: Some(true),
-            params: None,
+            ..CompletionRequest::default()
         })
         .await
         .expect("should succeed");
@@ -1695,7 +1695,7 @@ async fn thinking_budget_clamps_under_a_caller_set_max_tokens() {
             effort: None, // Medium default: 8192, which exceeds the cap
             tools: vec![],
             reasoning: Some(true),
-            params: None,
+            ..CompletionRequest::default()
         })
         .await
         .expect("should succeed");
@@ -1726,7 +1726,7 @@ async fn reasoning_false_sends_no_thinking_block_and_keeps_temperature() {
             effort: Some(stella_protocol::ReasoningEffort::High),
             tools: vec![],
             reasoning: Some(false),
-            params: None,
+            ..CompletionRequest::default()
         })
         .await
         .expect("should succeed");

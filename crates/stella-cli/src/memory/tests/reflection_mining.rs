@@ -255,7 +255,7 @@ async fn reflect_and_record_stores_the_models_self_review_against_its_execution(
             crate::memory::TurnEvidence::from_transcript(&transcript, true),
             true,
             None,
-            crate::memory::ReflectionPosture::default(),
+            crate::memory::ReflectionPosture::default().into(),
         )
         .await;
     assert_eq!(report.recorded, 1, "lesson mining still works");
@@ -360,7 +360,7 @@ async fn without_an_execution_id_the_self_review_is_dropped_not_misattributed() 
             ),
             true,
             None,
-            crate::memory::ReflectionPosture::default(),
+            crate::memory::ReflectionPosture::default().into(),
         )
         .await;
     assert_eq!(report.recorded, 1, "lessons are unaffected");
@@ -470,7 +470,7 @@ async fn reflect_and_record_writes_lessons_to_log_and_store() {
             crate::memory::TurnEvidence::from_transcript(&transcript, true),
             true,
             None,
-            crate::memory::ReflectionPosture::default(),
+            crate::memory::ReflectionPosture::default().into(),
         )
         .await;
 
@@ -588,7 +588,7 @@ async fn an_unreadable_reflection_is_recorded_and_an_empty_one_is_not() {
                 ),
                 true,
                 None,
-                crate::memory::ReflectionPosture::default(),
+                crate::memory::ReflectionPosture::default().into(),
             )
             .await;
         assert_eq!(report.recorded, 0, "neither response carries a lesson");
@@ -664,7 +664,7 @@ async fn reflection_preserves_settled_cost_when_budget_rejects_model_output() {
             crate::memory::TurnEvidence::from_transcript(&[msg(MessageRole::User, "worked")], true),
             true,
             Some(0.001),
-            crate::memory::ReflectionPosture::default(),
+            crate::memory::ReflectionPosture::default().into(),
         )
         .await;
     assert_eq!(report.recorded, 0);

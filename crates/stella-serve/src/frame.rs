@@ -505,6 +505,7 @@ mod tests {
             provider_id: "mock".to_string(),
             role: ModelCallRole::Worker,
             request: CompletionRequest {
+                context: None,
                 messages: Vec::new(),
                 max_output_tokens: None,
                 temperature: None,

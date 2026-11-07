@@ -53,10 +53,9 @@ use stella_store::work_journal::WorkJournal;
 ///
 /// # There is no unbind, deliberately
 ///
-/// A finished session leaves the handle bound, and nothing clears it. That is
-/// safe because the only thing a binding does is answer where the *next* turn
-/// checkpoints, and after a session finishes there is no next turn: the deck
-/// re-binds on a switch, and the one-shot drivers exit.
+/// A finished session leaves the handle bound. A new session replaces the
+/// identity and clears the prior record before opening its own journal.
+/// Engines already running keep the sink and identity they captured.
 ///
 /// # What must NOT inherit a binding
 ///
@@ -91,7 +90,7 @@ pub struct SessionDurability {
     /// and the *next* turn's checkpoint must land in the session it actually
     /// belongs to. `Arc` so `sink()` hands out cheap shares rather than
     /// re-opening the record per engine.
-    bound: Arc<RwLock<Option<Bound>>>,
+    bound: Arc<RwLock<Option<SessionBinding>>>,
     /// The other live sessions writing to this work tree, as of the last
     /// [`Self::refresh_worktree_sharers`] (#4386).
     ///
@@ -187,6 +186,12 @@ impl UnmeasurableReason {
 
 /// What a bound session writes through: its durable record.
 #[derive(Clone, Debug)]
+struct SessionBinding {
+    context: stella_protocol::SessionContext,
+    record: Option<Bound>,
+}
+
+#[derive(Clone, Debug)]
 struct Bound {
     journal: Arc<WorkJournal>,
     /// The staged-pipeline frame every checkpoint of this session rides with,
@@ -202,6 +207,42 @@ struct Bound {
 }
 
 impl SessionDurability {
+    /// Capture the bound identity before a turn or hook leaves this process.
+    pub fn session_context(&self) -> Option<stella_protocol::SessionContext> {
+        self.bound
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .map(|binding| binding.context.clone())
+    }
+
+    /// Capture identity and checkpoint destination from one binding.
+    pub fn engine_binding(
+        &self,
+    ) -> (
+        Option<stella_protocol::SessionContext>,
+        Option<Arc<dyn CheckpointSink>>,
+    ) {
+        let binding = self.bound.read().unwrap_or_else(|p| p.into_inner()).clone();
+        let Some(binding) = binding else {
+            return (None, None);
+        };
+        let sink = binding.record.map(|bound| {
+            let sink: Arc<dyn CheckpointSink> = Arc::new(JournalCheckpointSink { bound });
+            sink
+        });
+        (Some(binding.context), sink)
+    }
+
+    fn begin_session(&self, session_id: &str) {
+        *self.bound.write().unwrap_or_else(|p| p.into_inner()) = Some(SessionBinding {
+            context: stella_protocol::SessionContext {
+                session_id: session_id.into(),
+            },
+            record: None,
+        });
+    }
+
     /// Point this handle at the durable record of the session that is now
     /// running, and establish that session's tree baseline.
     ///
@@ -224,9 +265,14 @@ impl SessionDurability {
     pub fn bind(&self, journal: WorkJournal) {
         {
             let mut slot = self.bound.write().unwrap_or_else(|p| p.into_inner());
-            *slot = Some(Bound {
-                journal: Arc::new(journal),
-                pipeline: Arc::new(RwLock::new(None)),
+            *slot = Some(SessionBinding {
+                context: stella_protocol::SessionContext {
+                    session_id: journal.session().into(),
+                },
+                record: Some(Bound {
+                    journal: Arc::new(journal),
+                    pipeline: Arc::new(RwLock::new(None)),
+                }),
             });
         }
         // After the write lock is released: `snapshot_worktree` takes the read
@@ -283,7 +329,7 @@ impl SessionDurability {
     #[cfg(test)]
     pub fn set_pipeline_frame(&self, json: String) {
         let bound = self.bound.read().unwrap_or_else(|p| p.into_inner()).clone();
-        if let Some(bound) = bound {
+        if let Some(bound) = bound.and_then(|binding| binding.record) {
             *bound.pipeline.write().unwrap_or_else(|p| p.into_inner()) = Some(json);
         }
     }
@@ -326,7 +372,9 @@ impl SessionDurability {
             .read()
             .unwrap_or_else(|p| p.into_inner())
             .clone()?;
-        Some(Arc::new(JournalCheckpointSink { bound }))
+        Some(Arc::new(JournalCheckpointSink {
+            bound: bound.record?,
+        }))
     }
 
     /// The bound session's durable record, or `None` while unbound.
@@ -335,6 +383,8 @@ impl SessionDurability {
             self.bound
                 .read()
                 .unwrap_or_else(|p| p.into_inner())
+                .as_ref()?
+                .record
                 .as_ref()?
                 .journal
                 .clone(),
@@ -586,18 +636,27 @@ pub fn bind_session_in(
     workspace_root: &Path,
     session_id: &str,
 ) -> Option<String> {
+    // Open first, then publish the identity and its journal in one write. An
+    // engine built while the journal opens takes the old pair whole. It never
+    // takes the new identity with nowhere to save its transcript.
     match WorkJournal::open_in(store_root, workspace_root, session_id) {
         Ok(journal) => {
             // `bind` establishes this session's tree baseline; see its doc.
             durability.bind(journal);
             None
         }
-        Err(e) => Some(format!(
-            "durable work record unavailable ({e}) — this session's turns will \
-             not be recoverable from stella's own history"
-        )),
+        Err(e) => {
+            durability.begin_session(session_id);
+            Some(format!(
+                "durable work record unavailable ({e}) — this session's turns will \
+                 not be recoverable from stella's own history"
+            ))
+        }
     }
 }
+
+#[cfg(test)]
+mod session_identity;
 
 #[cfg(test)]
 mod tests {

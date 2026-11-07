@@ -715,6 +715,7 @@ async fn run_task(
     // rooted at the invocation root — `durability` argues each (#3232).
     let attempt_durability = durability::bind(&invocation_root, claim_holder);
     let mut cfg = cfg.clone();
+    cfg.durability = attempt_durability.handle().clone();
     cfg.workspace_root = root.to_path_buf();
     // Each attempt is its own session in its own worktree. It recalls its own
     // block below, so it spends its own steering allowance. Share the
@@ -789,9 +790,10 @@ async fn run_task(
 
     // Each worker is its own session in its own workspace, so its SessionStart
     // hooks fire here, in the worktree.
-    let system_prompt = agent::with_session_hook_context(
+    let system_prompt = agent::with_session_hook_context_for(
         agent::build_system_prompt(&cfg, root, &active_rules),
         &cfg,
+        attempt_durability.handle(),
     )
     .await;
     // A checkpoint under this attempt's own key means a prior attempt at this

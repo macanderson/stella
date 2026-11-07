@@ -253,7 +253,8 @@ impl<'a> Engine<'a> {
                 &call.name,
                 call.input.clone(),
                 read_only,
-            ),
+            )
+            .with_session_context(self.config.session_context.as_ref()),
         )
         .await;
         // The engine carries no operator posture of its own (operator tool
@@ -324,7 +325,8 @@ impl<'a> Engine<'a> {
                 input,
                 read_only,
                 result_str,
-            ),
+            )
+            .with_session_context(self.config.session_context.as_ref()),
         )
         .await;
         diagnostics.extend(post.diagnostics);
@@ -370,7 +372,8 @@ impl<'a> Engine<'a> {
         let run = run_decision_hooks(
             handle.runner,
             Some(handle.hooks),
-            &HookPayload::stop(self.config.cwd.clone(), final_text),
+            &HookPayload::stop(self.config.cwd.clone(), final_text)
+                .with_session_context(self.config.session_context.as_ref()),
         )
         .await;
         self.surface_hook_diagnostics("Stop", &run.diagnostics, events);
@@ -464,7 +467,8 @@ impl<'a> Engine<'a> {
         let run = run_decision_hooks(
             handle.runner,
             Some(handle.hooks),
-            &HookPayload::pre_compact(self.config.cwd.clone()),
+            &HookPayload::pre_compact(self.config.cwd.clone())
+                .with_session_context(self.config.session_context.as_ref()),
         )
         .await;
         self.surface_hook_diagnostics("PreCompact", &run.diagnostics, events);

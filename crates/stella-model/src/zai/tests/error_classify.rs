@@ -8,6 +8,7 @@ use super::*;
 
 fn hi_request() -> CompletionRequest {
     CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,

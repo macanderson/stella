@@ -104,6 +104,7 @@ mod pr_observe;
 mod profile_cmd;
 mod session_clear;
 mod session_override;
+mod session_switch;
 mod sessions_view;
 mod settings_io;
 mod settle;
@@ -576,11 +577,21 @@ pub async fn run_deck_session(
     } else {
         agent::build_system_prompt(cfg, &cfg.workspace_root, &active_rules)
     };
+    // The other two halves of the same promise, bound beside the journal
+    // because all three name the session and all three must name the SAME one:
+    // every turn from here checkpoints into this record's sidecar, and every
+    // file the agent touches commits to this session's ref in stella's own git
+    // store. Re-bound on an in-deck session switch, below.
+    if let Some(warning) =
+        crate::durability::bind_session(&cfg.durability, &cfg.workspace_root, &session_record.id)
+    {
+        let _ = deck_tx.send(system_notice(warning));
+    }
     let mut system_prompt = agent::with_session_hook_context(bare_prompt.clone(), cfg).await;
-    // What the SessionStart hooks appended, captured once: a session model
-    // switch rebuilds the prompt around the NEW model line and re-appends
-    // this verbatim — hooks run once per session, not once per switch.
-    let hook_context_suffix = system_prompt[bare_prompt.len()..].to_string();
+    // What the SessionStart hooks appended for the bound session. A model
+    // switch rebuilds the prompt around the NEW model line and re-appends this
+    // verbatim. A session switch runs the hooks again and replaces it.
+    let mut hook_context_suffix = system_prompt[bare_prompt.len()..].to_string();
     // The persona-free prompt an assumed agent's block is appended to
     // (`WorkspaceInput::AgentAssume`), so assuming twice never stacks.
     let mut base_system_prompt = system_prompt.clone();
@@ -618,16 +629,6 @@ pub async fn run_deck_session(
             }
         },
     );
-    // The other two halves of the same promise, bound beside the journal
-    // because all three name the session and all three must name the SAME one:
-    // every turn from here checkpoints into this record's sidecar, and every
-    // file the agent touches commits to this session's ref in stella's own git
-    // store. Re-bound on an in-deck session switch, below.
-    if let Some(warning) =
-        crate::durability::bind_session(&cfg.durability, &cfg.workspace_root, &session_record.id)
-    {
-        let _ = deck_tx.send(system_notice(warning));
-    }
     // Which of the two durable stores this session's conversation comes back
     // from, decided HERE because the fresher candidate — the resume point an
     // interrupted turn left mid-flight — lives in the record the bind above
@@ -1409,34 +1410,27 @@ pub async fn run_deck_session(
                                 whistle.rebind(&session_record.id);
                                 *pr_session_id.lock().unwrap_or_else(|p| p.into_inner()) =
                                     session_record.id.clone();
-                                {
-                                    let mut sink =
-                                        journal_sink.lock().unwrap_or_else(|p| p.into_inner());
-                                    match stella_store::journal::SessionJournal::open(&sidecar_dir)
-                                    {
-                                        Ok(j) => sink.swap(Some(j)),
-                                        Err(e) => {
-                                            sink.swap(None);
-                                            let _ = deck_tx.send(chrome_note(format!(
-                                                "session journaling unavailable — this session \
-                                                 will no longer be resumable ({e})"
-                                            )));
-                                        }
-                                    }
-                                }
-                                // Durability re-keys with everything else. The
-                                // next turn's engine reads the sink afresh, so
-                                // the checkpoint lands in the session the user
-                                // just switched TO; the departing session's
-                                // resume point and commits are left as they
-                                // stood.
-                                if let Some(warning) = crate::durability::bind_session(
-                                    &cfg.durability,
-                                    &cfg.workspace_root,
+                                // Journal, durability and hook text move to the
+                                // adopted session before the restore below.
+                                session_switch::rebind(
+                                    cfg,
                                     &session_record.id,
-                                ) {
-                                    let _ = deck_tx.send(chrome_note(warning));
-                                }
+                                    &sidecar_dir,
+                                    &journal_sink,
+                                    &deck_tx,
+                                    session_override::PromptPlane {
+                                        base_system_prompt: &mut base_system_prompt,
+                                        system_prompt: &mut system_prompt,
+                                        messages: &mut messages,
+                                    },
+                                    session_override::HookPlane {
+                                        suffix: &mut hook_context_suffix,
+                                        persona: assumed_persona.as_deref(),
+                                        pipeline_persona,
+                                        active_rules: &active_rules,
+                                    },
+                                )
+                                .await;
 
                                 // Blank the lead pane, replay the adopted
                                 // transcript in its place (direct sends — a

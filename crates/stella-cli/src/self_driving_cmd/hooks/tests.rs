@@ -301,6 +301,29 @@ fn a_reporting_hook_that_fails_does_not_stop_the_loop() {
     );
 }
 
+/// A drive's events name the drive, so a subscriber can join them to the audit
+/// log. The gate and the reports reach the hook by two paths, and this reads
+/// both.
+#[test]
+fn a_loop_event_names_the_drive_session_that_fired_it() {
+    let session = super::super::audit::begin_session();
+    let root = temp_root("session");
+
+    let run = fired(&root, HookEvent::DriveRunStart);
+    assert_eq!(run["session_id"], session, "{run}");
+
+    let seen = root.join("gate.json");
+    let settings = settings_with("PreIssueWork", &format!("cat > {}", seen.display()));
+    assert_eq!(
+        before_issue_work(&root, &settings, &issue("42")),
+        WorkGate::Allow
+    );
+    let gate: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&seen).expect("the hook was run"))
+            .expect("the payload is JSON");
+    assert_eq!(gate["session_id"], session, "{gate}");
+}
+
 /// Fire one event into a hook that captures its payload, and read it back.
 fn fired(root: &std::path::Path, event: HookEvent) -> serde_json::Value {
     let seen = root.join(format!("{event}.json"));

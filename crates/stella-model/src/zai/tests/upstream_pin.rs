@@ -55,6 +55,7 @@ async fn mock_served_by(server: &MockServer, upstream: &str) {
 
 fn hello() -> CompletionRequest {
     CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,

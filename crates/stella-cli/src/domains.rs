@@ -213,6 +213,7 @@ pub async fn infer_domains(
     root: &Path,
     model_hint: &str,
     budget_limit: Option<f64>,
+    context: Option<stella_protocol::SessionContext>,
 ) -> (Domains, f64) {
     let summary = summarize_repo(root);
     let prompt = format!(
@@ -236,6 +237,7 @@ pub async fn infer_domains(
     for _attempt in 0..2 {
         let remaining_budget = budget_limit.map(|limit| (limit - total_cost_usd).max(0.0));
         let req = CompletionRequest {
+            context: context.clone(),
             messages: messages.clone(),
             // Unstated on purpose: `DomainInference`'s output contract is
             // declared once at the chokepoint
@@ -563,7 +565,8 @@ mod tests {
             ]),
         };
 
-        let (domains, _cost) = infer_domains(&provider, &root, "paid-domains-model", None).await;
+        let (domains, _cost) =
+            infer_domains(&provider, &root, "paid-domains-model", None, None).await;
 
         assert_eq!(domains.inferred_by, "model");
         assert_eq!(
@@ -587,7 +590,7 @@ mod tests {
         };
 
         let (domains, cost_usd) =
-            infer_domains(&provider, &root, "paid-domains-model", Some(0.01)).await;
+            infer_domains(&provider, &root, "paid-domains-model", Some(0.01), None).await;
 
         assert_eq!(cost_usd, 0.012, "both settled calls remain attributable");
         assert_eq!(domains.inferred_by, "heuristic");

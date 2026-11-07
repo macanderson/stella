@@ -284,6 +284,7 @@ mod tests {
 
         let error = provider
             .complete(CompletionRequest {
+                context: None,
                 messages: vec![CompletionMessage::user("hi")],
                 max_output_tokens: None,
                 temperature: None,
@@ -308,6 +309,7 @@ mod tests {
 
         let result = provider
             .complete(CompletionRequest {
+                context: None,
                 messages: vec![CompletionMessage::user("hi")],
                 max_output_tokens: None,
                 temperature: None,
@@ -378,6 +380,7 @@ mod tests {
         let result = provider
             .complete_observed(
                 CompletionRequest {
+                    context: None,
                     messages: vec![CompletionMessage::user("hi")],
                     max_output_tokens: None,
                     temperature: None,
@@ -425,6 +428,7 @@ mod tests {
         .with_base_url(server.uri());
 
         let req = CompletionRequest {
+            context: None,
             messages: vec![CompletionMessage::user("hi")],
             max_output_tokens: None,
             temperature: None,
@@ -464,6 +468,7 @@ mod tests {
         .with_base_url(server.uri());
 
         let req = CompletionRequest {
+            context: None,
             messages: vec![CompletionMessage::user("hi")],
             max_output_tokens: None,
             temperature: None,
@@ -508,6 +513,7 @@ mod tests {
         )
         .with_base_url(server.uri());
         let req = CompletionRequest {
+            context: None,
             messages: vec![CompletionMessage::user("hi")],
             max_output_tokens: None,
             temperature: None,
@@ -560,6 +566,7 @@ mod tests {
         .with_base_url(server.uri());
         provider
             .complete(CompletionRequest {
+                context: None,
                 messages: vec![CompletionMessage::user("hi")],
                 max_output_tokens: None,
                 temperature: None,

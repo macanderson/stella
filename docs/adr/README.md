@@ -113,6 +113,7 @@ open; nothing before Phase 3 forces it.
 | [0044](0044-a-forge-tool-groups-verbs-over-one-object.md) | A forge tool groups verbs over one object | Accepted |
 | [0045](0045-retire-ad-hoc-build-time-and-model-tier-labels.md) | Retire the ad hoc build-time and model-tier labels | Accepted — label part amended by [0046](0046-one-uppercase-label-scheme.md) |
 | [0046](0046-one-uppercase-label-scheme.md) | One uppercase label scheme | Accepted |
+| [0047](0047-native-session-request-context.md) | Native session request context | Proposed |
 | [0048](0048-an-appraisal-reads-a-window-of-control-trials.md) | An appraisal reads a window of control trials | Accepted |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session

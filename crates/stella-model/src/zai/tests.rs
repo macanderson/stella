@@ -133,7 +133,7 @@ async fn complete_aggregates_text_deltas_from_a_mock_server() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let result = provider
@@ -181,7 +181,7 @@ async fn complete_reassembles_a_streamed_tool_call_split_across_many_chunks() {
             speculation_safe: false,
         }],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let result = provider
@@ -247,7 +247,7 @@ async fn complete_observed_streams_content_deltas_in_order_never_reasoning() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let observer = RecordingObserver::new();
@@ -297,7 +297,7 @@ async fn complete_observed_announces_each_call_exactly_once_across_both_boundari
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let observer = RecordingObserver::new();
@@ -367,7 +367,7 @@ async fn complete_observed_announces_a_single_call_on_the_finish_chunk_before_do
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let observer = SequenceObserver {
@@ -413,7 +413,7 @@ async fn complete_observed_announces_the_last_call_by_done_without_a_finish_chun
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let observer = RecordingObserver::new();
@@ -463,7 +463,7 @@ async fn usage_accounting_sends_the_include_field_and_takes_the_reported_cost() 
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     // The mock's matchers make a missing usage field / missing headers a
@@ -504,7 +504,7 @@ async fn openrouter_reasoning_deltas_surface_like_reasoning_content() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
     let result = provider.complete(req).await.expect("should succeed");
     assert_eq!(result.text, "thinking hard");
@@ -542,7 +542,7 @@ async fn a_truncated_reasoning_only_turn_is_reported_empty_not_as_its_own_scratc
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
     let result = provider.complete(req).await.expect("should succeed");
     assert_eq!(
@@ -596,7 +596,7 @@ async fn complete_falls_back_to_null_when_streamed_tool_arguments_never_parse() 
             speculation_safe: false,
         }],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let result = provider
@@ -645,7 +645,7 @@ async fn complete_surfaces_a_tool_call_truncated_at_the_token_limit_not_null() {
             speculation_safe: false,
         }],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let err = provider.complete(req).await.unwrap_err();
@@ -693,7 +693,7 @@ async fn truncation_is_blamed_on_the_last_call_not_an_earlier_broken_one() {
             effort: None,
             tools: vec![],
             reasoning: None,
-            params: None,
+            ..CompletionRequest::default()
         })
         .await
         .unwrap_err();
@@ -735,7 +735,7 @@ async fn a_tool_call_with_no_arguments_cut_at_the_token_limit_is_terminal() {
             effort: None,
             tools: vec![],
             reasoning: None,
-            params: None,
+            ..CompletionRequest::default()
         })
         .await
         .unwrap_err();
@@ -771,7 +771,7 @@ async fn complete_maps_a_real_throttle_429_to_retryable_rate_limited() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let err = provider.complete(req).await.unwrap_err();
@@ -805,7 +805,7 @@ async fn complete_maps_insufficient_balance_429_to_terminal_not_rate_limited() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let err = provider.complete(req).await.unwrap_err();
@@ -846,7 +846,7 @@ async fn complete_honors_retry_after_header_on_a_throttle_429() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let err = provider.complete(req).await.unwrap_err();
@@ -881,7 +881,7 @@ async fn complete_computes_nonzero_cost_from_catalog_pricing() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let result = provider.complete(req).await.expect("should succeed");
@@ -930,7 +930,7 @@ async fn complete_surfaces_cached_tokens_and_bills_them_at_the_cached_rate() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let result = provider.complete(req).await.expect("should succeed");
@@ -981,7 +981,7 @@ async fn xai_identity_surfaces_cached_tokens_in_usage() {
             effort: None,
             tools: vec![],
             reasoning: None,
-            params: None,
+            ..CompletionRequest::default()
         })
         .await
         .expect("should succeed");
@@ -1019,7 +1019,7 @@ async fn openrouter_reasoning_tokens_reach_the_usage_envelope() {
             effort: None,
             tools: vec![],
             reasoning: None,
-            params: None,
+            ..CompletionRequest::default()
         })
         .await
         .expect("should succeed");
@@ -1059,7 +1059,7 @@ async fn a_usage_frame_without_the_breakdown_reports_none_not_zero() {
             effort: None,
             tools: vec![],
             reasoning: None,
-            params: None,
+            ..CompletionRequest::default()
         })
         .await
         .expect("should succeed");
@@ -1085,7 +1085,7 @@ async fn complete_maps_5xx_to_retryable_transport() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let err = provider.complete(req).await.unwrap_err();
@@ -1117,7 +1117,7 @@ async fn complete_returns_err_on_mid_stream_error_frame_not_truncated_ok() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let err = provider.complete(req).await.unwrap_err();
@@ -1154,7 +1154,7 @@ async fn complete_returns_transport_err_on_clean_eof_without_done() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let err = provider.complete(req).await.unwrap_err();
@@ -1197,7 +1197,6 @@ async fn generation_params_land_in_the_wire_body_including_nonstandard_fields() 
     provider
         .complete(CompletionRequest {
             messages: vec![CompletionMessage::user("hi")],
-            max_output_tokens: None,
             temperature: None,
             effort: None,
             tools: vec![],
@@ -1213,6 +1212,7 @@ async fn generation_params_land_in_the_wire_body_including_nonstandard_fields() 
                 verbosity: Some(stella_protocol::Verbosity::High),
                 service_tier: Some(stella_protocol::ServiceTier::Priority),
             }),
+            ..CompletionRequest::default()
         })
         .await
         .expect("should succeed");
@@ -1248,7 +1248,7 @@ async fn absent_params_and_reasoning_add_no_keys_to_the_body() {
             effort: None,
             tools: vec![],
             reasoning: None,
-            params: None,
+            ..CompletionRequest::default()
         })
         .await
         .expect("should succeed");
@@ -1292,7 +1292,7 @@ async fn openrouter_identity_sends_root_level_cache_control() {
             effort: None,
             tools: vec![],
             reasoning: None,
-            params: None,
+            ..CompletionRequest::default()
         })
         .await
         .expect("should succeed");
@@ -1357,7 +1357,7 @@ async fn openrouter_identity_sends_a_session_stable_session_id() {
         effort: None,
         tools: vec![],
         reasoning: None,
-        params: None,
+        ..CompletionRequest::default()
     };
     provider.complete(req()).await.expect("first turn");
     provider.complete(req()).await.expect("second turn");
@@ -1407,7 +1407,7 @@ async fn non_openrouter_identities_never_send_session_id() {
                 effort: None,
                 tools: vec![],
                 reasoning: None,
-                params: None,
+                ..CompletionRequest::default()
             })
             .await
             .expect("should succeed");
@@ -1491,7 +1491,7 @@ async fn complete_surfaces_cache_write_tokens() {
             effort: None,
             tools: vec![],
             reasoning: None,
-            params: None,
+            ..CompletionRequest::default()
         })
         .await
         .expect("should succeed");
@@ -1531,7 +1531,7 @@ async fn deepseek_native_cache_hit_tokens_surface_as_cached_input() {
             effort: None,
             tools: vec![],
             reasoning: None,
-            params: None,
+            ..CompletionRequest::default()
         })
         .await
         .expect("should succeed");
@@ -1554,7 +1554,7 @@ async fn zai_identity_maps_reasoning_to_glm_thinking_object() {
         effort: None,
         tools: vec![],
         reasoning,
-        params: None,
+        ..CompletionRequest::default()
     };
     provider.complete(req(Some(true))).await.expect("on");
     provider.complete(req(Some(false))).await.expect("off");
@@ -1590,7 +1590,7 @@ async fn other_identities_ignore_reasoning_entirely() {
             effort: Some(ReasoningEffort::High),
             tools: vec![],
             reasoning: Some(true),
-            params: None,
+            ..CompletionRequest::default()
         })
         .await
         .expect("should succeed");
@@ -1626,7 +1626,7 @@ async fn xai_identity_maps_effort_to_reasoning_effort() {
         effort,
         tools: vec![],
         reasoning,
-        params: None,
+        ..CompletionRequest::default()
     };
     // Pinned effort (reasoning not suppressed) → the mapped level.
     provider
@@ -1707,7 +1707,7 @@ async fn xai_original_grok4_omits_reasoning_effort_it_would_reject() {
                 effort: Some(ReasoningEffort::High),
                 tools: vec![],
                 reasoning: Some(true),
-                params: None,
+                ..CompletionRequest::default()
             })
             .await
             .expect("should succeed");
@@ -1797,7 +1797,7 @@ async fn openrouter_resends_without_reasoning_when_the_endpoint_mandates_it() {
         effort: Some(stella_protocol::ReasoningEffort::Low),
         tools: vec![],
         reasoning: Some(false),
-        params: None,
+        ..CompletionRequest::default()
     };
 
     let result = provider.complete(req).await.expect("the resend succeeds");

@@ -363,6 +363,7 @@ impl<'a> Engine<'a> {
                     .unwrap_or(stella_protocol::UNKNOWN_MODEL)
                     .to_string(),
                 request: CompletionRequest {
+                    context: self.config.session_context.clone(),
                     messages,
                     max_output_tokens: Some(max_output_tokens),
                     temperature: Some(0.0),

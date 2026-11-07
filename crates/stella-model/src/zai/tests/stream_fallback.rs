@@ -12,6 +12,7 @@ use crate::stream_fallback_support::{
 
 fn plain_request() -> CompletionRequest {
     CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("say hello")],
         max_output_tokens: None,
         temperature: None,

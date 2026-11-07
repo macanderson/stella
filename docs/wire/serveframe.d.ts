@@ -1112,6 +1112,10 @@ export interface CompletionMessage {
  */
 export interface CompletionRequest {
   /**
+   * Captured by the engine before dispatch. Excluded from provider bodies.
+   */
+  context?: SessionContext | null;
+  /**
    * Reasoning effort for models that support a thinking mode.
    */
   effort?: ReasoningEffort | null;
@@ -2375,6 +2379,13 @@ export interface ScopeProposal {
  * providers that support tiered service; others use their default tier.
  */
 export type ServiceTier = "auto" | "default" | "flex" | "priority";
+
+/**
+ * The native session that owns one request and its hook events.
+ */
+export interface SessionContext {
+  session_id: string;
+}
 
 /**
  * Which channel put a skill into the prompt (SPEC 6.3, whose head reads

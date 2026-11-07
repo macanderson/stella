@@ -1097,12 +1097,12 @@ impl<'a> Engine<'a> {
             crate::estimator::estimate_conversation_attachment_tokens(messages),
         );
         let req_config = &self.config;
-        // Built ONCE, outside the attempt closure below, and borrowed from
-        // there. `CompletionRequestRef` is `Copy` (slices + scalars), so each
+        // Borrowed once; each retry copies the view and retains its identity.
         // attempt takes its own view for free instead of deep-copying the whole
         // transcript and every tool schema — the per-attempt cost the `FnMut`
         // bound used to force on an owning request (#921).
         let req = CompletionRequestRef {
+            context: req_config.session_context.as_ref(),
             messages,
             max_output_tokens: call.max_output_tokens,
             temperature: req_config.temperature,

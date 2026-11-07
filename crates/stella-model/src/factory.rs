@@ -459,6 +459,7 @@ mod tests {
 
             let result = provider
                 .complete(CompletionRequest {
+                    context: None,
                     messages: vec![CompletionMessage::user("hi")],
                     max_output_tokens: None,
                     temperature: None,
