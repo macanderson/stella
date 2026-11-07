@@ -536,8 +536,7 @@ mod tests {
     #[test]
     fn stella_home_honors_the_override() {
         // The environment is process-global and cargo runs these tests on a
-        // thread pool — "single-threaded test", as this used to claim, was
-        // never true. A leaked `STELLA_HOME` also makes
+        // thread pool, so no test here runs alone. A leaked `STELLA_HOME` also makes
         // `migrate_legacy_global_dirs` no-op for every later test. See #1137.
         let _lock = crate::test_env::lock();
         let _restore = crate::test_env::EnvRestore::capture(&["STELLA_HOME"]);

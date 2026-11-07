@@ -979,12 +979,11 @@ impl ContextStore {
 /// Every currently-believed edge with this subject and relation, newest
 /// first, as `(edge_id, dst_id)`.
 ///
-/// **All** of them, not just the newest (#617). This used to be
-/// `currently_valid_edge`, an `ORDER BY id DESC LIMIT 1` in
-/// [`crate::store`]: a single-valued assert closed the newest belief and left
-/// every older live one open, so the store kept answering with two
-/// simultaneous beliefs for a fact that is single-valued by definition, and
-/// `facts_superseded` under-counted what the assert had actually replaced.
+/// **All** of them, not just the newest (#617). An `ORDER BY id DESC LIMIT 1`
+/// would let a single-valued assert close the newest belief and leave every
+/// older live one open, so the store would answer with two simultaneous
+/// beliefs for a fact that is single-valued by definition, and
+/// `facts_superseded` would under-count what the assert had actually replaced.
 /// Two live edges arise the ordinary way — the same predicate asserted
 /// multivalued (which is allowed to coexist) and later corrected as
 /// single-valued.
