@@ -80,6 +80,7 @@ fn type_tag_matches_the_serde_type_wire_tag() {
             session_spent_usd: None,
             session_limit_usd: None,
             deadline_remaining_ms: None,
+            rejected_spend_figures: 0,
         },
         AgentEvent::UsageIncomplete {
             role: ModelCallRole::Worker,

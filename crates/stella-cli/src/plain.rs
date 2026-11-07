@@ -294,9 +294,25 @@ pub fn assistant_response(text: &str) {
         return;
     }
     println!();
-    for line in stella_tui::markdown::render_ansi(text, &palette()) {
+    for line in stella_tui::markdown::render_ansi(&printable(text), &palette()) {
         println!("{line}");
     }
+}
+
+/// Model text with its control characters taken out.
+///
+/// A model's text is not ours. An `ESC` in it would reach the terminal as a
+/// command: clear the screen, set the title, write to the clipboard. The deck
+/// is safe, since ratatui drops a control character before it fills a cell.
+/// This surface prints with `println!`, so it cleans the text here. Each
+/// whole code goes first, the way tool output is cleaned. Then any control
+/// character left goes too. A newline and a tab stay. They shape the text
+/// and command nothing.
+fn printable(text: &str) -> String {
+    stella_tui::strip_ansi(text)
+        .chars()
+        .filter(|c| !c.is_control() || matches!(*c, '\n' | '\t'))
+        .collect()
 }
 
 /// Print a cost summary for a turn. `AgentEvent::TurnComplete` (the source of
@@ -428,6 +444,7 @@ fn flush_reasoning() {
 /// paragraph break costs a row of thought and says nothing — the same call the
 /// deck makes.
 fn reasoning_block(text: &str) -> Vec<String> {
+    let text = printable(text);
     let rows: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
     let total = rows.len();
     let mut out = vec![format!(
@@ -577,7 +594,11 @@ pub fn render_event(event: &AgentEvent) {
             // enforced at the prompt site, not here.
             println!("  {}", styled_event_line(&textline::ask_user(question)));
             for (i, option) in options.iter().enumerate() {
-                println!("    {} {}", format!("{})", i + 1).dimmed(), option);
+                println!(
+                    "    {} {}",
+                    format!("{})", i + 1).dimmed(),
+                    printable(option)
+                );
             }
         }
         AgentEvent::Error { .. } => {
@@ -605,9 +626,12 @@ fn styled_event_line(line: &EventLine) -> String {
         Tone::Muted => line.glyph.dimmed(),
     };
     let glyph: ColoredString = if line.strong { glyph.bold() } else { glyph };
+    // The body and the detail carry text from a model, a tool or a provider's
+    // error. Each is cleaned the way a thought is.
+    let body = printable(&line.body);
     match &line.detail {
-        Some(detail) => format!("{} {} {}", glyph, line.body, detail.dimmed()),
-        None => format!("{} {}", glyph, line.body),
+        Some(detail) => format!("{} {} {}", glyph, body, printable(detail).dimmed()),
+        None => format!("{} {}", glyph, body),
     }
 }
 
@@ -743,6 +767,15 @@ mod tests {
         );
     }
 
+    /// A provider's error text is not ours either. Its title escape is
+    /// dropped whole, and its bell goes with it.
+    #[test]
+    fn an_event_line_carries_no_escape_from_the_text_it_quotes() {
+        let line = styled_event_line(&textline::error("bad\u{1b}]0;pwned\u{7} gateway", false));
+        assert!(!line.contains('\u{7}'), "the bell reached: {line:?}");
+        assert_eq!(strip_ansi(&line), "✗ error: bad gateway");
+    }
+
     // ── #2421: what the plain surface stopped throwing away ────────────────
     //
     // Four witnesses, one per gap. Each asserts on the *visible* text, so a
@@ -861,6 +894,25 @@ mod tests {
             .collect();
         assert!(visible[0].contains("3 lines"), "blanks were counted");
         assert_eq!(visible.len(), 4, "blanks were previewed: {visible:?}");
+    }
+
+    /// A thought is the model's text. Its escapes must not reach the
+    /// terminal. This one would set the title and clear the screen.
+    #[test]
+    fn reasoning_reaches_the_terminal_with_no_escape_of_its_own() {
+        let thought = "set \u{1b}]0;pwned\u{7} then \u{1b}[2J wipe \u{9b}2J done\n";
+        let block = reasoning_block(thought).join("\n");
+        for hazard in ["\u{1b}]", "\u{7}", "\u{1b}[2J", "\u{9b}"] {
+            assert!(!block.contains(hazard), "{hazard:?} reached: {block:?}");
+        }
+        assert!(strip_ansi(&block).contains("set  then  wipe 2J done"));
+    }
+
+    /// The answer keeps its shape and loses its escapes, as a thought does.
+    #[test]
+    fn printable_keeps_newlines_and_tabs_and_drops_the_rest() {
+        let text = "a\tb\r\nc\u{1b}[31md\u{7}\n";
+        assert_eq!(printable(text), "a\tb\ncd\n");
     }
 
     /// The headline gap: a mutation prints the diff that rode its own event.

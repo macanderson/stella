@@ -467,6 +467,9 @@ pub struct ResumeState {
     /// Cumulative session spend to re-seed the budget guard (monotone spend
     /// across interruptions; a session budget keeps meaning "this session").
     pub spent_usd: Option<f64>,
+    /// Dollar figures the session's guard had refused, from the same last
+    /// `BudgetTick`. Zero when the journal holds no tick.
+    pub rejected_spend_figures: u32,
 }
 
 /// Resolve what a `stella resume` invocation points at, without loading it.
@@ -537,6 +540,7 @@ pub fn load_resume(
     interrupted.drain(..requeued);
     let pipeline = journal::last_pipeline(&records);
     let spent_usd = journal::last_spent_usd(&records);
+    let rejected_spend_figures = journal::last_rejected_spend_figures(&records);
     Ok(ResumeState {
         record,
         records,
@@ -545,6 +549,7 @@ pub fn load_resume(
         interrupted,
         pipeline,
         spent_usd,
+        rejected_spend_figures,
     })
 }
 
@@ -668,10 +673,32 @@ pub struct RestoredConversation {
     pub note: String,
     /// Session spend the checkpoint knows about, when one was adopted. The
     /// checkpoint's meter is a step-boundary snapshot of the same instant as
-    /// its transcript, so it can be ahead of the journal's last `BudgetTick`;
-    /// the caller takes the larger of the two, because spend is monotone and
-    /// under-counting it is what quietly loosens a session budget.
+    /// its transcript, so it can be ahead of the journal's last `BudgetTick`.
+    /// [`Self::budget_meter`] takes the larger of the two.
     pub spent_usd: Option<f64>,
+    /// Dollar figures the checkpoint's guard had refused. Zero when no
+    /// checkpoint was adopted.
+    pub rejected_spend_figures: u32,
+}
+
+impl RestoredConversation {
+    /// What the adopted session hands its budget guard: the spend, then the
+    /// count of refused figures.
+    ///
+    /// The journal's last `BudgetTick` and the checkpoint are written at
+    /// different moments of one turn, so either can be the later. Both only
+    /// go up within a session, so the larger of each wins. A smaller spend
+    /// hands the session budget it already spent. A smaller count calls a
+    /// short total whole.
+    #[must_use]
+    pub fn budget_meter(&self, resume: &ResumeState) -> (f64, u32) {
+        let spent_usd = f64::max(
+            resume.spent_usd.unwrap_or(0.0),
+            self.spent_usd.unwrap_or(0.0),
+        );
+        let refused = u32::max(resume.rejected_spend_figures, self.rejected_spend_figures);
+        (spent_usd, refused)
+    }
 }
 
 /// Choose which durable store a resumed conversation comes back from.
@@ -699,6 +726,7 @@ pub fn restore_conversation(
         messages: restore_messages(history.clone().unwrap_or_default(), system_prompt),
         note,
         spent_usd: None,
+        rejected_spend_figures: 0,
     };
     let Some(json) = checkpoint else {
         return from_history(
@@ -709,6 +737,7 @@ pub fn restore_conversation(
         Ok(checkpoint) => {
             let step = checkpoint.step;
             let spent_usd = checkpoint.budget.session_spent_usd;
+            let rejected_spend_figures = checkpoint.budget.rejected_spend_figures;
             RestoredConversation {
                 messages: restore_messages(checkpoint.messages, system_prompt),
                 note: format!(
@@ -716,6 +745,7 @@ pub fn restore_conversation(
                      steps are in the transcript and will not be re-run."
                 ),
                 spent_usd: Some(spent_usd),
+                rejected_spend_figures,
             }
         }
         Err(e) => from_history(format!(
@@ -756,6 +786,7 @@ pub fn fresh_state(workspace: &str, title: &str) -> ResumeState {
         interrupted: Vec::new(),
         pipeline: None,
         spent_usd: None,
+        rejected_spend_figures: 0,
     }
 }
 
@@ -838,6 +869,7 @@ mod tests {
             interrupted: Vec::new(),
             pipeline,
             spent_usd: None,
+            rejected_spend_figures: 0,
         }
     }
 
@@ -1111,6 +1143,11 @@ mod tests {
     /// turn-boundary history that predates that turn entirely — the exact
     /// disagreement a resume has to resolve.
     fn interrupted_turn() -> (String, Vec<CompletionMessage>) {
+        interrupted_turn_refusing(0)
+    }
+
+    /// The same turn, with a guard that had refused `rejected` figures.
+    fn interrupted_turn_refusing(rejected: u32) -> (String, Vec<CompletionMessage>) {
         let history = vec![
             CompletionMessage::system("old prompt"),
             CompletionMessage::user("the turn before"),
@@ -1129,6 +1166,7 @@ mod tests {
                 session_limit_usd: None,
                 turn_spent_usd: 0.25,
                 session_spent_usd: 4.5,
+                rejected_spend_figures: rejected,
             },
             total_cost_usd: 0.25,
             calibration_model: None,
@@ -1188,6 +1226,27 @@ mod tests {
             Some("done")
         );
         assert_eq!(clean.spent_usd, None);
+    }
+
+    /// A resumed session keeps saying its total is short. The journal's last
+    /// tick and the checkpoint each hold a count, and the larger wins, as the
+    /// spend does. Drop either store's count and this fails.
+    #[test]
+    fn a_resume_hands_the_guard_the_larger_refused_count_of_its_two_stores() {
+        let (checkpoint, history) = interrupted_turn_refusing(2);
+        let restored = restore_conversation(Some(&checkpoint), Some(history.clone()), "today");
+        assert_eq!(restored.rejected_spend_figures, 2, "the checkpoint's count");
+
+        let mut journal_ahead = resume_state_with(Vec::new(), None);
+        journal_ahead.spent_usd = Some(5.0);
+        journal_ahead.rejected_spend_figures = 3;
+        assert_eq!(restored.budget_meter(&journal_ahead), (5.0, 3));
+        let journal_behind = resume_state_with(Vec::new(), None);
+        assert_eq!(restored.budget_meter(&journal_behind), (4.5, 2));
+
+        let clean = restore_conversation(None, Some(history), "today");
+        assert_eq!(clean.rejected_spend_figures, 0);
+        assert_eq!(clean.budget_meter(&journal_ahead), (5.0, 3), "journal");
     }
 
     /// A checkpoint this build cannot read must not take the resume down with

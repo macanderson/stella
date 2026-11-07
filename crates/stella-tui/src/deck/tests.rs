@@ -603,6 +603,7 @@ fn budget_tick_sets_live_spend_without_double_counting_step_usage() {
             session_spent_usd: None,
             session_limit_usd: None,
             deadline_remaining_ms: None,
+            rejected_spend_figures: 0,
         },
     ));
     assert_eq!(w.agents[0].cost_usd, 0.42, "the tick is authoritative");

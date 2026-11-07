@@ -551,7 +551,7 @@
           "properties": {
             "deadline_remaining_ms": {
               "default": null,
-              "description": "Wall clock left before the task deadline at this tick — the third\naxis, and the only one a journal could not otherwise state (#2240).\n\n`None` means **no deadline was armed**, which is exactly the\ndistinction that used to require reading argv: a trial killed by its\nharness emitted dozens of these against a dollar cap it never\napproached, while the 900s wall clock that actually stopped it\nappeared nowhere in the journal. `Some(0)` is the opposite fact — a\ndeadline is armed and has already passed.\n\nMilliseconds rather than a `Duration` because this is a wire type\n(AGENTS.md #4): a whole-millisecond integer round-trips through JSON\nbyte-for-byte, where a float of seconds would not.\n\n`serde(default)` — absent on every journal written before this\nfield existed, where it reads as \"unarmed\". That is the right\ndecode: those journals genuinely could not say otherwise.",
+              "description": "Wall clock left before the task deadline at this tick — the third\naxis, and the only one a journal could not otherwise state (#2240).\n\n`None` means **no deadline was armed**; `Some(0)` means one was\narmed and has passed. Telling them apart used to require reading\nargv: a trial killed by its harness emitted dozens of these against\na dollar cap it never approached, while the 900s wall clock that\nstopped it appeared nowhere in the journal.\n\nMilliseconds rather than a `Duration` because this is a wire type\n(AGENTS.md #4): a whole-millisecond integer round-trips through JSON\nbyte-for-byte, where a float of seconds would not.\n\n`serde(default)`: a journal written before this field existed reads\nas unarmed, which is all such a journal could have said.",
               "format": "uint64",
               "minimum": 0,
               "type": [
@@ -568,6 +568,12 @@
             },
             "mode": {
               "$ref": "#/$defs/BudgetMode"
+            },
+            "rejected_spend_figures": {
+              "description": "Dollar figures the guard has refused and counted as zero: `NaN`,\ninfinite or negative. Nonzero means this tick's spend is\nshort of the bill. Omitted at zero, so a clean tick serializes as\nit always did and an older journal reads as zero.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
             },
             "session_limit_usd": {
               "default": null,

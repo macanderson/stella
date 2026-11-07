@@ -162,7 +162,7 @@ fn thinking_level_maps_low_directly_and_everything_else_to_high() {
 /// Gemini already streamed on the wire; only `complete_observed_ref` was
 /// missing, so it inherited the trait's silent default and the deck
 /// stayed blank until the whole turn completed. Thought-summary parts
-/// stay silent, matching anthropic and zai.
+/// never ride `text_delta`.
 #[tokio::test]
 async fn complete_observed_streams_answer_deltas_in_order_never_thoughts() {
     let server = MockServer::start().await;
@@ -256,10 +256,54 @@ async fn complete_observed_announces_a_no_argument_call_as_an_empty_object() {
     assert_eq!(announced, result.tool_calls);
 }
 
+/// A `thought: true` part reaches the observer as thinking. It stays out of
+/// the answer text and off `text_delta`, which
+/// `complete_observed_streams_answer_deltas_in_order_never_thoughts` pins.
+/// The engine's degeneracy guard reads the observer's two text channels, and
+/// the answer text is its only other source. A host stuck on one character
+/// inside thought parts keeps the read alive while writing nothing, so a part
+/// dropped by `absorb` was a run the guard could never see.
+#[tokio::test]
+async fn complete_observed_streams_thought_parts_as_reasoning() {
+    let server = MockServer::start().await;
+    let run = "!".repeat(512);
+    let thought = format!(
+        "data: {{\"candidates\":[{{\"content\":{{\"parts\":[{{\"text\":\"{run}\",\"thought\":true}}]}}}}]}}\n\n"
+    );
+    let sse_body = format!(
+        "{thought}{thought}data: {{\"candidates\":[{{\"finishReason\":\"STOP\",\"content\":{{\"parts\":[{{\"text\":\"ok\"}}]}}}}]}}\n\n"
+    );
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+        .mount(&server)
+        .await;
+
+    let provider =
+        GeminiProvider::new(ApiKey::new("k"), "gemini-3-pro").with_base_url(server.uri());
+    let observer = RecordingObserver::new();
+    let result = provider
+        .complete_observed(observed_req("think"), &observer)
+        .await
+        .expect("completion should succeed");
+
+    assert_eq!(result.text, "ok", "thinking must stay out of the answer");
+    assert_eq!(
+        observer.reasoning.lock().unwrap().as_slice(),
+        &[run.clone(), run],
+        "every thought part must reach the observer as reasoning, in order"
+    );
+    assert_eq!(
+        observer.deltas.lock().unwrap().as_slice(),
+        &["ok".to_string()],
+        "a thought part must never be announced as answer text"
+    );
+}
+
 /// Shared observer double. Mirrors the anthropic and zai copies.
 struct RecordingObserver {
     calls: std::sync::Mutex<Vec<ToolCall>>,
     deltas: std::sync::Mutex<Vec<String>>,
+    reasoning: std::sync::Mutex<Vec<String>>,
 }
 
 impl RecordingObserver {
@@ -267,6 +311,7 @@ impl RecordingObserver {
         Self {
             calls: std::sync::Mutex::new(Vec::new()),
             deltas: std::sync::Mutex::new(Vec::new()),
+            reasoning: std::sync::Mutex::new(Vec::new()),
         }
     }
 }
@@ -277,6 +322,9 @@ impl stella_protocol::ToolCallObserver for RecordingObserver {
     }
     fn text_delta(&self, delta: &str) {
         self.deltas.lock().unwrap().push(delta.to_string());
+    }
+    fn reasoning_delta(&self, delta: &str) {
+        self.reasoning.lock().unwrap().push(delta.to_string());
     }
 }
 

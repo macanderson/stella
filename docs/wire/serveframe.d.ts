@@ -283,24 +283,29 @@ export type AgentEvent = {
    * Wall clock left before the task deadline at this tick — the third
    * axis, and the only one a journal could not otherwise state (#2240).
    *
-   * `None` means **no deadline was armed**, which is exactly the
-   * distinction that used to require reading argv: a trial killed by its
-   * harness emitted dozens of these against a dollar cap it never
-   * approached, while the 900s wall clock that actually stopped it
-   * appeared nowhere in the journal. `Some(0)` is the opposite fact — a
-   * deadline is armed and has already passed.
+   * `None` means **no deadline was armed**; `Some(0)` means one was
+   * armed and has passed. Telling them apart used to require reading
+   * argv: a trial killed by its harness emitted dozens of these against
+   * a dollar cap it never approached, while the 900s wall clock that
+   * stopped it appeared nowhere in the journal.
    *
    * Milliseconds rather than a `Duration` because this is a wire type
    * (AGENTS.md #4): a whole-millisecond integer round-trips through JSON
    * byte-for-byte, where a float of seconds would not.
    *
-   * `serde(default)` — absent on every journal written before this
-   * field existed, where it reads as "unarmed". That is the right
-   * decode: those journals genuinely could not say otherwise.
+   * `serde(default)`: a journal written before this field existed reads
+   * as unarmed, which is all such a journal could have said.
    */
   deadline_remaining_ms?: number | null;
   limit_usd?: number | null;
   mode: BudgetMode;
+  /**
+   * Dollar figures the guard has refused and counted as zero: `NaN`,
+   * infinite or negative. Nonzero means this tick's spend is
+   * short of the bill. Omitted at zero, so a clean tick serializes as
+   * it always did and an older journal reads as zero.
+   */
+  rejected_spend_figures?: number;
   /**
    * The configured per-session limit, when one is set. `None` mirrors
    * `session_spent_usd`.

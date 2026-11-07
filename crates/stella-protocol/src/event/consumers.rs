@@ -105,17 +105,20 @@ pub enum Surface {
     /// `textline::event_line`, `deck::trace_of`). Those reach every case, so
     /// they stay out of this enum, the same reason replay does. This surface
     /// is the narrower claim: one reader picks out this one tag, the same
-    /// bar `Serve` holds `TallyFold::observe` to. Three rows hold it today:
+    /// bar `Serve` holds `TallyFold::observe` to. Four rows hold it today:
     ///
     /// - the Files tab (`views/files_tab.rs`, fed by `model/file_state.rs`'s
     ///   `touch_file`) selects
-    ///   [`AgentEvent::FileChange`](super::AgentEvent::FileChange);
+    ///   [`AgentEvent::FileChange`](super::AgentEvent::FileChange).
     /// - the SUB-AGENTS overlay (`views/subagents/rows.rs::delegates_of`)
     ///   filters the transcript for
-    ///   [`AgentEvent::SubAgent`](super::AgentEvent::SubAgent) specifically;
+    ///   [`AgentEvent::SubAgent`](super::AgentEvent::SubAgent) specifically.
     /// - the ask card (`deck_ui/gates.rs::handle_focused_gates`) reads the
     ///   `pending_ask_user` latch that only
     ///   [`AgentEvent::AskUser`](super::AgentEvent::AskUser) sets.
+    /// - the status bar (`views/status_bar.rs::spend_cell`) reads the count of
+    ///   refused figures that only
+    ///   [`AgentEvent::BudgetTick`](super::AgentEvent::BudgetTick) sets.
     Interactive,
 }
 

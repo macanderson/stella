@@ -89,6 +89,9 @@ pub struct Status<'a> {
     /// `None` and `Some(0)` are different facts and render differently: see
     /// the module doc's "The one conditional cell".
     pub deadline_remaining_ms: Option<u64>,
+    /// Dollar figures the budget guard refused and counted as zero. Nonzero
+    /// adds a warning to the spend cell; see `spend_cell`.
+    pub rejected_spend_figures: u32,
 }
 
 /// At or under this much left, the countdown turns red.
@@ -215,7 +218,7 @@ pub fn cells(status: &Status<'_>) -> Vec<Vec<Span<'static>>> {
             ctx.push(Span::styled(format!(" {}%", pct(status.ctx_used)), text));
             ctx
         },
-        vec![Span::styled(format!("${:.2}", status.spend_usd), money)],
+        spend_cell(status.spend_usd, status.rejected_spend_figures, money),
         vec![
             Span::styled("saved ", label),
             Span::styled(format!("${:.2}", status.saved_usd), money),
@@ -228,6 +231,27 @@ pub fn cells(status: &Status<'_>) -> Vec<Vec<Span<'static>>> {
         ],
     ]);
     cells
+}
+
+/// The spend cell: session spend in gold, and a warning after it when the
+/// budget guard refused figures it could not read.
+///
+/// The guard counts a `NaN`, infinite or negative cost as zero so the gate
+/// stays usable, which leaves the total short of the provider's bill by an
+/// amount nobody knows. `+2 unreadable` says the total is a floor. It sits
+/// inside the spend cell rather than in a cell of its own because it
+/// qualifies that number and must be dropped with it, never shown without it.
+/// Amber, because SPEC 2 keeps amber for a warning and red for a failure, and
+/// the run has not failed.
+fn spend_cell(spend_usd: f64, rejected_spend_figures: u32, money: Style) -> Vec<Span<'static>> {
+    let mut cell = vec![Span::styled(format!("${spend_usd:.2}"), money)];
+    if rejected_spend_figures > 0 {
+        cell.push(Span::styled(
+            format!(" +{rejected_spend_figures} unreadable"),
+            Style::new().fg(token::WARNING),
+        ));
+    }
+    cell
 }
 
 /// The CLOCK cell: what is left of an armed task deadline (SPEC 5).
