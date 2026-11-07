@@ -1358,6 +1358,22 @@ for heading in \
   fi
 done
 
+# ── H1: both HTML comment closers are markers, not prose ────────────────────
+# HTML ends a comment with `--!>` as well as `-->`. The grade scorer strips
+# a leading marker before it counts words, so it must strip both.
+for closer in '-->' '--!>'; do
+  stripped="$(cd "$repo_root/scripts" && python3 -c '
+import sys
+from prose.grade import GRADE_MARKER
+print(GRADE_MARKER.sub("", sys.argv[1] + " plain words"))
+' "$closer")"
+  if [ "$stripped" = "plain words" ]; then
+    ok "H1 a leading $closer is stripped"
+  else
+    no "H1 a leading $closer is stripped" "got: $stripped"
+  fi
+done
+
 # ── X1: the entry point stays executable ────────────────────────────────────
 # The usage text and each failure message tell you to run
 # `./scripts/check-prose.py`. That only works when git keeps the file's

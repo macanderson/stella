@@ -46,8 +46,9 @@ GRADE_HEADER = """\
 
 
 # A comment marker is not a word: the leading `//!`, `///`, `#`, `*` and
-# list markers are stripped before sentences are counted.
-GRADE_MARKER = re.compile(r"^\s*(?://[!/]{0,2}|#{1,6}|\*+|<!--|-->|-\s|\d+\.\s)\s*")
+# list markers are stripped before sentences are counted. HTML closes a
+# comment with `--!>` as well as `-->`, so both are stripped.
+GRADE_MARKER = re.compile(r"^\s*(?://[!/]{0,2}|#{1,6}|\*+|<!--|--!?>|-\s|\d+\.\s)\s*")
 GRADE_WORD = re.compile(r"\b[A-Za-z][a-zA-Z']*\b")
 
 
