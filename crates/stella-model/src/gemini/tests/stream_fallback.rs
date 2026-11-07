@@ -19,6 +19,7 @@ const UNARY_PATH: &str = "/models/gemini-3-pro:generateContent";
 
 fn plain_request() -> CompletionRequest {
     CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("say hello")],
         max_output_tokens: None,
         temperature: None,

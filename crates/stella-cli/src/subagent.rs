@@ -115,12 +115,13 @@ impl TurnSteering for OrphanStop {
     }
 }
 
-/// The two session-wide answers every child this dispatcher runs is held to:
-/// may this tool be called at all, and may *this caller* call it.
+/// The session-wide answers every child this dispatcher runs is held to: may
+/// this tool be called at all, may *this caller* call it, and which session
+/// does the child answer to.
 ///
-/// One argument rather than two because they travel together and are read
-/// together — `crate::agent::tool_stack` composes them into one chain, and a
-/// caller that supplied the switches and forgot the gate would build the
+/// One argument rather than several because they travel together and are read
+/// together — `crate::agent::tool_stack` composes the first two into one chain,
+/// and a caller that supplied the switches and forgot the gate would build the
 /// half-gated child #3930 closed once already.
 pub struct ChildToolPosture {
     /// The operator's `tools.<name>` switches.
@@ -128,6 +129,8 @@ pub struct ChildToolPosture {
     /// The session authorization gate — an installed plugin's accepted grant,
     /// or `NoAuthz` by name (#3482).
     pub gate: Arc<dyn stella_core::ports::AuthzGate>,
+    /// Where a child reads the session it answers to.
+    pub session: Option<crate::durability::SessionDurability>,
 }
 
 /// The session's own model wiring: the adapter every seat-less child runs on,
@@ -193,6 +196,14 @@ pub struct SessionSubAgents {
     /// own spend the moment it stops, rather than after a `.await` the parent
     /// may never reach. See "Settling is the child's job".
     pool: Arc<Mutex<BudgetGuard>>,
+    /// Where each child reads the session it answers to.
+    ///
+    /// A driver installs this dispatcher before it binds its session, and the
+    /// deck can switch sessions later. Either way the identity held in
+    /// `model.config` goes stale, so [`Self::wiring_for`] reads this handle at
+    /// dispatch. [`Self::new`] leaves it `None`, and a child then keeps the
+    /// identity its config holds.
+    session: Option<crate::durability::SessionDurability>,
 }
 
 impl SessionSubAgents {
@@ -216,6 +227,7 @@ impl SessionSubAgents {
                 None,
                 Some(DEFAULT_POOL_LIMIT_USD),
             ))),
+            session: None,
         }
     }
 
@@ -241,6 +253,19 @@ impl SessionSubAgents {
     #[must_use]
     pub fn with_authz_gate(mut self, gate: Arc<dyn stella_core::ports::AuthzGate>) -> Self {
         self.gate = gate;
+        self
+    }
+
+    /// Read each child's session from `session` when the child is dispatched.
+    ///
+    /// A separate builder for [`Self::with_tool_policy`]'s reason: the test
+    /// doubles have no session to bind.
+    #[must_use]
+    pub fn with_session_binding(
+        mut self,
+        session: Option<crate::durability::SessionDurability>,
+    ) -> Self {
+        self.session = session;
         self
     }
 
@@ -274,13 +299,20 @@ impl SessionSubAgents {
     /// The adapter and the engine config come out of one read, so a child
     /// dispatched while [`Self::retarget`] runs gets the wiring from before the
     /// switch or the wiring from after it, never one field of each.
+    ///
+    /// The session comes from the `session` handle, not the config, so the
+    /// child names the session that is bound when it runs.
     fn wiring_for(&self, seat: Option<&str>) -> (Arc<dyn Provider>, EngineConfig) {
         let model = self.model.read().unwrap_or_else(|p| p.into_inner());
         let provider = seat
             .and_then(|seat| self.seats.get(seat))
             .cloned()
             .unwrap_or_else(|| model.provider.clone());
-        (provider, model.config.clone())
+        let mut config = model.config.clone();
+        if let Some(session) = &self.session {
+            config.session_context = session.session_context();
+        }
+        (provider, config)
     }
 
     /// The provider half of [`Self::wiring_for`], for the seat-routing tests —
@@ -357,7 +389,8 @@ impl SessionSubAgents {
                 .with_pool_limit(pool_limit_usd)
                 .with_seats(seats)
                 .with_tool_policy(posture.policy)
-                .with_authz_gate(posture.gate),
+                .with_authz_gate(posture.gate)
+                .with_session_binding(posture.session),
         );
         registry.attach_sub_agent_dispatcher(dispatcher.clone() as Arc<dyn SubAgentDispatcher>);
         dispatcher
@@ -441,6 +474,7 @@ pub fn install_for_session(
         ChildToolPosture {
             policy: crate::agent::session_tool_policy(cfg),
             gate: crate::agent::tool_stack::session_gate(&cfg.workspace_root),
+            session: Some(cfg.durability.clone()),
         },
     ))
 }

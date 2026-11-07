@@ -118,6 +118,7 @@ async fn complete_sends_a_session_stable_prompt_cache_key() {
     let provider =
         OpenAiProvider::new(ApiKey::new("sk-test-openai"), "gpt-5.5").with_base_url(server.uri());
     let req = || CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,
@@ -169,6 +170,7 @@ async fn temperature_is_omitted_for_a_gpt5_reasoning_model() {
         OpenAiProvider::new(ApiKey::new("sk-test-openai"), "gpt-5.5").with_base_url(server.uri());
     provider
         .complete(CompletionRequest {
+            context: None,
             messages: vec![CompletionMessage::user("hi")],
             max_output_tokens: None,
             temperature: Some(0.0), // the engine default this dialect rejects
@@ -308,6 +310,7 @@ impl stella_protocol::ToolCallObserver for RecordingObserver {
 
 fn observed_req(prompt: &str) -> CompletionRequest {
     CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user(prompt)],
         max_output_tokens: None,
         temperature: None,
@@ -427,6 +430,7 @@ async fn complete_streams_and_aggregates_text_deltas_from_a_mock_server() {
         OpenAiProvider::new(ApiKey::new("sk-test-openai"), "gpt-5.5").with_base_url(server.uri());
 
     let req = CompletionRequest {
+        context: None,
         messages: vec![
             CompletionMessage::system("system"),
             CompletionMessage::user("say hello"),
@@ -482,6 +486,7 @@ async fn complete_reassembles_a_streamed_tool_call_split_across_many_chunks() {
         OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(server.uri());
 
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("read src/lib.rs")],
         max_output_tokens: None,
         temperature: None,
@@ -532,6 +537,7 @@ async fn complete_falls_back_to_null_when_streamed_arguments_never_parse() {
         OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(server.uri());
 
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("run ls")],
         max_output_tokens: None,
         temperature: None,
@@ -565,6 +571,7 @@ async fn complete_maps_401_to_auth_error() {
         OpenAiProvider::new(ApiKey::new("bad-key"), "gpt-5.5").with_base_url(server.uri());
 
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,
@@ -595,6 +602,7 @@ async fn complete_maps_403_to_auth_error() {
         OpenAiProvider::new(ApiKey::new("limited-key"), "gpt-5.5").with_base_url(server.uri());
 
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,
@@ -626,6 +634,7 @@ async fn complete_maps_429_to_rate_limited_with_retry_after_and_it_is_retryable(
         OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(server.uri());
 
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,
@@ -663,6 +672,7 @@ async fn complete_computes_nonzero_cost_from_catalog_pricing() {
     let provider =
         OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(server.uri());
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,
@@ -703,6 +713,7 @@ async fn complete_maps_5xx_to_retryable_transport() {
     let provider =
         OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(server.uri());
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,
@@ -737,6 +748,7 @@ async fn complete_returns_err_on_response_failed_not_truncated_ok() {
     let provider =
         OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(server.uri());
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,
@@ -781,6 +793,7 @@ async fn output_cap_arrives_as_length_not_a_terminal_error() {
     let provider =
         OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(server.uri());
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,
@@ -820,6 +833,7 @@ async fn a_non_cap_incompletion_is_still_terminal() {
     let provider =
         OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(server.uri());
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,
@@ -858,6 +872,7 @@ async fn complete_returns_transport_err_on_clean_eof_without_completed() {
     let provider =
         OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(server.uri());
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,
@@ -912,6 +927,7 @@ async fn generation_params_forward_top_p_service_tier_and_verbosity() {
         OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-4.1").with_base_url(server.uri());
     provider
         .complete(CompletionRequest {
+            context: None,
             messages: vec![CompletionMessage::user("hi")],
             max_output_tokens: None,
             temperature: None,
@@ -954,6 +970,7 @@ async fn top_p_is_omitted_for_a_reasoning_model_like_temperature() {
         OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(server.uri());
     provider
         .complete(CompletionRequest {
+            context: None,
             messages: vec![CompletionMessage::user("hi")],
             max_output_tokens: None,
             temperature: None,
@@ -985,6 +1002,7 @@ async fn reasoning_false_suppresses_the_reasoning_object_even_with_effort() {
         OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(server.uri());
     provider
         .complete(CompletionRequest {
+            context: None,
             messages: vec![CompletionMessage::user("hi")],
             max_output_tokens: None,
             temperature: None,
@@ -1011,6 +1029,7 @@ async fn reasoning_true_without_effort_defaults_to_medium() {
         OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(server.uri());
     provider
         .complete(CompletionRequest {
+            context: None,
             messages: vec![CompletionMessage::user("hi")],
             max_output_tokens: None,
             temperature: None,
@@ -1040,6 +1059,7 @@ async fn absent_params_and_reasoning_add_no_keys_to_the_body() {
         OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(server.uri());
     provider
         .complete(CompletionRequest {
+            context: None,
             messages: vec![CompletionMessage::user("hi")],
             max_output_tokens: None,
             temperature: None,
@@ -1070,6 +1090,7 @@ async fn every_request_opts_out_of_server_side_storage() {
         OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(server.uri());
     provider
         .complete(CompletionRequest {
+            context: None,
             messages: vec![CompletionMessage::user("hi")],
             max_output_tokens: None,
             temperature: None,
@@ -1098,6 +1119,7 @@ async fn complete_maps_finish_reason_to_stop_and_tool_calls() {
         OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(server.uri());
     let plain = provider
         .complete(CompletionRequest {
+            context: None,
             messages: vec![CompletionMessage::user("hi")],
             max_output_tokens: None,
             temperature: None,
@@ -1128,6 +1150,7 @@ async fn complete_maps_finish_reason_to_stop_and_tool_calls() {
         OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(tool_server.uri());
     let called = provider
         .complete(CompletionRequest {
+            context: None,
             messages: vec![CompletionMessage::user("read it")],
             max_output_tokens: None,
             temperature: None,

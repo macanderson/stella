@@ -98,6 +98,7 @@ pub(super) fn describe_sessions(scope: &SessionScope<'_>, in_tx: UnboundedSender
     };
     let registry = scope.registry.clone();
     let cfg = scope.cfg.clone();
+    let context = cfg.durability.session_context();
     let budget_limit = scope.budget_limit;
     let mine = scope.mine.to_string();
     let workspace = scope.workspace.to_string();
@@ -130,6 +131,7 @@ pub(super) fn describe_sessions(scope: &SessionScope<'_>, in_tx: UnboundedSender
                 continue;
             }
             let request = CompletionRequest {
+                context: context.clone(),
                 messages: describe_messages(&record.title, &stats.prompts),
                 max_output_tokens: Some(80),
                 temperature: Some(0.2),

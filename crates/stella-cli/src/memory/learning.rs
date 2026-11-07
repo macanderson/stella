@@ -170,7 +170,7 @@ impl SessionMemory {
         evidence: TurnEvidence<'_>,
         quiet: bool,
         budget_limit: Option<f64>,
-        posture: crate::memory::ReflectionPosture,
+        context: crate::memory::reflection::ReflectionRequestContext,
     ) -> ReflectionReport {
         let reflected = match reflect_on_turn(
             provider,
@@ -179,7 +179,7 @@ impl SessionMemory {
             evidence,
             &self.domains.names(),
             budget_limit,
-            posture,
+            context,
         )
         .await
         {

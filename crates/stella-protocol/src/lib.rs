@@ -109,7 +109,7 @@ pub use compaction_rewrite::CompactionRewrite;
 pub use completion::{
     CompletionMessage, CompletionRequest, CompletionRequestRef, CompletionResult, CompletionUsage,
     FinishReason, GenerationParams, MessageRole, PartialUsage, ReasoningEffort, ServiceTier,
-    Verbosity,
+    SessionContext, Verbosity,
 };
 pub use context_event::CompiledContextFrameBuilt;
 pub use contract::{ContractError, Provenance, RiskLevel, ToolContract};

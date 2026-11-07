@@ -282,6 +282,7 @@ impl stella_protocol::ToolCallObserver for RecordingObserver {
 
 fn observed_req(prompt: &str) -> CompletionRequest {
     CompletionRequest {
+        context: None,
         messages: vec![
             CompletionMessage::system("system"),
             CompletionMessage::user(prompt),
@@ -315,6 +316,7 @@ async fn complete_streams_and_aggregates_text_excluding_thought_parts() {
         .with_base_url(server.uri());
 
     let req = CompletionRequest {
+        context: None,
         messages: vec![
             CompletionMessage::system("system"),
             CompletionMessage::user("say hello"),
@@ -366,6 +368,7 @@ async fn complete_returns_transport_err_on_clean_eof_without_finish_reason() {
     let provider = GeminiProvider::new(ApiKey::new("test-gemini-key"), "gemini-3-pro")
         .with_base_url(server.uri());
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,
@@ -411,6 +414,7 @@ async fn complete_mints_call_ids_and_captures_thought_signatures() {
         GeminiProvider::new(ApiKey::new("test-key"), "gemini-3-pro").with_base_url(server.uri());
 
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("read src/lib.rs and list files")],
         max_output_tokens: None,
         temperature: None,
@@ -461,6 +465,7 @@ async fn complete_normalizes_a_no_arg_call_to_an_empty_object_not_null() {
         GeminiProvider::new(ApiKey::new("test-key"), "gemini-3-pro").with_base_url(server.uri());
 
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("what time is it")],
         max_output_tokens: None,
         temperature: None,
@@ -495,6 +500,7 @@ async fn complete_maps_403_to_auth_error() {
         GeminiProvider::new(ApiKey::new("bad-key"), "gemini-3-pro").with_base_url(server.uri());
 
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,
@@ -523,6 +529,7 @@ async fn complete_maps_400_api_key_invalid_to_auth_not_terminal() {
         GeminiProvider::new(ApiKey::new("bad-key"), "gemini-3-pro").with_base_url(server.uri());
 
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,
@@ -552,6 +559,7 @@ async fn complete_maps_429_to_rate_limited_with_retry_after() {
         GeminiProvider::new(ApiKey::new("key"), "gemini-3-pro").with_base_url(server.uri());
 
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,
@@ -574,6 +582,7 @@ async fn complete_maps_429_to_rate_limited_with_retry_after() {
 /// A bare request for config-shape tests; overrides are patched in.
 fn bare_request() -> CompletionRequest {
     CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,
@@ -747,6 +756,7 @@ async fn several_function_call_parts_fan_in_as_several_calls() {
         GeminiProvider::new(ApiKey::new("test-key"), "gemini-3-pro").with_base_url(server.uri());
     let result = provider
         .complete(CompletionRequest {
+            context: None,
             messages: vec![CompletionMessage::user("read both files and list")],
             max_output_tokens: None,
             temperature: None,

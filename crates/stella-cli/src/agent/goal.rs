@@ -133,11 +133,15 @@ pub(crate) async fn run_raw_one_shot(
     // before the verb existed.
     invoked_skill: Option<crate::extensions::InvokedSkill>,
 ) -> Result<(), crate::failure::CliFailure> {
+    let mut presence = SessionPresence::announce(full_cfg, Some(prompt));
     // Fired before anything else is built: a provider, a tool registry, an
     // MCP connection. So a denied prompt costs nothing but the hook itself.
     let prompt_owned = match user_prompt_submit_hook(full_cfg, prompt).await {
         Ok(prompt) => prompt,
-        Err(reason) => return Err(crate::failure::CliFailure::error(reason)),
+        Err(reason) => {
+            presence.finish(stella_store::SessionStatus::Stopped, None);
+            return Err(crate::failure::CliFailure::error(reason));
+        }
     };
     let prompt: &str = &prompt_owned;
     let bare = bare_loop_config(full_cfg);
@@ -315,7 +319,6 @@ pub(crate) async fn run_raw_one_shot(
     let started_unix = crate::memory::unix_now_secs();
     // Machine-wide presence: findable in the deck's SESSIONS overlay and
     // replayable from its journal after this process exits.
-    let mut presence = SessionPresence::announce(cfg, Some(prompt));
     // Agent whistle: this door runs in non-interactive mode (no deck, no
     // `stella-serve`), so until now it had nowhere to steer from — `stella
     // whistle` reaches it over this session's own control socket, into the
@@ -744,6 +747,7 @@ pub async fn run_goal_cmd(
     plain::section_header("Stella — goal mode");
     println!("  {}\n", goal.dimmed());
 
+    let mut presence = SessionPresence::announce(cfg, Some(goal));
     let mut messages = vec![
         CompletionMessage::system(
             with_session_hook_context(
@@ -774,7 +778,6 @@ pub async fn run_goal_cmd(
     let started_unix = crate::memory::unix_now_secs();
     // Machine-wide presence: a goal run is exactly the long-lived headless
     // session the SESSIONS overlay + replay exist for.
-    let mut presence = SessionPresence::announce(cfg, Some(goal));
     // Agent whistle (#4769): one listener for the whole arc rather than one
     // per round. Held for the arc's duration; its `Drop` unbinds and removes
     // the socket.

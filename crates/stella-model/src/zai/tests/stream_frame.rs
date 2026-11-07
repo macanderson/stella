@@ -15,6 +15,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 /// Build a minimal single-tool request for the frame-shape tests below.
 fn tool_req(prompt: &str) -> CompletionRequest {
     CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user(prompt)],
         max_output_tokens: None,
         temperature: None,

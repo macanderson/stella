@@ -728,6 +728,7 @@ async fn call_model(
 
     for attempt in 0..ATTEMPTS {
         let request = CompletionRequest {
+            context: None,
             messages: messages.clone(),
             max_output_tokens: Some(max_output_tokens),
             temperature: Some(0.0),

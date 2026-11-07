@@ -159,6 +159,10 @@ pub(super) fn bind(workspace_root: &Path, claim_holder: &str) -> AttemptDurabili
 }
 
 impl AttemptDurability {
+    pub(super) fn handle(&self) -> &SessionDurability {
+        &self.handle
+    }
+
     /// Put this attempt's durability facts on its own event lane: a record
     /// that would not open, and a transcript re-entered from one that did.
     ///

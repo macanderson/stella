@@ -60,6 +60,7 @@ async fn openrouter_identity_maps_reasoning_to_the_gateway_object() {
         .with_base_url(server.uri())
         .with_identity("openrouter", "OpenRouter");
     let req = |reasoning, effort| CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,

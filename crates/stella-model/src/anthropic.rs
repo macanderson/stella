@@ -13,6 +13,7 @@ use stella_protocol::{
 };
 
 mod context_edit;
+mod session_context;
 mod stream;
 mod unary;
 
@@ -28,6 +29,8 @@ const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 pub struct AnthropicProvider {
+    session_client: std::sync::OnceLock<Result<reqwest::Client, String>>,
+    session_unary_client: std::sync::OnceLock<Result<reqwest::Client, String>>,
     client: reqwest::Client,
     api_key: ApiKey,
     base_url: String,
@@ -95,6 +98,8 @@ impl AnthropicProvider {
             .ok()
             .map(|e| e.pricing);
         Self {
+            session_client: std::sync::OnceLock::new(),
+            session_unary_client: std::sync::OnceLock::new(),
             client: http::client(),
             api_key,
             base_url: DEFAULT_BASE_URL.to_string(),
@@ -1031,7 +1036,9 @@ impl AnthropicProvider {
             return self.complete_unary_attempt(req).await;
         }
         let body = self.build_body(req, true);
-        let response = self.dispatch(&self.client, &body, false).await?;
+        let response = self
+            .dispatch(&self.client, &body, false, req.context)
+            .await?;
         let outcome = stream::aggregate_anthropic_stream(
             response,
             observer,
@@ -1237,12 +1244,27 @@ impl AnthropicProvider {
         client: &reqwest::Client,
         body: &AnthropicRequest<'_>,
         unary: bool,
+        context: Option<&stella_protocol::SessionContext>,
     ) -> Result<reqwest::Response, ProviderError> {
+        let session_header = session_context::header(&self.base_url, context)?;
+        let client = if session_header.is_some() {
+            let slot = if unary {
+                &self.session_unary_client
+            } else {
+                &self.session_client
+            };
+            session_context::client(slot, unary)?
+        } else {
+            client
+        };
         let mut request = client
             .post(format!("{}/v1/messages", self.base_url))
             .header("x-api-key", self.api_key.reveal())
             .header("anthropic-version", ANTHROPIC_VERSION)
             .header("content-type", "application/json");
+        if let Some(id) = session_header {
+            request = request.header("x-oxagen-session", id);
+        }
         // Beta flags are accumulated into ONE comma-joined `anthropic-beta`
         // header rather than several headers, and each rides only when the
         // request actually carries the field it gates — so a session using

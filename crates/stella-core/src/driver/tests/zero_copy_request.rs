@@ -18,6 +18,7 @@ struct SliceAddressProvider {
     /// attempt, in order.
     seen: std::sync::Mutex<Vec<(usize, usize, usize, usize)>>,
     attempts: AtomicU32,
+    sessions: std::sync::Mutex<Vec<Option<stella_protocol::SessionContext>>>,
 }
 
 #[async_trait]
@@ -34,6 +35,7 @@ impl Provider for SliceAddressProvider {
         &self,
         req: CompletionRequestRef<'_>,
     ) -> Result<CompletionResultAlias, ProviderError> {
+        self.sessions.lock().unwrap().push(req.context.cloned());
         self.seen.lock().unwrap_or_else(|p| p.into_inner()).push((
             req.messages.as_ptr() as usize,
             req.messages.len(),
@@ -61,13 +63,21 @@ async fn a_retried_attempt_re_sends_the_same_slices_it_did_the_first_time() {
     let provider = SliceAddressProvider {
         seen: std::sync::Mutex::new(Vec::new()),
         attempts: AtomicU32::new(0),
+        sessions: std::sync::Mutex::new(Vec::new()),
     };
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = PausedSleeper;
     let seams = TurnCapabilities::none();
-    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
+    let context = stella_protocol::SessionContext {
+        session_id: "ses-native-retry".into(),
+    };
+    let config = EngineConfig {
+        session_context: Some(context.clone()),
+        ..EngineConfig::default()
+    };
+    let engine = Engine::assemble(&provider, &tools, config, &sleeper, seams);
     let (tx, _rx) = mpsc::unbounded_channel();
     let mut messages = vec![
         CompletionMessage::system("You are Stella."),
@@ -81,6 +91,10 @@ async fn a_retried_attempt_re_sends_the_same_slices_it_did_the_first_time() {
         "{outcome:?}"
     );
 
+    assert_eq!(
+        *provider.sessions.lock().unwrap(),
+        vec![Some(context.clone()), Some(context)]
+    );
     let seen = provider
         .seen
         .lock()
@@ -118,6 +132,7 @@ async fn the_adapter_serializes_off_the_callers_own_transcript() {
     let provider = SliceAddressProvider {
         seen: std::sync::Mutex::new(Vec::new()),
         attempts: AtomicU32::new(0),
+        sessions: std::sync::Mutex::new(Vec::new()),
     };
     let tools = CountingTools {
         calls: Arc::new(AtomicU32::new(0)),

@@ -22,6 +22,7 @@ fn sse_ok() -> &'static str {
 
 fn request() -> CompletionRequest {
     CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,

@@ -2244,6 +2244,17 @@
     "CompletionRequest": {
       "description": "A completion request — the same shape regardless of which provider\nadapter ultimately serves it.",
       "properties": {
+        "context": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionContext"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Captured by the engine before dispatch. Excluded from provider bodies."
+        },
         "effort": {
           "anyOf": [
             {
@@ -3958,6 +3969,18 @@
           "type": "string"
         }
       ]
+    },
+    "SessionContext": {
+      "description": "The native session that owns one request and its hook events.",
+      "properties": {
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "type": "object"
     },
     "SkillTrigger": {
       "description": "Which channel put a skill into the prompt (SPEC 6.3, whose head reads\n`auto|/cmd`).\n\nThe two channels are genuinely different events and were indistinguishable\nuntil #5232: auto-selection is the turn's steering block choosing a skill,\nand an invocation is a person typing its slug. Collapsing them cost more\nthan a label — `skill_usage` is written from a re-run of *auto* selection,\nso an explicitly invoked skill recorded no use at all and appraisal could\nretire it for being unused.",

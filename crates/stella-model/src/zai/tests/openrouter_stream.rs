@@ -35,6 +35,7 @@ async fn openrouter_tool_call_turn_never_leaks_reasoning_as_the_answer() {
         .with_base_url(server.uri())
         .with_identity("openrouter", "OpenRouter");
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("scaffold a nextjs app")],
         max_output_tokens: None,
         temperature: None,
@@ -77,6 +78,7 @@ async fn openrouter_in_band_error_code_502_is_retryable() {
         .with_base_url(server.uri())
         .with_identity("openrouter", "OpenRouter");
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,
@@ -123,6 +125,7 @@ async fn openrouter_in_band_abort_without_a_code_is_retryable() {
         .with_base_url(server.uri())
         .with_identity("openrouter", "OpenRouter");
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,
@@ -164,6 +167,7 @@ async fn openrouter_in_band_refusal_stays_terminal() {
         .with_base_url(server.uri())
         .with_identity("openrouter", "OpenRouter");
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,
@@ -199,6 +203,7 @@ async fn openrouter_in_band_error_code_429_is_rate_limited() {
         .with_base_url(server.uri())
         .with_identity("openrouter", "OpenRouter");
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,
@@ -237,6 +242,7 @@ async fn openrouter_reasoning_only_turn_still_falls_back() {
         .with_base_url(server.uri())
         .with_identity("openrouter", "OpenRouter");
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,
@@ -290,6 +296,7 @@ async fn reasoning_streams_to_the_observer_separately_from_the_answer() {
         .with_base_url(server.uri())
         .with_identity("openrouter", "OpenRouter");
     let req = CompletionRequest {
+        context: None,
         messages: vec![CompletionMessage::user("hi")],
         max_output_tokens: None,
         temperature: None,

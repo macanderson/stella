@@ -88,6 +88,7 @@ mod tests {
             OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.2").with_base_url(server.uri());
         let result = provider
             .complete(CompletionRequest {
+                context: None,
                 messages: vec![CompletionMessage::user("read both files and list")],
                 max_output_tokens: None,
                 temperature: None,
@@ -162,6 +163,7 @@ mod tests {
             OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.2").with_base_url(server.uri());
         let err = provider
             .complete(CompletionRequest {
+                context: None,
                 messages: vec![CompletionMessage::user("hi")],
                 max_output_tokens: None,
                 temperature: None,

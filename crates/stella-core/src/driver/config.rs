@@ -42,6 +42,8 @@ use crate::budget::BudgetGuard;
 /// backstops. `Default` gives sensible starting values for `stella-cli`.
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
+    /// Immutable identity captured when this engine is built.
+    pub session_context: Option<stella_protocol::SessionContext>,
     pub max_output_tokens: Option<u32>,
     pub temperature: Option<f32>,
     pub effort: Option<ReasoningEffort>,
@@ -396,6 +398,7 @@ impl Default for EngineConfig {
             effort: None,
             reasoning: None,
             params: None,
+            session_context: None,
             retry_policy: RetryPolicy::standard(),
             loop_detection: LoopDetectionConfig::default(),
             compaction_budget_tokens: 150_000,

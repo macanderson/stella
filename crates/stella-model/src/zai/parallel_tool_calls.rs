@@ -62,6 +62,7 @@ async fn several_tool_calls_in_one_message_fan_in_as_several_calls() {
         ZaiProvider::new(ApiKey::new("sk-test-zai"), "glm-5.2").with_base_url(server.uri());
     let response = provider
         .complete(CompletionRequest {
+            context: None,
             messages: vec![CompletionMessage::user("read a.rs and search for fn main")],
             max_output_tokens: None,
             temperature: None,
