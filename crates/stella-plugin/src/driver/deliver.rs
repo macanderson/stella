@@ -36,6 +36,15 @@ use serde::{Deserialize, Serialize};
 /// the host handed it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "schema",
+    schemars(
+        description = "Which pull request an ask is about: the forge's own number, as a \
+                       string, opaque to the driver — a second forge numbers differently, and \
+                       a driver hands back what the host gave it."
+    )
+)]
 pub struct PullRequestArgs {
     /// The pull request.
     pub pr: String,
@@ -47,6 +56,7 @@ pub struct PullRequestArgs {
 /// run that never started all mean "no answer yet" here.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum DeliverCi {
     /// No answer yet. Waiting is the only thing left to do.
     #[default]
@@ -60,6 +70,7 @@ pub enum DeliverCi {
 /// Whether the branch merges as it stands.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum DeliverMergeability {
     /// No conflict with the base.
     Clean,
@@ -75,6 +86,7 @@ pub enum DeliverMergeability {
 /// What human review has said, if anything.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum DeliverReview {
     /// Nobody has reviewed it.
     #[default]
@@ -92,6 +104,7 @@ pub enum DeliverReview {
 /// is an unknown mergeability, and it reads as "wait".
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DeliverObservation {
     /// The pull request this is about, echoed back so a driver can join it.
     pub pr: String,
@@ -127,6 +140,7 @@ pub struct DeliverObservation {
 /// fixes across two days is the only party that knows it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DecideArgs {
     /// What the driver read.
     pub observation: DeliverObservation,
@@ -141,6 +155,7 @@ pub struct DecideArgs {
 /// Where a pull request the loop opened now stands.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum DeliverState {
     /// Opened, not yet pushed for checks.
     #[default]
@@ -169,6 +184,7 @@ pub enum DeliverState {
 /// The single next thing to do.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum DeliverAction {
     /// Read again later. The right answer far more often than the others.
     #[default]
@@ -193,6 +209,7 @@ pub enum DeliverAction {
 /// moves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum DeliverEscalation {
     /// The same build kept failing after the ceiling.
     FixCeilingReached,
@@ -205,6 +222,7 @@ pub enum DeliverEscalation {
 /// What the machine decided, given one reading.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DeliverDecision {
     /// The pull request this is about.
     pub pr: String,
@@ -223,6 +241,7 @@ pub struct DeliverDecision {
 /// The pull request `deliver_open` opened.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct OpenReport {
     /// The unit it closes.
     pub issue: String,
@@ -239,6 +258,7 @@ pub struct OpenReport {
 /// naming what the host saw.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ReadyReport {
     /// The pull request that is now out of draft.
     pub pr: String,
@@ -252,6 +272,7 @@ pub struct ReadyReport {
 /// can tell which one landed.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct MergeReport {
     /// The pull request that merged.
     pub pr: String,

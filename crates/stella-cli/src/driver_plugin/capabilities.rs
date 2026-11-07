@@ -567,7 +567,10 @@ impl DriverCapabilities for HostDriverCapabilities {
         args: Option<DriverArgs>,
     ) -> Result<DriverOk, HostCallFailure> {
         match call {
-            DriverCall::BacklogNext => self.backlog_next().await,
+            DriverCall::BacklogNext => {
+                no_args(call, args.as_ref())?;
+                self.backlog_next().await
+            }
             DriverCall::BacklogClaim => {
                 let table = table_for(call, args.as_ref())?;
                 let unit = table.backlog_claim.as_ref().ok_or_else(|| no_table(call))?;

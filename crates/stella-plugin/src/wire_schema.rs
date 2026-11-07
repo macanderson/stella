@@ -48,15 +48,22 @@
 //! reader that actually runs. Where a body struct carries the attribute the
 //! same mechanism applies and always did.
 //!
-//! **The host-call and driver channels.** [`crate::HostCallRequest`],
-//! [`crate::DriveRequest`] and their answers cross the same pipes and are
-//! published in the corpus; they are not published here, because
-//! [`crate::HostCallOk`] is an **untagged** union whose whole contract is that
-//! its cases are discriminable by their required key sets — a property
-//! JSON Schema states as `oneOf` and does not check. Publishing a schema that
-//! looks authoritative about a union nothing validates would be worse than
-//! publishing none. The corpus shows every arm's real bytes, which is what an
+//! **The host-call channel.** [`crate::HostCallRequest`] and its answer cross
+//! the same pipes as the wrapper socket. They are published in the corpus.
+//! They are not published as a schema here. [`crate::HostCallOk`] is an
+//! **untagged** union: its cases are told apart only by their required key
+//! sets, a rule JSON Schema states as `oneOf` and does not check. A schema
+//! that looks authoritative about a union nothing checks would be worse than
+//! none. The corpus shows every arm's real bytes, which is what an
 //! implementer of that channel needs.
+//!
+//! **The driver channel** carries no such union. Every type
+//! [`crate::DriveRequest`] and [`crate::DriverCallResponse`] carry is a plain
+//! struct or an externally tagged enum. So it is not excluded here for that
+//! reason, and it is not excluded at all. [`driver_schema`](crate::wire_schema::driver_schema)
+//! and [`driver_artifacts`](crate::wire_schema::driver_artifacts) publish its own
+//! `driver.schema.json` and `driver.d.ts` beside these, over the same four
+//! rules stated above.
 //!
 //! # The `.d.ts` beside it, and why the container is flattened first
 //!
@@ -112,6 +119,12 @@ pub const WRAPPER_SCHEMA: &str = "wrapper.schema.json";
 
 /// The committed TypeScript declarations' filename.
 pub const WRAPPER_DTS: &str = "wrapper.d.ts";
+
+/// The driver channel's committed schema filename.
+pub const DRIVER_SCHEMA: &str = "driver.schema.json";
+
+/// The driver channel's committed TypeScript declarations filename.
+pub const DRIVER_DTS: &str = "driver.d.ts";
 
 /// Why the socket's wire contract could not be published.
 ///
@@ -199,9 +212,12 @@ pub fn wrapper_schema() -> Result<Value, WrapperSchemaError> {
              framed as {\"point\": …, \"body\": {…}} and both refuse a key \
              beside those two. This document is a definitions container, not a \
              union: the two are not interchangeable, and `point` does not \
-             discriminate between them. The host-call and driver channels cross \
-             the same pipes and are published in wrapper.wire.json instead — \
-             see crates/stella-plugin/src/wire_schema.rs for why.",
+             discriminate between them. The host-call channel crosses the same \
+             pipes and is published in wrapper.wire.json instead, because one \
+             of its answers is an untagged union — see \
+             crates/stella-plugin/src/wire_schema.rs for why. The driver \
+             channel crosses those pipes too and carries no such union, so it \
+             publishes its own driver.schema.json beside this one.",
         "$defs": Value::Object(defs),
     }))
 }
@@ -279,13 +295,124 @@ const DTS_HEADER: &str = "\
 // travels. Which direction you are reading is decided by which pipe it came
 // off, and a plugin only ever writes responses.
 //
-// The host-call and driver channels cross the same pipes and are not described
-// here: HostCallOk is an untagged union whose contract is that its arms are
-// discriminable by their required keys, which JSON Schema can state and cannot
-// check. docs/wire/wrapper.wire.json shows every one of their messages as the
-// exact bytes a parser meets.
+// The host-call channel crosses the same pipes and is not described here: one
+// of its answers is an untagged union whose contract is that its arms are
+// discriminable by their required keys, which JSON Schema can state and
+// cannot check. docs/wire/wrapper.wire.json shows every one of its messages
+// as the exact bytes a parser meets. The driver channel crosses those pipes
+// too and carries no such union — see driver.schema.json and driver.d.ts.
 //
 // Every message carries protocol_version, and the contract is additive-only.
+";
+
+/// Every driver-channel root type, hoisted into one `$defs` container. This
+/// follows the [`wrapper_schema`] pattern, over four shapes instead of two.
+/// [`crate::DriveRequest`] opens a session. [`crate::DriverCallRequest`] is a
+/// capability ask mid-session. [`crate::DriverCallResponse`] is the host's
+/// answer to one. [`crate::DriveResponse`] ends the session. This is a
+/// container, not a union, on [`wrapper_schema`]'s own terms: the four are
+/// not interchangeable, and nothing on the wire tells them apart by shape
+/// alone. A reader knows which one arrived from which pipe carried it, and
+/// where in the exchange it stands.
+///
+/// # Errors
+///
+/// As [`wrapper_schema`].
+pub fn driver_schema() -> Result<Value, WrapperSchemaError> {
+    let mut defs = Map::new();
+    for (name, root) in [
+        (
+            "DriveRequest",
+            schemars::schema_for!(crate::DriveRequest).to_value(),
+        ),
+        (
+            "DriverCallRequest",
+            schemars::schema_for!(crate::DriverCallRequest).to_value(),
+        ),
+        (
+            "DriverCallResponse",
+            schemars::schema_for!(crate::DriverCallResponse).to_value(),
+        ),
+        (
+            "DriveResponse",
+            schemars::schema_for!(crate::DriveResponse).to_value(),
+        ),
+    ] {
+        let hoisted = hoist(name, root, &mut defs)?;
+        defs.insert(name.to_string(), hoisted);
+    }
+
+    Ok(serde_json::json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "StellaDriverChannel",
+        "description":
+            "The four messages the driver channel carries, and every payload they carry. \
+             DriveRequest opens a session; DriverCallRequest is a capability ask a driver \
+             makes mid-session; DriverCallResponse is the host's answer to one; DriveResponse \
+             ends the session, naming what should happen next. This document is a definitions \
+             container, not a union: the four are not interchangeable. The host-call channel \
+             crosses the same pipes and stays corpus-only in wrapper.wire.json, because one of \
+             its answers is an untagged union — see crates/stella-plugin/src/wire_schema.rs.",
+        "$defs": Value::Object(defs),
+    }))
+}
+
+/// Every committed driver-channel artifact, as `(filename, contents)`.
+///
+/// # Errors
+///
+/// [`WrapperSchemaError`], as [`driver_schema`], plus
+/// [`WrapperSchemaError::Unsupported`] when the shared TypeScript printer meets
+/// a construct it does not model.
+pub fn driver_artifacts() -> Result<Vec<(&'static str, String)>, WrapperSchemaError> {
+    let schema = driver_schema()?;
+    let declarations = stella_protocol::schema_export::typescript_declarations_with_header(
+        &schema,
+        DRIVER_DTS_HEADER,
+        DRIVER_POINT,
+    )?;
+    let mut json =
+        serde_json::to_string_pretty(&schema).expect("a JSON Schema is always serializable");
+    json.push('\n');
+    Ok(vec![(DRIVER_SCHEMA, json), (DRIVER_DTS, declarations)])
+}
+
+/// How the driver channel's session messages are tagged.
+///
+/// None of the four published roots is itself a `oneOf` tagged on `point`.
+/// Only [`crate::DrivePoint`] carries the key, and it has one legal value.
+/// So this adds no tag vocabulary to the printed declarations — the rule in
+/// `stella_protocol::schema_export::typescript_declarations_with_header` for
+/// a container, where an untagged `$defs` entry "contributes nothing and is
+/// not an error". Named for the same reason as [`SOCKET_POINT`]: it is the
+/// vocabulary a plugin author already meets in `doc:backlog-self-driving`.
+const DRIVER_POINT: Discriminant = Discriminant {
+    key: "point",
+    vocabulary: "DrivePoint",
+    doc: "The one point a driver session dispatches.",
+};
+
+const DRIVER_DTS_HEADER: &str = "\
+// GENERATED FILE — DO NOT EDIT.
+//
+// Regenerate with:  bash scripts/export-agentevent-schema.sh
+// Source of truth:  stella-plugin/src/driver.rs
+// Guarded by:       scripts/check-wire-schema.sh (`make wire-schema`)
+//
+// The driver channel: the session a plugin opens when it drives turns,
+// instead of sitting inside one. The host opens the session with a
+// DriveRequest. The driver asks for a capability with a DriverCallRequest,
+// and the host answers with a DriverCallResponse. The driver ends the
+// session with a DriveResponse naming what should happen next.
+//
+// The host-call channel crosses the same pipes and is not described here.
+// One of its answers is an untagged union. Its arms are told apart only by
+// their required keys, a rule JSON Schema can state and cannot check.
+// docs/wire/wrapper.wire.json shows every one of its messages as the exact
+// bytes a parser meets.
+//
+// Every capability ask names a call. The host's grant either permits or
+// refuses it. A refusal is a value the driver branches on, never a death.
 ";
 
 #[cfg(test)]
@@ -527,5 +654,414 @@ mod tests {
             artifacts().expect("both artifacts print"),
             artifacts().expect("both artifacts print")
         );
+    }
+
+    /// The driver channel publishes a schema and TypeScript declarations,
+    /// the way the wrapper socket does — on the header's old reason, which
+    /// stopped being true of this channel: nothing in `stella_plugin::driver`
+    /// is an untagged union.
+    #[test]
+    fn the_driver_channel_publishes_a_schema_and_declarations() {
+        let artifacts = driver_artifacts().expect("the driver channel's artifacts print");
+        let names: Vec<&str> = artifacts.iter().map(|(name, _)| *name).collect();
+        assert_eq!(names, vec![DRIVER_SCHEMA, DRIVER_DTS]);
+    }
+
+    /// Every `$ref` in the driver document resolves against the driver
+    /// document, on [`every_reference_in_the_published_document_resolves_within_it`]'s
+    /// terms.
+    #[test]
+    fn every_reference_in_the_driver_document_resolves_within_it() {
+        let document = driver_schema().expect("the driver container assembles");
+        let defs = document
+            .get("$defs")
+            .and_then(Value::as_object)
+            .expect("a container");
+
+        fn references(node: &Value, found: &mut Vec<String>) {
+            match node {
+                Value::Object(map) => {
+                    for (key, value) in map {
+                        if key == "$ref" {
+                            if let Some(reference) = value.as_str() {
+                                found.push(reference.to_string());
+                            }
+                        } else {
+                            references(value, found);
+                        }
+                    }
+                }
+                Value::Array(items) => items.iter().for_each(|item| references(item, found)),
+                _ => {}
+            }
+        }
+
+        let mut found = Vec::new();
+        references(&document, &mut found);
+        assert!(
+            !found.is_empty(),
+            "the driver document references its payload types"
+        );
+        for reference in found {
+            let name = reference
+                .strip_prefix("#/$defs/")
+                .unwrap_or_else(|| panic!("{reference} is not a local definition reference"));
+            assert!(defs.contains_key(name), "{reference} resolves to nothing");
+        }
+    }
+
+    /// `DriverCallResponse` is hand-written, not derived (this module's
+    /// header explains why): a two-arm union, `result` and `ok` required
+    /// together or `result` and `err` required together, and no third key
+    /// legal in either arm.
+    #[test]
+    fn driver_call_response_is_a_closed_union_of_ok_or_err() {
+        let document = driver_schema().expect("the driver container assembles");
+        let response = def(&document, "DriverCallResponse");
+        let arms = response
+            .get("oneOf")
+            .and_then(Value::as_array)
+            .expect("a union of the two answers a capability ask gets");
+        assert_eq!(arms.len(), 2);
+        let mut required_sets: Vec<Vec<&str>> = arms
+            .iter()
+            .map(|arm| {
+                assert_eq!(
+                    arm.get("additionalProperties"),
+                    Some(&Value::Bool(false)),
+                    "each arm refuses a key beside its own"
+                );
+                arm.get("required")
+                    .and_then(Value::as_array)
+                    .expect("each arm requires its own keys")
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .collect()
+            })
+            .collect();
+        required_sets.sort_unstable();
+        assert_eq!(
+            required_sets,
+            vec![vec!["result", "err"], vec!["result", "ok"]]
+        );
+    }
+
+    /// `DriveResponse` is hand-written too: the envelope `Serialize` actually
+    /// writes, `{"point": "drive", "body": {"next": …}}`, not this struct's
+    /// own field (`next` alone).
+    #[test]
+    fn drive_response_requires_the_envelope_a_driver_actually_writes() {
+        let document = driver_schema().expect("the driver container assembles");
+        let response = def(&document, "DriveResponse");
+        assert_eq!(
+            response.get("required").and_then(Value::as_array),
+            Some(&vec![
+                Value::String("point".to_string()),
+                Value::String("body".to_string())
+            ])
+        );
+        let body = response
+            .pointer("/properties/body")
+            .expect("DriveResponse carries a body");
+        assert_eq!(
+            body.get("required").and_then(Value::as_array),
+            Some(&vec![Value::String("next".to_string())])
+        );
+        assert_eq!(body.get("additionalProperties"), Some(&Value::Bool(false)));
+    }
+
+    /// The declarations print, and name every payload type the schema defines.
+    #[test]
+    fn the_driver_declarations_name_every_payload_type() {
+        let document = driver_schema().expect("the driver container assembles");
+        let artifacts = driver_artifacts().expect("both driver artifacts print");
+        let (name, declarations) = artifacts
+            .iter()
+            .find(|(name, _)| *name == DRIVER_DTS)
+            .expect("the .d.ts is committed beside the schema");
+        assert_eq!(*name, "driver.d.ts");
+
+        for defined in document["$defs"].as_object().expect("a container").keys() {
+            assert!(
+                declarations.contains(&format!("export interface {defined} "))
+                    || declarations.contains(&format!("export type {defined} =")),
+                "no declaration emitted for {defined}"
+            );
+        }
+        // A container is not a type of its own.
+        assert!(!declarations.contains("export type StellaDriverChannel"));
+    }
+
+    /// One `export` per name, on [`no_identifier_is_exported_twice`]'s terms.
+    #[test]
+    fn no_identifier_is_exported_twice_in_the_driver_declarations() {
+        let artifacts = driver_artifacts().expect("both driver artifacts print");
+        let (_, declarations) = artifacts
+            .iter()
+            .find(|(name, _)| *name == DRIVER_DTS)
+            .expect("the .d.ts is committed beside the schema");
+        let mut exported: Vec<&str> = declarations
+            .lines()
+            .filter_map(|line| line.strip_prefix("export "))
+            .filter_map(|rest| {
+                rest.strip_prefix("interface ")
+                    .or(rest.strip_prefix("type "))
+            })
+            .map(|rest| rest.split_whitespace().next().unwrap_or(rest))
+            .collect();
+        let count = exported.len();
+        exported.sort_unstable();
+        exported.dedup();
+        assert_eq!(count, exported.len(), "an identifier is declared twice");
+    }
+
+    /// Running the driver exporter twice writes the same bytes, on
+    /// [`export_is_deterministic`]'s terms.
+    #[test]
+    fn driver_export_is_deterministic() {
+        assert_eq!(
+            driver_artifacts().expect("both driver artifacts print"),
+            driver_artifacts().expect("both driver artifacts print")
+        );
+    }
+
+    /// `docs/wire/` is read by a consumer with no workspace in front of them,
+    /// so nothing published names a Rust path — `scripts/check-wire-schema.sh`
+    /// enforces this over the committed files; this is the same check over the
+    /// driver channel's artifacts in the one-crate test run.
+    #[test]
+    fn the_driver_contract_names_no_rust_path() {
+        let document = driver_schema().expect("the driver container assembles");
+        let json = serde_json::to_string(&document).expect("the document serializes");
+        let artifacts = driver_artifacts().expect("both driver artifacts print");
+        let (_, declarations) = artifacts
+            .iter()
+            .find(|(name, _)| *name == DRIVER_DTS)
+            .expect("the .d.ts is committed beside the schema");
+        for leaked in ["crate::", "super::"] {
+            assert!(!json.contains(leaked), "driver.schema.json names {leaked}");
+            assert!(!declarations.contains(leaked), "driver.d.ts names {leaked}");
+        }
+    }
+
+    /// Whether `value` has a JSON type `kind` names.
+    fn fits(kind: &str, value: &Value) -> bool {
+        match kind {
+            "null" => value.is_null(),
+            "boolean" => value.is_boolean(),
+            "string" => value.is_string(),
+            "integer" => value.is_u64() || value.is_i64(),
+            "number" => value.is_number(),
+            "array" => value.is_array(),
+            "object" => value.is_object(),
+            _ => false,
+        }
+    }
+
+    /// How many of the schemas in `cases` take `value`.
+    fn taken(defs: &Value, cases: &[Value], value: &Value) -> usize {
+        let fit = cases.iter().filter(|case| admits(defs, case, value));
+        fit.count()
+    }
+
+    /// Whether `schema` takes `value`. It checks only the keys the driver
+    /// schema uses: `$ref`, `oneOf`, `anyOf`, `enum`, `const`, `type`,
+    /// `required`, `properties`, `additionalProperties` and `items`. That
+    /// lets a test ask the schema about one message, as a validator would.
+    fn admits(defs: &Value, schema: &Value, value: &Value) -> bool {
+        let Some(rules) = schema.as_object() else {
+            return schema.as_bool().unwrap_or(false);
+        };
+        let rule = |key: &str| rules.get(key);
+        let list = |key: &str| rule(key).and_then(Value::as_array);
+        if let Some(reference) = rule("$ref").and_then(Value::as_str) {
+            let name = reference.trim_start_matches("#/$defs/");
+            return admits(defs, &defs[name], value);
+        }
+        if list("oneOf").is_some_and(|cases| taken(defs, cases, value) != 1) {
+            return false;
+        }
+        if list("anyOf").is_some_and(|cases| taken(defs, cases, value) == 0) {
+            return false;
+        }
+        if list("enum").is_some_and(|values| !values.contains(value)) {
+            return false;
+        }
+        if rule("const").is_some_and(|constant| constant != value) {
+            return false;
+        }
+        let kinds: Vec<&str> = match rule("type") {
+            Some(Value::String(kind)) => vec![kind.as_str()],
+            Some(Value::Array(kinds)) => kinds.iter().filter_map(Value::as_str).collect(),
+            _ => Vec::new(),
+        };
+        if !kinds.is_empty() && !kinds.iter().any(|kind| fits(kind, value)) {
+            return false;
+        }
+        if let Some(fields) = value.as_object() {
+            let required = list("required").into_iter().flatten();
+            for key in required.filter_map(Value::as_str) {
+                if !fields.contains_key(key) {
+                    return false;
+                }
+            }
+            let properties = rule("properties").and_then(Value::as_object);
+            let closed = rule("additionalProperties") == Some(&Value::Bool(false));
+            for (key, field) in fields {
+                let allowed = match properties.and_then(|properties| properties.get(key)) {
+                    Some(property) => admits(defs, property, field),
+                    None => !closed,
+                };
+                if !allowed {
+                    return false;
+                }
+            }
+        }
+        if let (Some(items), Some(values)) = (rule("items"), value.as_array()) {
+            for item in values {
+                if !admits(defs, items, item) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// The driver document's `$defs`, for [`admits`].
+    fn driver_defs() -> Value {
+        let document = driver_schema().expect("the driver container assembles");
+        document["$defs"].clone()
+    }
+
+    /// **The witness for the per-call arms.** An ask carries the table of
+    /// the call it names, and the host refuses any other table. So the schema
+    /// refuses it too, such as `work_status` with a `work_start` table. A
+    /// schema that checks `call` and `args` apart fails this test.
+    #[test]
+    fn a_driver_ask_carries_the_table_of_the_call_it_names() {
+        let defs = driver_defs();
+        let request = &defs["DriverCallRequest"];
+        let ask = |call: &str, args: Option<&Value>| {
+            let mut message = serde_json::json!({ "id": 1, "call": call });
+            if let Some(args) = args {
+                message["args"] = args.clone();
+            }
+            admits(&defs, request, &message)
+        };
+        let unit = serde_json::json!({ "issue": "41" });
+        let start = serde_json::json!({ "work_start": unit });
+        let start_and_null = serde_json::json!({ "work_start": unit, "backlog_claim": null });
+        let start_and_claim = serde_json::json!({ "work_start": unit, "backlog_claim": unit });
+        let null_start = serde_json::json!({ "work_start": null });
+        let empty = serde_json::json!({});
+
+        assert!(ask("work_start", Some(&start)));
+        assert!(ask("work_start", Some(&start_and_null)));
+        assert!(ask("work_status", None));
+        assert!(ask("work_status", Some(&empty)));
+
+        assert!(!ask("work_status", Some(&start)));
+        assert!(!ask("backlog_next", Some(&start)));
+        assert!(!ask("work_start", None));
+        assert!(!ask("work_start", Some(&empty)));
+        assert!(!ask("work_start", Some(&null_start)));
+        assert!(!ask("work_start", Some(&start_and_claim)));
+    }
+
+    /// Each `args` member is named for the one call that reads it, and
+    /// [`crate::DriverArgs::tables`] agrees. The per-call arms rest on that
+    /// match. A member named for no call fails here.
+    #[test]
+    fn each_args_member_is_named_for_the_call_that_reads_it() {
+        let full = crate::DriverArgs {
+            backlog_claim: Some(crate::UnitArgs::default()),
+            work_start: Some(crate::UnitArgs::default()),
+            work_abandon: Some(crate::AbandonArgs::default()),
+            deliver_observe: Some(crate::PullRequestArgs::default()),
+            deliver_next: Some(crate::DecideArgs::default()),
+            deliver_ready: Some(crate::PullRequestArgs::default()),
+            deliver_merge: Some(crate::PullRequestArgs::default()),
+        };
+        let encoded = serde_json::to_value(&full).expect("a table encodes");
+        let members = encoded.as_object().expect("a table is an object");
+        assert_eq!(members.len(), full.tables().len());
+        for (member, table) in members {
+            let call = crate::DriverCall::all()
+                .iter()
+                .copied()
+                .find(|call| call.as_str() == member)
+                .unwrap_or_else(|| panic!("no call is named {member}"));
+            let mut alone = Map::new();
+            alone.insert(member.clone(), table.clone());
+            let one: crate::DriverArgs =
+                serde_json::from_value(Value::Object(alone)).expect("one member decodes");
+            assert_eq!(one.tables(), vec![call], "{member}");
+        }
+    }
+
+    /// The driver readers take an explicit `null` as a missing key. So the
+    /// schema takes `null` on each key a message leaves unused, and takes the
+    /// same messages the readers take.
+    #[test]
+    fn an_unused_driver_key_may_be_null() {
+        let defs = driver_defs();
+        let next = serde_json::json!({ "sleep": { "secs": 60 } });
+        let mut ask = serde_json::json!({ "id": 1, "call": "work_status", "args": null });
+        ask["point"] = Value::Null;
+        ask["body"] = Value::Null;
+        let mut response = serde_json::json!({ "point": "drive", "body": { "next": next } });
+        for unused in ["call", "id", "args"] {
+            response[unused] = Value::Null;
+        }
+        let answer = serde_json::json!({ "result": 1, "ok": {}, "err": null });
+        let failure = serde_json::json!({ "refusal": "failed", "detail": "no" });
+        let refusal = serde_json::json!({ "result": 1, "err": failure, "ok": null });
+
+        assert!(serde_json::from_value::<crate::DriverCallRequest>(ask.clone()).is_ok());
+        assert!(serde_json::from_value::<crate::DriveResponse>(response.clone()).is_ok());
+        assert!(serde_json::from_value::<crate::DriverCallResponse>(answer.clone()).is_ok());
+        assert!(serde_json::from_value::<crate::DriverCallResponse>(refusal.clone()).is_ok());
+
+        assert!(admits(&defs, &defs["DriverCallRequest"], &ask));
+        assert!(admits(&defs, &defs["DriveResponse"], &response));
+        assert!(admits(&defs, &defs["DriverCallResponse"], &answer));
+        assert!(admits(&defs, &defs["DriverCallResponse"], &refusal));
+
+        // `null` is the one value an unused key takes.
+        response["id"] = serde_json::json!(3);
+        assert!(!admits(&defs, &defs["DriveResponse"], &response));
+        let neither = serde_json::json!({ "result": 1, "ok": null, "err": null });
+        assert!(!admits(&defs, &defs["DriverCallResponse"], &neither));
+    }
+
+    /// Every driver message the corpus publishes passes the driver schema.
+    /// The corpus holds the bytes the transport writes, so a schema that
+    /// failed one of them would be wrong about the wire.
+    #[test]
+    fn every_published_driver_message_passes_the_driver_schema() {
+        let defs = driver_defs();
+        let corpus = crate::wire_corpus::corpus().expect("the corpus encodes");
+        for (section, root) in [
+            ("driver_calls", "DriverCallRequest"),
+            ("driver_results", "DriverCallResponse"),
+        ] {
+            for entry in corpus[section].as_array().expect("an array") {
+                assert!(
+                    admits(&defs, &defs[root], &entry["message"]),
+                    "{section}: {entry}"
+                );
+            }
+        }
+        for entry in corpus["driver_session"].as_array().expect("an array") {
+            let root = if entry["case"] == "open" {
+                "DriveRequest"
+            } else {
+                "DriveResponse"
+            };
+            assert!(
+                admits(&defs, &defs[root], &entry["message"]),
+                "driver_session: {entry}"
+            );
+        }
     }
 }

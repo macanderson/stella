@@ -14,11 +14,12 @@
 // travels. Which direction you are reading is decided by which pipe it came
 // off, and a plugin only ever writes responses.
 //
-// The host-call and driver channels cross the same pipes and are not described
-// here: HostCallOk is an untagged union whose contract is that its arms are
-// discriminable by their required keys, which JSON Schema can state and cannot
-// check. docs/wire/wrapper.wire.json shows every one of their messages as the
-// exact bytes a parser meets.
+// The host-call channel crosses the same pipes and is not described here: one
+// of its answers is an untagged union whose contract is that its arms are
+// discriminable by their required keys, which JSON Schema can state and
+// cannot check. docs/wire/wrapper.wire.json shows every one of its messages
+// as the exact bytes a parser meets. The driver channel crosses those pipes
+// too and carries no such union — see driver.schema.json and driver.d.ts.
 //
 // Every message carries protocol_version, and the contract is additive-only.
 
