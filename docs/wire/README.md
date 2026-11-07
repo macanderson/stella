@@ -59,10 +59,12 @@ variants are discriminable by their required keys — a property JSON Schema
 can state as `oneOf` and cannot check, so a schema there would read as more
 authority than it has.
 
-The driver channel carries no such union — its request and response roots are
-all plain structs and externally tagged enums — so it is not held to the
-corpus alone: `driver.schema.json` and `driver.d.ts` publish it the same way,
-through the same printer (#6284).
+The driver channel carries no such union. Its request and response roots are
+plain structs and externally tagged enums, so it is not held to the corpus
+alone. `driver.schema.json` and `driver.d.ts` publish it through the same
+printer, so a driver author gets a schema and TypeScript types for the channel
+their own program speaks. The schema also ties each ask's `call` to the one
+`args` table that call reads.
 
 The corpus is not superseded and is not going away: a schema describes shapes,
 and the corpus pins the bytes a plugin's parser actually meets, which a schema

@@ -444,8 +444,11 @@
     },
     "DriveResponse": {
       "additionalProperties": false,
-      "description": "The response that ends a driver session: which point is open — always \"drive\" — and what the driver wants to happen next.",
+      "description": "The response that ends a driver session. `point` is always \"drive\", and `body.next` says what the driver wants to happen next. `call`, `id` and `args` belong to a capability ask, so a response carries them only as null.",
       "properties": {
+        "args": {
+          "type": "null"
+        },
         "body": {
           "additionalProperties": false,
           "properties": {
@@ -457,6 +460,12 @@
             "next"
           ],
           "type": "object"
+        },
+        "call": {
+          "type": "null"
+        },
+        "id": {
+          "type": "null"
         },
         "point": {
           "$ref": "#/$defs/DrivePoint"
@@ -481,90 +490,6 @@
       "required": [
         "session"
       ],
-      "type": "object"
-    },
-    "DriverArgs": {
-      "additionalProperties": false,
-      "description": "What a capability ask is **about** — one member per verb that reads one.\n\nThe mirror of [`DriverOk`], on the way in. Every member is omitted when\nabsent, so a verb that reads nothing sends no table at all and the bytes an\nask written against B0 sends are unchanged. The table denies unknown\nfields, so an argument this contract does not have is a decode error on the\nhost's side rather than a value silently dropped.\n\n**A table names exactly the verb the ask names.** [`Self::tables`] is what\na host checks that with: an ask carrying `work_start` arguments under a\n`work_status` call is two claims about what the driver wants, and believing\none of them quietly is the failure [`DriverMessage`]'s own envelope refuses\none layer out.\n\n`work_status` and `deliver_open` carry no member here, because they act on\nthe unit the session already holds. A key on either could only name a\ndifferent unit from the one it would report on.",
-      "properties": {
-        "backlog_claim": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/UnitArgs"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Which unit [`DriverCall::BacklogClaim`] should take the lease on."
-        },
-        "deliver_merge": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/PullRequestArgs"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Which pull request [`DriverCall::DeliverMerge`] should merge."
-        },
-        "deliver_next": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/DecideArgs"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "What [`DriverCall::DeliverNext`] should decide over."
-        },
-        "deliver_observe": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/PullRequestArgs"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Which pull request [`DriverCall::DeliverObserve`] should read."
-        },
-        "deliver_ready": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/PullRequestArgs"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Which pull request [`DriverCall::DeliverReady`] should take out of\ndraft."
-        },
-        "work_abandon": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/AbandonArgs"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Why [`DriverCall::WorkAbandon`] is releasing the session's unit."
-        },
-        "work_start": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/UnitArgs"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Which unit [`DriverCall::WorkStart`] should work."
-        }
-      },
       "type": "object"
     },
     "DriverCall": {
@@ -668,44 +593,545 @@
       ]
     },
     "DriverCallRequest": {
-      "additionalProperties": false,
-      "description": "One capability ask a driver writes mid-session. `id` is the driver's own correlation number, echoed back on the answer, so a driver that pipelines two asks can tell the answers apart. `args` is the named verb's own table, omitted for a verb that reads none.",
-      "properties": {
-        "args": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/DriverArgs"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "What the ask is about, for a verb that reads one.\n\nOmitted for a verb that reads none, which is what every ask written\nagainst B0 sends. A table naming a verb other than [`Self::call`] is a\nrefusal rather than a value the host quietly drops — see\n[`DriverArgs::tables`]."
-        },
-        "call": {
-          "$ref": "#/$defs/DriverCall",
-          "description": "Which capability."
-        },
-        "id": {
-          "description": "What the driver calls this ask, echoed on the answer.",
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "id",
-        "call"
-      ],
-      "title": "DriverCallRequest",
-      "type": "object"
-    },
-    "DriverCallResponse": {
-      "description": "The host's answer to one capability ask: `result`, the id the ask carried, plus exactly one of `ok` (what the host did) or `err` (why it would not or could not).",
+      "description": "One capability ask a driver writes mid-session. `id` is the driver's own number for the ask. The host echoes it on the answer, so a driver that sends two asks at once can tell the answers apart. A call that reads arguments sends `args` with one member, named for that call, and any other member only as null. A call that reads none sends no member. `point` and `body` belong to a session response, so an ask carries them only as null.",
       "oneOf": [
         {
           "additionalProperties": false,
           "properties": {
+            "args": {
+              "additionalProperties": false,
+              "properties": {
+                "backlog_claim": {
+                  "$ref": "#/$defs/UnitArgs",
+                  "description": "Which unit [`DriverCall::BacklogClaim`] should take the lease on."
+                },
+                "deliver_merge": {
+                  "type": "null"
+                },
+                "deliver_next": {
+                  "type": "null"
+                },
+                "deliver_observe": {
+                  "type": "null"
+                },
+                "deliver_ready": {
+                  "type": "null"
+                },
+                "work_abandon": {
+                  "type": "null"
+                },
+                "work_start": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "backlog_claim"
+              ],
+              "type": "object"
+            },
+            "body": {
+              "type": "null"
+            },
+            "call": {
+              "const": "backlog_claim",
+              "description": "Take a cooperative lease on an issue, or report who holds it.",
+              "type": "string"
+            },
+            "id": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "point": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "id",
+            "call",
+            "args"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "args": {
+              "additionalProperties": false,
+              "properties": {
+                "backlog_claim": {
+                  "type": "null"
+                },
+                "deliver_merge": {
+                  "type": "null"
+                },
+                "deliver_next": {
+                  "type": "null"
+                },
+                "deliver_observe": {
+                  "type": "null"
+                },
+                "deliver_ready": {
+                  "type": "null"
+                },
+                "work_abandon": {
+                  "type": "null"
+                },
+                "work_start": {
+                  "$ref": "#/$defs/UnitArgs",
+                  "description": "Which unit [`DriverCall::WorkStart`] should work."
+                }
+              },
+              "required": [
+                "work_start"
+              ],
+              "type": "object"
+            },
+            "body": {
+              "type": "null"
+            },
+            "call": {
+              "const": "work_start",
+              "description": "Run one unit of backlog through the turn loop the host is driving.",
+              "type": "string"
+            },
+            "id": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "point": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "id",
+            "call",
+            "args"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "args": {
+              "additionalProperties": false,
+              "properties": {
+                "backlog_claim": {
+                  "type": "null"
+                },
+                "deliver_merge": {
+                  "type": "null"
+                },
+                "deliver_next": {
+                  "type": "null"
+                },
+                "deliver_observe": {
+                  "type": "null"
+                },
+                "deliver_ready": {
+                  "type": "null"
+                },
+                "work_abandon": {
+                  "$ref": "#/$defs/AbandonArgs",
+                  "description": "Why [`DriverCall::WorkAbandon`] is releasing the session's unit."
+                },
+                "work_start": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "work_abandon"
+              ],
+              "type": "object"
+            },
+            "body": {
+              "type": "null"
+            },
+            "call": {
+              "const": "work_abandon",
+              "description": "Release the claim and the worktree, recording why.",
+              "type": "string"
+            },
+            "id": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "point": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "id",
+            "call",
+            "args"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "args": {
+              "additionalProperties": false,
+              "properties": {
+                "backlog_claim": {
+                  "type": "null"
+                },
+                "deliver_merge": {
+                  "type": "null"
+                },
+                "deliver_next": {
+                  "type": "null"
+                },
+                "deliver_observe": {
+                  "$ref": "#/$defs/PullRequestArgs",
+                  "description": "Which pull request [`DriverCall::DeliverObserve`] should read."
+                },
+                "deliver_ready": {
+                  "type": "null"
+                },
+                "work_abandon": {
+                  "type": "null"
+                },
+                "work_start": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "deliver_observe"
+              ],
+              "type": "object"
+            },
+            "body": {
+              "type": "null"
+            },
+            "call": {
+              "const": "deliver_observe",
+              "description": "One read of the forge — CI, reviews, mergeability, base drift.",
+              "type": "string"
+            },
+            "id": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "point": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "id",
+            "call",
+            "args"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "args": {
+              "additionalProperties": false,
+              "properties": {
+                "backlog_claim": {
+                  "type": "null"
+                },
+                "deliver_merge": {
+                  "type": "null"
+                },
+                "deliver_next": {
+                  "$ref": "#/$defs/DecideArgs",
+                  "description": "What [`DriverCall::DeliverNext`] should decide over."
+                },
+                "deliver_observe": {
+                  "type": "null"
+                },
+                "deliver_ready": {
+                  "type": "null"
+                },
+                "work_abandon": {
+                  "type": "null"
+                },
+                "work_start": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "deliver_next"
+              ],
+              "type": "object"
+            },
+            "body": {
+              "type": "null"
+            },
+            "call": {
+              "const": "deliver_next",
+              "description": "The deterministic next action, given the observation.",
+              "type": "string"
+            },
+            "id": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "point": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "id",
+            "call",
+            "args"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "args": {
+              "additionalProperties": false,
+              "properties": {
+                "backlog_claim": {
+                  "type": "null"
+                },
+                "deliver_merge": {
+                  "type": "null"
+                },
+                "deliver_next": {
+                  "type": "null"
+                },
+                "deliver_observe": {
+                  "type": "null"
+                },
+                "deliver_ready": {
+                  "$ref": "#/$defs/PullRequestArgs",
+                  "description": "Which pull request [`DriverCall::DeliverReady`] should take out of\ndraft."
+                },
+                "work_abandon": {
+                  "type": "null"
+                },
+                "work_start": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "deliver_ready"
+              ],
+              "type": "object"
+            },
+            "body": {
+              "type": "null"
+            },
+            "call": {
+              "const": "deliver_ready",
+              "description": "Take the pull request out of draft, when and only when `deliver_next`\nsays so.",
+              "type": "string"
+            },
+            "id": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "point": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "id",
+            "call",
+            "args"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "args": {
+              "additionalProperties": false,
+              "properties": {
+                "backlog_claim": {
+                  "type": "null"
+                },
+                "deliver_merge": {
+                  "$ref": "#/$defs/PullRequestArgs",
+                  "description": "Which pull request [`DriverCall::DeliverMerge`] should merge."
+                },
+                "deliver_next": {
+                  "type": "null"
+                },
+                "deliver_observe": {
+                  "type": "null"
+                },
+                "deliver_ready": {
+                  "type": "null"
+                },
+                "work_abandon": {
+                  "type": "null"
+                },
+                "work_start": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "deliver_merge"
+              ],
+              "type": "object"
+            },
+            "body": {
+              "type": "null"
+            },
+            "call": {
+              "const": "deliver_merge",
+              "description": "Merge, when and only when `deliver_next` says so.",
+              "type": "string"
+            },
+            "id": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "point": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "id",
+            "call",
+            "args"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "args": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "backlog_claim": {
+                      "type": "null"
+                    },
+                    "deliver_merge": {
+                      "type": "null"
+                    },
+                    "deliver_next": {
+                      "type": "null"
+                    },
+                    "deliver_observe": {
+                      "type": "null"
+                    },
+                    "deliver_ready": {
+                      "type": "null"
+                    },
+                    "work_abandon": {
+                      "type": "null"
+                    },
+                    "work_start": {
+                      "type": "null"
+                    }
+                  },
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "body": {
+              "type": "null"
+            },
+            "call": {
+              "oneOf": [
+                {
+                  "const": "backlog_next",
+                  "description": "The ranked readiness queue.",
+                  "type": "string"
+                },
+                {
+                  "const": "backlog_file",
+                  "description": "File a finding as an issue, deduplicated by fingerprint.",
+                  "type": "string"
+                },
+                {
+                  "const": "backlog_close",
+                  "description": "Close an issue with a receipt naming the evidence.",
+                  "type": "string"
+                },
+                {
+                  "const": "backlog_link",
+                  "description": "Bind an `execution_id` to an issue key, so spend is attributable.",
+                  "type": "string"
+                },
+                {
+                  "const": "work_status",
+                  "description": "The in-flight unit: stage, spend, elapsed, checkpoint.",
+                  "type": "string"
+                },
+                {
+                  "const": "deliver_open",
+                  "description": "Branch, commit, push, and open the pull request as a draft.",
+                  "type": "string"
+                },
+                {
+                  "const": "sweep_audit",
+                  "description": "Run the open lens's tooling and emit the findings not yet seen.",
+                  "type": "string"
+                },
+                {
+                  "const": "sweep_regress",
+                  "description": "Re-run the witnesses named by closed issues' receipts.",
+                  "type": "string"
+                },
+                {
+                  "const": "sweep_meta",
+                  "description": "Fold the ledger and emit the loop's own pathologies as findings.",
+                  "type": "string"
+                },
+                {
+                  "const": "curate_propose",
+                  "description": "Emit a proposal — a tool, a context record, a skill — with evidence.",
+                  "type": "string"
+                },
+                {
+                  "const": "curate_list",
+                  "description": "Pending proposals and their evidence counts.",
+                  "type": "string"
+                },
+                {
+                  "const": "curate_accept",
+                  "description": "Apply a proposal, if the workspace's declared authority permits it.",
+                  "type": "string"
+                }
+              ]
+            },
+            "id": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "point": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "id",
+            "call"
+          ],
+          "type": "object"
+        }
+      ],
+      "title": "DriverCallRequest"
+    },
+    "DriverCallResponse": {
+      "description": "The host's answer to one capability ask: `result`, the id the ask carried, plus exactly one of `ok` (what the host did) or `err` (why it would not or could not). The other key of the two may appear only as null.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "err": {
+              "type": "null"
+            },
             "ok": {
               "$ref": "#/$defs/DriverOk"
             },
@@ -726,6 +1152,9 @@
           "properties": {
             "err": {
               "$ref": "#/$defs/HostCallFailure"
+            },
+            "ok": {
+              "type": "null"
             },
             "result": {
               "format": "uint32",

@@ -843,4 +843,225 @@ mod tests {
             assert!(!declarations.contains(leaked), "driver.d.ts names {leaked}");
         }
     }
+
+    /// Whether `value` has a JSON type `kind` names.
+    fn fits(kind: &str, value: &Value) -> bool {
+        match kind {
+            "null" => value.is_null(),
+            "boolean" => value.is_boolean(),
+            "string" => value.is_string(),
+            "integer" => value.is_u64() || value.is_i64(),
+            "number" => value.is_number(),
+            "array" => value.is_array(),
+            "object" => value.is_object(),
+            _ => false,
+        }
+    }
+
+    /// How many of the schemas in `cases` take `value`.
+    fn taken(defs: &Value, cases: &[Value], value: &Value) -> usize {
+        let fit = cases.iter().filter(|case| admits(defs, case, value));
+        fit.count()
+    }
+
+    /// Whether `schema` takes `value`. It checks only the keys the driver
+    /// schema uses: `$ref`, `oneOf`, `anyOf`, `enum`, `const`, `type`,
+    /// `required`, `properties`, `additionalProperties` and `items`. That
+    /// lets a test ask the schema about one message, as a validator would.
+    fn admits(defs: &Value, schema: &Value, value: &Value) -> bool {
+        let Some(rules) = schema.as_object() else {
+            return schema.as_bool().unwrap_or(false);
+        };
+        let rule = |key: &str| rules.get(key);
+        let list = |key: &str| rule(key).and_then(Value::as_array);
+        if let Some(reference) = rule("$ref").and_then(Value::as_str) {
+            let name = reference.trim_start_matches("#/$defs/");
+            return admits(defs, &defs[name], value);
+        }
+        if list("oneOf").is_some_and(|cases| taken(defs, cases, value) != 1) {
+            return false;
+        }
+        if list("anyOf").is_some_and(|cases| taken(defs, cases, value) == 0) {
+            return false;
+        }
+        if list("enum").is_some_and(|values| !values.contains(value)) {
+            return false;
+        }
+        if rule("const").is_some_and(|constant| constant != value) {
+            return false;
+        }
+        let kinds: Vec<&str> = match rule("type") {
+            Some(Value::String(kind)) => vec![kind.as_str()],
+            Some(Value::Array(kinds)) => kinds.iter().filter_map(Value::as_str).collect(),
+            _ => Vec::new(),
+        };
+        if !kinds.is_empty() && !kinds.iter().any(|kind| fits(kind, value)) {
+            return false;
+        }
+        if let Some(fields) = value.as_object() {
+            let required = list("required").into_iter().flatten();
+            for key in required.filter_map(Value::as_str) {
+                if !fields.contains_key(key) {
+                    return false;
+                }
+            }
+            let properties = rule("properties").and_then(Value::as_object);
+            let closed = rule("additionalProperties") == Some(&Value::Bool(false));
+            for (key, field) in fields {
+                let allowed = match properties.and_then(|properties| properties.get(key)) {
+                    Some(property) => admits(defs, property, field),
+                    None => !closed,
+                };
+                if !allowed {
+                    return false;
+                }
+            }
+        }
+        if let (Some(items), Some(values)) = (rule("items"), value.as_array()) {
+            for item in values {
+                if !admits(defs, items, item) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// The driver document's `$defs`, for [`admits`].
+    fn driver_defs() -> Value {
+        let document = driver_schema().expect("the driver container assembles");
+        document["$defs"].clone()
+    }
+
+    /// **The witness for the per-call arms.** An ask carries the table of
+    /// the call it names, and the host refuses any other table. So the schema
+    /// refuses it too, such as `work_status` with a `work_start` table. A
+    /// schema that checks `call` and `args` apart fails this test.
+    #[test]
+    fn a_driver_ask_carries_the_table_of_the_call_it_names() {
+        let defs = driver_defs();
+        let request = &defs["DriverCallRequest"];
+        let ask = |call: &str, args: Option<&Value>| {
+            let mut message = serde_json::json!({ "id": 1, "call": call });
+            if let Some(args) = args {
+                message["args"] = args.clone();
+            }
+            admits(&defs, request, &message)
+        };
+        let unit = serde_json::json!({ "issue": "41" });
+        let start = serde_json::json!({ "work_start": unit });
+        let start_and_null = serde_json::json!({ "work_start": unit, "backlog_claim": null });
+        let start_and_claim = serde_json::json!({ "work_start": unit, "backlog_claim": unit });
+        let null_start = serde_json::json!({ "work_start": null });
+        let empty = serde_json::json!({});
+
+        assert!(ask("work_start", Some(&start)));
+        assert!(ask("work_start", Some(&start_and_null)));
+        assert!(ask("work_status", None));
+        assert!(ask("work_status", Some(&empty)));
+
+        assert!(!ask("work_status", Some(&start)));
+        assert!(!ask("backlog_next", Some(&start)));
+        assert!(!ask("work_start", None));
+        assert!(!ask("work_start", Some(&empty)));
+        assert!(!ask("work_start", Some(&null_start)));
+        assert!(!ask("work_start", Some(&start_and_claim)));
+    }
+
+    /// Each `args` member is named for the one call that reads it, and
+    /// [`crate::DriverArgs::tables`] agrees. The per-call arms rest on that
+    /// match. A member named for no call fails here.
+    #[test]
+    fn each_args_member_is_named_for_the_call_that_reads_it() {
+        let full = crate::DriverArgs {
+            backlog_claim: Some(crate::UnitArgs::default()),
+            work_start: Some(crate::UnitArgs::default()),
+            work_abandon: Some(crate::AbandonArgs::default()),
+            deliver_observe: Some(crate::PullRequestArgs::default()),
+            deliver_next: Some(crate::DecideArgs::default()),
+            deliver_ready: Some(crate::PullRequestArgs::default()),
+            deliver_merge: Some(crate::PullRequestArgs::default()),
+        };
+        let encoded = serde_json::to_value(&full).expect("a table encodes");
+        let members = encoded.as_object().expect("a table is an object");
+        assert_eq!(members.len(), full.tables().len());
+        for (member, table) in members {
+            let call = crate::DriverCall::all()
+                .iter()
+                .copied()
+                .find(|call| call.as_str() == member)
+                .unwrap_or_else(|| panic!("no call is named {member}"));
+            let mut alone = Map::new();
+            alone.insert(member.clone(), table.clone());
+            let one: crate::DriverArgs =
+                serde_json::from_value(Value::Object(alone)).expect("one member decodes");
+            assert_eq!(one.tables(), vec![call], "{member}");
+        }
+    }
+
+    /// The driver readers take an explicit `null` as a missing key. So the
+    /// schema takes `null` on each key a message leaves unused, and takes the
+    /// same messages the readers take.
+    #[test]
+    fn an_unused_driver_key_may_be_null() {
+        let defs = driver_defs();
+        let next = serde_json::json!({ "sleep": { "secs": 60 } });
+        let mut ask = serde_json::json!({ "id": 1, "call": "work_status", "args": null });
+        ask["point"] = Value::Null;
+        ask["body"] = Value::Null;
+        let mut response = serde_json::json!({ "point": "drive", "body": { "next": next } });
+        for unused in ["call", "id", "args"] {
+            response[unused] = Value::Null;
+        }
+        let answer = serde_json::json!({ "result": 1, "ok": {}, "err": null });
+        let failure = serde_json::json!({ "refusal": "failed", "detail": "no" });
+        let refusal = serde_json::json!({ "result": 1, "err": failure, "ok": null });
+
+        assert!(serde_json::from_value::<crate::DriverCallRequest>(ask.clone()).is_ok());
+        assert!(serde_json::from_value::<crate::DriveResponse>(response.clone()).is_ok());
+        assert!(serde_json::from_value::<crate::DriverCallResponse>(answer.clone()).is_ok());
+        assert!(serde_json::from_value::<crate::DriverCallResponse>(refusal.clone()).is_ok());
+
+        assert!(admits(&defs, &defs["DriverCallRequest"], &ask));
+        assert!(admits(&defs, &defs["DriveResponse"], &response));
+        assert!(admits(&defs, &defs["DriverCallResponse"], &answer));
+        assert!(admits(&defs, &defs["DriverCallResponse"], &refusal));
+
+        // `null` is the one value an unused key takes.
+        response["id"] = serde_json::json!(3);
+        assert!(!admits(&defs, &defs["DriveResponse"], &response));
+        let neither = serde_json::json!({ "result": 1, "ok": null, "err": null });
+        assert!(!admits(&defs, &defs["DriverCallResponse"], &neither));
+    }
+
+    /// Every driver message the corpus publishes passes the driver schema.
+    /// The corpus holds the bytes the transport writes, so a schema that
+    /// failed one of them would be wrong about the wire.
+    #[test]
+    fn every_published_driver_message_passes_the_driver_schema() {
+        let defs = driver_defs();
+        let corpus = crate::wire_corpus::corpus().expect("the corpus encodes");
+        for (section, root) in [
+            ("driver_calls", "DriverCallRequest"),
+            ("driver_results", "DriverCallResponse"),
+        ] {
+            for entry in corpus[section].as_array().expect("an array") {
+                assert!(
+                    admits(&defs, &defs[root], &entry["message"]),
+                    "{section}: {entry}"
+                );
+            }
+        }
+        for entry in corpus["driver_session"].as_array().expect("an array") {
+            let root = if entry["case"] == "open" {
+                "DriveRequest"
+            } else {
+                "DriveResponse"
+            };
+            assert!(
+                admits(&defs, &defs[root], &entry["message"]),
+                "driver_session: {entry}"
+            );
+        }
+    }
 }

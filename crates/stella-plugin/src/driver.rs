@@ -653,21 +653,6 @@ pub enum DriveNext {
 /// The `args` key is the verb's own table and nothing else — see
 /// [`DriverArgs`]. An ask for a verb that reads no arguments omits it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-// `Deserialize` is written out by hand over the shared, denying envelope
-// below rather than by attribute here, so the derived schema would otherwise
-// claim the channel accepts a key it refuses — [`crate::wire::WrapperRequest`]'s
-// reason.
-#[cfg_attr(feature = "schema", schemars(deny_unknown_fields))]
-#[cfg_attr(
-    feature = "schema",
-    schemars(
-        description = "One capability ask a driver writes mid-session. `id` is the driver's \
-                       own correlation number, echoed back on the answer, so a driver that \
-                       pipelines two asks can tell the answers apart. `args` is the named \
-                       verb's own table, omitted for a verb that reads none."
-    )
-)]
 pub struct DriverCallRequest {
     /// What the driver calls this ask, echoed on the answer.
     pub id: u32,

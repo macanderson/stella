@@ -296,12 +296,15 @@ export interface DriveRequest {
 }
 
 /**
- * The response that ends a driver session: which point is open — always "drive" — and what the driver wants to happen next.
+ * The response that ends a driver session. `point` is always "drive", and `body.next` says what the driver wants to happen next. `call`, `id` and `args` belong to a capability ask, so a response carries them only as null.
  */
 export interface DriveResponse {
+  args?: null;
   body: {
     next: DriveNext;
   };
+  call?: null;
+  id?: null;
   point: DrivePoint;
 }
 
@@ -313,57 +316,6 @@ export interface DriveSession {
    * The host's identifier for this session, echoed into its telemetry.
    */
   session: string;
-}
-
-/**
- * What a capability ask is **about** — one member per verb that reads one.
- *
- * The mirror of [`DriverOk`], on the way in. Every member is omitted when
- * absent, so a verb that reads nothing sends no table at all and the bytes an
- * ask written against B0 sends are unchanged. The table denies unknown
- * fields, so an argument this contract does not have is a decode error on the
- * host's side rather than a value silently dropped.
- *
- * **A table names exactly the verb the ask names.** [`Self::tables`] is what
- * a host checks that with: an ask carrying `work_start` arguments under a
- * `work_status` call is two claims about what the driver wants, and believing
- * one of them quietly is the failure [`DriverMessage`]'s own envelope refuses
- * one layer out.
- *
- * `work_status` and `deliver_open` carry no member here, because they act on
- * the unit the session already holds. A key on either could only name a
- * different unit from the one it would report on.
- */
-export interface DriverArgs {
-  /**
-   * Which unit [`DriverCall::BacklogClaim`] should take the lease on.
-   */
-  backlog_claim?: UnitArgs | null;
-  /**
-   * Which pull request [`DriverCall::DeliverMerge`] should merge.
-   */
-  deliver_merge?: PullRequestArgs | null;
-  /**
-   * What [`DriverCall::DeliverNext`] should decide over.
-   */
-  deliver_next?: DecideArgs | null;
-  /**
-   * Which pull request [`DriverCall::DeliverObserve`] should read.
-   */
-  deliver_observe?: PullRequestArgs | null;
-  /**
-   * Which pull request [`DriverCall::DeliverReady`] should take out of
-   * draft.
-   */
-  deliver_ready?: PullRequestArgs | null;
-  /**
-   * Why [`DriverCall::WorkAbandon`] is releasing the session's unit.
-   */
-  work_abandon?: AbandonArgs | null;
-  /**
-   * Which unit [`DriverCall::WorkStart`] should work.
-   */
-  work_start?: UnitArgs | null;
 }
 
 /**
@@ -400,36 +352,176 @@ export interface DriverArgs {
 export type DriverCall = "backlog_next" | "backlog_claim" | "backlog_file" | "backlog_close" | "backlog_link" | "work_start" | "work_status" | "work_abandon" | "deliver_open" | "deliver_observe" | "deliver_next" | "deliver_ready" | "deliver_merge" | "sweep_audit" | "sweep_regress" | "sweep_meta" | "curate_propose" | "curate_list" | "curate_accept";
 
 /**
- * One capability ask a driver writes mid-session. `id` is the driver's own correlation number, echoed back on the answer, so a driver that pipelines two asks can tell the answers apart. `args` is the named verb's own table, omitted for a verb that reads none.
+ * One capability ask a driver writes mid-session. `id` is the driver's own number for the ask. The host echoes it on the answer, so a driver that sends two asks at once can tell the answers apart. A call that reads arguments sends `args` with one member, named for that call, and any other member only as null. A call that reads none sends no member. `point` and `body` belong to a session response, so an ask carries them only as null.
  */
-export interface DriverCallRequest {
+export type DriverCallRequest = {
+  args: {
+    /**
+     * Which unit [`DriverCall::BacklogClaim`] should take the lease on.
+     */
+    backlog_claim: UnitArgs;
+    deliver_merge?: null;
+    deliver_next?: null;
+    deliver_observe?: null;
+    deliver_ready?: null;
+    work_abandon?: null;
+    work_start?: null;
+  };
+  body?: null;
   /**
-   * What the ask is about, for a verb that reads one.
-   *
-   * Omitted for a verb that reads none, which is what every ask written
-   * against B0 sends. A table naming a verb other than [`Self::call`] is a
-   * refusal rather than a value the host quietly drops — see
-   * [`DriverArgs::tables`].
+   * Take a cooperative lease on an issue, or report who holds it.
    */
-  args?: DriverArgs | null;
-  /**
-   * Which capability.
-   */
-  call: DriverCall;
-  /**
-   * What the driver calls this ask, echoed on the answer.
-   */
+  call: "backlog_claim";
   id: number;
-}
+  point?: null;
+} | {
+  args: {
+    backlog_claim?: null;
+    deliver_merge?: null;
+    deliver_next?: null;
+    deliver_observe?: null;
+    deliver_ready?: null;
+    work_abandon?: null;
+    /**
+     * Which unit [`DriverCall::WorkStart`] should work.
+     */
+    work_start: UnitArgs;
+  };
+  body?: null;
+  /**
+   * Run one unit of backlog through the turn loop the host is driving.
+   */
+  call: "work_start";
+  id: number;
+  point?: null;
+} | {
+  args: {
+    backlog_claim?: null;
+    deliver_merge?: null;
+    deliver_next?: null;
+    deliver_observe?: null;
+    deliver_ready?: null;
+    /**
+     * Why [`DriverCall::WorkAbandon`] is releasing the session's unit.
+     */
+    work_abandon: AbandonArgs;
+    work_start?: null;
+  };
+  body?: null;
+  /**
+   * Release the claim and the worktree, recording why.
+   */
+  call: "work_abandon";
+  id: number;
+  point?: null;
+} | {
+  args: {
+    backlog_claim?: null;
+    deliver_merge?: null;
+    deliver_next?: null;
+    /**
+     * Which pull request [`DriverCall::DeliverObserve`] should read.
+     */
+    deliver_observe: PullRequestArgs;
+    deliver_ready?: null;
+    work_abandon?: null;
+    work_start?: null;
+  };
+  body?: null;
+  /**
+   * One read of the forge — CI, reviews, mergeability, base drift.
+   */
+  call: "deliver_observe";
+  id: number;
+  point?: null;
+} | {
+  args: {
+    backlog_claim?: null;
+    deliver_merge?: null;
+    /**
+     * What [`DriverCall::DeliverNext`] should decide over.
+     */
+    deliver_next: DecideArgs;
+    deliver_observe?: null;
+    deliver_ready?: null;
+    work_abandon?: null;
+    work_start?: null;
+  };
+  body?: null;
+  /**
+   * The deterministic next action, given the observation.
+   */
+  call: "deliver_next";
+  id: number;
+  point?: null;
+} | {
+  args: {
+    backlog_claim?: null;
+    deliver_merge?: null;
+    deliver_next?: null;
+    deliver_observe?: null;
+    /**
+     * Which pull request [`DriverCall::DeliverReady`] should take out of
+     * draft.
+     */
+    deliver_ready: PullRequestArgs;
+    work_abandon?: null;
+    work_start?: null;
+  };
+  body?: null;
+  /**
+   * Take the pull request out of draft, when and only when `deliver_next`
+   * says so.
+   */
+  call: "deliver_ready";
+  id: number;
+  point?: null;
+} | {
+  args: {
+    backlog_claim?: null;
+    /**
+     * Which pull request [`DriverCall::DeliverMerge`] should merge.
+     */
+    deliver_merge: PullRequestArgs;
+    deliver_next?: null;
+    deliver_observe?: null;
+    deliver_ready?: null;
+    work_abandon?: null;
+    work_start?: null;
+  };
+  body?: null;
+  /**
+   * Merge, when and only when `deliver_next` says so.
+   */
+  call: "deliver_merge";
+  id: number;
+  point?: null;
+} | {
+  args?: {
+    backlog_claim?: null;
+    deliver_merge?: null;
+    deliver_next?: null;
+    deliver_observe?: null;
+    deliver_ready?: null;
+    work_abandon?: null;
+    work_start?: null;
+  } | null;
+  body?: null;
+  call: "backlog_next" | "backlog_file" | "backlog_close" | "backlog_link" | "work_status" | "deliver_open" | "sweep_audit" | "sweep_regress" | "sweep_meta" | "curate_propose" | "curate_list" | "curate_accept";
+  id: number;
+  point?: null;
+};
 
 /**
- * The host's answer to one capability ask: `result`, the id the ask carried, plus exactly one of `ok` (what the host did) or `err` (why it would not or could not).
+ * The host's answer to one capability ask: `result`, the id the ask carried, plus exactly one of `ok` (what the host did) or `err` (why it would not or could not). The other key of the two may appear only as null.
  */
 export type DriverCallResponse = {
+  err?: null;
   ok: DriverOk;
   result: number;
 } | {
   err: HostCallFailure;
+  ok?: null;
   result: number;
 };
 
