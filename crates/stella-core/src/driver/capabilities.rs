@@ -515,6 +515,9 @@ mod tests {
     /// Through the public reader, not the private field, because the reader is
     /// the thing an out-of-tree host has. This does not compile before
     /// `Engine::lane` exists.
+    ///
+    /// `assemble` is the only constructor, so an engine built with no lane is
+    /// `assemble` handed `TurnCapabilities::none()`, the second case here.
     #[test]
     fn the_assembled_lane_reads_back_through_the_public_reader() {
         use stella_protocol::BuiltinLane;
@@ -539,6 +542,42 @@ mod tests {
             TurnCapabilities::none(),
         );
         assert_eq!(bare.lane(), None);
+    }
+
+    /// A copy of an engine keeps the lane of the engine it copies.
+    ///
+    /// `with_turn_instance` and `with_turn_halt` are the public methods that
+    /// build a new `Engine` from an existing one. Each writes the struct out
+    /// field by field, so `lane: None` in place of `self.lane.clone()` would
+    /// compile. A host that frames each turn on such a copy would then frame
+    /// it with no lane.
+    #[test]
+    fn a_copied_engine_keeps_the_lane_it_was_copied_from() {
+        use stella_protocol::BuiltinLane;
+
+        #[derive(Debug)]
+        struct NeverHalts;
+        impl crate::driver::TurnHalt for NeverHalts {
+            fn halt_reason(&self) -> Option<String> {
+                None
+            }
+        }
+
+        let provider = crate::subagent::tests::ScriptedProvider::new(vec![]);
+        let tools = crate::subagent::tests::MixedTools::default();
+        let sleeper = crate::tests::PausedSleeper;
+
+        for lane in [Some(TurnLane::Builtin(BuiltinLane::FleetWorker)), None] {
+            let seams = TurnCapabilities {
+                lane: lane.clone(),
+                ..TurnCapabilities::none()
+            };
+            let config = EngineConfig::default();
+            let engine = Engine::assemble(&provider, &tools, config, &sleeper, seams);
+
+            assert_eq!(engine.with_turn_instance(2).lane(), lane.as_ref());
+            assert_eq!(engine.with_turn_halt(Arc::new(NeverHalts)).lane(), lane.as_ref());
+        }
     }
 
     /// **The deletion witness.** No per-seam builder survives on `Engine`,
