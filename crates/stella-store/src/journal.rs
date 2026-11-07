@@ -463,6 +463,23 @@ pub fn last_spent_usd(records: &[JournalRecord]) -> Option<f64> {
     })
 }
 
+/// How many dollar figures the session's guard had refused, read off the
+/// same last `BudgetTick` as [`last_spent_usd`]. Zero with no tick. Resume
+/// hands it back to the guard, so a short total still says it is short.
+pub fn last_rejected_spend_figures(records: &[JournalRecord]) -> u32 {
+    let last = records.iter().rev().find_map(|r| match r {
+        JournalRecord::Event { event, .. } => match &**event {
+            AgentEvent::BudgetTick {
+                rejected_spend_figures,
+                ..
+            } => Some(*rejected_spend_figures),
+            _ => None,
+        },
+        _ => None,
+    });
+    last.unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -774,7 +791,7 @@ mod tests {
                     session_spent_usd: None,
                     session_limit_usd: None,
                     deadline_remaining_ms: None,
-                    rejected_spend_figures: 0,
+                    rejected_spend_figures: 1,
                 }),
             },
             JournalRecord::Pipeline { on: false },
@@ -787,13 +804,15 @@ mod tests {
                     session_spent_usd: None,
                     session_limit_usd: None,
                     deadline_remaining_ms: None,
-                    rejected_spend_figures: 0,
+                    rejected_spend_figures: 2,
                 }),
             },
         ];
         assert_eq!(last_pipeline(&records), Some(false));
         assert_eq!(last_spent_usd(&records), Some(1.25));
+        assert_eq!(last_rejected_spend_figures(&records), 2);
         assert_eq!(last_pipeline(&[]), None);
         assert_eq!(last_spent_usd(&[]), None);
+        assert_eq!(last_rejected_spend_figures(&[]), 0);
     }
 }
