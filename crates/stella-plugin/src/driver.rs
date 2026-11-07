@@ -359,7 +359,7 @@ pub struct DriverGrant {
     ///
     /// `[runtime]` is the process a plugin is **inside a turn**, and the
     /// manifest refuses it below `participation = "observer"`
-    /// ([`ManifestError::RuntimeRequiresObserver`](crate::ManifestError::RuntimeRequiresObserver))
+    /// ([`ManifestError::RuntimeRequiresObserver`])
     /// on the argument that a content bundle is never invoked, so its process
     /// would never start. A driver is the counterexample: it is never invoked
     /// inside a turn *by construction* — this module's header is the argument —
