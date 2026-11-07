@@ -86,6 +86,7 @@ async fn json_handshake_replays_the_session_id() {
             headers: BTreeMap::new(),
         },
         candidate_safe: false,
+        cwd: None,
     };
     let client = McpClient::connect(&cfg, Duration::from_secs(5))
         .await
@@ -158,6 +159,7 @@ async fn the_negotiated_protocol_version_rides_every_request_after_initialize() 
             headers: BTreeMap::new(),
         },
         candidate_safe: false,
+        cwd: None,
     };
     let client = McpClient::connect(&cfg, Duration::from_secs(5))
         .await

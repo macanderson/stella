@@ -79,11 +79,11 @@ fn the_clamp_rejects_what_it_was_written_against() {
         !clamp::is_resting_gold(0xEF, 0xC5, 0xA0),
         "a cream must not pass as gold"
     );
-    // The zinc ramp itself passes: it leans a few units blue, and a grey that
+    // The cool ramp itself passes: it leans a few units blue, and a grey that
     // leans that little is still a grey.
     assert!(
-        clamp::is_neutral(0x71, 0x71, 0x7A),
-        "the house zinc must pass as a neutral"
+        clamp::is_neutral(0x6E, 0x72, 0x7A),
+        "the house cool grey must pass as a neutral"
     );
     // A slate: a grey carrying a blue hue. It fights the gold.
     assert!(
@@ -111,10 +111,10 @@ fn gold_ink_is_a_shade_of_gold() {
     let gold = rgb("gold", token::GOLD);
     // A literal rather than `token::GOLD_INK`, which does not exist: `gold-ink`
     // paints only the light web surface, so it carries no `rust` name and never
-    // enters `ALL`. The value is the JSON's (`#8A7223`); the Python guard walks
+    // enters `ALL`. The value is the JSON's (`#806719`); the Python guard walks
     // the real token — this exercises the predicate the Rust side holds a
     // future cell to.
-    let shade = (0x8A, 0x72, 0x23);
+    let shade = (0x80, 0x67, 0x19);
     assert!(
         clamp::is_shade_of(shade, gold),
         "gold-ink #{:02X}{:02X}{:02X} is not a shade of gold \
@@ -197,7 +197,7 @@ fn gold_bright_is_a_lift_of_gold() {
 /// is `(r + b) / 510` and the ceiling bounds `b` at `0.35 r`. Push `r` to its
 /// maximum of 255 and `b` follows to 89, which is lightness 0.6745 — and there
 /// is no further to go, because `r` cannot exceed 255. `gold_bright` sits at
-/// 0.6941.
+/// 0.6235.
 ///
 /// That is why the earlier exception was the wrong shape. The blue ceiling was
 /// not a strict rule that one token happened to break; above this lightness it
@@ -241,7 +241,7 @@ fn the_resting_blue_ceiling_is_unsatisfiable_above_this_lightness() {
     // The geometry above is a property of the ceiling and holds whatever gold
     // ships. What it USED to prove — that the lift role is unavoidable because
     // the ceiling cannot be met at gold_bright's lightness — does not cover
-    // the house lift. That sits at 0.6686, just under the line, where the
+    // the house lift. That sits at 0.6235, just under the line, where the
     // ceiling can be met. So the lift role rests on the plainer fact below,
     // asserted rather than read off a lightness that does not imply it.
     let (r, g, b) = rgb("gold_bright", token::GOLD_BRIGHT);

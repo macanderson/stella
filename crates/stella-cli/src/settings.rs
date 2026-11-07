@@ -1287,7 +1287,7 @@ fn project_trust() -> ProjectTrust {
 /// | Project-scope lifecycle hooks — an untrusted scope keeps only what the user/managed scopes declared | `settings::merge::merge_captured_scopes` |
 /// | Project-scope `context_providers` — a stdio entry spawns its `command` at admission, an http entry supplies its own `egress_consent` for a payload carrying workspace content | the same function, immediately below hooks |
 /// | Project-scope `active_plugins` — a name here makes the host spawn that plugin's program on every turn, so an untrusted scope keeps the user/managed list and adds nothing | the same function, immediately below `context_providers` |
-/// | The MCP servers declared in `.stella/mcp.toml` — an arbitrary stdio `command` run at session start, or an attacker-chosen http endpoint | `agent::load_mcp_plan` |
+/// | The MCP servers declared in `.stella/mcp.toml` — an arbitrary stdio `command` run at session start, or an attacker-chosen http endpoint | `agent::own_mcp_config` |
 /// | `<workspace>/.stella/plugins/` — a plugin declares a program the host spawns and can arbitrate the agent loop | `plugin_cmd::roster::read_project_tier` |
 /// | `stella self-driving`'s issue work — refused outright when the workspace declares context records that would not reach the turn, because unsteered work is indistinguishable from steered work in the pull request it produces | `self_driving_cmd::work::steering::refuse_if_unsteered` |
 ///

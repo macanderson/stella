@@ -248,12 +248,15 @@ fn a_declined_claim_is_withheld_from_the_next_ingest() {
         ),
         "this is the fact `stella ingest` consults before offering a claim"
     );
+    // The cooldown runs from the moment of the decline, so the lapse is read
+    // from the recorded deadline. A fixed date stops working once the clock
+    // reaches that date minus the default cooldown.
+    let deadline = states["node-version-2222bbbb"]
+        .cooldown_until
+        .clone()
+        .expect("a decline records its cooldown");
     assert!(
-        stella_records::records::should_repropose(
-            &states,
-            "node-version-2222bbbb",
-            "2027-01-01T00:00:00Z"
-        ),
+        stella_records::records::should_repropose(&states, "node-version-2222bbbb", &deadline),
         "and the cooldown does lapse"
     );
 }

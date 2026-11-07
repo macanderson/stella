@@ -223,6 +223,10 @@ configure a CI job without editing the command line:
     Same as `--max-output-tokens`. Limits output per step below the model's
     own maximum, to control cost or speed on a long unattended run.
   </OptionCard>
+  <OptionCard name="STELLA_MAX_STEPS">
+    Same as `--max-steps`. Stops each turn after this many steps. A turn has no
+    step cap unless you set one.
+  </OptionCard>
   <OptionCard name="STELLA_UPSTREAM_PIN">
     Same as `--upstream-pin`. Locks a gateway to the upstreams you name and
     refuses to fall back to another. Set this when two CI runs need to be

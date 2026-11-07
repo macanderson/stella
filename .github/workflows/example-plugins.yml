@@ -75,7 +75,7 @@ jobs:
           path: .stella-examples
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       # Rust and Python are graded unconditionally, so both are built before
       # the harness runs and `STELLA_EXAMPLES_REQUIRE` below makes skipping

@@ -6,22 +6,22 @@ status: living
 
 # Directive schema
 
-*Normative home: the [Context Graph Protocol](https://github.com/macanderson/context-graph-protocol/tree/c5fb2fe)
+*Normative home: the [Context Graph Protocol](https://github.com/oxageninc/context-graph-protocol/tree/c5fb2fe)
 (`contextgraph/1.0-draft`). This document defers to it rather than restating its
 wire semantics.*
 
 > **Superseded — do not implement from the six-type table below.** Those six types
 > (`memory, fact, rule, preference, constraint, procedure`) predate the
-> adaptive-context reconciliation ([context-graph-protocol#27](https://github.com/macanderson/context-graph-protocol/issues/27)).
+> adaptive-context reconciliation ([context-graph-protocol#27](https://github.com/oxageninc/context-graph-protocol/issues/27)).
 > The **live model is four directive kinds** — `preference, rule, constraint,
 > procedure` — in `crates/stella-records/src/context_record/kind.rs`; **`memory` and `fact`
 > are not directive kinds** (`memory` is its own record kind, `fact` is a
 > `knowledge` kind). Portable directive semantics are owned by the **Context Graph
 > Protocol** exchange-provider profile (CGP #28), not by this document. Kept for
-> history; see, **in the CGP repository**, [`adaptive-context-reconciliation.md`](https://github.com/macanderson/context-graph-protocol/blob/c5fb2fe/docs/adaptive-context-reconciliation.md)
-> and [`adr/0007-protocol-product-boundary.md`](https://github.com/macanderson/context-graph-protocol/blob/c5fb2fe/docs/adr/0007-protocol-product-boundary.md) — both are published at the
+> history; see, **in the CGP repository**, [`adaptive-context-reconciliation.md`](https://github.com/oxageninc/context-graph-protocol/blob/c5fb2fe/docs/adaptive-context-reconciliation.md)
+> and [`adr/0007-protocol-product-boundary.md`](https://github.com/oxageninc/context-graph-protocol/blob/c5fb2fe/docs/adr/0007-protocol-product-boundary.md) — both are published at the
 > revision pinned above, now that
-> [context-graph-protocol#27](https://github.com/macanderson/context-graph-protocol/issues/27)
+> [context-graph-protocol#27](https://github.com/oxageninc/context-graph-protocol/issues/27)
 > has landed, and neither is this workspace's
 > `docs/adr/0007-immutable-promotion-history.md`.
 

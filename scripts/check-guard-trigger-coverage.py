@@ -71,6 +71,10 @@ WATCHED_GUARDS = (
     # Watched for the same reason one file over. It reads a workflow, and a
     # diff confined to workflow files skips ci.yml's Rust-gated `check` job.
     "check-release-wiring.py",
+    # Watched for the identical reason: it reads
+    # `.github/workflows/release.yml`, the very file a workflow-only diff
+    # would otherwise skip ci.yml's `check` job for.
+    "check-release-retry.py",
 )
 
 WORKFLOWS_DIR = "workflows"

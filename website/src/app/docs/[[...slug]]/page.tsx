@@ -77,7 +77,14 @@ export default async function Page(props: {
     // `role` passes straight through to the article element it renders (see
     // DocsPage's `...containerProps`), so this is an attribute, not a layout
     // change.
-    <DocsPage toc={page.data.toc} full={page.data.full} role="main">
+    // `footer.className` lands on Fumadocs' previous/next grid, the hook
+    // global.css uses to give those links the house card corner.
+    <DocsPage
+      toc={page.data.toc}
+      full={page.data.full}
+      footer={{ className: "stella-page-nav" }}
+      role="main"
+    >
       <script
         type="application/ld+json"
         // Our own frontmatter titles and page-tree URLs, not user input.

@@ -436,12 +436,12 @@ struct OpenRouterReasoning {
 /// Map the engine's one `ReasoningEffort` enum to OpenRouter's
 /// `reasoning.effort`.
 ///
-/// This used to collapse `xhigh`/`max` down to `high`, matching
-/// `openai.rs::map_reasoning_effort`, because the gateway modelled only
-/// `low`/`medium`/`high`. It no longer does: OpenRouter documents the full
+/// Every tier reaches the wire as itself, unlike
+/// `openai.rs::map_reasoning_effort`, which collapses `xhigh`/`max` to `high`.
+/// OpenRouter documents the full
 /// `none`/`minimal`/`low`/`medium`/`high`/`xhigh`/`max` ladder and normalizes
-/// it onto whatever the routed model exposes. Keeping the collapse meant the
-/// top two tiers were a lie — a user pinning `xhigh` got `high` on the wire,
+/// it onto whatever the routed model exposes. A collapse would make the top
+/// two tiers a lie — a user pinning `xhigh` would get `high` on the wire,
 /// silently, with nothing to distinguish it from asking for `high`.
 ///
 /// Sending a tier the routed model does not itself advertise under

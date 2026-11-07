@@ -197,10 +197,9 @@ const LIVE_ROUTE: &str = "/api/v1/live";
 /// incremental poll stays small, and this renders once into markup whose
 /// output folds already keep a long body out of the reader's way.
 ///
-/// This used to be a standalone page at `/transcript?id=N`, reached by a
-/// button on top of the dashboard's own hand-rendered transcript — two
-/// renderings of one run, one click apart. The fragment is the consolidation:
-/// one renderer (`stella-transcript`), embedded where the turn already is.
+/// A fragment rather than a page of its own: one renderer
+/// (`stella-transcript`), embedded where the turn already is, so a run has one
+/// rendering rather than two a click apart.
 fn render_transcript(obs: &Observatory, id: i64) -> Result<String, db::DbError> {
     let execution = obs.execution(id)?;
     let journal = obs.execution_journal(id, true, None)?;

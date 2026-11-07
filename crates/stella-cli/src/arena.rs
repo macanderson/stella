@@ -40,7 +40,7 @@
 //! a benchmark that ignores the oracle its runner asked for reports a number
 //! nobody can interpret.
 //!
-//! [`contextgraph-trace`]: https://github.com/macanderson/context-graph-protocol/blob/6f8d7ef13b2528c26913c6472405408ba2584a85/docs/sketches/host-trace.md
+//! [`contextgraph-trace`]: https://github.com/oxageninc/context-graph-protocol/blob/6f8d7ef13b2528c26913c6472405408ba2584a85/docs/sketches/host-trace.md
 
 use std::collections::{HashMap, HashSet};
 use std::io::Write;

@@ -434,7 +434,7 @@ evolution_surfaces! {
         EvolutionPosture::Shipped {
             mechanism: "`stella self-driving drive --backlog` seeds the loop from the ready \
                         backlog rather than the defect queue: an issue is ready when it \
-                        carries `status:ready` or when every `Blocked by: #N` line in its \
+                        carries `STATUS:READY` or when every `Blocked by: #N` line in its \
                         body names a closed issue (`stella_autonomy::ready`). Each ready \
                         issue is worked in an isolated worktree, opened as a pull request \
                         that closes it, merged only when the deterministic transition says \
@@ -460,8 +460,8 @@ evolution_surfaces! {
     Backlog => "backlog",
         EvolutionPosture::Shipped {
             mechanism: "drive's triage places an issue in the operator's own words — \
-                        kind, rung, and a `size/` scale — and writes the labels through \
-                        the issue port. It flips `status:blocked` to `status:ready` once \
+                        kind, rung, and a `SIZE:` scale — and writes the labels through \
+                        the issue port. It flips `STATUS:BLOCKED` to `STATUS:READY` once \
                         every `Blocked by` in the body has closed. The base and deploy \
                         watches file-and-adopt a breakage issue when `main` or the \
                         release run goes red with none open. The end-of-turn residue \

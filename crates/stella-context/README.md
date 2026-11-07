@@ -268,6 +268,43 @@ place.
   memory and the fact graph are not rebuildable, so an older binary must not
   write into a schema it does not know.
 
+## Export views
+
+`context.db` holds two read-only views for programs outside Stella. A reader
+opens the file read-only and selects from them. It needs no Stella code. The
+views keep their names and their columns. A change that would break them adds a
+`_v2` view beside them instead, and the migration tests pin both column lists.
+The views arrived with schema version 14, so a store an older Stella last
+opened does not have them yet.
+
+`export_memories_v1` holds one row per live memory. A memory a person forgot is
+not in it, and neither is the old text of an edited one.
+
+| Column | Meaning |
+|---|---|
+| `lineage` | The memory's lasting id. An edit keeps it. |
+| `revision` | The id of the current text. An edit changes it. |
+| `kind` | The memory's kind, such as `reflection`. |
+| `content` | The current text. |
+| `recorded_at` | When the current text was written, in RFC 3339 UTC. |
+
+`export_memory_uses_v1` holds one row each time a turn put a memory in front of
+the model. Each row is a `context_use` record from the ledger, so a row never
+changes and never goes away.
+
+| Column | Meaning |
+|---|---|
+| `seq` | A number that only grows. Read the rows past the last `seq` you saw. |
+| `use_id` | The use record's id. |
+| `lineage` | The memory the turn used. |
+| `use_kind` | How the turn used it. Every row today is `rendered`: the memory was in the prompt the model saw. |
+| `thread_id` | The thread the turn ran in, such as `ses-1789972711780-2168`: its start time in milliseconds, then the process id. NULL when the turn had no thread. |
+| `execution_id` | The turn's row in `store.db`'s `executions` table. |
+| `used_at` | When the turn finished, in RFC 3339 UTC. |
+
+Stella also has a `memory_citations` table in `store.db`, for a model's own
+verdict on a memory. Nothing writes to it today, so the views leave it out.
+
 ## Testing
 
 ```bash

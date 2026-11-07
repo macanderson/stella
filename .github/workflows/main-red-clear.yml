@@ -10,7 +10,7 @@ name: main-red-clear
 #
 # `scripts/refresh-main-red-holds.sh` re-runs those holds. This workflow is one
 # of its two callers, and covers the recovery a person performs by hand:
-# closing the `main-red` issue, or taking the label off it.
+# closing the `MAIN-RED` issue, or taking the label off it.
 #
 # ── Why the canary calls the script too ──────────────────────────────────────
 #
@@ -64,10 +64,11 @@ jobs:
     name: clear the hold a recovered main left behind
     # `closed` still carries the label on the issue; `unlabeled` no longer
     # does, and names the removed label instead.
+    # Expression `==` and `contains()` ignore case, so `main-red` still matches during the rename.
     if: >-
       github.event_name != 'issues'
-      || contains(github.event.issue.labels.*.name, 'main-red')
-      || github.event.label.name == 'main-red'
+      || contains(github.event.issue.labels.*.name, 'MAIN-RED')
+      || github.event.label.name == 'MAIN-RED'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

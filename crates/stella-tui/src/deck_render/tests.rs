@@ -61,7 +61,7 @@ fn full_deck_frame_composes_every_band_at_80_cols() {
         // the right, keeping only the worker and the stage.
         //
         // These are values, not labels. SPEC 5 retires the uppercase
-        // micro-label row this used to assert (MODEL / CONTEXT / CPU / CACHE /
+        // micro-label row (MODEL / CONTEXT / CPU / CACHE /
         // SPEND / SAVED / WARMTH): six self-describing values do not need a row
         // of chrome explaining them, and CPU, CACHE and WARMTH have left the row
         // entirely, behind `?` and the AGENTS tab.
@@ -774,7 +774,7 @@ fn a_panicking_deck_view_renders_an_error_card_and_the_session_survives() {
         "the error card carries the panic message:\n{text}"
     );
     // `ctx ` is the status bar band (SPEC 5), which replaced the statline's
-    // `MODEL` micro-label — the marker this used to look for.
+    // `MODEL` micro-label.
     for surviving in [">>>", "ctx ", "stella*"] {
         assert!(
             text.contains(surviving),

@@ -42,8 +42,8 @@ your memory to interpret, it is a note to yourself, not a handoff.
 
 ```bash
 gh issue create \
-  --title "stella-core: retry counter survives a goal-round boundary" \
-  --label bug --label area:core --label P1 \
+  --title "P1 T3 S Bug (Core): The retry counter survives a goal-round boundary" \
+  --label P1 --label MODEL:T3 --label SIZE:SMALL --label KIND:BUG --label AREA:CORE \
   --body "$(cat <<'EOF'
 ## Problem
 
@@ -90,7 +90,7 @@ you already discovered so the next agent does not rediscover them), **Done when*
 
 ```bash
 gh search issues --repo macanderson/stella "<distinctive terms>" --state all
-gh issue list --state open --label area:<crate> --limit 50
+gh issue list --state open --label AREA:<CRATE> --limit 50
 ```
 
 Duplicates are worse than nothing — they split the discussion and inflate the
@@ -101,12 +101,14 @@ learned and link it instead.
 
 | | |
 |---|---|
-| type | `bug` · `feature` · `epic` · `documentation` |
+| kind | `KIND:BUG` · `KIND:FEATURE` · `KIND:IMPROVEMENT` · `KIND:CHORE` · `KIND:DOCUMENTATION` · `KIND:DEVOPS`, plus `EPIC` for a container issue |
 | priority | `P0` broken now · `P1` next · `P2` polish |
-| area | `area:core` `area:cli` `area:model` `area:tools` `area:tui` `area:pipeline` `area:store` `area:context` `area:bench` `area:ci` `area:docs` … |
-| special | `self-improvement` (Stella making Stella more capable) · `needs-witness` (PR waiting on its witness test) |
+| tier | `MODEL:T1` · `MODEL:T2` · `MODEL:T3` · `MODEL:T4`, by the hardest step |
+| size | `SIZE:EXTRA-SMALL` · `SIZE:SMALL` · `SIZE:MEDIUM` · `SIZE:LARGE` · `SIZE:EXTRA-LARGE`, by agent minutes to a merge-ready PR |
+| area | `AREA:CORE` `AREA:CLI` `AREA:MODEL` `AREA:TOOLS` `AREA:TUI` `AREA:PIPELINE` `AREA:STORE` `AREA:CONTEXT` `AREA:BENCH` `AREA:CI` `AREA:DOCS` … |
+| special | `SELF-IMPROVEMENT` (Stella making Stella more capable) · `NEEDS-WITNESS` (PR waiting on its witness test) |
 
-Leave `triage` off — that is for issues arriving from outside without a type.
+Leave `TRIAGE` off — that is for issues arriving from outside without a kind.
 You know what you found; classify it.
 
 ## Then close the loop on the loop

@@ -19,7 +19,7 @@ import { REPO_URL, SITE_URL } from "@/lib/site";
 // part that got cut was the proposition. It also disagreed with the Open Graph
 // and Twitter titles right below it, which are NOT template-expanded — the tab
 // said one thing and every shared card said another.
-const HOME_TITLE = "stella — the terminal agent that proves its work finished";
+const HOME_TITLE = "stella: the terminal agent that proves its work finished";
 // "ends a run on evidence" is required and not "a second
 // model confirms it". That was the old wording, and it described a rung that
 // does not exist: there is no model verdict, and no arm that
@@ -29,7 +29,7 @@ const HOME_TITLE = "stella — the terminal agent that proves its work finished"
 // `stella goal` does still end on a verifier model's judgement, but it is one
 // mode, and the front page was generalising it to the whole product.
 const HOME_DESCRIPTION =
-  "A terminal coding agent that runs on the API keys you already have, speaks ten providers' own protocols, and ends a run on evidence — a test that failed before the change and passes after — rather than on a model's say-so.";
+  "A terminal coding agent that runs on the API keys you already have, speaks ten providers' own protocols, and ends a run on evidence, a test that failed before the change and passes after, rather than on a model's say-so.";
 
 export const metadata: Metadata = {
   title: { absolute: HOME_TITLE },
@@ -68,9 +68,17 @@ const softwareJsonLd = {
  * providers it speaks to, and the four doors into the docs. Everything else is
  * one click away and better written there.
  *
- * Brand notes (docs/brand): the name is lowercase always; the comet flies
- * left→right into the wordmark; gold is the signal (the lockup, the prompt,
- * the CTA) and never the surface.
+ * Brand notes (docs/brand): the name is lowercase always; the asterisk in the
+ * wordmark is the only mark; gold is the signal (the lockup, the prompt, the
+ * CTA) and never the surface.
+ *
+ * Type: this is a marketing page, so every size comes from the kit's
+ * marketing scale. Paragraphs take text-m-body and small text takes
+ * text-m-micro, both from src/brand/house-type.css. text-m-micro sets the
+ * code face, so small text that people read adds font-sans. The h1 and each
+ * section's h2 take the display face, Space Grotesk, from the heading rule in
+ * global.css. Use no Tailwind size class such as text-sm here, and no face
+ * class on a heading.
  */
 
 /**
@@ -94,7 +102,7 @@ const DOORS = [
   {
     href: "/docs/agent-modes",
     title: "Pick a mode",
-    body: "chat, run, goal, monitor, or fleet — and which of them fits the task in front of you.",
+    body: "chat, run, goal, monitor, or fleet, and which of them fits the task in front of you.",
   },
   {
     href: "/docs/agent-tools/permissions",
@@ -104,7 +112,7 @@ const DOORS = [
   {
     href: "/docs/plugins",
     title: "Wrap a run in evidence",
-    body: "Install a verification plugin and a turn reports what proves it — and where a run can stop.",
+    body: "Install a verification plugin and a turn reports what proves it, and where a run can stop.",
   },
 ];
 
@@ -129,8 +137,8 @@ export default function HomePage() {
           </h1>
           <p className="lp-lead mt-6">
             It runs on the API keys you already have, speaks ten providers&apos;
-            own protocols, and ends a run on evidence — a test that failed
-            before the change and passes after — rather than on a model&apos;s
+            own protocols, and ends a run on evidence, a test that failed
+            before the change and passes after, rather than on a model&apos;s
             say-so. Nothing is proxied through a hosted service, and telemetry
             never leaves your disk.
           </p>
@@ -138,14 +146,14 @@ export default function HomePage() {
           {/* Install and "read the docs" are the same decision — try it now,
               or read first — so they sit side by side instead of stacked. */}
           <div className="mt-12">
-            <p className="mb-2 text-sm text-fd-muted-foreground">Install it:</p>
+            <p className="mb-2 text-m-micro font-sans text-fd-muted-foreground">Install it:</p>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-stretch">
               <div className="min-w-0 flex-1">
                 <InstallBlock command={INSTALL} />
               </div>
               <Link
                 href="/docs"
-                className="lp-cta flex shrink-0 items-center justify-center rounded-md px-6 text-sm"
+                className="btn btn-primary btn-lg shrink-0"
               >
                 Read the docs
               </Link>
@@ -155,7 +163,7 @@ export default function HomePage() {
           <div className="mt-6">
             <a
               href={REPO_URL}
-              className="text-sm text-fd-muted-foreground underline underline-offset-4 hover:text-fd-foreground"
+              className="text-m-micro font-sans text-fd-muted-foreground underline underline-offset-4 hover:text-fd-foreground"
             >
               Source on GitHub
             </a>
@@ -166,7 +174,7 @@ export default function HomePage() {
               and the two follow-ups that keep a reader connected (the star,
               the follow). "star stella on GitHub" doubles as the source link
               the old "Source on GitHub" line carried. */}
-          <p className="mt-6 flex flex-wrap items-center gap-x-2 text-sm text-fd-muted-foreground">
+          <p className="mt-6 flex flex-wrap items-center gap-x-2 text-m-micro font-sans text-fd-muted-foreground">
             <Mark className="h-3.5 w-auto shrink-0" />
             <span>
               created by{" "}
@@ -175,13 +183,13 @@ export default function HomePage() {
                 className="underline underline-offset-4 hover:text-fd-foreground"
               >
                 @macanderson
-              </a>{" "}
-              —{" "}
+              </a>
+              .{" "}
               <a
                 href="https://github.com/macanderson/stella"
                 className="underline underline-offset-4 hover:text-fd-foreground"
               >
-                star <span className="lp-brand-face">stella</span> on GitHub
+                Star <span className="lp-brand-face">stella</span> on GitHub
               </a>{" "}
               and follow for{" "}
               <a
@@ -201,13 +209,13 @@ export default function HomePage() {
         <div className="mx-auto w-full max-w-3xl px-4 py-16">
           <h2 className="lp-eyebrow mb-5">One run, start to finish</h2>
           <HeroTerminal />
-          <p className="mt-4 max-w-prose text-sm text-fd-muted-foreground">
+          <p className="mt-4 max-w-prose text-m-micro font-sans text-fd-muted-foreground">
             A plain <code>stella run</code> is the raw step loop: it reports
             what it changed and what the turn cost, and claims nothing about
             proof. The rows and the metering are
             <span className="lp-brand-face"> stella</span>&apos;s own; the
             figures illustrate a run rather than a benchmark. Verification is
-            opt-in —{" "}
+            opt-in:{" "}
             <Link
               href="/docs/agent-modes"
               className="underline underline-offset-4 hover:text-fd-foreground"
@@ -223,12 +231,12 @@ export default function HomePage() {
       <section className="lp-section">
         <div className="mx-auto w-full max-w-3xl px-4 py-16">
           <h2 className="lp-eyebrow mb-5">The deck</h2>
-          <p className="max-w-prose text-base">
+          <p className="max-w-prose text-m-body">
             Two moments decide whether you can trust an agent with a branch:
             what it does before it starts, and what it does when a check goes
             red. Running <span className="lp-brand-face">stella</span> with no
             subcommand opens the interactive deck, where both of them look
-            like this —{" "}
+            like this. The docs list{" "}
             <Link
               href="/docs/agent-modes#interactive-the-command-deck"
               className="underline underline-offset-4"
@@ -251,7 +259,7 @@ export default function HomePage() {
       <section className="lp-section lp-band">
         <div className="mx-auto w-full max-w-3xl px-4 py-16">
           <h2 className="lp-eyebrow mb-5">Step inside</h2>
-          <p className="max-w-prose text-base">
+          <p className="max-w-prose text-m-body">
             The rest of this page tells you what{" "}
             <span className="lp-brand-face">stella</span> is.{" "}
             <Link href="/engine" className="underline underline-offset-4">
@@ -266,7 +274,7 @@ export default function HomePage() {
           <div className="mt-6">
             <Link
               href="/engine"
-              className="lp-cta inline-flex items-center rounded-md px-6 py-3 text-sm"
+              className="btn btn-primary btn-lg"
             >
               Take the engine tour
             </Link>
@@ -278,7 +286,7 @@ export default function HomePage() {
       <section className="lp-section">
         <div className="mx-auto w-full max-w-3xl px-4 py-16">
           <h2 className="lp-eyebrow mb-5">Providers</h2>
-          <p className="max-w-prose text-base">
+          <p className="max-w-prose text-m-body">
             {PROVIDER_CATALOG.map((p, i) => (
               <span key={p.id}>
                 {i > 0 ? <span className="text-fd-muted-foreground"> · </span> : null}
@@ -288,7 +296,7 @@ export default function HomePage() {
               </span>
             ))}
           </p>
-          <p className="mt-4 max-w-prose text-sm text-fd-muted-foreground">
+          <p className="mt-4 max-w-prose text-m-micro font-sans text-fd-muted-foreground">
             {/* The trailing `{" "}` is required: JSX trims the leading
                 whitespace of a text node's first line when the node spans
                 more than one line, so `</span> speaks each\n vendor's…`
@@ -301,7 +309,7 @@ export default function HomePage() {
             Override any base URL, key, or model in{" "}
             <Link
               href="/docs/configuration/settings"
-              className="font-mono text-[0.9em] underline underline-offset-4"
+              className="font-mono underline underline-offset-4"
             >
               settings.json
             </Link>
@@ -321,8 +329,8 @@ export default function HomePage() {
                   href={d.href}
                   className="-mx-3 block px-3 py-4 transition-colors hover:bg-fd-accent"
                 >
-                  <span className="text-base font-medium">{d.title}</span>
-                  <span className="mt-1 block max-w-prose text-sm text-fd-muted-foreground">
+                  <span className="text-m-body font-medium">{d.title}</span>
+                  <span className="mt-1 block max-w-prose text-m-micro font-sans text-fd-muted-foreground">
                     {d.body}
                   </span>
                 </Link>
@@ -333,11 +341,11 @@ export default function HomePage() {
       </section>
 
       <footer className="lp-section lp-footer">
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-10 text-sm text-fd-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-10 text-m-micro font-sans text-fd-muted-foreground sm:flex-row sm:items-center sm:justify-between">
           <span className="inline-flex items-center gap-2">
             <Mark className="h-4 w-auto" />
             <span className="lp-brand-face text-fd-foreground">stella</span>
-            <span>— AGPL 3.0</span>
+            <span>is licensed under AGPL 3.0</span>
           </span>
           <nav aria-label="Footer" className="flex items-center gap-5">
             <Link href="/docs" className="hover:text-fd-foreground">

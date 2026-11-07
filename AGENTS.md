@@ -28,6 +28,54 @@ Oxagen's *Engineering Deterministic AI Coding Agents* field manual.
 
 ---
 
+## Operating cost ceiling
+
+Mac set this on 2026-10-06 for every Oxagen repository. Until a customer is live, the whole product costs at most $1,000 a month to operate. The total covers hosting, databases, CI minutes, model calls, vendors, and domains across every repository. Spending above it needs Mac's approval before the money is spent.
+
+- **Weigh cost in every design.** Before you add a CI job, a service, a vendor, a scheduled task, or a larger instance, estimate its monthly cost and state it in the pull request.
+- **CI does two jobs.** It prevents regressions by running the unit tests, and it deploys to production on merge. Applying a migration before the deploy is part of deploying. Add no other CI job without Mac's approval. The checks CI already runs stay until Mac decides which to cut, and their minutes count toward the ceiling.
+- **Ask before crossing the ceiling.** When a change would take the monthly total past $1,000, stop and ask Mac. Do not merge it, start it, or buy it until Mac approves.
+
+## Local execution
+
+Mac set this on 2026-09-26 for every repository on this machine. Local builds, test runs, dev servers, and git hooks ran the laptop out of memory and killed agent runs partway through, and every killed run costs money. CI is the only place code is built or checked, and the only place the full test suite runs. Mac amended this on 2026-10-05: an agent may run the tests of a package it changed, one package at a time, with at most two test workers.
+
+- Do not run the gate, a build, a typecheck, a lint, or the full test suite. Push the branch and read the CI result. Read a failed job with `gh run view --job <id> --log-failed`.
+- Before you push, you may run the tests of a package you changed. Run one package at a time, with at most two test workers, and never with coverage or watch mode. In a Node package, run `pnpm --filter <package> exec vitest run --maxWorkers=2`. In a Rust crate, run `cargo test -p <crate> -j 2 -- --test-threads=2`. Never start tests through `pnpm test`, `turbo`, or the repository root, because those run every package at once.
+- Do not start a dev server: no `next dev`, `next start`, `pnpm dev`, a server under `cargo run`, or anything else that listens on a port.
+- Do not start Docker or Colima, and do not run anything that needs them.
+- Do not run Biome in any form.
+- Git hooks are off on this machine. `LEFTHOOK=0` and `HUSKY=0` are set for every shell and every Claude Code session. Do not reinstall a hook, turn one back on, or run a hook's commands by hand.
+- Code generators and small integrity scripts that only read and write files are allowed, such as regenerating a checksum, a schema index, or a message catalogue.
+- Put this rule, word for word, in the prompt of every subagent you start.
+
+---
+
+## Replies to PR feedback
+
+Mac set this on 2026-09-28 for every repository and every PR, labelled or not. Each feedback comment an agent fixes gets two replies from that agent, with no exceptions.
+
+- **Reply with the fix branch before the first edit.** Create the branch that will carry the fix, then reply to the feedback comment with the branch name. Post this reply before you change any file for that comment.
+- **Reply with the commit SHA once the fix is done.** After the fix is committed and pushed, post a second reply to the same comment with the commit SHA.
+- **Give every comment its own two replies.** One reply answers one feedback comment. When one branch or one commit fixes several comments, each comment still gets both replies.
+- **Reply where the comment lives.** Answer a review thread inline, on the comment itself (`gh api repos/<owner>/<repo>/pulls/<n>/comments/<id>/replies`). A finding in a review body or a top-level comment has no thread, so answer it with two PR comments that each quote it.
+- **Mark both replies.** A watcher starts each reply with `<!-- pr-watch -->`, as it does every comment it posts.
+
+Agents chose these details on 2026-09-28, and Mac has not ruled on them. Cut the fix branch from the PR's head branch. One fix branch may carry several comments. Merge the fix branch into the PR's head branch before the second reply, so the SHA in that reply is a commit on the PR branch. A fix-branch reply with no commit-SHA reply after it marks unfinished work, and the next watcher picks it up.
+
+## Agent-monitored pull requests
+
+Mac set this on 2026-09-26 for every repository. The `agent-monitored-pr` label marks a PR that an agent watches until it merges or closes. A labelled PR comes before other work, and its fixes run in parallel wherever that is safe.
+
+- **Label every PR an agent opens.** Pass `--label agent-monitored-pr` to `gh pr create`. If the repository has no such label, create it first: `gh label create agent-monitored-pr --color fd0880 --description "Agent polls every 60 seconds fixes CI, comments, conflicts."`
+- **Poll the PR every 60 seconds.** Each poll reads the PR's state, its mergeability, and the checks on the head commit. It reads every review thread that still needs a reply: one with no inline reply after the reviewer's last comment, or one whose fix-branch reply has no commit-SHA reply after it. `gh pr view --json` does not return review threads, so read them with `gh api graphql` (`pullRequest.reviewThreads`). It also reads review bodies and top-level comments, because a finding there has no thread. Answer each finding there as Replies to PR feedback sets out, with PR comments that quote it, and record the id of the comment you answered. Start every comment a watcher posts with `<!-- pr-watch -->`. Skip comments that start with that marker or with `<!-- pr-claim -->`, so a watcher does not answer its own comments.
+- **Fix to the Codex review gate.** Mac set this on 2026-11-06 for every pull request: "codex reviews are back in action and a minimum of 1 pass is required - if any p0 or p1 is found a 2nd is also required. no matter what all feedback regardless of severity gets fixed - anything found by codex on pass 2 gets fixed too we are never leaving any feedback unaddressed moving forward i dont care how many code reviews we have to go through for any pr". Later that day he made it stricter: "no we do not leave anything behind every ounce of every review gets fixed until the reviewer says its good". Codex reviews every PR. Ask for the first pass with a PR comment that says `@codex review` when the PR opens, and wait for that pass before you judge the merge. Fix every finding at every severity, from any reviewer, in the PR that drew it. After each round of fixes, push and comment `@codex review` again, and repeat until a pass finds nothing, with no limit on passes. File no residue issue. A fix that needs Mac's decision, a credential, or real spend holds the PR unmerged. Merge once Codex's latest pass found nothing, every thread is resolved, CI passes on the head commit, and the branch has no conflict. Right before the merge, read the head sha, the review threads, the review bodies, and Codex's summary comment again. A new finding holds the merge until it is fixed, and a head that moved after its checks passed starts the gate again. Merge with `gh pr merge --match-head-commit <sha>`, so GitHub refuses the merge when the head moved after that read.
+- **Let the review gate govern review findings.** The gate decides when the PR merges, in place of any repository rule on review rounds or passes. A defect you notice yourself still follows fix over file.
+- **Clear conflicts and CI failures as they appear.** When the PR conflicts, merge the base branch in, resolve it, and push. When a job fails, read its failing step with `gh run view --job <id> --log-failed`, fix it, and push without waiting for the rest of the run.
+- **Dispatch subagents.** Give each independent fix its own subagent when no two fixes touch the same file. Stay active until the PR merges or closes.
+- **Search for the label every 60 seconds.** A session that watches PRs runs `gh search prs --owner macanderson --owner oxageninc --label agent-monitored-pr --state open --limit 1000` every 60 seconds. Mac's repositories can sit under either owner, and a search of one owner misses the other's PRs. Without `--limit`, gh returns 30 results, and GitHub search returns at most 1000. The session takes each labelled PR that no live claim holds.
+- **Claim a PR before the first write.** A PR has one writer. Two writers on one branch restart each other's CI and reject each other's pushes. To claim, post a PR comment whose first line is `<!-- pr-claim --> <login> <session-word> <runtime> <session name>`, then read the PR's comments again. The session word is one word that names your session, such as a job id. A claim holds for 90 minutes after it is posted. The oldest claim that still holds owns the PR. If that claim is not yours, delete your comment and message the owner instead of pushing. Before your claim lapses, post a new one and delete the old one. Delete your claim when you stop watching the PR. Agents chose this claim on 2026-09-26 to answer review findings, in the format of stella's `scripts/pr-claim.sh`, and Mac has not ruled on it. In this repository, take the claim with `scripts/pr-claim.sh claim <PR>`, then read the comments again.
+
 ## Essential commands
 
 The repo is a Cargo workspace. Rust is **pinned to a concrete version**
@@ -41,6 +89,9 @@ same commit (or the next one) so drift never accumulates. A **`Makefile`**
 wraps the common commands with the correct flags — run `make help` for the
 full list.
 
+CI runs the builds, tests, and lints these targets wrap. None of them is run
+on this machine, so push the branch and read the CI run instead.
+
 ```bash
 make build               # cargo build --workspace
 make test                # cargo test --workspace
@@ -50,7 +101,8 @@ make smoke               # compile check — runs `stella models` (no API key ne
 make help                # list every target
 ```
 
-**Iterate on a single crate** (much faster than the whole workspace):
+**Single-crate tests** run in CI as part of the workspace suite. They are not
+run on this machine:
 
 ```bash
 make test-core           # or: cargo test -p stella-core
@@ -58,7 +110,8 @@ make test-model          # or: cargo test -p stella-model
 make test-tools          # or: cargo test -p stella-tools
 ```
 
-**Watch mode** (requires `cargo install cargo-watch`):
+**Watch mode** (requires `cargo install cargo-watch`) re-runs tests and clippy
+on every save, so it is not run on this machine. CI runs the tests and clippy:
 
 ```bash
 make watch               # re-run workspace tests on every save
@@ -82,13 +135,13 @@ RUSTDOCFLAGS="-D warnings" cargo doc -p stella-core --no-deps --document-private
 
 It compiles, so it stays a `make gate` step rather than moving into
 `make guards-fast` — CARGO_SCOPE is what makes it seconds instead of the
-full workspace.
+full workspace. CI runs it, and it is not run on this machine.
 
 ### The gate — what every push is held to
 
-A red gate is an automatic "not yet". CI is where it runs: on the
-maintainer's laptop an agent session does not run `make gate`, a workspace
-build, or the workspace test suite — it pushes and reads the run
+A red gate is an automatic "not yet". CI is where it runs. On the
+maintainer's laptop an agent session does not run `make gate`, a build, or a
+test of any size. It pushes and reads the run
 (CLAUDE.md, "CI builds and tests; this laptop does not"). The list below is
 the contract CI enforces and the command a contributor with their own
 machine runs before pushing:
@@ -120,8 +173,10 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #     flag pair cargo refuses; #5992)
                          #   + release-wiring (auto-tag.yml still asks
                          #     for a run on the commit it merges; #5857)
+                         #   + release-retry (release.yml's publish step
+                         #     retries once on a mid-publish 5xx; #5698)
                          #   + priority-scheme (the issue priority scheme is
-                         #     stated once, in SCR-005, and the triage guard's
+                         #     stated once, in AGENTS.md, and the triage guard's
                          #     regex covers exactly the levels it names)
                          #   + left-behind
                          #   + retired-model-keys (no shipping Rust
@@ -314,8 +369,18 @@ every `main` run 24 to 27 minutes behind a runner on 2026-09-05, and eleven
 commits went unanswered while a repaired tree still read as broken. So the
 script reports three states rather than two. `pending` names the commits whose run has not
 concluded, counts how many of the repository's 100 most recent runs are
-unfinished, exits 0, and closes no open `main-unverified` issue — a recovery
+unfinished, exits 0, and closes no open `MAIN-UNVERIFIED` issue — a recovery
 is claimed off an answer, never off the absence of one.
+
+**A commit missing from that list gets one more read before it counts as
+missing.** The list can hold rows without holding the newest ones: on
+2026-09-14, 2026-09-15 and 2026-09-24 a populated list still reported ten
+commits as `missing`, each with a completed `ci` run a day old. A
+commit the list does not hold gets asked for by its own sha, on a second
+endpoint the list read does not use. A run found there turns the verdict
+`verified` or `pending` and says the list missed it; an empty answer or a
+failed read leaves the list's verdict standing. Either way the log names what
+the list held, so a stale read leaves a trace instead of a silent `missing`.
 
 It is a separate job because it was the third step of the compile job, so an
 answer that costs seconds waited on a toolchain, a cache and
@@ -332,12 +397,12 @@ opened an issue; the second printed its finding into a step log and
 exited 1, and the composition job can pass on the same run — so the
 finding never reached anything a person reads. That happened twice, both
 times on a `chore(release): sync versions` commit whose run concluded
-`failure` with no `main-red` issue open either day.
+`failure` with no `MAIN-RED` issue open either day.
 `check-main-verified.sh --announce` now files on the same shape — one issue
 found by label, a comment while the condition recurs, closed on the next run
-that answers clean — under its own `main-unverified` label rather than
-`main-red`. "Nothing verified this commit" is a different state from "a check
-said no about this commit," and `main-red-hold.yml` reads only `main-red`, so
+that answers clean — under its own `MAIN-UNVERIFIED` label rather than
+`MAIN-RED`. "Nothing verified this commit" is a different state from "a check
+said no about this commit," and `main-red-hold.yml` reads only `MAIN-RED`, so
 an unverified-main issue never blocks a merge on an absence of information the
 way a known-broken `main` does.
 
@@ -355,7 +420,7 @@ finished run. It answers "nothing to say" — not red — on a queued run, a
 cancelled one, a `startup_failure`, or a run it does not know. That is the
 fail-open rule `check-main-verified.sh` uses for the question above. It is a
 row of the canary's `checks` array, not a fourth workflow step, so a green
-suite closes the same `main-red` issue a red one opened, through the
+suite closes the same `MAIN-RED` issue a red one opened, through the
 one-issue code the other four rows already share. No second actor races the
 canary to open or close it.
 
@@ -375,10 +440,25 @@ nothing. It fails open like its sibling. The run it starts carries the event
 was a push, so it cannot loop. `make dispatch-main-verification-test` covers
 it, the case where the tip already has a run included.
 
+**A red scheduled run opens an issue too.** A scheduled run has no pull
+request and no author. When one fails, it shows only in the Actions tab. The
+triage sweep failed on every run that way. `scheduled-red.yml` starts on
+`workflow_run` after each workflow with an `on: schedule` trigger. It acts
+only when that run's event was `schedule`. It runs `scripts/scheduled-red.sh`,
+which keeps one open issue per workflow, labelled `SCHEDULED-RED` and marked
+in its body with the workflow's name. A second red run adds a comment, and the next green
+run closes the issue. A cancelled or skipped run changes nothing. The script
+fails open, with a `::warning::` line, when `gh` is missing, the tracker
+errors, or two issues match one workflow. `workflow_run` finds a workflow by
+its `name:` field, so `scripts/check-scheduled-red-coverage.sh` holds that
+list to the scheduled workflows, in both directions. `make scheduled-red-test`
+covers both scripts. `guard-self-tests.yml` runs it on every pull request, and
+it runs the coverage check on this tree.
+
 A seventh, `main-red-hold.yml`, is the canary's other half: the canary *detects*,
 and this is what consumes the detection at the point a merge is still a
 decision. It runs on `pull_request`. Each run asks the tracker whether a
-`main-red` issue is open at that moment, and fails if one is — naming it. That
+`MAIN-RED` issue is open at that moment, and fails if one is — naming it. That
 answer is a snapshot, and the paragraph below is how it gets re-taken when
 `main` moves under a pull request that is finished and waiting.
 On 2026-08-19 the canary
@@ -387,15 +467,15 @@ and four more PRs merged onto the non-compiling tree over the next 35 minutes,
 the first of them **twelve seconds later** (#3917). Once `main` is red every
 PR's checks are red too, so red stops distinguishing "your change is broken"
 from "the base is" — which is how one composition break became four breaks in
-three crates, each hiding the next. The `unblocks-main` label is the designed
+three crates, each hiding the next. The `UNBLOCKS-MAIN` label is the designed
 way through, so the hold never blocks its own repair, and an unreachable
 tracker fails **open** because this is the second line of defence and the
 canary's issue is the first. Compiles nothing. `make main-red-hold` asks by
 hand; `make main-red-hold-test` covers it, blocking branch included. Reporting
 became holding on 2026-09-02, when `main is not known-broken` joined `main`'s
 required status checks: a throwaway PR went red and unmergeable while a
-hand-filed, `main-red`-labelled issue stood, and green again once
-`unblocks-main` landed on it.
+hand-filed, `MAIN-RED`-labelled issue stood, and green again once
+`UNBLOCKS-MAIN` landed on it.
 
 **A hold goes stale in both directions unless something re-asks it.** Branch
 protection reads the last check run for that name on that commit, and the hold
@@ -405,7 +485,7 @@ event left to correct it, while `main` breaks and gets fixed underneath.
 The stale failure blocks work that should land. On 2026-09-05 `main` broke, a
 repair landed, the canary closed the issue, and ten open pull requests stayed
 unmergeable on a check whose own question now answered the other way. The stale
-pass is the dangerous one: `#5928`'s hold ran at 09:41, the `main-red` issue
+pass is the dangerous one: `#5928`'s hold ran at 09:41, the `MAIN-RED` issue
 for that outage was filed at 10:07, and it merged onto the broken tree during
 the red window with that 26-minute-old green as its required check. Both are
 one bug — the hold is a point-in-time answer that branch protection reads as a
@@ -414,7 +494,7 @@ reaches for first, an empty commit and close-and-reopen, are the two this
 repository forbids.
 
 `scripts/refresh-main-red-holds.sh` re-asks for them. One tracker query decides
-what every hold should be saying — failing while a `main-red` issue is open,
+what every hold should be saying — failing while a `MAIN-RED` issue is open,
 passing while none is — and it re-runs the hold on each open pull request whose
 last run says the other thing, which reports under the same name on the same
 commit. One sweep rather than two, because it is one question: a second script
@@ -463,7 +543,7 @@ A claim is a comment, so it carries an author and a timestamp, and it lapses
 after twenty minutes — an assignee would never lapse, and a crashed session
 would then hold the repair of a red `main` shut. Every unknown proceeds
 loudly: no `gh`, an unreachable tracker, an unreadable identity, two open
-`main-red` issues at once. That direction is the whole safety argument, since
+`MAIN-RED` issues at once. That direction is the whole safety argument, since
 a claim check that can block a repair is worse than the duplication it
 prevents. `make main-red-claim` asks by hand; `make main-red-claim-test`
 covers it, standing-down branch included.
@@ -708,6 +788,30 @@ from all three sides now — the sweep, `ci.yml`'s pull request step, and
 `make recheck-lock-compositions-test` cover both, the two-branch collision
 built rather than described.
 
+An eleventh, the `branch-drift` job in `release-reconcile.yml`, asks a
+question about branches rather than releases or locks: is a merged pull
+request's branch still on origin, and has it moved past the commit that was
+actually merged? GitHub most often deletes a pull request's branch when it
+merges. A branch still there and ahead of its own merge means somebody pushed
+to it afterward. That work is not part of any pull request and is not on
+`main`. That is exactly what happened to `fix/arenabench-dind-host-netns`:
+seven commits landed on the branch after GitHub recorded its merged head,
+survived nowhere but a local clone and a runner image built from the branch,
+and the loss stayed invisible for two days. The job runs hourly beside the
+`reconcile` and `tap` jobs that `RELEASING.md` describes. It checks every
+branch on origin, however long ago its pull request merged. For each drifted
+branch it reports the name, the PR number, the commit that merged, and the
+branch's live tip. It skips the release bot's `bot/version-sync`, which stays
+on origin after each merge because the next release reuses it. It also skips
+a pull request from a fork, whose branch lives in the fork.
+
+**After a pull request merges, its branch is dead.** Do not push more commits
+to a branch once its pull request has merged, even to the same lane or issue.
+Open a fresh branch from `main` instead. A branch that keeps receiving
+commits after merge is invisible to review and to CI, and is one deletion away
+from losing whatever it carries; `branch-drift` above catches it only if it
+runs before that deletion happens.
+
 **A stacked PR's evidence is the same CI run — but confirm it started.** No
 workflow's `pull_request:` trigger carries a `branches:` filter (`push:`
 triggers do, and only for the workflows above's own post-merge behavior), so a
@@ -804,6 +908,10 @@ command for each platform. #3830 is where "the image agents run in should carry
 it" is tracked — that image is not defined in this repository, so nothing here
 can install it.
 
+**The pre-push hook is off on this machine.** Every mention of the hook below
+describes a clone where a contributor installed it with `make hooks`. On this
+machine CI runs every rung, and nothing runs at push time.
+
 `guards-fast` is not a rung you choose by hand; the pre-push hook picks it for
 a push that reaches no crate *and* cannot have touched the wire contract — a
 website-only or workflow-only push, which used to pay for a cargo build it had
@@ -831,9 +939,10 @@ git honours ignore patterns only for paths it is not already tracking. A
 failure can also mean an ignore rule is too broad to accept new files; the
 script's output tells you which case you're in.
 
-**Run `make hooks` once per clone.** It installs a `pre-push` git hook
-(`core.hooksPath=.githooks`) that runs `make gate` automatically on every push
-and aborts the push if it fails. The point is *when* it fails: on your machine,
+**`make hooks` is not run on this machine.** On another clone it installs a
+`pre-push` git hook (`core.hooksPath=.githooks`) that runs `make gate`
+automatically on every push and aborts the push if it fails. The point is
+*when* it fails: on your machine,
 in thirty seconds, instead of an hour into `ci.yml` and a review round-trip.
 It is advisory and per-clone (bypassable with `SKIP_GATE=1 git push` or
 `git push --no-verify`), so it complements the required server-side checks
@@ -1227,8 +1336,9 @@ For a behavior change or feature, a PR should include a **witness test**:
 - It **fails** on `main` without your change (the feature is genuinely absent).
 - It **passes** with your change (the feature is genuinely present).
 
-Check it the artisanal way (`git stash && cargo test -p <crate>`). Pure
-refactors, docs, and CI changes don't need a witness — say so in the PR
+Tests are not run on this machine, so check it in CI. Push the witness test
+alone and read the failing run, then push the change and read the passing
+one. Pure refactors, docs, and CI changes don't need a witness — say so in the PR
 template. If a witness is genuinely impractical (e.g. TUI rendering), explain
 how you verified the change instead.
 
@@ -1400,7 +1510,7 @@ the files you must plan around (see below).
 | Drive the engine one step at a time from a durable host (checkpoint/resume) | [`stella-engine`](crates/stella-engine/README.md) | Re-export-only facade over `stella-core`'s step loop (#971); no logic, no I/O. Consumed by [`stella-serve`](crates/stella-serve/README.md) and external hosts — `stella-cli` does not link it. |
 | Share the engine-assembly bottom half (provider, registry, store, budget), or the wrapper socket built on top of it | [`stella-runtime`](crates/stella-runtime/README.md) | `RuntimeSpec` → `RuntimeBuilder` → `SessionRuntime`, construction only. Reads no ambient environment by contract (`tests/no_ambient_reads.rs`). Also owns the wrapper socket — see the dedicated row above. |
 | Declare CLI-vs-API capability parity (witnessed, ratcheted) | [`stella-parity`](crates/stella-parity/README.md) | The cross-surface capability matrix: every engine capability carries a posture + named witness test per surface, so a feature cannot ship on one surface and silently miss the other. |
-| Context Graph Protocol (wire types / host / conformance) | external repo: [`context-graph-protocol`](https://github.com/macanderson/context-graph-protocol) | Split out of this workspace; Stella depends on it as registry crates (`contextgraph-*`) pinned with exact `=` version requirements in the root `[workspace.dependencies]`. Stays dependency-light by contract. |
+| Context Graph Protocol (wire types / host / conformance) | external repo: [`context-graph-protocol`](https://github.com/oxageninc/context-graph-protocol) | Split out of this workspace; Stella depends on it as registry crates (`contextgraph-*`) pinned with exact `=` version requirements in the root `[workspace.dependencies]`. Stays dependency-light by contract. |
 
 ### When a new crate is justified
 
@@ -1551,7 +1661,7 @@ editing Stella's own code should know what lives where:
 | `.stella/tools/*.toml` | Developer-defined custom script tools. Also scanned at `~/.stella/tools/`. |
 | `.stella/issues/<provider>.toml` | The active tracker's provider manifest: which raw statuses mean open, how each resolution is spelled, and which labels mean which issue class (`doc:agent-native-delivery` §4.1). GitHub's and Linear's both ship embedded in the binary (`crates/stella-cli/src/issue_provider/github.toml` and `linear.toml`, listed in that module's `BUILT_IN` table) and a file here of the same name shadows one, key by key. Adding a tracker is a `.toml` beside those two and a row in that table — no code branches on a provider name. `stella.toml`'s `[issues]` says which provider is active. |
 | `.stella/settings.json` | Project-scope provider config (overrides built-ins or defines new providers) and tool switches (`tools.delegate: "off"` withholds the sub-agent delegation tool — every built-in is registered by default since #710). Merged per-field with org-managed and user scopes. |
-| `.stella/mcp.toml` | MCP server config — extra tools merged into the registry at session start. An installed plugin may also ship one (`<plugin_dir>/mcp.toml`, declared as `[[mcp]]`, #4733); a server of yours keeps its name on a collision, and the package's copy is dropped with a notice. |
+| `.stella/mcp.toml` | MCP server config — extra tools merged into the registry at session start. `~/.stella/mcp.toml` holds servers for every repository, and an entry here with the same name replaces that one whole (`stella-cli`'s `mcp_cmd::scopes`). An installed plugin may also ship one (`<plugin_dir>/mcp.toml`, declared as `[[mcp]]`, #4733); a server of yours keeps its name on a collision, and the package's copy is dropped with a notice. |
 | `.stella/domains.toml` | Domain taxonomy for memory/reflection tagging, inferred by `stella init`. |
 | `.stella/workspace.json` | Durable per-workspace telemetry identity (`workspace_id`), written by `stella cloud register`. Deliberately **outside** `private/` and safe to commit — sharing it makes every clone/machine report under one `workspace_id` to a cloud org. |
 | `.stella/private/` | Owner-only generated local state (`0700`; files `0600`). The generated `.stella/.gitignore` excludes this whole directory. |
@@ -1821,12 +1931,13 @@ trailer `Refs #N` instead.
   into a fixed-size `TestBackend` and the whole character grid is compared
   against a committed snapshot under `tests/snapshots/deck/`. This catches what
   a `contains` assertion cannot — a column that shifted, a panel that moved, a
-  row that vanished. Regenerate with
-  `BLESS=1 cargo test -p stella-tui --test deck_render_snapshots`, then **read
+  row that vanished. Regeneration runs
+  `BLESS=1 cargo test -p stella-tui --test deck_render_snapshots`, which
+  compiles, so it is not run on this machine. Wherever it runs, **read
   the diff**: a golden blessed without looking is a changelog, not a test.
 
-When iterating, run a single crate's tests — `cargo test -p stella-core` is
-seconds; `cargo test --workspace` rebuilds everything.
+CI runs the tests, one crate or the whole workspace. They are not run on this
+machine.
 
 ---
 
@@ -1837,7 +1948,8 @@ seconds; `cargo test --workspace` rebuilds everything.
   you run day to day passes `--locked`, which is what makes a stale lock
   invisible until release time — so `lockfile-sync`
   (`scripts/check-lockfile-sync.sh`) resolves it on every gate run, including
-  the `guards-fast` rung the pre-push hook picks. It compiles nothing.
+  the `guards-fast` rung. It compiles nothing. CI runs it, and it is not run on
+  this machine, where the pre-push hook is off.
 
   It catches the lock you forgot to regenerate. It cannot catch the other
   shape: two branches that are each correct and collide only once both land —
@@ -1893,24 +2005,24 @@ something it is building. It is sales/marketing material.
 
 ## Standing decisions — apply without asking
 
-Each directive below is a Steering Context Record in [`docs/scr/`](docs/scr/);
-the SCR is canonical — it carries the rationale, exceptions, and enforcement
-status. This block is the compiled summary that every agent — Claude Code
-(via CLAUDE.md's `@AGENTS.md` import) and Stella (which reads AGENTS.md
-directly) — loads at session start. The corpus is identical across the
-macanderson org repos.
+These rules are standing decisions. Each one is held as a context record in
+the Oxagen workspace this repository is linked to. The repository keeps no copy
+of the records. Oxagen [ADR-137](https://github.com/oxageninc/product/blob/main/docs/adr/ADR-137-standing-decisions-are-workspace-context-records.md)
+retired `docs/scr/` in every repository. Every agent loads this summary at
+session start. Claude Code loads it through the `@AGENTS.md` import in
+CLAUDE.md, and Stella reads AGENTS.md directly.
 
-- **[SCR-001](docs/scr/SCR-001-no-full-suite-builds.md) — Tests/builds
+- **SCR-001 — Tests/builds
   (inner loop):** Never compile or run the full test suite while developing.
   Build and test only the crates/packages/modules touched by the change
   (plus direct dependents on interface changes). The full suite is CI's job.
-  Here: `cargo test -p <crate> [filter]`, never bare `cargo test` / `cargo test --workspace`.
-- **[SCR-002](docs/scr/SCR-002-durability-first-architecture.md) —
+  Here: CI runs every build and test, and none of them runs on this machine.
+- **SCR-002 —
   Architecture decisions:** Do not ask. Choose the most durable option — the
   one that can't be questioned in 10 years as the right move. Cheap-and-easy
   only wins when it is also the excellent durable choice. Record every such
   decision as an ADR in `docs/adr/`; the ADR replaces the question.
-- **[SCR-003](docs/scr/SCR-003-dod-verified-close.md) — Definition of
+- **SCR-003 — Definition of
   done:** An issue closes only when every DoD checklist item is satisfied
   and verified. Reference-grade includes tests, code comments, docs, and
   CI — not just the implementation. A PR that advances an issue without
@@ -1918,23 +2030,58 @@ macanderson org repos.
   does not close, so the merge gate does not hold that PR against the
   issue's DoD. A PR may carry both, and is gated only on what it closes. A
   PR that closes nothing is waived by a label, and which one is a claim:
-  `no-issue` for a trivial change, `closes-nothing` for a substantial one
+  `NO-ISSUE` for a trivial change, `CLOSES-NOTHING` for a substantial one
   that closes no issue by design.
-- **[SCR-004](docs/scr/SCR-004-residue-becomes-issues.md) — Fix over
+- **SCR-004 — Fix over
   file:** Fix what you notice in the PR you are making; two unrelated fixes
   in one PR is fine. File an issue only when a fix cannot responsibly ride
   the PR (a maintainer decision, a rig or spend, or work larger than the
   session), and only when fixing it moves stability, reliability,
   maintainability, innovation, efficiency, or performance. Apply ONLY the
-  `triage` label.
-- **[SCR-005](docs/scr/SCR-005-triage-separation-of-duties.md) — Triage
-  separation of duties:** Never apply a priority or size label —
-  a dedicated triage agent owns sizing and priority; a guard workflow
-  strips creator-applied priorities.
-- **[SCR-006](docs/scr/SCR-006-schema-changes-are-labelled.md) — A schema change is labelled, and its migration is
+  `TRIAGE` label.
+- **SCR-005 — Triage
+  separation of duties:** Never apply a priority, `MODEL:`, `SIZE:`,
+  `KIND:`, or `AREA:` label. A dedicated triage agent owns them, and a
+  guard workflow strips creator-applied priorities. The triage agent only
+  sizes and orders the work. It never implements anything and never closes
+  an issue. The priority scheme below the list names the levels.
+- **SCR-006 — A schema change is labelled, and its migration is
   applied before or with its deploy:** A pull request that changes a schema carries
-  `migration-required`, and the migration reaches production before or with
+  `MIGRATION-REQUIRED`, and the migration reaches production before or with
   the deploy of that change, never after. Say in the PR which store changed
   and what must be applied. Where a repo has no automation to apply the label
   from the diff, apply it by hand. Do not add an automatic apply to a deploy
   pipeline under this record; that is a separate decision, made per repo.
+
+Priority scheme: `P0` drop everything · `P1` this cycle · `P2` next cycle ·
+`P3` backlog · `P4` someday, speculative. Rule: every open issue carries
+either a priority label or `TRIAGE` — never neither, never both.
+
+## Issue fields and reflection
+
+Mac set this on 2026-09-28 for every repository. Every issue in Mac's repositories belongs on the `All issues` project board in the `macanderson` account. The board carries six fields. Keep all six correct on every issue you work on.
+
+| Field | Values | Meaning |
+|---|---|---|
+| Prompt | Text | The prompt that starts an agent on the work |
+| Model Tier | Ultra, Pro, Standard, Lite | The model tier the work needs |
+| Size | XS, S, M, L, XL | The size of the change |
+| `agent_mins_est` | Number | Agent minutes the work should take |
+| `agent_mins` | Number | Agent minutes the work took |
+| Resolution | Shipped, Won't ship, Duplicate | How the issue closed |
+
+- **Add the issue to the board when you file it.** Set Prompt, Model Tier, and `agent_mins_est` at the same time. Set Size too, unless a triage rule in this repository gives sizing to the triage agent.
+- **Stamp your minutes when your run ends.** Add the minutes your run spent on the issue to `agent_mins`. Add to the value already there, because several runs can share one issue.
+- **Write a reflection when your run ends.** Post it as a comment on the issue. Give your run's minutes, say what shipped, compare `agent_mins` with `agent_mins_est`, and say what the next agent should know. The reflections are the record of minutes. If two runs write `agent_mins` at once and one value is lost, rebuild the sum from the reflections.
+- **Set Resolution when the issue closes.**
+- **Fix any field you find wrong** on any issue you touch.
+- **Use the reflection until the board exists.** If `gh project list` shows no `All issues` board, or your token lacks the `project` scope, write the six values in the reflection instead. Copy them to the board once it exists.
+
+These commands find the board and set a field:
+
+```sh
+gh project list --owner macanderson                                  # the board titled "All issues"
+gh project field-list <number> --owner macanderson --format json     # field and option ids
+gh project item-add <number> --owner macanderson --url <issue-url> --format json --jq .id   # the item id
+gh project item-edit --project-id <project-id> --id <item-id> --field-id <field-id> --number 42
+```

@@ -179,6 +179,7 @@ from every project's own `store.db`.
 | `domain`, `node_domains`, `edge_domains` | The domain taxonomy used to tag and filter recall. |
 | `context_records` | Published context-steering records (see ADR 0011/0012 below). |
 | `ann_centroid`, `ann_assignment`, `ann_index_state` | The approximate-nearest-neighbor index over embeddings. |
+| `export_memories_v1`, `export_memory_uses_v1` | Read-only views of memories and their uses, for programs outside Stella. The crate README lists their columns. |
 
 #### `fleet.db` — multi-agent ledger (`crates/stella-fleet/src/ledger.rs`)
 

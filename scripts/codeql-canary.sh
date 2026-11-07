@@ -38,7 +38,7 @@ dry_run=0
 conclusion=""
 sha="unknown"
 run_url="<no run URL given>"
-label="codeql-red"
+label="CODEQL-RED"
 fixture_open_issue=""
 
 while [ $# -gt 0 ]; do
@@ -191,9 +191,12 @@ ticks costs the issue nothing.
     else
       # Make the label first. `gh issue create --label` fails if the label
       # does not exist yet, and `--force` makes this safe to repeat.
+      #
+      # `--force` also sets the colour and the description on each run. Both
+      # match the label manifest word for word, so a run never resets them.
       gh_run label create "$label" \
-        --color B60205 \
-        --description "CodeQL is failing on main — filed by the CodeQL canary" \
+        --color D5584D \
+        --description "CodeQL is failing on main: filed by the CodeQL canary" \
         --force
       gh_run issue create \
         --title "CodeQL is red on main" \

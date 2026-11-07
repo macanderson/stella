@@ -36,8 +36,8 @@ use stella_core::ports::{FallbackResolver, ResolvedFallback, ToolExecutor};
 use stella_core::retry::{ParkPlan, plan_park};
 use stella_core::{Engine, EngineConfig, TurnCapabilities, TurnOutcome};
 use stella_protocol::{
-    BudgetMode, CompletionMessage, CompletionRequestRef, CompletionResult, CompletionUsage,
-    Provider, ProviderError, ToolCall, ToolOutput, ToolSchema,
+    AgentEvent, BudgetMode, CompletionMessage, CompletionRequestRef, CompletionResult,
+    CompletionUsage, Provider, ProviderError, SteerCause, ToolCall, ToolOutput, ToolSchema,
 };
 use stella_time::test_util::NoopSleeper;
 use tokio::sync::Mutex as TokioMutex;
@@ -112,7 +112,12 @@ fn clone_step(
     }
 }
 
-/// A tool that always succeeds and counts the times it really ran.
+/// A tool that always succeeds and counts the times it really ran. Its
+/// output echoes the command, not a fixed string. The same command run
+/// twice must still look like the same call to the loop detector. But two
+/// different commands must not look like the same stalled tool — that
+/// would read as stagnation before a scenario driving three distinct
+/// loops ever forms its third one.
 struct CountingTools {
     calls: Arc<AtomicU32>,
 }
@@ -128,10 +133,11 @@ impl ToolExecutor for CountingTools {
             speculation_safe: false,
         }]
     }
-    async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+    async fn execute(&self, _name: &str, input: &Value) -> ToolOutput {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        let command = input.get("cmd").and_then(Value::as_str).unwrap_or("");
         ToolOutput::Ok {
-            content: "ok".into(),
+            content: format!("ok: {command}"),
             data: None,
         }
     }
@@ -259,6 +265,14 @@ impl Turn {
     /// Drive the turn and report what it bought. Both providers share one
     /// counter, so `model_calls` is the turn's total.
     async fn run(self) -> (TurnOutcome, Spend) {
+        let (outcome, spend, _events) = self.run_with_events().await;
+        (outcome, spend)
+    }
+
+    /// [`Self::run`], plus every event the turn emitted, in order. A
+    /// scenario reaches for this only when it must count a typed event, such
+    /// as a loop steer. Most scenarios just read the spend.
+    async fn run_with_events(self) -> (TurnOutcome, Spend, Vec<AgentEvent>) {
         let model_calls = Arc::new(AtomicU32::new(0));
         let tool_calls = Arc::new(AtomicU32::new(0));
         let provider = ScriptedProvider::new("primary", self.script, model_calls.clone());
@@ -295,7 +309,7 @@ impl Turn {
 
         let mut messages = self.messages;
         let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::unbounded_channel();
 
         let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
         let cost_usd = match &outcome {
@@ -308,7 +322,14 @@ impl Turn {
             tool_calls: tool_calls.load(Ordering::SeqCst),
             cost_usd,
         };
-        (outcome, spend)
+        // `run_turn` sends each event before it awaits again. So by the
+        // time it returns, the channel already holds the whole stream, and
+        // draining it here needs no reader running at the same time.
+        let mut events = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            events.push(event);
+        }
+        (outcome, spend, events)
     }
 }
 
@@ -683,6 +704,72 @@ async fn a_loop_steer_the_model_obeys_buys_one_more_call() {
             tool_calls: 3,
             cost_usd: 4.0 * CALL_COST_USD,
         },
+    );
+}
+
+/// What the ladder's whole budget costs, both warnings priced. One loop
+/// earns a steer. The model obeys, and forms a second loop: `ls` three
+/// times, then `pwd` three times. Same tool, different arguments, so the
+/// ladder owes this loop its own warning rather than treating it as the
+/// one already warned about. The model obeys again, and forms a third
+/// loop: `whoami` three times. The budget is spent, so this one buys no
+/// warning — it ends the turn.
+///
+/// Raising `MAX_LOOP_STEERS` changes what this test sees, which is the
+/// whole point of pinning it here rather than only where the ladder's
+/// unit tests already do. At the shipped cap of two, the third loop
+/// aborts the turn on its ninth tool call. A cap of three would let it buy
+/// a third warning and a tenth tool call before the same loop ends it —
+/// a different price for the same failure.
+#[tokio::test]
+async fn the_loop_steer_budget_prices_both_warnings_and_the_abort_after() {
+    let (outcome, spend, events) = Turn::new(vec![
+        Ok(tool_step(&[("call_1", "ls")])),
+        Ok(tool_step(&[("call_2", "ls")])),
+        Ok(tool_step(&[("call_3", "ls")])),
+        Ok(tool_step(&[("call_4", "pwd")])),
+        Ok(tool_step(&[("call_5", "pwd")])),
+        Ok(tool_step(&[("call_6", "pwd")])),
+        Ok(tool_step(&[("call_7", "whoami")])),
+        Ok(tool_step(&[("call_8", "whoami")])),
+        Ok(tool_step(&[("call_9", "whoami")])),
+    ])
+    .run_with_events()
+    .await;
+
+    match &outcome {
+        TurnOutcome::Aborted { reason, .. } => {
+            assert!(reason.contains("stuck-loop"), "unexpected reason: {reason}");
+        }
+        other => panic!("expected the spent budget to abort the turn, got {other:?}"),
+    }
+    assert_spend(
+        "two loops steered, a third spends the budget (driver::loop_escalation)",
+        &spend,
+        &Spend {
+            model_calls: 9,
+            tool_calls: 9,
+            cost_usd: 9.0 * CALL_COST_USD,
+        },
+    );
+
+    let loop_steers = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                AgentEvent::Steered {
+                    cause: SteerCause::Loop,
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(
+        loop_steers, 2,
+        "two loops were warned about before the third spent the budget \
+         and aborted — any other count means the ladder charged a \
+         warning wrong"
     );
 }
 

@@ -67,6 +67,42 @@ async fn write_access_is_opt_in_per_spawn() {
     assert_eq!(tools.writes.load(Ordering::SeqCst), 1);
 }
 
+/// A host capped at two steps runs a child that asks for sixteen. The child
+/// stops after two. Without the clamp it would take a third step.
+#[tokio::test(start_paused = true)]
+async fn a_child_never_steps_past_its_hosts_cap() {
+    let parent_provider = ScriptedProvider::new(vec![]);
+    let child_provider = ScriptedProvider::new(vec![
+        Ok(tool_call_result("read_file", "c1", 0.01)),
+        Ok(tool_call_result("read_file", "c2", 0.01)),
+        Ok(tool_call_result("read_file", "c3", 0.01)),
+    ]);
+    let tools = MixedTools::default();
+    let seams = TurnCapabilities::none();
+    let parent = Engine::assemble(
+        &parent_provider,
+        &tools,
+        EngineConfig {
+            max_steps: Some(2),
+            ..EngineConfig::default()
+        },
+        &PausedSleeper,
+        seams,
+    );
+    let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
+    let (tx, _rx) = mpsc::unbounded_channel();
+
+    let spec = SubAgentSpec::read_only("capped", "look");
+    assert_eq!(spec.max_steps, Some(16), "the child asks for more");
+    let outcome = parent
+        .run_sub_agent(SubAgentHost::new(&child_provider), &spec, &mut budget, &tx)
+        .await;
+
+    let report = outcome.report().expect("a capped child still reports");
+    assert_eq!(report.steps, 2, "got {outcome:?}");
+    assert!((report.cost_usd - 0.02).abs() < 1e-9, "got {outcome:?}");
+}
+
 // ---- budget: carved, settled, and never a hole in the accounting ------
 
 #[tokio::test(start_paused = true)]
