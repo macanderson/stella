@@ -164,6 +164,7 @@ pub struct SubAgentRequest {
     /// Requested pool ceiling; clamped down to the policy's.
     pub pool_limit_usd: Option<f64>,
     /// Requested per-child step cap; clamped into `1..=policy.max_child_steps`.
+    /// The engine also holds each child to the turn's own `max_steps`.
     pub max_steps: Option<usize>,
     /// Provider id the children's calls announce. `None` uses the turn's own —
     /// the single-model deployment, and the default.
