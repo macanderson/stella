@@ -1104,12 +1104,12 @@ impl Store {
     /// `stella usage sync` backfill.
     ///
     /// **An incomplete execution rolls up as a floor, not as nothing** (#4171).
-    /// This used to also require `usage_complete = 1 AND usage_status =
-    /// 'complete'`, so a turn with sixty-eight accounted calls and one attempt
-    /// that reported no usage contributed `$0.00` to every project total
-    /// instead of "at least $2.40". `cost_usd` is already the lower bound —
-    /// `finish_execution_accounted` stores `MAX(reported, RECEIPTS_TOTAL_USD)`
-    /// — so the number was there the whole time and only the gate withheld it.
+    /// It does not require `usage_complete = 1 AND usage_status =
+    /// 'complete'`: that gate would make a turn with sixty-eight accounted
+    /// calls and one attempt that reported no usage contribute `$0.00` to
+    /// every project total instead of "at least $2.40". `cost_usd` is already
+    /// the lower bound — `finish_execution_accounted` stores
+    /// `MAX(reported, RECEIPTS_TOTAL_USD)`.
     /// [`usage::ExecutionRollupRow::usage_complete`] carries the verdict out
     /// with the row instead — the conjunction the WHERE used to be, so `true`
     /// still means exactly what it meant before. That is the same bargain

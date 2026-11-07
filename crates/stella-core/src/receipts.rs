@@ -1072,11 +1072,10 @@ impl ReceiptLedger {
     /// the settled boundary where the served model/provider are known.
     /// `estimated_input_tokens` is the conversation estimate the driver already
     /// computed for this same slice and pairs with `StepUsage` (a drift sample).
-    /// It is **passed in, not recomputed**: this used to run its own
-    /// `estimate_conversation_tokens` over the identical unmutated messages, one
-    /// call frame below the driver's, purely so the two events would agree.
-    /// Threading the value makes them agree by construction and removes a full
-    /// transcript walk from every step. [`Self::emit_step_receipt_estimating`]
+    /// It is **passed in, not recomputed**. Passing the driver's value makes
+    /// the two events agree by construction. A second
+    /// `estimate_conversation_tokens` here would walk the same transcript
+    /// again on every step. [`Self::emit_step_receipt_estimating`]
     /// is for callers that have no estimate in hand.
     pub fn emit_step_receipt(
         &mut self,

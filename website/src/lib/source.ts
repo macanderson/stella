@@ -4,11 +4,10 @@ import { loader } from "fumadocs-core/source";
 /**
  * The Fumadocs content source.
  *
- * This used to pass an `icon()` resolver that turned an `icon: <provider-id>`
- * frontmatter key into a vendor logomark beside the page in the sidebar. No
- * page in content/docs sets `icon:` — the feature had zero call sites and the
- * comment describing it was the only evidence it existed. It is removed rather
- * than left as a trap: re-adding it is `icon: (i) => i && createElement(...)`.
+ * No `icon()` resolver is passed: no page in content/docs sets an
+ * `icon: <provider-id>` frontmatter key, so a resolver turning one into a
+ * vendor logomark in the sidebar would have zero call sites. Re-adding it is
+ * `icon: (i) => i && createElement(...)`.
  */
 export const source = loader({
   baseUrl: "/docs",

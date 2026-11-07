@@ -190,7 +190,7 @@ know:
   "sub_agents": {
     "enabled": true,
     "pool_limit_usd": 0.50,     // clamped to the operator's ceiling
-    "max_steps": 8,             // per child; clamped into the operator's range
+    "max_steps": 8,             // per child; clamped into the operator's range and the turn's max_steps
     "provider_id": "cheap-model" // optional; omitted = the turn's own
   }
 }

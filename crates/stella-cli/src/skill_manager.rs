@@ -763,11 +763,8 @@ mod tests {
     /// scope is isolated. Returns (workspace_root, home, guard); the guard
     /// only has to outlive the caller's test.
     ///
-    /// This used to hold the binary-wide environment lock for the whole test
-    /// and restore the real `HOME` on the way out, because `setenv`/`getenv`
-    /// races are UB and the harness runs these on parallel threads. The
-    /// redirect is per-thread now (#1139), so there is nothing to serialize
-    /// and no window in which another test could see an unrestored `HOME`.
+    /// `crate::paths::test_user_home` holds the environment lock until its
+    /// guard drops, so no other test can see an unrestored `HOME`.
     pub(super) fn scratch() -> (tempfile::TempDir, PathBuf, crate::paths::TestHomeGuard) {
         let td = tempfile::tempdir().unwrap();
         let home = td.path().join("home");

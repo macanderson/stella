@@ -4,9 +4,9 @@
 #
 #   ./scripts/test-prose-guard.sh
 #
-# Run it after touching that script. Not part of `make gate`: it builds a
-# handful of throwaway git trees, the same posture as
-# `make typed-errors-test`.
+# Run it after touching that script or the `scripts/prose/` package it
+# imports. Not part of `make gate`: it builds a handful of throwaway git
+# trees, the same posture as `make typed-errors-test`.
 #
 # The guard's promise is one sentence: a (file, pattern) pair may shrink its
 # count, never grow it, and a pair absent from the baseline must be at zero. P2
@@ -408,6 +408,44 @@ if python3 "$SCRIPT" "$r" >/dev/null 2>&1; then
 else
   no "P15 a gitignored file stays out of the scan" "the guard read an ignored file"
 fi
+
+# ── P16: history prose is caught whatever word comes before it ───────────────
+# The passive exception has to be a whole word. Matched as trailing letters,
+# it spared "This used to guess" because "This" ends in "is", and spared any
+# subject ending in "be", "are" or "een" the same way. One fixture per
+# sentence, so each one is judged alone.
+i=0
+for sentence in \
+  "This used to guess." \
+  "Her analysis used to say." \
+  "The wardrobe used to creak." \
+  "The software used to count." \
+  "The screen used to flicker." \
+  "It used to guess."; do
+  i=$((i + 1))
+  r="$(new_root "p16-$i")"
+  printf '%s\n' "$sentence" | doc "$r" docs/a.md
+  baseline "$r"
+  expect_fail "P16 history prose is caught: $sentence" "$r"
+done
+
+# ── P17: the passive "used to" is present tense and passes ──────────────────
+# "The flag is used to pick a dialect" describes what the code does today, so
+# the whole-word exception P16 relies on must still spare it.
+i=0
+for sentence in \
+  "The flag is used to pick a dialect." \
+  "It can be used to pick a dialect." \
+  "The flags are used to pick a dialect." \
+  "The flag was used to pick a dialect." \
+  "The flags were used to pick a dialect." \
+  "It has been used to pick a dialect."; do
+  i=$((i + 1))
+  r="$(new_root "p17-$i")"
+  printf '%s\n' "$sentence" | doc "$r" docs/a.md
+  baseline "$r"
+  expect_pass "P17 the passive form passes: $sentence" "$r"
+done
 
 # ── The density ratchet (#4760) ─────────────────────────────────────────────
 # A different question from every case above: not whether a sentence is
@@ -1256,6 +1294,95 @@ if (cd "$r" && git ls-files --unmerged | grep -q .); then
   expect_pass "U1 an unmerged index counts each path once" "$r"
 else
   no "U1 an unmerged index counts each path once" "the fixture merge did not conflict"
+fi
+
+# ── E1: the guard's own modules are not scanned ─────────────────────────────
+# The pattern table has to spell every construction it bans, and the helpers
+# beside it quote them in their docstrings. The guard skips its own source for
+# that reason, and the skip must cover the `scripts/prose/` package as well as
+# the entry point, or the guard fails on the text that defines it.
+r="$(new_root e1)"
+doc "$r" scripts/prose/patterns.py <<'EOF'
+# Two things follow from that, and the second is the hard one.
+EOF
+baseline "$r"
+expect_pass "E1 the guard's own package is not scanned" "$r"
+
+# ── E2: a split out of a file the guard skips carries nothing ────────────────
+# An excluded file was never held to the rule, so it has no allowance to hand
+# on. Its sentences are new prose the moment they land in a file the guard
+# reads, exactly as they are under `--absolute`.
+r="$(new_root e2)"
+hard_doc_varied "$r" docs/wire/big.md 60
+baseline "$r"
+commit_all "$r"
+split_tail "$r" docs/wire/big.md docs/tail.md 30
+PROSE_BASE_REF=HEAD expect_fail "E2 a split out of an excluded file is new prose" "$r"
+
+# ── E3: the same holds for a rename out of a file the guard skips ────────────
+r="$(new_root e3)"
+hard_doc_varied "$r" docs/wire/big.md 60
+baseline "$r"
+commit_all "$r"
+(cd "$r" && git mv docs/wire/big.md docs/big.md) >/dev/null 2>&1
+PROSE_BASE_REF=HEAD expect_fail "E3 a rename out of an excluded file is new prose" "$r"
+
+# ── M1: every failing ratchet is reported in one run ────────────────────────
+# A tree can fail more than one ratchet at once. The guard used to return on
+# the first failing one, so a banned phrase hid a grade failure and a longer
+# header behind it, and each fix then surfaced the next (#6230). One file per
+# ratchet, so each failure stands on its own.
+r="$(new_root m1)"
+baseline "$r"
+density_baseline "$r"
+doc "$r" docs/phrase.md <<'EOF'
+Two things follow from that, and the second is the hard one.
+EOF
+hard_doc "$r" docs/hard.md 8
+rs_with_header "$r" newcrate 30 lib
+out="$(python3 "$SCRIPT" "$r" 2>&1)"
+status=$?
+if [ "$status" -eq 0 ]; then
+  no "M1 a tree failing all three ratchets fails" "the guard exited 0"
+else
+  ok "M1 a tree failing all three ratchets fails"
+fi
+for heading in \
+  "content-free prose added" \
+  "prose got harder to read" \
+  "module headers got longer"; do
+  if printf '%s' "$out" | grep -qF "$heading"; then
+    ok "M1 the run reports \"$heading\""
+  else
+    no "M1 the run reports \"$heading\"" "the output has no such heading"
+  fi
+done
+
+# ── H1: both HTML comment closers are markers, not prose ────────────────────
+# HTML ends a comment with `--!>` as well as `-->`. The grade scorer strips
+# a leading marker before it counts words, so it must strip both.
+for closer in '-->' '--!>'; do
+  stripped="$(cd "$repo_root/scripts" && python3 -c '
+import sys
+from prose.grade import GRADE_MARKER
+print(GRADE_MARKER.sub("", sys.argv[1] + " plain words"))
+' "$closer")"
+  if [ "$stripped" = "plain words" ]; then
+    ok "H1 a leading $closer is stripped"
+  else
+    no "H1 a leading $closer is stripped" "got: $stripped"
+  fi
+done
+
+# ── X1: the entry point stays executable ────────────────────────────────────
+# The usage text and each failure message tell you to run
+# `./scripts/check-prose.py`. That only works when git keeps the file's
+# execute bit.
+mode="$(git -C "$repo_root" ls-files -s scripts/check-prose.py | cut -d' ' -f1)"
+if [ "$mode" = "100755" ]; then
+  ok "X1 check-prose.py is tracked as executable"
+else
+  no "X1 check-prose.py is tracked as executable" "git records mode $mode"
 fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

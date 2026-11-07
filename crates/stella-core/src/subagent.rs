@@ -265,6 +265,9 @@ pub struct SubAgentSpec {
     /// primitive. A child that *is* the work — a best-of-N candidate standing
     /// in for the parent's own turn — carries the parent's cap, which by
     /// default is none (`EngineConfig::max_steps`).
+    ///
+    /// The engine that runs the child holds it to that engine's own cap too.
+    /// A child never takes more steps than its host may.
     pub max_steps: Option<usize>,
     /// Output-token cap per child call.
     pub max_output_tokens: Option<u32>,
@@ -828,7 +831,10 @@ impl Engine<'_> {
                 // A forked skill's `effort:` override (#2682); absent, the
                 // child thinks as hard as its parent does.
                 effort: spec.effort.or(self.config.effort),
-                max_steps: spec.max_steps,
+                // The host's cap binds the child as well. A caller that caps
+                // a run's steps caps every agent in it, so a child asking for
+                // more than its host may gets the host's cap.
+                max_steps: tighter_step_cap(spec.max_steps, self.config.max_steps),
                 turn_instance: spec.turn_instance,
                 compaction_budget_tokens: spec
                     .compaction_budget_tokens
@@ -1268,6 +1274,15 @@ impl Drop for CancelBracket {
                 ),
             },
         });
+    }
+}
+
+/// The lower of a child's step cap and its host's. `None` is no cap, so
+/// either side's cap wins over it.
+fn tighter_step_cap(child: Option<usize>, host: Option<usize>) -> Option<usize> {
+    match (child, host) {
+        (Some(child), Some(host)) => Some(child.min(host)),
+        (child, host) => child.or(host),
     }
 }
 

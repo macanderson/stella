@@ -281,8 +281,8 @@ impl SessionMemory {
         let lessons = self.retain_unforgotten(turn_store.as_ref(), lessons);
         let lessons = writable_lessons(lessons);
         // Then split what survives into lessons the store should learn and
-        // restatements of what it already holds. The split — rather than the
-        // filter this used to be — is the #2358 fix: a restatement must skip
+        // restatements of what it already holds. It splits rather than
+        // filters (#2358): a restatement must skip
         // the store (see `partition_known` for the measured cost of storing
         // paraphrases) but still reach the mining log below, because a lesson
         // the loop keeps re-learning is exactly the recurrence the skill and
@@ -949,12 +949,12 @@ impl SessionMemory {
         let existing = self.load_skills();
         let skills_dir = self.workspace_skills_dir();
         // What the no-clobber guard needs is the set of paths that are
-        // OCCUPIED, which is a filesystem question — not the set that loaded,
-        // which is what this used to pass. A skill disabled from the SKILLS tab
-        // keeps its file by design and drops out of `load_skills()`, so a
-        // re-mined candidate (identity is a stable `{slug}-{hash8}`, so it
-        // re-targets the very same path) sailed past the guard and
-        // `std::fs::write` destroyed the user's edits (#737). The loaded paths
+        // OCCUPIED, which is a filesystem question — not the set that loaded.
+        // A skill disabled from the SKILLS tab keeps its file by design and
+        // drops out of `load_skills()`, so a re-mined candidate (identity is a
+        // stable `{slug}-{hash8}`, so it re-targets the very same path) would
+        // sail past a guard fed the loaded set, and `std::fs::write` would
+        // destroy the user's edits (#737). The loaded paths
         // are still unioned in: they cost nothing, they carry the "known skill"
         // signal, and they keep the guard armed for already-loaded skills if
         // the directory read ever fails.
