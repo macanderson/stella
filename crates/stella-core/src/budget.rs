@@ -167,8 +167,9 @@ pub struct BudgetGuard {
     /// Never reset by [`begin_turn`](Self::begin_turn): the money a refusal
     /// stands for is still missing from the session total, and the count is
     /// how [`tick_event`](Self::tick_event) says so. A reseed keeps it too,
-    /// so the count covers the guard's whole life, which after an in-deck
-    /// session switch includes refusals made in the session left behind.
+    /// since the total it writes is still this session's. Only
+    /// [`switch_session`](Self::switch_session) clears it. The refusals then
+    /// belong to a session that has left the screen.
     rejected_spend_figures: u32,
 }
 
@@ -273,8 +274,22 @@ impl BudgetGuard {
     /// back is runtime data like any other: it goes through `spendable_usd`
     /// too, and a session whose recorded total is unreadable reseeds to zero
     /// rather than wedging the gate. That refusal is counted like any other.
+    ///
+    /// The refusal count stays. A dropped turn and a checkpoint restore
+    /// reseed the same session, so its refusals still apply.
     pub fn reseed_session_spend(&mut self, spent_usd: f64) {
         self.session_spent_usd = self.admit(spent_usd);
+    }
+
+    /// Move the guard to another session, whose journal says it spent
+    /// `spent_usd`. This is the in-deck session switch.
+    ///
+    /// It clears the refusal count, then reseeds. The old refusals were
+    /// missing from the old total. The new total is the one on screen now,
+    /// and they say nothing about it.
+    pub fn switch_session(&mut self, spent_usd: f64) {
+        self.rejected_spend_figures = 0;
+        self.reseed_session_spend(spent_usd);
     }
 
     /// The figure `spendable_usd` lets through, counting a refusal so the
@@ -1285,6 +1300,23 @@ mod tests {
         parent.settle_child(&child);
         assert_eq!(rejected_on_tick(&parent), 1);
         assert_eq!(parent.session_spent_usd(), 0.05);
+    }
+
+    /// A switch leaves the old session's refusals behind. A reseed of the
+    /// same session keeps them, and a switch to a bad total counts that one.
+    #[test]
+    fn a_session_switch_clears_the_refusals_and_a_reseed_keeps_them() {
+        let mut guard = BudgetGuard::new(BudgetMode::Enforced, None, Some(1.00));
+        guard.record_spend(f64::NAN);
+        guard.reseed_session_spend(0.30);
+        assert_eq!(rejected_on_tick(&guard), 1, "same session, same refusal");
+
+        guard.switch_session(0.40);
+        assert_eq!(rejected_on_tick(&guard), 0, "the old refusal came along");
+        assert_eq!(guard.session_spent_usd(), 0.40);
+
+        guard.switch_session(f64::NAN);
+        assert_eq!(rejected_on_tick(&guard), 1, "the new total was refused");
     }
 
     #[test]

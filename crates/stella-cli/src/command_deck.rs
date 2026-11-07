@@ -1495,7 +1495,7 @@ pub async fn run_deck_session(
                                 // adopted checkpoint's step-boundary meter —
                                 // see the startup resume for why max, not
                                 // either one.
-                                budget.reseed_session_spend(
+                                budget.switch_session(
                                     rs.spent_usd
                                         .unwrap_or(0.0)
                                         .max(adopted.spent_usd.unwrap_or(0.0)),
