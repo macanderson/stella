@@ -1358,5 +1358,16 @@ for heading in \
   fi
 done
 
+# ── X1: the entry point stays executable ────────────────────────────────────
+# The usage text and each failure message tell you to run
+# `./scripts/check-prose.py`. That only works when git keeps the file's
+# execute bit.
+mode="$(git -C "$repo_root" ls-files -s scripts/check-prose.py | cut -d' ' -f1)"
+if [ "$mode" = "100755" ]; then
+  ok "X1 check-prose.py is tracked as executable"
+else
+  no "X1 check-prose.py is tracked as executable" "git records mode $mode"
+fi
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
