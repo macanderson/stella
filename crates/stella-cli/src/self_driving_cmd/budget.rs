@@ -371,6 +371,7 @@ mod tests {
             spend_limit: Some(9.0),
             turn_timeout: Some(std::time::Duration::from_secs(600)),
             max_output_tokens: Some(8192),
+            max_steps: Some(40),
         };
         let mut budget = RunBudget::new(flags.clone());
         budget.record(&summary(3.0));

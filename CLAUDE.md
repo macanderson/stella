@@ -25,7 +25,7 @@ Mac set this on 2026-09-28 for every repository and every PR, labelled or not. E
 - **Reply where the comment lives.** Answer a review thread inline, on the comment itself (`gh api repos/<owner>/<repo>/pulls/<n>/comments/<id>/replies`). A finding in a review body or a top-level comment has no thread, so answer it with two PR comments that each quote it.
 - **Mark both replies.** A watcher starts each reply with `<!-- pr-watch -->`, as it does every comment it posts.
 
-Agents chose these details on 2026-09-28, and Mac has not ruled on them. Cut the fix branch from the PR's head branch. One fix branch may carry several comments. Merge the fix branch into the PR's head branch before the second reply, so the SHA in that reply is a commit on the PR branch. A comment the agent does not fix, because it goes to a residue issue or does not hold, keeps one reply with the issue link or the evidence. A fix-branch reply with no commit-SHA reply after it marks unfinished work, and the next watcher picks it up.
+Agents chose these details on 2026-09-28, and Mac has not ruled on them. Cut the fix branch from the PR's head branch. One fix branch may carry several comments. Merge the fix branch into the PR's head branch before the second reply, so the SHA in that reply is a commit on the PR branch. A fix-branch reply with no commit-SHA reply after it marks unfinished work, and the next watcher picks it up.
 
 ## Agent-monitored pull requests
 
@@ -33,9 +33,8 @@ Mac set this on 2026-09-26 for every repository. The `agent-monitored-pr` label 
 
 - **Label every PR an agent opens.** Pass `--label agent-monitored-pr` to `gh pr create`. If the repository has no such label, create it first: `gh label create agent-monitored-pr --color fd0880 --description "Agent polls every 60 seconds fixes CI, comments, conflicts."`
 - **Poll the PR every 60 seconds.** Each poll reads the PR's state, its mergeability, and the checks on the head commit. It reads every review thread that still needs a reply: one with no inline reply after the reviewer's last comment, or one whose fix-branch reply has no commit-SHA reply after it. `gh pr view --json` does not return review threads, so read them with `gh api graphql` (`pullRequest.reviewThreads`). It also reads review bodies and top-level comments, because a finding there has no thread. Answer each finding there as Replies to PR feedback sets out, with PR comments that quote it, and record the id of the comment you answered. Start every comment a watcher posts with `<!-- pr-watch -->`. Skip comments that start with that marker or with `<!-- pr-claim -->`, so a watcher does not answer its own comments.
-- **Fix by review pass.** Pass N is the Nth review one reviewer submits on the PR. On pass 1, fix every P0, P1, and P2 finding. On pass 2, fix P0 and P1. From pass 3 on, fix P0 only. A P0 blocks the PR at every pass.
-- **File one residue issue.** Carry every P1 and P2 finding left unfixed into a single issue for the PR. Its title ends with `(residue #<PR>)`, and its body links the PR. Reply inline on every thread you handle. A finding you fix gets the two replies in Replies to PR feedback. A finding you carry gets a reply that links the residue issue.
-- **Let the pass rule govern review findings.** On a labelled PR, the pass rule decides which review findings get fixed, in place of any repository rule on review rounds or on fixing every finding in the PR. Residue goes to one issue, even where a repository files each finding alone. Where a repository allows one change per issue, residue from unrelated changes splits into one issue per change. A defect you notice yourself still follows fix over file. A P3 finding follows the repository's usual rules.
+- **Fix to the Codex review gate.** Mac set this on 2026-11-06 for every pull request: "codex reviews are back in action and a minimum of 1 pass is required - if any p0 or p1 is found a 2nd is also required. no matter what all feedback regardless of severity gets fixed - anything found by codex on pass 2 gets fixed too we are never leaving any feedback unaddressed moving forward i dont care how many code reviews we have to go through for any pr". Later that day he made it stricter: "no we do not leave anything behind every ounce of every review gets fixed until the reviewer says its good". Codex reviews every PR. Ask for the first pass with a PR comment that says `@codex review` when the PR opens, and wait for that pass before you judge the merge. Fix every finding at every severity, from any reviewer, in the PR that drew it. After each round of fixes, push and comment `@codex review` again, and repeat until a pass finds nothing, with no limit on passes. File no residue issue. A fix that needs Mac's decision, a credential, or real spend holds the PR unmerged. Merge once Codex's latest pass found nothing, every thread is resolved, CI passes on the head commit, and the branch has no conflict. Right before the merge, read the head sha, the review threads, the review bodies, and Codex's summary comment again. A new finding holds the merge until it is fixed, and a head that moved after its checks passed starts the gate again. Merge with `gh pr merge --match-head-commit <sha>`, so GitHub refuses the merge when the head moved after that read.
+- **Let the review gate govern review findings.** The gate decides when the PR merges, in place of any repository rule on review rounds or passes. A defect you notice yourself still follows fix over file.
 - **Clear conflicts and CI failures as they appear.** When the PR conflicts, merge the base branch in, resolve it, and push. When a job fails, read its failing step with `gh run view --job <id> --log-failed`, fix it, and push without waiting for the rest of the run.
 - **Dispatch subagents.** Give each independent fix its own subagent when no two fixes touch the same file. Stay active until the PR merges or closes.
 - **Search for the label every 60 seconds.** A session that watches PRs runs `gh search prs --owner macanderson --owner oxageninc --label agent-monitored-pr --state open --limit 1000` every 60 seconds. Mac's repositories can sit under either owner, and a search of one owner misses the other's PRs. Without `--limit`, gh returns 30 results, and GitHub search returns at most 1000. The session takes each labelled PR that no live claim holds.
@@ -347,14 +346,12 @@ Mac set this on 2026-09-26 for every repository. The `agent-monitored-pr` label 
   A table created before that time reviewed an older head. Treat it as no
   table. When a current table is there, settle every `❌` row before the
   session ends:
-  - **Fix it** when the objective belongs to the PR. Push the commits that
-    satisfy it, then check Sourcery again for the new head.
-  - **Answer it** when it does not belong: deliberately out of scope,
-    deferred into a filed issue, or a misreading of the diff. Post a PR
-    comment naming the row and the reason, and file the follow-up issue
-    where one is owed ("Fix over file" above). Sourcery's verdict is
-    a claim like any other review comment and can be wrong about your diff.
-    The rebuttal still goes on the PR, where the next reviewer finds it.
+  - **Fix it** in this PR. The Codex review gate above covers a `❌` row
+    like any other finding. Push the commits that satisfy it, then check
+    Sourcery again for the new head, until its table shows no `❌` row.
+  - **Fix the PR body** when a row misreads it, such as a `Refs #N` link
+    read as a promise to finish that issue, which `Refs` does not make.
+    File no follow-up issue for a row, and never move one to a later PR.
 
   No current table can mean two different things, and reading it as the
   wrong one is the failure this rule exists to prevent. Check whether

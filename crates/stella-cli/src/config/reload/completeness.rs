@@ -68,6 +68,7 @@ fn ledger(before: &Config, after: &Config) -> Vec<Field> {
         api_key,
         turn_timeout,
         max_output_tokens,
+        max_steps,
         plan_mode,
         minimal_prompt,
         workspace_root,
@@ -132,6 +133,11 @@ fn ledger(before: &Config, after: &Config) -> Vec<Field> {
             name: "max_output_tokens",
             posture: Posture::StartupOnly(INVOCATION),
             moved: max_output_tokens != &before.max_output_tokens,
+        },
+        Field {
+            name: "max_steps",
+            posture: Posture::StartupOnly(INVOCATION),
+            moved: max_steps != &before.max_steps,
         },
         Field {
             name: "plan_mode",

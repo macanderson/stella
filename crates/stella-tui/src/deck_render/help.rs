@@ -148,9 +148,9 @@ const DESCRIPTION_W: usize = 71;
 /// padded to [`keymap::key_column_width`] — the widest chord in the table —
 /// so every description starts in the same place.
 ///
-/// The width is asked for rather than spelled. This used to pad to a literal
-/// 13 while the table held a 15-cell chord, and the two rows wider than the
-/// pad pushed their descriptions left of every other row's (#4428). The
+/// The width is asked for rather than spelled. A fixed pad goes stale when
+/// the table gains a wider chord. Then each wider row pushes its text left of
+/// the rest (#4428). The
 /// padding is also measured in cells, not `char`s: `{key:<13}` counts `char`s,
 /// which is the same number only for the ASCII rows.
 fn help_row(key: &str, desc: &str) -> Line<'static> {
