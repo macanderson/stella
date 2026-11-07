@@ -53,13 +53,13 @@ function Ok({ children }: { children: string }) {
  */
 export function HeroTerminal() {
   return (
-    <Terminal title="zsh — stella">
+    <Terminal title="stella (zsh)">
       <Prompt>export ANTHROPIC_API_KEY=…</Prompt>
       <Prompt>stella run &quot;fix the failing test&quot;</Prompt>
       <Dim>{"  ▶ read_file(path=src/parser.rs)\n"}</Dim>
       <Dim>{"  ± modified src/parser.rs +3 −1\n"}</Dim>
       <Dim>{"  ▶ bash(command=cargo test -p parser)\n"}</Dim>
-      <Ok>{"    ✓ ok in 1174ms — test result: ok. 12 passed; 0 failed\n"}</Ok>
+      <Ok>{"    ✓ ok in 1174ms, test result: ok. 12 passed; 0 failed\n"}</Ok>
       <Dim>{"\n  ◆ claude-sonnet-5 · $0.0413 · 18.6s\n"}</Dim>
     </Terminal>
   );

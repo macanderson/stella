@@ -51,7 +51,12 @@ parent = "parent"
 # A wrong class hides.
 #
 # The keys are Stella's own class names, and §4.1 draws the same three.
+#
+# A name matches in any case. The old name of a renamed label matches its new
+# name too, so `bug` and `KIND:BUG` are one label. The old names stay listed so
+# a reader sees them. `KIND:DOCUMENTATION` maps to no class, the way
+# `documentation` did before it.
 [classes]
-bug = ["bug"]
-feature = ["feature"]
-task = ["chore", "task", "refactor"]
+bug = ["KIND:BUG", "bug"]
+feature = ["KIND:FEATURE", "KIND:IMPROVEMENT", "feature"]
+task = ["KIND:CHORE", "KIND:DEVOPS", "chore", "task", "refactor"]

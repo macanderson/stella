@@ -7,7 +7,7 @@
 <meta name="description" content="stella is the engine — oxagen's operating system for verified AI work. The task loop, the laboratory that improves it, the factory that turns verified traces into private models, and the road to stella 2.0 and 3.0.">
 <meta property="og:title" content="stella is the engine · oxagen vision">
 <meta property="og:description" content="An agent is a loop. stella is the program that controls it — open source, deterministic, proven done. oxagen is the operating system around it: the laboratory, the model factory, and the control plane.">
-<link rel="icon" type="image/svg+xml" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" role="img" aria-label="stella mark"><g transform="translate(3.050,128.164) scale(1.27608)"><path class="mark" d="M5.88507 -58.2714V-67.369H16.3847L25.7719 -65.7956L26.4302 -67.4381L18.669 -72.8821L11.2665 -80.3931L17.6519 -86.7785L25.163 -79.3761L30.607 -71.6149L32.2494 -72.2732L30.6761 -81.6604V-92.16H39.7737V-81.6604L38.2004 -72.2732L39.8428 -71.6149L45.2868 -79.3761L52.7978 -86.7785L59.1832 -80.3931L51.7808 -72.8821L44.0196 -67.4381L44.6779 -65.7956L54.0651 -67.369H64.5647V-58.2714H54.0651L44.6779 -59.8447L44.0196 -58.2023L51.7808 -52.7583L59.1832 -45.2472L52.7978 -38.8618L45.2868 -46.2642L39.8428 -54.0254L38.2004 -53.3672L39.7737 -43.98V-33.4804H30.6761V-43.98L32.2494 -53.3672L30.607 -54.0254L25.163 -46.2642L17.6519 -38.8618L11.2665 -45.2472L18.669 -52.7583L26.4302 -58.2023L25.7719 -59.8447L16.3847 -58.2714Z" fill="#D4AF37"/></g><style>:root%7Bcolor:#09090B%7D@media(prefers-color-scheme:dark)%7B:root%7Bcolor:#FFFFFF%7D%7D</style></svg>'>
+<link rel="icon" type="image/svg+xml" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" role="img" aria-label="stella mark"><g transform="translate(3.050,128.164) scale(1.27608)"><path class="mark" d="M5.88507 -58.2714V-67.369H16.3847L25.7719 -65.7956L26.4302 -67.4381L18.669 -72.8821L11.2665 -80.3931L17.6519 -86.7785L25.163 -79.3761L30.607 -71.6149L32.2494 -72.2732L30.6761 -81.6604V-92.16H39.7737V-81.6604L38.2004 -72.2732L39.8428 -71.6149L45.2868 -79.3761L52.7978 -86.7785L59.1832 -80.3931L51.7808 -72.8821L44.0196 -67.4381L44.6779 -65.7956L54.0651 -67.369H64.5647V-58.2714H54.0651L44.6779 -59.8447L44.0196 -58.2023L51.7808 -52.7583L59.1832 -45.2472L52.7978 -38.8618L45.2868 -46.2642L39.8428 -54.0254L38.2004 -53.3672L39.7737 -43.98V-33.4804H30.6761V-43.98L32.2494 -53.3672L30.607 -54.0254L25.163 -46.2642L17.6519 -38.8618L11.2665 -45.2472L18.669 -52.7583L26.4302 -58.2023L25.7719 -59.8447L16.3847 -58.2714Z" fill="#D4AF37"/></g><style>:root%7Bcolor:#090A0D%7D@media(prefers-color-scheme:dark)%7B:root%7Bcolor:#FCFCFE%7D%7D</style></svg>'>
 <style>
 /* ==========================================================================
    stella brand kit v1.0 "the comet": Phosphor Gold on Ink, JetBrains Mono.
@@ -25,13 +25,13 @@
 
 :root {
   --gold: #D4AF37;
-  --gold-deep: #09090B;
-  --gold-300: #F1CE65;
-  --ink: #09090B;
-  --paper: #FFFFFF;
-  --surface: #18181B;
+  --gold-deep: #090A0D;
+  --gold-300: #E3C45B;
+  --ink: #090A0D;
+  --paper: #FCFCFE;
+  --surface: #0F1115;
   --border: #1F262D;
-  --muted: #777782;
+  --muted: #737882;
   --pass: #54D14F;
   --fail: #E25DC2;
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
@@ -67,7 +67,7 @@ svg { max-width: 100%; height: auto; }
   background-size: 48px 48px;
 }
 .starfield { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
-.starfield circle { fill: #FFFFFF; animation: twinkle 6s ease-in-out infinite; animation-delay: var(--td, 0s); }
+.starfield circle { fill: #FCFCFE; animation: twinkle 6s ease-in-out infinite; animation-delay: var(--td, 0s); }
 @keyframes twinkle { 0%, 100% { opacity: var(--o, 0.1); } 50% { opacity: calc(var(--o, 0.1) * 2.4); } }
 
 /* scroll progress hairline */
@@ -78,7 +78,7 @@ svg { max-width: 100%; height: auto; }
   position: fixed; top: 0; left: 0; right: 0; z-index: 50;
   display: flex; align-items: center; gap: 12px;
   padding: 14px 28px;
-  background: rgb(9 9 11 / 0.82); backdrop-filter: blur(8px);
+  background: rgb(9 10 13 / 0.82); backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border);
   font-size: 0.78rem; font-weight: 500; letter-spacing: 0.1em;
 }
@@ -340,7 +340,7 @@ figcaption { margin-top: 10px; font-size: 0.72rem; color: var(--muted); line-hei
           <path d="M0 0 L10 5 L0 10 z" fill="#D4AF37"/>
         </marker>
         <marker id="arm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-          <path d="M0 0 L10 5 L0 10 z" fill="#777782"/>
+          <path d="M0 0 L10 5 L0 10 z" fill="#737882"/>
         </marker>
       </defs>
       <!-- kernel -->
@@ -348,7 +348,7 @@ figcaption { margin-top: 10px; font-size: 0.72rem; color: var(--muted); line-hei
       <text class="lbl gd" x="540" y="102" text-anchor="middle">stella-core — the kernel</text>
       <text class="sm" x="540" y="124" text-anchor="middle">no I/O · pure decision logic · property-tested</text>
       <rect class="box" x="400" y="146" width="280" height="84" rx="10"/>
-      <text class="sm" x="540" y="172" text-anchor="middle" fill="#FFFFFF">the task loop</text>
+      <text class="sm" x="540" y="172" text-anchor="middle" fill="#FCFCFE">the task loop</text>
       <text class="sm" x="540" y="192" text-anchor="middle">plan → act → observe → compact</text>
       <text class="sm" x="540" y="212" text-anchor="middle">budget checked between steps, never mid-tool</text>
       <!-- providers port -->
@@ -574,34 +574,34 @@ figcaption { margin-top: 10px; font-size: 0.72rem; color: var(--muted); line-hei
           <path d="M0 0 L10 5 L0 10 z" fill="#D4AF37"/>
         </marker>
         <marker id="arm5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-          <path d="M0 0 L10 5 L0 10 z" fill="#777782"/>
+          <path d="M0 0 L10 5 L0 10 z" fill="#737882"/>
         </marker>
       </defs>
       <rect class="boxd" x="0" y="20" width="480" height="240" rx="14"/>
       <text class="lbl" x="24" y="52">your boundary</text>
       <rect class="box" x="24" y="70" width="208" height="76" rx="10"/>
-      <text class="sm" x="128" y="98" text-anchor="middle" fill="#FFFFFF">compute · network · disk</text>
+      <text class="sm" x="128" y="98" text-anchor="middle" fill="#FCFCFE">compute · network · disk</text>
       <text class="sm" x="128" y="118" text-anchor="middle">yours already — you pay</text>
       <text class="sm" x="128" y="134" text-anchor="middle">your cloud, not us</text>
       <rect class="box" x="248" y="70" width="208" height="76" rx="10"/>
-      <text class="sm" x="352" y="98" text-anchor="middle" fill="#FFFFFF">provider keys</text>
+      <text class="sm" x="352" y="98" text-anchor="middle" fill="#FCFCFE">provider keys</text>
       <text class="sm" x="352" y="118" text-anchor="middle">frontier spend goes to</text>
       <text class="sm" x="352" y="134" text-anchor="middle">your provider, direct</text>
       <rect class="box" x="24" y="162" width="432" height="76" rx="10" stroke="#D4AF37"/>
-      <text class="sm" x="240" y="190" text-anchor="middle" fill="#FFFFFF">traces · weights · the serving of your private model</text>
+      <text class="sm" x="240" y="190" text-anchor="middle" fill="#FCFCFE">traces · weights · the serving of your private model</text>
       <text class="sm gd" x="240" y="212" text-anchor="middle">never leaves — zero egress by default, enforced in CI</text>
       <rect class="boxg" x="640" y="20" width="440" height="240" rx="14" stroke-width="1.5"/>
       <text class="lbl gd" x="664" y="52">oxagen</text>
       <rect class="box" x="664" y="70" width="180" height="76" rx="10"/>
-      <text class="sm" x="754" y="98" text-anchor="middle" fill="#FFFFFF">the substrate</text>
+      <text class="sm" x="754" y="98" text-anchor="middle" fill="#FCFCFE">the substrate</text>
       <text class="sm" x="754" y="118" text-anchor="middle">protocol · oracles ·</text>
       <text class="sm" x="754" y="134" text-anchor="middle">curriculum recipes</text>
       <rect class="box" x="864" y="70" width="192" height="76" rx="10"/>
-      <text class="sm" x="960" y="98" text-anchor="middle" fill="#FFFFFF">training pipeline</text>
+      <text class="sm" x="960" y="98" text-anchor="middle" fill="#FCFCFE">training pipeline</text>
       <text class="sm" x="960" y="118" text-anchor="middle">runs inside your</text>
       <text class="sm" x="960" y="134" text-anchor="middle">boundary, licensed by us</text>
       <rect class="box" x="664" y="162" width="392" height="76" rx="10"/>
-      <text class="sm" x="860" y="190" text-anchor="middle" fill="#FFFFFF">support · governance · the control plane</text>
+      <text class="sm" x="860" y="190" text-anchor="middle" fill="#FCFCFE">support · governance · the control plane</text>
       <text class="sm" x="860" y="212" text-anchor="middle">people and software, no per-token cost underneath</text>
       <path class="ln" d="M480 100 H636" stroke-width="2" marker-end="url(#ar5)"/>
       <text class="sm gd" x="558" y="90" text-anchor="middle">support + credits</text>

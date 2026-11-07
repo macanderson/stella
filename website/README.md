@@ -8,10 +8,12 @@ Built with [Next.js](https://nextjs.org) (App Router) + [Fumadocs](https://fumad
 
 ## Brand
 
-House system v7.0 (`design/tokens/stella-tokens.json`): obsidian `#09090B`,
-white, neutral greys, one gold `#D4AF37` (`#8A7223` on white). Faces: Space
-Grotesk for h1–h3 and the `stella*` wordmark, Geist for body and UI, Monaspace
-Neon for code. Rules: lowercase always; gold is the signal, never the surface;
+House system v8.0 (`design/tokens/stella-tokens.json`): soot `#090A0D`,
+bone, cool greys, one gold `#D4AF37` (`#806719` on bone). Faces: Space
+Grotesk for h1 to h3 and the `stella*` wordmark, Aeonik for body, UI, and h4
+to h6, and Monaspace Neon for code. The site is a customer site, so its body
+is 16px, and every other size is a step of the kit's scale. The kit sets the
+faces and the sizes, and the sync carries them here. Rules: lowercase always; gold is the signal, never the surface;
 gold on white uses the deep shade (metal on white is 2.1:1).
 
 **`docs/brand/` is normative** (start with its `brand-guidelines.html`). Three
@@ -37,10 +39,15 @@ anywhere, and a `--rl-`-style prefix so the selectors cannot collide.
 `public/brand/` mirrors `docs/brand/logo/svg/`; `public/icons/*`,
 `src/app/favicon.ico`, `src/app/icon.svg`, and `src/app/apple-icon.png` mirror
 `docs/brand/pwa/`; the woff2 files under `src/fonts/` mirror
-`docs/brand/fonts/`. When the kit regenerates, re-copy — never hand-edit the
-site's copies. The one rendered-from-geometry surface is the `next/og` card in
+`docs/brand/fonts/`. `src/brand/` holds the kit's font loader and token sheet,
+verbatim, and `house-type.css`, the kit's font roles and its `text-m-*` and
+`text-a-*` type classes taken out of its Tailwind sheet. A marketing page such as the landing
+page sizes its text with `text-m-*`, never with Tailwind's `text-sm` or
+`text-lg`. Every one of these files is a committed copy of the house kit, edited
+by hand. Keep `docs/brand/` in step, because `brand-parity.test.ts` compares the two.
+The one rendered-from-geometry surface is the `next/og` card in
 `src/app/opengraph-image.tsx`, which draws the lockup from the constants in
-`src/components/brand.tsx`.
+`src/components/brand-marks.generated.ts`.
 
 ## Develop
 

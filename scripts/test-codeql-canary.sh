@@ -94,7 +94,10 @@ refute "a bare check never touches gh" "gh " \
 
 expect "a red run with nothing open creates an issue" 1 "gh issue create" \
   --conclusion failure --announce --dry-run
-expect "the created issue is labelled so only one stays open" 1 "codeql-red" \
+expect "the created issue is labelled so only one stays open" 1 "--label CODEQL-RED" \
+  --conclusion failure --announce --dry-run
+expect "...after it makes the label in the manifest's colour" 1 \
+  "gh label create CODEQL-RED --color D5584D" \
   --conclusion failure --announce --dry-run
 expect "the issue carries the run URL" 1 "https://example.invalid/run/42" \
   --conclusion failure --announce --dry-run --run-url "https://example.invalid/run/42"

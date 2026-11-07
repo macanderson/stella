@@ -20,7 +20,7 @@ the semantics live in `stella-core`, only the I/O is here.
 
 Top of the stack, depending on every other workspace crate except `stella-serve`,
 plus `contextgraph-types`/`-host`/`-trace`/`-conformance` from the external
-[`context-graph-protocol`](https://github.com/macanderson/context-graph-protocol)
+[`context-graph-protocol`](https://github.com/oxageninc/context-graph-protocol)
 repo at a pinned rev. **Nothing depends on stella-cli** — no other `Cargo.toml`
 names it, and there is no `lib.rs`, only the binary. A change here reaches users
 immediately and reaches no other crate at all.

@@ -24,14 +24,17 @@
 //   CHROME=/path/to/chrome node scripts/deck-fit.mjs
 //
 // Exit status is 0 when every slide fits at every viewport, 1 otherwise — with
-// two statuses reserved for "the measurement never happened", because the
+// three statuses reserved for "the measurement never happened", because the
 // workflow above now walks the whole tree recursively (#3376) and hands this
-// script HTML that was never authored as a fixed-canvas deck:
+// script HTML that was never authored as a fixed-canvas deck, or that never
+// finishes loading:
 //
 //   0  every slide fits every viewport
 //   1  a slide overflows, or the file claims to be a deck and is malformed
 //   2  the harness is missing (no such file, no playwright-core)
 //   3  not a fixed-canvas deck — skipped, with the reason printed
+//   4  the page failed to load — not proven to fit, and not counted as a
+//      measurement (#6278)
 //
 // 3 exists so a skip is a named event rather than a silent pass. The shape it
 // names is the one this script can actually measure: `.slide` elements each
@@ -39,6 +42,19 @@
 // scrolling document under the same directory (website/public/presentations/
 // turn-loop/index.html has 34 `.slide` sections and no `.frame` at all) is not
 // that shape and must not be counted as either a pass or a failure.
+//
+// 4 exists for the same reason: `investor-deck.html`'s only unusual asset is a
+// self-hosted webfont, and #6278 traced a stuck CI run to a `waitForLoadState`
+// call that recorded no navigation step at all before its deadline — a page
+// that never reached the load state, not one that loaded slowly, and Playwright's
+// own docs discourage that call as flaky for exactly this reason. Reporting it
+// as its own exit status is the fix; a retry is the weaker answer, since it
+// would hide how often the load itself hangs rather than showing it.
+//
+// A deck can hit both 1 and 4 across its viewports — one overflows while
+// another never loads. 1 wins: an overflow is a proven defect, an unload only
+// means that viewport's question went unanswered, and a proven defect must
+// not read as "not proven to fit".
 
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
@@ -79,6 +95,27 @@ try {
 
 const browser = await chromium.launch({ executablePath: CHROME });
 
+// `goto()`'s default `waitUntil: "load"` already covers the page's own fetch.
+// What it does not cover is a `@font-face` file that markup requests: the load
+// event can fire while a webfont is still resolving, rendering on the fallback
+// typeface until it swaps in. `document.fonts.status === "loaded"` is the
+// direct signal for that settling, so this polls for it instead of
+// `waitForLoadState("networkidle")`, which has no way to tell "still loading"
+// from "never going to finish" and is what actually hung (#6278).
+//
+// `waitForFunction`, not `page.evaluate(() => document.fonts.ready)`: the
+// fonts-ready promise is the thing that can hang, and `evaluate` carries no
+// timeout of its own — it would await that promise forever and let the
+// workflow's 10-minute job timeout kill the run before this script ever got
+// to report exit 4. `waitForFunction` polls under the page's default timeout,
+// so a font that never settles throws Playwright's own `TimeoutError`, the
+// same shape `goto` already throws on a stuck navigation. A caller wraps this
+// in try/catch and turns that into exit 4.
+async function loadDeck(page, url) {
+  await page.goto(url);
+  await page.waitForFunction(() => document.fonts.status === "loaded");
+}
+
 // Ask what shape this file is before measuring it, in one cheap load. The
 // recursive walk in deck-fit.yml means "is this a deck?" is now a real question
 // with three answers, and each gets a different exit status rather than a
@@ -87,8 +124,14 @@ const browser = await chromium.launch({ executablePath: CHROME });
 // crash on — `slide.querySelector(".frame")` used to be dereferenced blind).
 {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-  await page.goto(pathToFileURL(DECK).href);
-  await page.waitForLoadState("networkidle");
+  try {
+    await loadDeck(page, pathToFileURL(DECK).href);
+  } catch (err) {
+    console.error(`deck-fit: ${DECK} — failed to load: ${err.name}: ${err.message}`);
+    await page.close();
+    await browser.close();
+    process.exit(4);
+  }
   const shape = await page.evaluate(() => {
     const slides = [...document.querySelectorAll(".slide")];
     return {
@@ -118,6 +161,7 @@ const browser = await chromium.launch({ executablePath: CHROME });
 }
 
 let failures = 0;
+let unloaded = 0;
 
 for (const vp of VIEWPORTS) {
   // Measure the resting layout, not the entrance animation: `.rise` parks its
@@ -131,8 +175,14 @@ for (const vp of VIEWPORTS) {
     reducedMotion: "reduce",
   });
   if (vp.blockFonts) await page.route("**/*.woff2", (r) => r.abort());
-  await page.goto(pathToFileURL(DECK).href);
-  await page.waitForLoadState("networkidle");
+  try {
+    await loadDeck(page, pathToFileURL(DECK).href);
+  } catch (err) {
+    console.log(`\nUNLOADED  ${vp.name}  —  ${err.name}: ${err.message}`);
+    unloaded++;
+    await page.close();
+    continue;
+  }
 
   const rows = await page.evaluate((mathSrc) => {
     // eslint-disable-next-line no-new-func -- see OVERFLOW_MATH_SRC's comment
@@ -190,5 +240,21 @@ for (const vp of VIEWPORTS) {
 }
 
 await browser.close();
-console.log(failures === 0 ? "\ndeck-fit: every slide fits every viewport." : `\ndeck-fit: ${failures} viewport(s) failed.`);
-process.exit(failures === 0 ? 0 : 1);
+
+// An overflow outranks an unload: it is a proven defect, while an unload only
+// means the question went unanswered at that viewport. Checking failures
+// first keeps a deck that both overflowed at one viewport and failed to load
+// at another from reading as merely "not proven to fit" — the overflow is
+// proven, and exit 1 says so.
+if (failures > 0) {
+  console.log(`\ndeck-fit: ${failures} viewport(s) failed.`);
+  process.exit(1);
+}
+
+if (unloaded > 0) {
+  console.log(`\ndeck-fit: ${unloaded} of ${VIEWPORTS.length} viewport(s) never loaded — not proven to fit.`);
+  process.exit(4);
+}
+
+console.log("\ndeck-fit: every slide fits every viewport.");
+process.exit(0);

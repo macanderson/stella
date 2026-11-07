@@ -180,7 +180,7 @@ pub(super) fn dry_run(
     println!(
         "  generator  {}",
         if backlog {
-            "backlog (ready issues: `status:ready`, or every `Blocked by:` reference closed)"
+            "backlog (ready issues: `STATUS:READY`, or every `Blocked by:` reference closed)"
         } else {
             "defect queue (ranked by triage)"
         }

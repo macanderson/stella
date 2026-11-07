@@ -61,6 +61,7 @@ mod doctrine;
 pub mod drive;
 pub mod escalation;
 pub mod gate;
+pub mod labels;
 pub mod meta;
 pub mod priority;
 pub mod ready;
@@ -921,13 +922,19 @@ pub struct IssueLabel {
 }
 
 impl QueueIssue {
-    /// Whether this issue carries a label by that exact name.
+    /// Whether this issue carries that label, as [`labels::same`] reads it.
     ///
-    /// `pub(crate)` rather than private because [`crate::priority`] ranks by
-    /// label and must ask the same question the same way — a second copy of
-    /// "does it have this label" is how two rankers start disagreeing.
-    pub(crate) fn has_label(&self, name: &str) -> bool {
-        self.labels.iter().any(|l| l.name == name)
+    /// Public because [`crate::priority`] ranks by label and the CLI prints
+    /// and counts by it, and each must ask the same question the same way —
+    /// a second copy of "does it have this label" is how two rankers start
+    /// disagreeing.
+    ///
+    /// An exact compare missed every label the tracker stores in another
+    /// case, so an uppercase rename would have hidden each rung, kind, and
+    /// escalation from the loop at once.
+    #[must_use]
+    pub fn has_label(&self, name: &str) -> bool {
+        self.labels.iter().any(|l| labels::same(&l.name, name))
     }
 
     /// Whether an escalation is keeping this issue out of a queue right now.

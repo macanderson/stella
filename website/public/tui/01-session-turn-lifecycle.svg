@@ -1,97 +1,97 @@
 <svg viewBox="0 0 680 520" width="680" height="520" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans Mono, JetBrains Mono, monospace">
-<rect x="0" y="0" width="680" height="520" rx="6" fill="#09090B" stroke="#27272A" stroke-width="1"/>
+<rect x="0" y="0" width="680" height="520" rx="6" fill="#090A0D" stroke="#222529" stroke-width="1"/>
 <text x="16" y="22" font-size="11" fill="#D4AF37" font-weight="500">SESSION</text>
-<text x="80" y="22" font-size="11" fill="#777782">▸ plan r3 · task 3 wire dedup digest · 2/6</text>
-<text x="500" y="22" font-size="11" fill="#4B4B56">⌃S plan</text>
-<text x="600" y="22" font-size="12" fill="#FFFFFF" font-weight="500">stella</text>
+<text x="80" y="22" font-size="11" fill="#737882">▸ plan r3 · task 3 wire dedup digest · 2/6</text>
+<text x="500" y="22" font-size="11" fill="#474C56">⌃S plan</text>
+<text x="600" y="22" font-size="12" fill="#FCFCFE" font-weight="500">stella</text>
 <text x="645" y="22" font-size="12" fill="#D4AF37" font-weight="500">*</text>
-<line x1="0" y1="32" x2="680" y2="32" stroke="#27272A" stroke-width="1"/>
-<line x1="16" y1="52" x2="664" y2="52" stroke="#3F3F46" stroke-width="1"/>
-<rect x="24" y="44" width="300" height="14" fill="#09090B"/>
+<line x1="0" y1="32" x2="680" y2="32" stroke="#222529" stroke-width="1"/>
+<line x1="16" y1="52" x2="664" y2="52" stroke="#40444A" stroke-width="1"/>
+<rect x="24" y="44" width="300" height="14" fill="#090A0D"/>
 <text x="28" y="56" font-size="11" fill="#D4AF37">turn 14</text>
-<text x="82" y="56" font-size="11" fill="#777782">execute · kimi-k3 · budget $0.60</text>
-<line x1="20" y1="70" x2="20" y2="100" stroke="#A1A1AA" stroke-width="2"/>
-<text x="32" y="82" font-size="12" fill="#A1A1AA">✦ skill</text>
-<text x="96" y="82" font-size="12" fill="#FFFFFF">oxagen-feature</text>
-<text x="222" y="82" font-size="11" fill="#4B4B56">auto</text>
-<text x="600" y="82" font-size="11" fill="#777782">1.2k tok</text>
-<text x="32" y="100" font-size="11" fill="#777782">injected 10-layer feature contract · used 42× this repo</text>
-<line x1="20" y1="116" x2="20" y2="126" stroke="#55555E" stroke-width="2"/>
-<text x="32" y="126" font-size="12" fill="#A1A1AA">▸ read</text>
-<text x="92" y="126" font-size="11" fill="#FFFFFF">…/self_driving_cmd/lifecycle.rs</text>
-<text x="342" y="126" font-size="11" fill="#4B4B56">221 lines</text>
-<text x="558" y="126" font-size="11" fill="#777782">⚡3ms · ↵ open</text>
+<text x="82" y="56" font-size="11" fill="#737882">execute · kimi-k3 · budget $0.60</text>
+<line x1="20" y1="70" x2="20" y2="100" stroke="#9A9FA6" stroke-width="2"/>
+<text x="32" y="82" font-size="12" fill="#9A9FA6">✦ skill</text>
+<text x="96" y="82" font-size="12" fill="#FCFCFE">oxagen-feature</text>
+<text x="222" y="82" font-size="11" fill="#474C56">auto</text>
+<text x="600" y="82" font-size="11" fill="#737882">1.2k tok</text>
+<text x="32" y="100" font-size="11" fill="#737882">injected 10-layer feature contract · used 42× this repo</text>
+<line x1="20" y1="116" x2="20" y2="126" stroke="#52565E" stroke-width="2"/>
+<text x="32" y="126" font-size="12" fill="#9A9FA6">▸ read</text>
+<text x="92" y="126" font-size="11" fill="#FCFCFE">…/self_driving_cmd/lifecycle.rs</text>
+<text x="342" y="126" font-size="11" fill="#474C56">221 lines</text>
+<text x="558" y="126" font-size="11" fill="#737882">⚡3ms · ↵ open</text>
 <line x1="20" y1="142" x2="20" y2="298" stroke="#D4AF37" stroke-width="2"/>
 <text x="32" y="154" font-size="12" fill="#D4AF37">● edit</text>
-<text x="92" y="154" font-size="11" fill="#FFFFFF">…/self_driving_cmd.rs</text>
+<text x="92" y="154" font-size="11" fill="#FCFCFE">…/self_driving_cmd.rs</text>
 <text x="272" y="154" font-size="11" fill="#74C991">+3</text>
 <text x="296" y="154" font-size="11" fill="#E0687D">-1</text>
-<text x="560" y="154" font-size="11" fill="#777782">⚡2ms · → task 3</text>
-<rect x="32" y="162" width="632" height="118" fill="#18181B"/>
-<text x="40" y="180" font-size="11" fill="#4B4B56">120</text>
-<text x="72" y="180" font-size="11" fill="#E4E4E7">Seen</text>
-<text x="112" y="180" font-size="11" fill="#FFFFFF">{</text>
-<text x="40" y="198" font-size="11" fill="#4B4B56">121</text>
-<text x="72" y="198" font-size="11" fill="#777782">/// Digest a finding into its dedup key.</text>
+<text x="560" y="154" font-size="11" fill="#737882">⚡2ms · → task 3</text>
+<rect x="32" y="162" width="632" height="118" fill="#0F1115"/>
+<text x="40" y="180" font-size="11" fill="#474C56">120</text>
+<text x="72" y="180" font-size="11" fill="#C7CBD1">Seen</text>
+<text x="112" y="180" font-size="11" fill="#FCFCFE">{</text>
+<text x="40" y="198" font-size="11" fill="#474C56">121</text>
+<text x="72" y="198" font-size="11" fill="#737882">/// Digest a finding into its dedup key.</text>
 <rect x="32" y="204" width="632" height="18" fill="#241019"/>
 <text x="40" y="217" font-size="11" fill="#E0687D">122 -</text>
-<text x="88" y="217" font-size="11" fill="#FFFFFF">digest:</text>
-<text x="148" y="217" font-size="11" fill="#E4E4E7">Vec</text>
-<text x="172" y="217" font-size="11" fill="#FFFFFF">&lt;</text>
-<text x="180" y="217" font-size="11" fill="#E4E4E7">String</text>
-<text x="228" y="217" font-size="11" fill="#FFFFFF">&gt;,</text>
+<text x="88" y="217" font-size="11" fill="#FCFCFE">digest:</text>
+<text x="148" y="217" font-size="11" fill="#C7CBD1">Vec</text>
+<text x="172" y="217" font-size="11" fill="#FCFCFE">&lt;</text>
+<text x="180" y="217" font-size="11" fill="#C7CBD1">String</text>
+<text x="228" y="217" font-size="11" fill="#FCFCFE">&gt;,</text>
 <rect x="32" y="222" width="632" height="18" fill="#10201A"/>
 <text x="40" y="235" font-size="11" fill="#74C991">122 +</text>
-<text x="88" y="235" font-size="11" fill="#FFFFFF">digest:</text>
-<text x="148" y="235" font-size="11" fill="#E4E4E7">BTreeSet</text>
-<text x="212" y="235" font-size="11" fill="#FFFFFF">&lt;</text>
-<text x="220" y="235" font-size="11" fill="#E4E4E7">DigestKey</text>
-<text x="292" y="235" font-size="11" fill="#FFFFFF">&gt;,</text>
+<text x="88" y="235" font-size="11" fill="#FCFCFE">digest:</text>
+<text x="148" y="235" font-size="11" fill="#C7CBD1">BTreeSet</text>
+<text x="212" y="235" font-size="11" fill="#FCFCFE">&lt;</text>
+<text x="220" y="235" font-size="11" fill="#C7CBD1">DigestKey</text>
+<text x="292" y="235" font-size="11" fill="#FCFCFE">&gt;,</text>
 <rect x="32" y="240" width="632" height="18" fill="#10201A"/>
 <text x="40" y="253" font-size="11" fill="#74C991">123 +</text>
-<text x="88" y="253" font-size="11" fill="#FFFFFF">seen_path:</text>
-<text x="172" y="253" font-size="11" fill="#E4E4E7">PathBuf</text>
-<text x="228" y="253" font-size="11" fill="#FFFFFF">,</text>
-<text x="40" y="273" font-size="11" fill="#4B4B56">124</text>
-<text x="72" y="273" font-size="11" fill="#FFFFFF">}</text>
-<text x="32" y="296" font-size="11" fill="#4B4B56">rust · → task 3 · ↵ open in FILES</text>
-<line x1="16" y1="318" x2="664" y2="318" stroke="#3F3F46" stroke-width="1"/>
-<rect x="24" y="310" width="196" height="14" fill="#09090B"/>
+<text x="88" y="253" font-size="11" fill="#FCFCFE">seen_path:</text>
+<text x="172" y="253" font-size="11" fill="#C7CBD1">PathBuf</text>
+<text x="228" y="253" font-size="11" fill="#FCFCFE">,</text>
+<text x="40" y="273" font-size="11" fill="#474C56">124</text>
+<text x="72" y="273" font-size="11" fill="#FCFCFE">}</text>
+<text x="32" y="296" font-size="11" fill="#474C56">rust · → task 3 · ↵ open in FILES</text>
+<line x1="16" y1="318" x2="664" y2="318" stroke="#40444A" stroke-width="1"/>
+<rect x="24" y="310" width="196" height="14" fill="#090A0D"/>
 <text x="28" y="322" font-size="11" fill="#D4AF37">turn 14 done</text>
-<text x="126" y="322" font-size="11" fill="#777782">· 0:42</text>
-<text x="32" y="342" font-size="11" fill="#777782">receipt</text>
+<text x="126" y="322" font-size="11" fill="#737882">· 0:42</text>
+<text x="32" y="342" font-size="11" fill="#737882">receipt</text>
 <text x="92" y="342" font-size="11" fill="#D4AF37">$0.11</text>
-<text x="140" y="342" font-size="11" fill="#FFFFFF">18k tok</text>
+<text x="140" y="342" font-size="11" fill="#FCFCFE">18k tok</text>
 <text x="204" y="342" font-size="11" fill="#74C991">4/4 tests</text>
-<text x="282" y="342" font-size="11" fill="#FFFFFF">2 files</text>
-<text x="344" y="342" font-size="11" fill="#A1A1AA">1 memory</text>
-<text x="422" y="342" font-size="11" fill="#777782">· ↵ audit</text>
-<line x1="16" y1="366" x2="664" y2="366" stroke="#3F3F46" stroke-width="1"/>
-<rect x="24" y="358" width="270" height="14" fill="#09090B"/>
+<text x="282" y="342" font-size="11" fill="#FCFCFE">2 files</text>
+<text x="344" y="342" font-size="11" fill="#9A9FA6">1 memory</text>
+<text x="422" y="342" font-size="11" fill="#737882">· ↵ audit</text>
+<line x1="16" y1="366" x2="664" y2="366" stroke="#40444A" stroke-width="1"/>
+<rect x="24" y="358" width="270" height="14" fill="#090A0D"/>
 <text x="28" y="370" font-size="11" fill="#D4AF37">turn 15</text>
-<text x="82" y="370" font-size="11" fill="#777782">verify · gates 0/5 · det only</text>
+<text x="82" y="370" font-size="11" fill="#737882">verify · gates 0/5 · det only</text>
 <line x1="20" y1="384" x2="20" y2="394" stroke="#D4AF37" stroke-width="2"/>
 <text x="32" y="394" font-size="12" fill="#D4AF37">◇ gate</text>
-<text x="92" y="394" font-size="11" fill="#FFFFFF">types</text>
-<text x="140" y="394" font-size="11" fill="#F1CE65">◐ running</text>
-<text x="588" y="394" font-size="11" fill="#4B4B56">$0.00</text>
+<text x="92" y="394" font-size="11" fill="#FCFCFE">types</text>
+<text x="140" y="394" font-size="11" fill="#E3C45B">◐ running</text>
+<text x="588" y="394" font-size="11" fill="#474C56">$0.00</text>
 <text x="16" y="438" font-size="12" fill="#D4AF37" font-weight="500">&gt;&gt;&gt;</text>
-<text x="16" y="414" font-size="11" fill="#777782">✓ plan</text>
+<text x="16" y="414" font-size="11" fill="#737882">✓ plan</text>
 <text x="74" y="414" font-size="11" fill="#D4AF37" font-weight="500">▸ execute</text>
 <text x="156" y="414" font-size="12" fill="#D4AF37">████</text>
-<text x="196" y="414" font-size="12" fill="#27272A">░░░░</text>
-<text x="240" y="414" font-size="11" fill="#777782">50%</text>
-<text x="276" y="414" font-size="11" fill="#4B4B56">· verify</text>
-<rect x="46" y="428" width="7" height="13" fill="#FFFFFF"/>
-<text x="16" y="462" font-size="11" fill="#4B4B56">⏎ queue · esc steer · ^N failure · ^Z fold turn · / commands</text>
-<line x1="0" y1="474" x2="680" y2="474" stroke="#27272A" stroke-width="1"/>
-<text x="16" y="496" font-size="11" fill="#777782">kimi-k3 · execute · ctx</text>
+<text x="196" y="414" font-size="12" fill="#222529">░░░░</text>
+<text x="240" y="414" font-size="11" fill="#737882">50%</text>
+<text x="276" y="414" font-size="11" fill="#474C56">· verify</text>
+<rect x="46" y="428" width="7" height="13" fill="#FCFCFE"/>
+<text x="16" y="462" font-size="11" fill="#474C56">⏎ queue · esc steer · ^N failure · ^Z fold turn · / commands</text>
+<line x1="0" y1="474" x2="680" y2="474" stroke="#222529" stroke-width="1"/>
+<text x="16" y="496" font-size="11" fill="#737882">kimi-k3 · execute · ctx</text>
 <text x="196" y="496" font-size="12" fill="#D4AF37">███▊</text>
-<text x="236" y="496" font-size="12" fill="#27272A">░░░░░░</text>
-<text x="292" y="496" font-size="11" fill="#FFFFFF">35%</text>
+<text x="236" y="496" font-size="12" fill="#222529">░░░░░░</text>
+<text x="292" y="496" font-size="11" fill="#FCFCFE">35%</text>
 <text x="330" y="496" font-size="11" fill="#D4AF37">$0.45</text>
-<text x="386" y="496" font-size="11" fill="#777782">saved</text>
+<text x="386" y="496" font-size="11" fill="#737882">saved</text>
 <text x="428" y="496" font-size="11" fill="#D4AF37">$0.69</text>
-<text x="486" y="496" font-size="11" fill="#A1A1AA">✉ 21</text>
-<text x="606" y="496" font-size="11" fill="#777782">? help</text>
+<text x="486" y="496" font-size="11" fill="#9A9FA6">✉ 21</text>
+<text x="606" y="496" font-size="11" fill="#737882">? help</text>
 </svg>

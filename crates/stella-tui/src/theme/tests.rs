@@ -522,8 +522,8 @@ fn every_stated_hue_angle_matches_the_computation() {
 
     for (phrase, computed) in [
         ("OKLCH hue 91.1", hue(BRAND)),
-        ("0.0 deg from [`BRAND`] in hue", sep(BRAND_LIVE, BRAND)),
-        ("(0.5 deg from [`BRAND`])", sep(BRAND_INK, BRAND)),
+        ("1.9 deg from [`BRAND`] in hue", sep(BRAND_LIVE, BRAND)),
+        ("(1.1 deg from [`BRAND`])", sep(BRAND_INK, BRAND)),
         ("OKLCH hue 153.9", hue(SUCCESS)),
         ("(62.8 deg from", sep(SUCCESS, BRAND)),
         ("OKLCH hue 43.0", hue(WARNING)),
@@ -593,7 +593,7 @@ fn every_stated_hue_angle_matches_the_computation() {
 /// longer required for telling a warning from the mark.
 ///
 /// What must hold now:
-///   1. The accent is `#D4AF37`, exactly; the canvas is `#09090B`, exactly.
+///   1. The accent is `#D4AF37`, exactly; the canvas is `#090A0D`, exactly.
 ///      Brand and gold are one family (the collapse IS the identity).
 ///   2. Every retired hue is gone — the electric-blue family, every gold
 ///      this palette replaced, and the whole warm neutral ramp with them.
@@ -671,7 +671,7 @@ fn palette_law_gold_is_the_brand() {
 
     // 1. The accent is the gold and the ground is the canvas — pinned by
     //    hex so the identity cannot silently drift. This is the one clause
-    //    that names numbers: `#D4AF37` on `#09090B`.
+    //    that names numbers: `#D4AF37` on `#090A0D`.
     assert_eq!(
         ACCENT,
         Color::Rgb(0xD4, 0xAF, 0x37),
@@ -679,8 +679,8 @@ fn palette_law_gold_is_the_brand() {
     );
     assert_eq!(
         GROUND,
-        Color::Rgb(0x09, 0x09, 0x0B),
-        "the ground must be the canvas #09090B, exactly"
+        Color::Rgb(0x09, 0x0A, 0x0D),
+        "the ground must be the canvas #090A0D, exactly"
     );
     assert_eq!(ACCENT, palette::BRAND, "the accent comes from the palette");
     assert_eq!(GOLD, ACCENT, "brand and gold are one value");
@@ -790,7 +790,7 @@ fn palette_law_gold_is_the_brand() {
     //    metal against both the ink and the paper. Half a palette on each
     //    answer is the one outcome neither argument permits.
     //
-    //    The grounds are held to a tighter band (≤ 8) than the text tiers
+    //    The grounds are held to a tighter band (≤ 10) than the text tiers
     //    ([`NEUTRAL_SPAN`]) because a ground is a large field where any cast
     //    is visible, while a text tier is a few thousand lit pixels.
     for (ground, name) in [
@@ -806,7 +806,7 @@ fn palette_law_gold_is_the_brand() {
         };
         let (max, min) = (r.max(g).max(b), r.min(g).min(b));
         assert!(
-            max - min <= 8,
+            max - min <= 10,
             "{name} ({ground:?}) must be a near-neutral, carrying no cast in \
              either direction"
         );

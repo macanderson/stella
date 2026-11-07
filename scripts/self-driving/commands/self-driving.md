@@ -39,7 +39,7 @@ Three rules override everything below.
    `/self-driving:tickets`.
 2. **Verified done, not claimed done.** Every behaviour fix ships with a witness
    test that fails on `main` and passes with the change. No witness, no merge —
-   label the PR `needs-witness` and say so.
+   label the PR `NEEDS-WITNESS` and say so.
 3. **Report what happened, not what you hoped.** A red gate is a red gate. A
    benchmark that did not run is `skipped`, never `passed`. If you fixed 6 of
    the planned 20, the report says 6.
@@ -85,7 +85,7 @@ someone else's breakage.
 scripts/self-driving.sh queue --limit "$SELF_DRIVING_BATCH"
 ```
 
-The ranked queue: open issues labelled `bug` or `triage`, P0 → P1 → P2 →
+The ranked queue: open issues labelled `KIND:BUG` or `TRIAGE`, P0 → P1 → P2 →
 unlabelled, oldest first inside a rank. Add anything the previous cycle's audit
 left unfixed.
 
@@ -105,7 +105,7 @@ For each group:
 - Branch from the freshly-fetched `origin/main`.
 - **Route the work to the engine.** With `--engine=stella` (default), dispatch
   the fix through Stella itself — this loop is Stella making Stella better, which
-  is what the `self-improvement` label is for. Fall back to fixing it yourself
+  is what the `SELF-IMPROVEMENT` label is for. Fall back to fixing it yourself
   only if `stella` is absent or its run fails preflight, and say which engine did
   the work.
 - Respect the **god files**: `scripts/file-size-baseline.txt` is gate-enforced

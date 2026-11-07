@@ -18,7 +18,7 @@
 #     already changed its answer (`#5913`).
 #   - Stale green. `main` breaks, the hold still passes, and the pull request
 #     merges onto the breakage with a green required check. `#5928` did
-#     exactly that: its hold ran at 09:41, the `main-red` issue was filed at
+#     exactly that: its hold ran at 09:41, the `MAIN-RED` issue was filed at
 #     10:07, and it merged during the red window on a run 26 minutes older
 #     than the outage (`#5949`).
 #
@@ -27,7 +27,7 @@
 # and reopen — are the two AGENTS.md bans.
 #
 # So this script re-asks for them. It reads the tracker once. An open
-# `main-red` issue means every hold should be failing; no open issue means
+# `MAIN-RED` issue means every hold should be failing; no open issue means
 # every hold should be passing. Then it runs the hold again on each open pull
 # request whose last run says the other thing. The new run lands under the
 # same name on the same commit. That is all the branch rules read.
@@ -46,17 +46,17 @@
 #
 # Two callers, since neither one sees every transition.
 #
-#   - `main-canary.yml`, on the push run that files or closes the `main-red`
+#   - `main-canary.yml`, on the push run that files or closes the `MAIN-RED`
 #     issue. That is the normal path for both directions, and a workflow on
 #     the issue event cannot see it. The canary writes with `GITHUB_TOKEN`,
 #     and no event from that token starts a workflow.
 #   - `main-red-clear.yml`, when a person closes the issue by hand, or takes
-#     the `main-red` label off it.
+#     the `MAIN-RED` label off it.
 #
 # Two runs cost nothing. The second finds each hold already answering today's
 # question and runs nothing.
 #
-# A pull request labelled `unblocks-main` is swept like any other. Its hold
+# A pull request labelled `UNBLOCKS-MAIN` is swept like any other. Its hold
 # passes while `main` is red, by design, so a sweep on the break path re-runs
 # it and it passes again. That is one wasted job on the repair pull request,
 # and the alternative is reading every pull request's labels to save it.
@@ -106,7 +106,7 @@
 # Needs `gh` and a POSIX shell, so it runs on a bare CI runner.
 set -uo pipefail
 
-label="main-red"
+label="MAIN-RED"
 workflow="main-red-hold.yml"
 # Zero pages the whole list. A caller who wants a cap asks for one, and gets
 # told when it cuts the list short.
@@ -280,7 +280,7 @@ fi
 # ── What should every hold be saying right now? ─────────────────────────────
 #
 # One question to the tracker, and it settles the whole sweep. While a
-# `main-red` issue is open the holds belong red; with none open they belong
+# `MAIN-RED` issue is open the holds belong red; with none open they belong
 # green. Either way the sweep only touches a run that says the other thing.
 
 if [ "$use_fixture" -eq 1 ]; then

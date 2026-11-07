@@ -38,7 +38,7 @@ Two placement questions had to be settled for this repository:
   `docs/scr/` across the five org repos: oxagen, context-graph-protocol,
   cgp-website, arenabench, stella (option 2b). The rollout was scoped to
   exactly these repositories — no new steering repo. Cross-repo drift is a
-  known cost, accepted and named in `docs/scr/README.md`; a periodic sync
+  known cost, accepted and named in `docs/scr/README.md`; a periodic sync <!-- `doc-links:ignore` -->
   check is filed as residue.
 - Enforcement shipped alongside the rules: a Claude Code `PreToolUse` hook
   blocking full-suite test builds (SCR-001, L2), an issue template with a

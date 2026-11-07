@@ -16,8 +16,8 @@
 //! `allowed_models` to `[models].allowed`, gives the bare `enable_recap` root
 //! scalar a table home at `[run].recap`, and reserves a home for
 //! `.stella/mcp.toml` under `[mcp.servers]` (parsed but NOT yet consumed —
-//! see `mcp_servers_not_yet_read`; `agent::load_mcp_plan` still reads only
-//! `.stella/mcp.toml`).
+//! see `mcp_servers_not_yet_read`; `agent::load_mcp_plan` reads servers from
+//! `$STELLA_HOME/mcp.toml` and `.stella/mcp.toml` only).
 //!
 //! Teaching one type to deserialize from both shapes would mean serde
 //! attributes that are correct for one format and misleading for the other.
@@ -1078,8 +1078,8 @@ pub struct LoadedToml {
 pub fn mcp_servers_not_yet_read(path: &Path, count: usize) -> String {
     format!(
         "  ! {}: [mcp.servers] declares {count} server{} that stella does not read yet — \
-         MCP servers still load from .stella/mcp.toml. Move them back there until \
-         the fold lands, or they will not start.",
+         MCP servers load from .stella/mcp.toml, or from $STELLA_HOME/mcp.toml for \
+         every repository. Move them there until the fold lands, or they will not start.",
         path.display(),
         if count == 1 { "" } else { "s" },
     )

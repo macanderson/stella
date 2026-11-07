@@ -300,7 +300,7 @@ pub fn appraise(
 /// how scarce varies by kind and by setting. The span therefore stretches to
 /// hold a full control arm at any rate, and both arms come from that one span,
 /// so the baseline is contemporaneous with the turns it judges.
-/// `doc:adr/0045-an-appraisal-reads-a-window-of-control-trials` records why
+/// `doc:adr/0048-an-appraisal-reads-a-window-of-control-trials` records why
 /// this is a count and not a span of time.
 ///
 /// For the live caller only. An offline task set has no order, so its oldest

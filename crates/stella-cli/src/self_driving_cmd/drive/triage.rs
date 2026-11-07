@@ -193,7 +193,7 @@ pub(super) fn assess_one(
             durable,
             Audit::Triaged,
             Some(&issue.key),
-            "no open blocker remains — flipped `status:blocked` to `status:ready`",
+            "no open blocker remains — flipped `STATUS:BLOCKED` to `STATUS:READY`",
         ),
         Ok(false) => {}
         Err(error) => audit::record(

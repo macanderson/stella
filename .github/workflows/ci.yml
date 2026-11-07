@@ -418,7 +418,7 @@ jobs:
       # Also toolchain-free. Four documents and one workflow regex each named
       # a priority scheme, and no two agreed; the regex is code, so a `P4`
       # issue read as triaged to a person and as unprioritised to the guard
-      # (#5216). SCR-005 is the home now, the regex is the one derived copy,
+      # (#5216). AGENTS.md is the home now, the regex is the one derived copy,
       # and this holds it there. It runs in docs-guards.yml too, because a
       # diff confined to prose is exactly the diff this job is skipped for.
       - name: the priority scheme is stated once
@@ -606,7 +606,7 @@ jobs:
           components: clippy, rustfmt
 
       - if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       # Nothing else in this job passes `--locked`, so a PR that edits a
       # manifest without committing the regenerated Cargo.lock builds green
@@ -829,7 +829,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       # Pinned by exact version, not just `--locked`: `--locked` fixes the
       # tool's own transitive graph but not the tool itself, so an unpinned

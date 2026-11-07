@@ -129,11 +129,11 @@ BENCH="docs/benchmarks/index.html"
 TRANSCRIPT="crates/stella-transcript/src/html/transcript.css"
 
 # ── C: a hued light neutral is caught ────────────────────────────────────────
-# `--panel` on the benchmark index is #FFFFFF today — achromatic, so it clears
+# `--panel` on the benchmark index is #FCFCFE today — achromatic, so it clears
 # the neutral clamp and carries no ratchet entry. Tinting it blue past the
 # spread bound is a first-time violation rather than a regression.
 r="$(new_root hued_neutral)"
-repaint "$r" "$BENCH" "#FFFFFF" "#EDF2FB"
+repaint "$r" "$BENCH" "#FCFCFE" "#EDF2FB"
 want "C1 a hued light neutral in a shipped surface is flagged" \
   expect-fail "$r" "no baseline entry"
 want "C2 the failure names the role and the spread it broke" \
@@ -148,7 +148,7 @@ entry_is "C4 the refused --update wrote no entry" "$r" "$BENCH" --panel absent
 # `paper-row` is a true grey and passes, so the entry must LEAVE the ratchet
 # rather than stay as a licence.
 r="$(new_root true_grey)"
-repaint "$r" "$TRANSCRIPT" "#EEF3FB" "#F4F4F5"
+repaint "$r" "$TRANSCRIPT" "#EEF3FB" "#ECEEF3"
 want "W1 a grey replacement is reported as clearing, not passed silently" \
   expect-fail "$r" "satisfies its clamp now"
 want "W2 --update drops the cleared entry" expect-pass "$r" "retightened to 2" "--update"

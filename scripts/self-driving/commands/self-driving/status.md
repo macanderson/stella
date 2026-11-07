@@ -18,7 +18,7 @@ Then add the things the script cannot see:
 ```bash
 gh pr list --author "@me" --state open --json number,title,statusCheckRollup
 gh run list --branch main --limit 5 --json conclusion,name,url
-gh issue list --state open --label bug --json number --jq 'length'
+gh issue list --state open --label KIND:BUG --json number --jq 'length'
 ```
 
 ---

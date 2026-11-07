@@ -18,18 +18,19 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 GUARD = HERE / "check-priority-scheme.py"
 
-SCR = "docs/scr/SCR-005-triage-separation-of-duties.md"
+HOME = "AGENTS.md"
 WORKFLOW = ".github/workflows/triage-guard.yml"
 
 pass_count = 0
 fail_count = 0
 
 
-def scr_body(scheme: str) -> str:
+def home_body(scheme: str, before: str = "") -> str:
     return (
-        "---\nid: scr/005-triage-separation-of-duties\n---\n\n"
-        "## Directive\n\n"
-        "Issue creators may apply exactly one label.\n\n"
+        "# Agents\n\n"
+        "## Standing decisions\n\n"
+        "- **SCR-005:** Issue creators may apply exactly one label.\n\n"
+        f"{before}"
         f"{scheme}\n"
     )
 
@@ -81,7 +82,7 @@ def fixture(name: str, files: dict[str, str]) -> Path:
 
 
 def tree(scheme: str, ceiling: int | None, extra: dict[str, str] | None = None) -> dict:
-    files = {SCR: scr_body(scheme), WORKFLOW: workflow_body(ceiling)}
+    files = {HOME: home_body(scheme), WORKFLOW: workflow_body(ceiling)}
     files.update(extra or {})
     return files
 
@@ -112,7 +113,7 @@ def expect(name: str, files: dict[str, str], want_rc: int, needle: str = "") -> 
 # C1 — the shape that must pass, or every case below proves nothing.
 expect("C1 a tree whose regex matches the scheme", tree(FIVE_LEVELS, 4), 0)
 
-# C2 — the defect this guard was written for: the label set and the SCR grow a
+# C2 — the defect this guard was written for: the label set and the home grow a
 # level and the regex does not.
 expect(
     "C2 a regex one level short fails",
@@ -152,7 +153,7 @@ expect(
 # C7 — with no declaration there is nothing to hold the regex to, and silence
 # must not read as agreement.
 expect(
-    "C7 an SCR with no scheme line fails",
+    "C7 a home with no scheme line fails",
     tree("The triage agent sizes the work.", 4),
     1,
     "no `Priority scheme:` line",
@@ -168,13 +169,24 @@ expect(
 )
 
 # C9 — the two files the guard reads are the two it cannot do without.
-expect("C9 a missing SCR fails", {WORKFLOW: workflow_body(4)}, 1, "is missing")
-expect("C10 a missing workflow fails", {SCR: scr_body(FIVE_LEVELS)}, 1, "is missing")
+expect("C9 a missing home fails", {WORKFLOW: workflow_body(4)}, 1, "is missing")
+expect("C10 a missing workflow fails", {HOME: home_body(FIVE_LEVELS)}, 1, "is missing")
 expect(
     "C11 a workflow with no pattern fails",
     tree(FIVE_LEVELS, None),
     1,
     "has no `P[0-N]` pattern",
+)
+
+# C12 — the home is a long file. Only the scheme's own paragraph is exempt.
+# A second copy above it, in the same file, still fails.
+SECOND_COPY = home_body(FIVE_LEVELS, before=span_line(4) + "\n")
+SECOND_COPY_LINE = SECOND_COPY.splitlines().index(span_line(4).strip()) + 1
+expect(
+    "C12 a second copy inside the home fails",
+    {HOME: SECOND_COPY, WORKFLOW: workflow_body(4)},
+    1,
+    f"{HOME}:{SECOND_COPY_LINE} states the priority scheme",
 )
 
 print(f"\n{pass_count} passed, {fail_count} failed")
