@@ -474,7 +474,7 @@ impl Store {
     /// [`export_all_json`](Store::export_all_json) for the uniform tables.
     fn query_to_json(
         &self,
-        conn: &rusqlite::Connection,
+        conn: &crate::conn::Guard<'_>,
         sql: &str,
         bindings: &[&dyn ToSql],
     ) -> Result<String> {
@@ -550,7 +550,7 @@ impl Store {
         ];
         let mut latest: Option<String> = None;
         for sql in candidates {
-            let row: rusqlite::Result<Option<String>> =
+            let row: crate::Result<Option<String>> =
                 conn.query_row(&sql, bindings.as_slice(), |row| row.get(0));
             if let Ok(Some(ts)) = row
                 && !ts.is_empty()

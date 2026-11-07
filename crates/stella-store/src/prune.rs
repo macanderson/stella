@@ -76,6 +76,7 @@
 
 use rusqlite::{OptionalExtension as _, Transaction, params};
 
+use crate::conn::OptionalExt as _;
 use crate::{Result, Store};
 
 /// Every table that keys off `executions.id` and dies with it. The list is
@@ -575,7 +576,7 @@ mod tests {
             let keyed = stmt
                 .query_map([], |r| r.get::<_, String>(1))
                 .unwrap()
-                .any(|c| c.as_deref() == Ok("execution_id"));
+                .any(|c| matches!(c.as_deref(), Ok("execution_id")));
             if !keyed {
                 continue;
             }

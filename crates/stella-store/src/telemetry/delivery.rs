@@ -18,7 +18,7 @@
 //! Not `execution_reflection.delivered`, which is the model's self-report
 //! about its turn. This is an observation.
 
-use rusqlite::OptionalExtension as _;
+use crate::conn::OptionalExt as _;
 use rusqlite::params;
 
 use crate::{Result, Store};

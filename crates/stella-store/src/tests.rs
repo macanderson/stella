@@ -1559,7 +1559,7 @@ fn v1_migration_dedupes_a_v0_database_and_retrofits_the_unique_keys() {
             .unwrap();
         stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
             .unwrap()
-            .collect::<rusqlite::Result<Vec<_>>>()
+            .collect::<crate::Result<Vec<_>>>()
             .unwrap()
     };
     assert_eq!(

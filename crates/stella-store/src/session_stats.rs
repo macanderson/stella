@@ -9,7 +9,9 @@
 //! than a journal replay, and a registry of forty sessions is priced at forty
 //! indexed queries.
 
-use rusqlite::{OptionalExtension, params};
+use rusqlite::params;
+
+use crate::conn::OptionalExt as _;
 
 use crate::{Result, Store};
 
@@ -51,7 +53,7 @@ impl Store {
             .prepare("SELECT prompt FROM executions WHERE session_id = ?1 ORDER BY id LIMIT ?2")?;
         let prompts = stmt
             .query_map(params![session_id, PROMPT_SAMPLE as i64], |r| r.get(0))?
-            .collect::<rusqlite::Result<Vec<String>>>()?;
+            .collect::<crate::Result<Vec<String>>>()?;
         Ok(SessionStats {
             turns: u32::try_from(turns).unwrap_or(u32::MAX),
             cost_usd,

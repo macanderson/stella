@@ -46,7 +46,9 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
-use rusqlite::{OptionalExtension, params};
+use rusqlite::params;
+
+use crate::conn::OptionalExt as _;
 use sha2::{Digest, Sha256};
 use stella_protocol::{
     AgentEvent, CompletionMessage, MessageRole, ToolCall, ToolOutput, ToolResult,
@@ -146,6 +148,13 @@ pub struct Reconstruction {
     /// compaction rewrite the journal was never told about. Empty on the clean
     /// path.
     pub digest_mismatches: Vec<String>,
+    /// Block ids of a non-gap kind that nonetheless carried local content in
+    /// `context_blocks.content`. A `tool_result` or `tool_call` row is meant
+    /// to resolve from the journal; local bytes on one of those contradict the
+    /// producer, and there is no reason to trust bytes that came from the very
+    /// row the digest check would otherwise run against. Empty on the clean
+    /// path.
+    pub local_content_anomalies: Vec<String>,
     /// Which compaction-journaling era wrote this execution's journal, read
     /// from its `executions` row. Decides what
     /// [`Self::digest_mismatches`] *means* — see [`Self::mismatch_severity`].
@@ -153,14 +162,17 @@ pub struct Reconstruction {
 }
 
 impl Reconstruction {
-    /// Whether every block resolved and every journal-resolved digest matched —
-    /// the step is a faithful, verified reconstruction of what the model saw.
+    /// Whether every block resolved, every journal-resolved digest matched,
+    /// and no non-gap block carried local content — the step is a faithful,
+    /// verified reconstruction of what the model saw.
     ///
     /// Era-blind: a mismatch is a mismatch, and a reconstruction
     /// with one is not something to vouch for whoever wrote it. The era
     /// changes how loudly it is *reported*, never whether it happened.
     pub fn is_verified(&self) -> bool {
-        self.unresolved.is_empty() && self.digest_mismatches.is_empty()
+        self.unresolved.is_empty()
+            && self.digest_mismatches.is_empty()
+            && self.local_content_anomalies.is_empty()
     }
 
     /// What this reconstruction's digest mismatches mean, given who wrote the
@@ -245,6 +257,7 @@ impl Store {
         let mut messages: Vec<CompletionMessage> = Vec::new();
         let mut unresolved = Vec::new();
         let mut digest_mismatches = Vec::new();
+        let mut local_content_anomalies = Vec::new();
         let mut current: Option<u64> = None;
 
         for entry in &manifest {
@@ -257,6 +270,9 @@ impl Store {
                 unresolved.push(entry.block_id.clone());
                 continue;
             };
+            if block.content.is_some() && !is_gap_kind(&block.kind) {
+                local_content_anomalies.push(entry.block_id.clone());
+            }
             if !content_matches_digest(block, &content) {
                 digest_mismatches.push(entry.block_id.clone());
             }
@@ -282,14 +298,21 @@ impl Store {
             messages,
             unresolved,
             digest_mismatches,
+            local_content_anomalies,
             journal_era: self.journal_era(execution_id)?,
         })
     }
 
     /// Index the execution's `tool_start` / `tool_result` / `text` events into a
     /// preimage lookup. Mirrors [`Store::materialize_tool_calls`]'s read shape.
+    ///
+    /// Raw, not `self.lock()`. The free function below also runs from inside
+    /// a migration's transaction. `&rusqlite::Transaction` derefs to
+    /// `&Connection`, so the function takes a bare connection, not the
+    /// path-carrying guard. A corruption error from this one path is still
+    /// `StoreError::Corrupt`. It just does not yet name the file.
     fn journal_preimages(&self, execution_id: i64) -> Result<JournalPreimages> {
-        journal_preimages(&self.lock(), execution_id)
+        journal_preimages(&self.raw_lock(), execution_id)
     }
 
     /// The era stamped on an execution row. An execution that is not there at
@@ -355,12 +378,42 @@ pub(crate) fn journal_preimages(
     Ok(out)
 }
 
+/// The block kinds whose preimage is captured locally at emission because the
+/// event journal never carries it: the system prefix, and every message the
+/// engine assembles rather than receives.
+///
+/// The producer's own list is `stella_core::receipts`'s `is_gap_kind`, which is
+/// private, so this is an acknowledged copy — the same bargain
+/// `stella-observatory`'s `GAP_KINDS` takes on the same list. A kind that
+/// drifts out of one list and not the others shows up as a
+/// [`Reconstruction::local_content_anomalies`] entry rather than as silence.
+const GAP_KINDS: [&str; 6] = [
+    "system_prefix",
+    "user_goal",
+    "recalled_frame",
+    "steered",
+    "summary",
+    "attachment",
+];
+
+/// Whether a block kind is one of the [`GAP_KINDS`] the journal cannot resolve,
+/// so its content is legitimately stored locally rather than replayed.
+fn is_gap_kind(kind: &str) -> bool {
+    GAP_KINDS.contains(&kind)
+}
+
 /// Whether resolved bytes really are this block's bytes: they re-hash to the
 /// `content_digest` the receipt recorded.
 ///
 /// Gap content is stored locally, so its check is tautological and is
 /// deliberately skipped as evidence — the proof lives in the journal-resolved
-/// kinds.
+/// kinds. The skip is keyed on the block's **kind**, never on whether it
+/// happens to carry local bytes: a `tool_result` or `tool_call` row with local
+/// content contradicts the producer, and trusting it on that basis is how a
+/// tampered store would buy itself a passing digest check — the exact lie this
+/// function exists to catch. Such a block is checked like any other; its local
+/// content being present at all is a separate, always-reported fact — see
+/// [`Reconstruction::local_content_anomalies`].
 ///
 /// This is not a formality. [`resolve_content`] finds a tool block's preimage
 /// by `call_id`, but `call_id` does not uniquely identify a *block*: compaction
@@ -370,7 +423,7 @@ pub(crate) fn journal_preimages(
 /// one those bytes actually are. A caller that skips this check does not get a
 /// slightly-off answer; it gets a confident answer about the wrong content.
 pub(crate) fn content_matches_digest(block: &crate::ContextBlockRow, content: &str) -> bool {
-    if block.content.is_some() {
+    if is_gap_kind(&block.kind) {
         return true;
     }
     let expected = block
@@ -927,6 +980,7 @@ mod tests {
             messages: Vec::new(),
             unresolved: vec!["blk_gap".into()],
             digest_mismatches: Vec::new(),
+            local_content_anomalies: Vec::new(),
             journal_era: JournalEra::CompactionJournaled,
         };
         assert_eq!(recon.mismatch_severity(), MismatchSeverity::None);
@@ -1005,5 +1059,97 @@ mod tests {
         let recon = store.reconstruct_worker_step(id, 0, 0).unwrap();
         assert!(!recon.is_verified());
         assert_eq!(recon.unresolved, vec!["blk_orphan".to_string()]);
+    }
+
+    /// A tampered `store.db`: a `tool_result` row carries local content that
+    /// does not hash to its own recorded digest —
+    /// the shape a row edited outside the write API leaves behind. Before the
+    /// fix, `content_matches_digest` returned `true` for any block carrying
+    /// local content, so this row read as verified whatever its digest said.
+    /// Mirrors `stella-observatory`'s
+    /// `local_bytes_on_a_journal_kind_are_checked_rather_than_trusted`: the two
+    /// folds must reach the same verdict on the same tampering.
+    #[test]
+    fn local_bytes_on_a_journal_kind_are_checked_rather_than_trusted() {
+        let mut block = journal(
+            "blk_res",
+            "tool_result",
+            Some("c1"),
+            "the bytes actually sent",
+        );
+        // Overwrite the digest-backed row with local content the digest was
+        // never taken over — a `tool_result` block is not supposed to carry
+        // local content at all.
+        block.content = Some("whatever the operator wanted to read".into());
+
+        let store = Store::in_memory().unwrap();
+        let id = store.begin_execution("run", "p", "z", "m").unwrap();
+        store.record_context_block(id, &block).unwrap();
+        store
+            .record_step_manifest(
+                id,
+                &StepManifestRow {
+                    turn_instance: 0,
+                    step: 0,
+                    call_seq: 0,
+                    provider: "z".into(),
+                    upstream_provider: None,
+                    model: "m".into(),
+                    call_role: "worker".into(),
+                    effective_budget_tokens: 1,
+                    calibration_factor: 1.0,
+                    estimated_input_tokens: 1,
+                    stall_seconds_requested: None,
+                    compiled_frame_id: None,
+                    frame_hash: None,
+                    blocks: vec![entry("blk_res", 0)],
+                },
+            )
+            .unwrap();
+
+        let recon = store.reconstruct_worker_step(id, 0, 0).unwrap();
+        assert!(
+            !recon.is_verified(),
+            "a tampered tool_result must not read as verified: {recon:?}"
+        );
+        assert_eq!(recon.digest_mismatches, vec!["blk_res".to_string()]);
+        assert_eq!(recon.local_content_anomalies, vec!["blk_res".to_string()]);
+    }
+
+    /// The other half of the same rule: a gap kind's local content stays
+    /// unchecked and raises no anomaly, because re-hashing what the row itself
+    /// stored proves nothing and finding it there is not a tampering signal.
+    #[test]
+    fn a_gap_kind_keeps_its_local_content_and_raises_no_anomaly() {
+        let store = Store::in_memory().unwrap();
+        let id = store.begin_execution("run", "p", "z", "m").unwrap();
+        store
+            .record_context_block(id, &gap("blk_goal", "user_goal", 0, "fix the parser"))
+            .unwrap();
+        store
+            .record_step_manifest(
+                id,
+                &StepManifestRow {
+                    turn_instance: 0,
+                    step: 0,
+                    call_seq: 0,
+                    provider: "z".into(),
+                    upstream_provider: None,
+                    model: "m".into(),
+                    call_role: "worker".into(),
+                    effective_budget_tokens: 1,
+                    calibration_factor: 1.0,
+                    estimated_input_tokens: 1,
+                    stall_seconds_requested: None,
+                    compiled_frame_id: None,
+                    frame_hash: None,
+                    blocks: vec![entry("blk_goal", 0)],
+                },
+            )
+            .unwrap();
+
+        let recon = store.reconstruct_worker_step(id, 0, 0).unwrap();
+        assert!(recon.is_verified(), "{recon:?}");
+        assert!(recon.local_content_anomalies.is_empty());
     }
 }

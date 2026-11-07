@@ -36,6 +36,7 @@ use std::time::Duration;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
+use crate::conn::OptionalExt as _;
 use crate::{Result, StoreError, fnv_hex};
 
 /// Where the user-tier catalog lives: `data_dir()/catalog.db` (honors
@@ -307,8 +308,8 @@ impl CatalogStore {
         Self::open(&catalog_db_path())
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Connection> {
-        self.conn.lock().unwrap_or_else(|p| p.into_inner())
+    fn lock(&self) -> crate::conn::Guard<'_> {
+        crate::conn::Guard::new(self.conn.lock().unwrap_or_else(|p| p.into_inner()))
     }
 
     /// Apply one refresh batch in a single transaction: upsert cards,
@@ -478,8 +479,7 @@ impl CatalogStore {
     /// uses both for validation strictness and for the auto-refresh
     /// opt-in (no sync row → never fetch implicitly).
     pub fn sync_info(&self, source: &str) -> Result<Option<SyncInfo>> {
-        Ok(self
-            .lock()
+        self.lock()
             .query_row(
                 "SELECT etag, payload_hash, refreshed_at FROM catalog_sync WHERE source = ?1",
                 params![source],
@@ -491,14 +491,13 @@ impl CatalogStore {
                     })
                 },
             )
-            .optional()?)
+            .optional()
     }
 
     /// Seconds since the last completed sync for `source` — `None` when
     /// never synced (or the stored timestamp is unreadable).
     pub fn seconds_since_sync(&self, source: &str) -> Result<Option<i64>> {
-        Ok(self
-            .lock()
+        self.lock()
             .query_row(
                 "SELECT CAST(strftime('%s','now') AS INTEGER)
                         - CAST(strftime('%s', refreshed_at) AS INTEGER)
@@ -506,14 +505,13 @@ impl CatalogStore {
                 params![source],
                 |row| row.get(0),
             )
-            .optional()?)
+            .optional()
     }
 
     /// Resolve any string form against the alias table, returning the card
     /// it names plus the latest version's pricing configuration.
     pub fn resolve(&self, api_provider: &str, alias: &str) -> Result<Option<ResolvedModel>> {
-        Ok(self
-            .lock()
+        self.lock()
             .query_row(
                 "SELECT c.id, c.api_provider, c.model_provider, c.slug, c.display_name, c.family,
                         a.model_version, a.alias,
@@ -556,7 +554,7 @@ impl CatalogStore {
                     })
                 },
             )
-            .optional()?)
+            .optional()
     }
 
     /// How many cards an API provider has, optionally filtered by card

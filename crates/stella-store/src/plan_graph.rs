@@ -18,7 +18,9 @@ pub mod graph;
 
 pub use graph::{PlanGraph, PlanGraphError, RevisionError, RevisionGate};
 
-use rusqlite::{OptionalExtension, params};
+use rusqlite::params;
+
+use crate::conn::OptionalExt as _;
 use stella_protocol::plan_graph::{
     DivergenceCause, PlanEdge, PlanEdgeKind, PlanEdgeSource, PlanNode, PlanRevision, TaskNode,
 };
