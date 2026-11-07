@@ -783,6 +783,7 @@ async fn a_rejected_answer_s_charge_keeps_the_partial_usage_invariant() {
     );
     assert!(spent.input_reported, "the provider's attestation was lost");
     assert_eq!(spent.usage.output_tokens, 1_024, "output tokens lost");
+    assert_eq!(spent.cost_usd, 0.019, "the charge itself was lost");
 }
 
 /// The control that second reading needs. A streamed answer was fed fragment
