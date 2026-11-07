@@ -104,6 +104,7 @@ mod pr_observe;
 mod profile_cmd;
 mod session_clear;
 mod session_override;
+mod session_switch;
 mod sessions_view;
 mod settings_io;
 mod settle;
@@ -1409,48 +1410,25 @@ pub async fn run_deck_session(
                                 whistle.rebind(&session_record.id);
                                 *pr_session_id.lock().unwrap_or_else(|p| p.into_inner()) =
                                     session_record.id.clone();
-                                {
-                                    let mut sink =
-                                        journal_sink.lock().unwrap_or_else(|p| p.into_inner());
-                                    match stella_store::journal::SessionJournal::open(&sidecar_dir)
-                                    {
-                                        Ok(j) => sink.swap(Some(j)),
-                                        Err(e) => {
-                                            sink.swap(None);
-                                            let _ = deck_tx.send(chrome_note(format!(
-                                                "session journaling unavailable — this session \
-                                                 will no longer be resumable ({e})"
-                                            )));
-                                        }
-                                    }
-                                }
-                                // Durability re-keys with everything else. The
-                                // next turn's engine reads the sink afresh, so
-                                // the checkpoint lands in the session the user
-                                // just switched TO; the departing session's
-                                // resume point and commits are left as they
-                                // stood.
-                                if let Some(warning) = crate::durability::bind_session(
-                                    &cfg.durability,
-                                    &cfg.workspace_root,
-                                    &session_record.id,
-                                ) {
-                                    let _ = deck_tx.send(chrome_note(warning));
-                                }
-                                // After the bind, because the hook payload names
-                                // the session bound there. Before the restore
-                                // below, because that seeds this prompt.
-                                session_override::adopt_session_hook_context(
+                                // Journal, durability and hook text move to the
+                                // adopted session before the restore below.
+                                session_switch::rebind(
                                     cfg,
+                                    &session_record.id,
+                                    &sidecar_dir,
+                                    &journal_sink,
+                                    &deck_tx,
                                     session_override::PromptPlane {
                                         base_system_prompt: &mut base_system_prompt,
                                         system_prompt: &mut system_prompt,
                                         messages: &mut messages,
                                     },
-                                    &mut hook_context_suffix,
-                                    assumed_persona.as_deref(),
-                                    pipeline_persona,
-                                    &active_rules,
+                                    session_override::HookPlane {
+                                        suffix: &mut hook_context_suffix,
+                                        persona: assumed_persona.as_deref(),
+                                        pipeline_persona,
+                                        active_rules: &active_rules,
+                                    },
                                 )
                                 .await;
 

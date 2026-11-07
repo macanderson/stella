@@ -15,8 +15,8 @@
 //! byte-stable *across* a turn — AGENTS.md's rule #7 — so `messages[0]`
 //! may move only at a turn boundary). The
 //! SessionStart hook context is NOT re-run for the rewrite: the caller hands
-//! in the suffix captured at startup, so a hook's side effects happen once
-//! per session no matter how often the model changes.
+//! in the suffix captured when the session was bound, so a hook's side
+//! effects happen once per session no matter how often the model changes.
 //!
 //! Everything else a rebuild re-derives has to be session-constant, or the
 //! switch moves bytes the prompt cache keys on. The rules come in as the
@@ -57,6 +57,17 @@ pub(super) struct PromptPlane<'a> {
     pub(super) system_prompt: &'a mut String,
     /// The live conversation; `messages[0]` is the seeded system message.
     pub(super) messages: &'a mut Vec<CompletionMessage>,
+}
+
+/// The hook half of a session switch's prompt rebuild: the `SessionStart`
+/// text it replaces, and what the rebuild puts back around that text.
+pub(super) struct HookPlane<'a> {
+    /// What the `SessionStart` hooks printed for the bound session.
+    pub(super) suffix: &'a mut String,
+    /// The assumed agent's persona, when one is assumed.
+    pub(super) persona: Option<&'a str>,
+    pub(super) pipeline_persona: bool,
+    pub(super) active_rules: &'a crate::rules::ResolvedRules,
 }
 
 /// Resolve `id` (`provider/slug`, or a bare catalog slug on the session's
@@ -212,19 +223,16 @@ pub(super) fn override_role_pins(cfg: &Config) -> Vec<(PipelineRole, RolePin)> {
 pub(super) async fn adopt_session_hook_context(
     cfg: &Config,
     mut prompts: PromptPlane<'_>,
-    hook_suffix: &mut String,
-    persona: Option<&str>,
-    pipeline_persona: bool,
-    active_rules: &crate::rules::ResolvedRules,
+    hooks: HookPlane<'_>,
 ) {
-    *hook_suffix = crate::agent::with_session_hook_context(String::new(), cfg).await;
+    *hooks.suffix = crate::agent::with_session_hook_context(String::new(), cfg).await;
     refresh_prompts(
         cfg,
         &mut prompts,
-        hook_suffix,
-        persona,
-        pipeline_persona,
-        active_rules,
+        hooks.suffix.as_str(),
+        hooks.persona,
+        hooks.pipeline_persona,
+        hooks.active_rules,
     );
 }
 
@@ -703,10 +711,12 @@ mod tests {
                 system_prompt: &mut system,
                 messages: &mut messages,
             },
-            &mut suffix,
-            Some("PERSONA"),
-            false,
-            &crate::rules::ResolvedRules::default(),
+            HookPlane {
+                suffix: &mut suffix,
+                persona: Some("PERSONA"),
+                pipeline_persona: false,
+                active_rules: &crate::rules::ResolvedRules::default(),
+            },
         )
         .await;
 
