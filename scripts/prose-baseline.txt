@@ -1929,6 +1929,9 @@ crates/stella-fleet/src/ledger.rs historical-reference 2
 crates/stella-fleet/src/ledger.rs issue-reference 10
 crates/stella-fleet/src/ledger/lease.rs historical-reference 3
 crates/stella-fleet/src/ledger/lease.rs issue-reference 4
+crates/stella-fleet/src/ledger/migrations.rs historical-reference 1
+crates/stella-fleet/src/ledger/migrations.rs issue-reference 5
+crates/stella-fleet/src/ledger/query.rs issue-reference 3
 crates/stella-fleet/src/lib.rs issue-reference 4
 crates/stella-fleet/src/monitor.rs historical-reference 1
 crates/stella-fleet/src/plan.rs issue-reference 2
@@ -3056,10 +3059,11 @@ crates/stella-tools/src/delete.rs issue-reference 9
 crates/stella-tools/src/durable_write.rs historical-reference 2
 crates/stella-tools/src/durable_write.rs honesty-declaration 1
 crates/stella-tools/src/durable_write.rs issue-reference 4
-crates/stella-tools/src/edit.rs filler-adverb 1
-crates/stella-tools/src/edit.rs historical-reference 5
-crates/stella-tools/src/edit.rs honesty-declaration 1
-crates/stella-tools/src/edit.rs issue-reference 13
+crates/stella-tools/src/edit.rs historical-reference 2
+crates/stella-tools/src/edit.rs issue-reference 6
+crates/stella-tools/src/edit/tests.rs historical-reference 3
+crates/stella-tools/src/edit/tests.rs honesty-declaration 1
+crates/stella-tools/src/edit/tests.rs issue-reference 5
 crates/stella-tools/src/environment.rs enumerative-announcement 1
 crates/stella-tools/src/environment.rs filler-adverb 1
 crates/stella-tools/src/environment.rs honesty-declaration 1

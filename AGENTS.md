@@ -712,7 +712,7 @@ and `ci.yml`'s `ubuntu-latest` job never resolves it. `release.yml` does
 build macOS targets, but only on a tag push, well after a PR has already
 merged — so a dependabot bump to `cpal` merged with `main` broken on macOS,
 with nothing in the required check having ever compiled it. This job runs
-`cargo check -p stella-cli --all-targets --locked` on `macos-14`,
+`cargo check -p stella-cli --all-targets --locked` on `macos-15`,
 path-triggered on `crates/stella-cli/**`, `Cargo.lock` and the workspace
 `Cargo.toml`. Not a required check.
 
