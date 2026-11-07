@@ -42,7 +42,9 @@ pub(super) fn client(
     slot.get_or_init(|| build_client(reqwest::Client::builder(), unary))
         .as_ref()
         .map_err(|error| {
-            ProviderError::Terminal(format!("could not open the local model connection: {error}"))
+            ProviderError::Terminal(format!(
+                "could not open the local model connection: {error}"
+            ))
         })
 }
 
@@ -79,7 +81,11 @@ mod tests {
             "http://localhost:4319",
         ] {
             assert_eq!(
-                header(url, Some(&session)).unwrap().unwrap().to_str().unwrap(),
+                header(url, Some(&session))
+                    .unwrap()
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
                 session.session_id.as_str()
             );
         }
@@ -163,7 +169,13 @@ mod dispatch_tests {
             .map(|request| {
                 let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
                 assert!(body.get("context").is_none());
-                request.headers.get("x-oxagen-session").unwrap().to_str().unwrap().to_owned()
+                request
+                    .headers
+                    .get("x-oxagen-session")
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_owned()
             })
             .collect();
         ids.sort();
@@ -174,14 +186,21 @@ mod dispatch_tests {
         let source = MockServer::start().await;
         let destination = MockServer::start().await;
         Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(307)
-                .insert_header("location", format!("{}/v1/messages", destination.uri())))
+            .respond_with(
+                ResponseTemplate::new(307)
+                    .insert_header("location", format!("{}/v1/messages", destination.uri())),
+            )
             .mount(&source)
             .await;
         let provider = AnthropicProvider::new(ApiKey::new("test"), "claude-fable-5")
             .with_base_url(source.uri());
         let req = request("ses-private");
-        assert!(provider.complete_unary_attempt(req.as_borrowed()).await.is_err());
+        assert!(
+            provider
+                .complete_unary_attempt(req.as_borrowed())
+                .await
+                .is_err()
+        );
         assert!(destination.received_requests().await.unwrap().is_empty());
     }
 
@@ -193,15 +212,16 @@ mod dispatch_tests {
             .respond_with(ResponseTemplate::new(200))
             .mount(&destination)
             .await;
-        let builder = reqwest::Client::builder()
-            .proxy(reqwest::Proxy::all(proxy.uri()).unwrap());
+        let builder = reqwest::Client::builder().proxy(reqwest::Proxy::all(proxy.uri()).unwrap());
         let client = build_client(builder, true).unwrap();
-        let response = client.post(destination.uri())
+        let response = client
+            .post(destination.uri())
             .header("x-oxagen-session", "ses-private")
-            .send().await.unwrap();
+            .send()
+            .await
+            .unwrap();
         assert!(response.status().is_success());
         assert_eq!(destination.received_requests().await.unwrap().len(), 1);
         assert!(proxy.received_requests().await.unwrap().is_empty());
     }
-
 }

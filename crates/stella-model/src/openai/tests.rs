@@ -970,6 +970,7 @@ async fn top_p_is_omitted_for_a_reasoning_model_like_temperature() {
         OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(server.uri());
     provider
         .complete(CompletionRequest {
+            context: None,
             messages: vec![CompletionMessage::user("hi")],
             max_output_tokens: None,
             temperature: None,

@@ -743,7 +743,8 @@ impl Engine<'_> {
                     cost_usd: outcome.cost_usd(),
                     steps: outcome.report().map_or(0, |report| report.steps),
                 },
-            ).with_session_context(self.config.session_context.as_ref()),
+            )
+            .with_session_context(self.config.session_context.as_ref()),
             events,
         )
         .await;

@@ -403,7 +403,8 @@ pub(crate) async fn user_prompt_submit_hook(cfg: &Config, prompt: &str) -> Resul
         &stella_core::hooks::HookPayload::user_prompt_submit(
             cfg.workspace_root.display().to_string(),
             prompt,
-        ).with_session_context(cfg.durability.session_context().as_ref()),
+        )
+        .with_session_context(cfg.durability.session_context().as_ref()),
     )
     .await;
     for diagnostic in &run.diagnostics {

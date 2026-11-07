@@ -230,16 +230,7 @@ pub(super) async fn run_deck_command(
         "/init" => {
             // The splash replay, the narrator, and the question channel all
             // live in `init_cmd` — this file is closed to growth.
-            match init_cmd::run(
-                provider,
-                cfg,
-                budget_limit,
-                ask_io,
-                in_tx,
-                LEAD,
-            )
-            .await
-            {
+            match init_cmd::run(provider, cfg, budget_limit, ask_io, in_tx, LEAD).await {
                 Ok(()) => return DeckCommand::InitCompleted,
                 Err(e) => say(format!("init failed: {e}")),
             }

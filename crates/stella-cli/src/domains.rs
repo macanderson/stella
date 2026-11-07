@@ -565,7 +565,8 @@ mod tests {
             ]),
         };
 
-        let (domains, _cost) = infer_domains(&provider, &root, "paid-domains-model", None, None).await;
+        let (domains, _cost) =
+            infer_domains(&provider, &root, "paid-domains-model", None, None).await;
 
         assert_eq!(domains.inferred_by, "model");
         assert_eq!(

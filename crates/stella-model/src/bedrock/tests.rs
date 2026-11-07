@@ -466,6 +466,7 @@ async fn generation_params_forward_only_top_p_into_inference_config() {
     let provider = test_provider(&server.uri());
     provider
         .complete(CompletionRequest {
+            context: None,
             messages: vec![CompletionMessage::user("hi")],
             max_output_tokens: None,
             temperature: None,

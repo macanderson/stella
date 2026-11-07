@@ -13,8 +13,8 @@ use stella_protocol::{
 };
 
 mod context_edit;
-mod stream;
 mod session_context;
+mod stream;
 mod unary;
 
 use crate::cache_economics::CacheTtl;
@@ -1036,7 +1036,9 @@ impl AnthropicProvider {
             return self.complete_unary_attempt(req).await;
         }
         let body = self.build_body(req, true);
-        let response = self.dispatch(&self.client, &body, false, req.context).await?;
+        let response = self
+            .dispatch(&self.client, &body, false, req.context)
+            .await?;
         let outcome = stream::aggregate_anthropic_stream(
             response,
             observer,

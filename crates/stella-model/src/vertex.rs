@@ -566,6 +566,7 @@ mod tests {
         .with_base_url(server.uri());
         provider
             .complete(CompletionRequest {
+                context: None,
                 messages: vec![CompletionMessage::user("hi")],
                 max_output_tokens: None,
                 temperature: None,

@@ -253,7 +253,8 @@ impl<'a> Engine<'a> {
                 &call.name,
                 call.input.clone(),
                 read_only,
-            ).with_session_context(self.config.session_context.as_ref()),
+            )
+            .with_session_context(self.config.session_context.as_ref()),
         )
         .await;
         // The engine carries no operator posture of its own (operator tool
@@ -324,7 +325,8 @@ impl<'a> Engine<'a> {
                 input,
                 read_only,
                 result_str,
-            ).with_session_context(self.config.session_context.as_ref()),
+            )
+            .with_session_context(self.config.session_context.as_ref()),
         )
         .await;
         diagnostics.extend(post.diagnostics);

@@ -470,10 +470,14 @@ fn named<T>(path: &'static str, _value: T) -> &'static str {
 #[test]
 fn each_events_rows_are_exactly_what_that_event_serializes() {
     for (event, payloads) in widest_payloads() {
-        let context = stella_protocol::SessionContext { session_id: "ses-native".into() };
-        let sent: BTreeSet<String> = payloads.into_iter()
+        let context = stella_protocol::SessionContext {
+            session_id: "ses-native".into(),
+        };
+        let sent: BTreeSet<String> = payloads
+            .into_iter()
             .map(|payload| payload.with_session_context(Some(&context)))
-            .flat_map(|payload| wire_paths(&payload)).collect();
+            .flat_map(|payload| wire_paths(&payload))
+            .collect();
         let declared = rows_for(event);
         assert_eq!(
             sent, declared,

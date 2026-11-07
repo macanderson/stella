@@ -678,11 +678,16 @@ pub(super) fn handle_skills_input(
             let description = description.clone();
             let root = root.clone();
             tokio::spawn(async move {
-                let (status, created) =
-                    create_skill_llm(
-                        &cfg, &registry, scope, &description, &root, budget_limit, context,
-                    )
-                    .await;
+                let (status, created) = create_skill_llm(
+                    &cfg,
+                    &registry,
+                    scope,
+                    &description,
+                    &root,
+                    budget_limit,
+                    context,
+                )
+                .await;
                 let _ = in_tx.send(skills_snapshot_created(&root, Some(status), created));
             });
         }
@@ -700,15 +705,21 @@ mod sideband_tests {
         let binding = crate::durability::SessionDurability::default();
         binding.bind(
             stella_store::work_journal::WorkJournal::open_in(
-                store.path(), workspace.path(), "ses-first",
-            ).unwrap(),
+                store.path(),
+                workspace.path(),
+                "ses-first",
+            )
+            .unwrap(),
         );
         let context = binding.session_context();
         let pending = async move { skill_creation_request("explain logs", &[], context) };
         binding.bind(
             stella_store::work_journal::WorkJournal::open_in(
-                store.path(), workspace.path(), "ses-second",
-            ).unwrap(),
+                store.path(),
+                workspace.path(),
+                "ses-second",
+            )
+            .unwrap(),
         );
         let request = pending.await;
         assert_eq!(request.context.unwrap().session_id, "ses-first");

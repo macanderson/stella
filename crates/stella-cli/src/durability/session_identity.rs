@@ -18,8 +18,13 @@ fn captured_engine_binding_survives_switch_and_failed_journal_open() {
     assert!(second_sink.is_none());
     assert_eq!(first_context.unwrap().session_id, "ses-first");
     first_sink.persist("first session continues");
-    assert_eq!(WorkJournal::open_in(store.path(), workspace.path(), "ses-first")
-        .unwrap().checkpoint().as_deref(), Some("first session continues"));
+    assert_eq!(
+        WorkJournal::open_in(store.path(), workspace.path(), "ses-first")
+            .unwrap()
+            .checkpoint()
+            .as_deref(),
+        Some("first session continues")
+    );
 }
 
 #[test]
@@ -29,8 +34,14 @@ fn lane_context_and_hook_keep_the_exact_bound_key() {
     let (context, _) = handle.engine_binding();
     let hook = stella_core::hooks::HookPayload::session_start("/workspace")
         .with_session_context(context.as_ref());
-    assert_eq!(hook.session_id.as_deref(), Some("lane-ses-parent-research-42"));
+    assert_eq!(
+        hook.session_id.as_deref(),
+        Some("lane-ses-parent-research-42")
+    );
     handle.begin_session("lane-ses-parent-review-43");
     assert_eq!(context.unwrap().session_id, "lane-ses-parent-research-42");
-    assert_eq!(handle.session_context().unwrap().session_id, "lane-ses-parent-review-43");
+    assert_eq!(
+        handle.session_context().unwrap().session_id,
+        "lane-ses-parent-review-43"
+    );
 }

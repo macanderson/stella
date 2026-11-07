@@ -143,7 +143,10 @@ pub(crate) struct ReflectionRequestContext {
 
 impl From<ReflectionPosture> for ReflectionRequestContext {
     fn from(posture: ReflectionPosture) -> Self {
-        Self { posture, session: None }
+        Self {
+            posture,
+            session: None,
+        }
     }
 }
 
