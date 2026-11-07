@@ -750,6 +750,9 @@ crates/stella-fleet/src/gc/tests.rs 7.48
 crates/stella-fleet/src/git.rs 9.63
 crates/stella-fleet/src/ledger.rs 9.41
 crates/stella-fleet/src/ledger/lease.rs 8.50
+crates/stella-fleet/src/ledger/migrations.rs 9.35
+crates/stella-fleet/src/ledger/query.rs 8.98
+crates/stella-fleet/src/ledger/tests.rs 7.60
 crates/stella-fleet/src/lib.rs 14.35
 crates/stella-fleet/src/monitor.rs 8.90
 crates/stella-fleet/src/plan.rs 8.77
@@ -1327,6 +1330,7 @@ crates/stella-tools/src/custom/tests/reservation.rs 14.10
 crates/stella-tools/src/delete.rs 10.29
 crates/stella-tools/src/durable_write.rs 11.80
 crates/stella-tools/src/edit.rs 10.22
+crates/stella-tools/src/edit/tests.rs 9.30
 crates/stella-tools/src/environment.rs 9.56
 crates/stella-tools/src/exec.rs 10.32
 crates/stella-tools/src/foundry_gate.rs 10.63
