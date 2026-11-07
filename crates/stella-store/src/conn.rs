@@ -120,6 +120,28 @@ impl<'a> Guard<'a> {
     }
 }
 
+impl crate::Store {
+    /// The lock for a plain read or write. If the file is bad, the error
+    /// names it. A poisoned lock means a panic in the middle of a write. The
+    /// link to the file still works, so this takes the lock back. To refuse
+    /// every later write would lose all the logs after one bad one.
+    pub(crate) fn lock(&self) -> Guard<'_> {
+        Guard::new(self.raw_lock())
+    }
+
+    /// The bare lock, for code that names the file on its own. `migrate`
+    /// and `migrate_and_prepare_exports` run when the store opens. They pass
+    /// each error through [`crate::integrity::classify_store_corruption`].
+    /// `integrity_check` shows what SQLite said, word for word.
+    /// `journal_preimages` also runs inside a migration, where only a bare
+    /// link fits. All other code should use `lock`.
+    pub(crate) fn raw_lock(&self) -> std::sync::MutexGuard<'_, rusqlite::Connection> {
+        self.conn
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
 /// A prepared statement that still knows its connection's path. A query run
 /// past this point can still name the file if it hits corruption. See
 /// [`Rows`].

@@ -821,28 +821,6 @@ impl Store {
         Ok(())
     }
 
-    /// `pub(crate)`: [`crate::cache_gaps`] is a separate module (split out to
-    /// keep this file small) whose `impl Store` block needs
-    /// the same connection access every query method here has.
-    pub(crate) fn lock(&self) -> crate::conn::Guard<'_> {
-        // A poisoned mutex means a panic mid-write; the connection itself
-        // is still usable and refusing all further persistence would turn
-        // one bad write into total observability loss.
-        crate::conn::Guard::new(self.raw_lock())
-    }
-
-    /// The bare guard, for the two callers that already name the path
-    /// themselves: [`Store::migrate`] and
-    /// [`Store::migrate_and_prepare_exports`], both wrapped
-    /// end to end in [`crate::integrity::classify_store_corruption`]. Nothing
-    /// else in the crate should reach for this — an ordinary read or write
-    /// wants [`Store::lock`], so its corruption can name the file itself.
-    pub(crate) fn raw_lock(&self) -> std::sync::MutexGuard<'_, Connection> {
-        self.conn
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
     /// Start an execution record, stamped [`JournalEra::CURRENT`]; returns its id.
     pub fn begin_execution(
         &self,
