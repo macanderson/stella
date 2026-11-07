@@ -79,10 +79,11 @@ impl Store {
     pub fn record_event(&self, execution_id: i64, seq: u64, event: &AgentEvent) -> Result<()> {
         let seq = sqlite_i64("event sequence", seq)?;
         let mut conn = self.lock();
-        let tx = conn.transaction()?;
-        write_event(&tx, execution_id, seq, event)?;
-        tx.commit()?;
-        Ok(())
+        conn.transaction(|tx| {
+            write_event(&tx, execution_id, seq, event)?;
+            tx.commit()?;
+            Ok(())
+        })
     }
 
     /// Append `event` to `execution_id`'s journal at the next free sequence.
@@ -106,15 +107,16 @@ impl Store {
     /// or an event that will not encode.
     pub fn append_event(&self, execution_id: i64, event: &AgentEvent) -> Result<u64> {
         let mut conn = self.lock();
-        let tx = conn.transaction()?;
-        let seq: i64 = tx.query_row(
-            "SELECT coalesce(max(seq) + 1, 0) FROM events WHERE execution_id = ?1",
-            params![execution_id],
-            |row| row.get(0),
-        )?;
-        write_event(&tx, execution_id, seq, event)?;
-        tx.commit()?;
-        Ok(seq as u64)
+        conn.transaction(|tx| {
+            let seq: i64 = tx.query_row(
+                "SELECT coalesce(max(seq) + 1, 0) FROM events WHERE execution_id = ?1",
+                params![execution_id],
+                |row| row.get(0),
+            )?;
+            write_event(&tx, execution_id, seq, event)?;
+            tx.commit()?;
+            Ok(seq as u64)
+        })
     }
 }
 

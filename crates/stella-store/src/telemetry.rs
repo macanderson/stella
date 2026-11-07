@@ -2,7 +2,7 @@
 
 pub mod model_rates;
 
-use rusqlite::OptionalExtension as _;
+use crate::conn::OptionalExt as _;
 use rusqlite::params;
 
 use crate::{Result, Store, sqlite_i64};
@@ -152,45 +152,46 @@ impl Store {
         // One transaction, because the receipt and the rollup it raises are
         // one fact: a reader must never see the ledger without the total it
         // now implies.
-        let tx = conn.transaction()?;
-        tx.execute(
-            "INSERT INTO telemetry (execution_id, stream_seq, turn_instance, engine_step, \
-             call_seq, provider, call_role, model, input_tokens, \
-             estimated_input_tokens, output_tokens, cache_read_tokens, cache_miss_tokens, \
-             cache_write_tokens, cost_usd, duration_ms, retries, tool_calls, usage_complete, \
-             sub_agent_id) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                execution_id,
-                stream_seq,
-                row.turn_instance,
-                engine_step,
-                call_seq,
-                row.provider,
-                row.call_role,
-                row.model,
-                input_tokens,
-                estimated_input_tokens,
-                output_tokens,
-                cache_read_tokens,
-                cache_miss_tokens,
-                cache_write_tokens,
-                row.cost_usd,
-                duration_ms,
-                row.retries,
-                tool_calls,
-                row.usage_complete,
-                row.sub_agent_id,
-            ],
-        )?;
-        tx.execute(
-            &format!(
-                "UPDATE executions SET cost_usd = MAX(cost_usd, {RECEIPTS_TOTAL_USD}) WHERE id = ?1"
-            ),
-            params![execution_id],
-        )?;
-        tx.commit()?;
-        Ok(())
+        conn.transaction(|tx| {
+            tx.execute(
+                "INSERT INTO telemetry (execution_id, stream_seq, turn_instance, engine_step, \
+                 call_seq, provider, call_role, model, input_tokens, \
+                 estimated_input_tokens, output_tokens, cache_read_tokens, cache_miss_tokens, \
+                 cache_write_tokens, cost_usd, duration_ms, retries, tool_calls, usage_complete, \
+                 sub_agent_id) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    execution_id,
+                    stream_seq,
+                    row.turn_instance,
+                    engine_step,
+                    call_seq,
+                    row.provider,
+                    row.call_role,
+                    row.model,
+                    input_tokens,
+                    estimated_input_tokens,
+                    output_tokens,
+                    cache_read_tokens,
+                    cache_miss_tokens,
+                    cache_write_tokens,
+                    row.cost_usd,
+                    duration_ms,
+                    row.retries,
+                    tool_calls,
+                    row.usage_complete,
+                    row.sub_agent_id,
+                ],
+            )?;
+            tx.execute(
+                &format!(
+                    "UPDATE executions SET cost_usd = MAX(cost_usd, {RECEIPTS_TOTAL_USD}) WHERE id = ?1"
+                ),
+                params![execution_id],
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
     }
 
     /// Every telemetry row above the replication cursor, oldest first,
@@ -434,13 +435,11 @@ impl Store {
     /// ask here. An execution with no landed model call settles at `0.0`,
     /// which is the truth and not a fallback.
     pub fn execution_settled_cost_usd(&self, execution_id: i64) -> Result<f64> {
-        self.lock()
-            .query_row(
-                "SELECT COALESCE(SUM(cost_usd), 0) FROM telemetry WHERE execution_id = ?1",
-                params![execution_id],
-                |row| row.get(0),
-            )
-            .map_err(Into::into)
+        self.lock().query_row(
+            "SELECT COALESCE(SUM(cost_usd), 0) FROM telemetry WHERE execution_id = ?1",
+            params![execution_id],
+            |row| row.get(0),
+        )
     }
 
     /// Permanently downgrade one execution's accounting state.
@@ -454,14 +453,12 @@ impl Store {
 
     /// Durable completeness bit used by local and enterprise projections.
     pub fn execution_usage_complete(&self, execution_id: i64) -> Result<bool> {
-        self.lock()
-            .query_row(
-                "SELECT finished_at IS NOT NULL AND usage_complete = 1 \
-                        AND usage_status = 'complete' FROM executions WHERE id = ?1",
-                params![execution_id],
-                |row| row.get(0),
-            )
-            .map_err(Into::into)
+        self.lock().query_row(
+            "SELECT finished_at IS NOT NULL AND usage_complete = 1 \
+                    AND usage_status = 'complete' FROM executions WHERE id = ?1",
+            params![execution_id],
+            |row| row.get(0),
+        )
     }
 }
 

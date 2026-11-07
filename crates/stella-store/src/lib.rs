@@ -91,9 +91,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use rusqlite::{Connection, TransactionBehavior, params};
 use serde::Serialize;
 use stella_protocol::{AgentEvent, TaskStatus};
+
+use crate::conn::OptionalExt as _;
 
 // Module map — this file holds the row types, the `Store` handle and its
 // query surface, and the tests; everything else is split by concern:
@@ -138,6 +140,7 @@ use stella_protocol::{AgentEvent, TaskStatus};
 //   telemetry   (crate-private impl) per-call telemetry rows and the
 //               execution-level paid-call accounting gate
 //   usage       `usage.db` — user-tier cross-project telemetry aggregate
+mod conn;
 mod ddl;
 mod dispatch;
 mod error;
@@ -757,7 +760,9 @@ impl Store {
     /// files run each pending `MIGRATIONS` entry in its own transaction
     /// (version stamped inside it — see [`apply_migration`]).
     fn migrate(&self) -> Result<()> {
-        let mut conn = self.lock();
+        // Raw: the caller, `migrate_and_prepare_exports`, already wraps this
+        // whole call in `classify_store_corruption` with the resolved path.
+        let mut conn = self.raw_lock();
         // The fresh-file decision is made under a write lock, because
         // "user_version is 0 AND no store table exists" is only true until
         // someone else acts on it. Read outside a transaction — or inside a
@@ -816,18 +821,6 @@ impl Store {
         Ok(())
     }
 
-    /// `pub(crate)`: [`crate::cache_gaps`] is a separate module (split out to
-    /// keep this file small) whose `impl Store` block needs
-    /// the same connection access every query method here has.
-    pub(crate) fn lock(&self) -> std::sync::MutexGuard<'_, Connection> {
-        // A poisoned mutex means a panic mid-write; the connection itself
-        // is still usable and refusing all further persistence would turn
-        // one bad write into total observability loss.
-        self.conn
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
     /// Start an execution record, stamped [`JournalEra::CURRENT`]; returns its id.
     pub fn begin_execution(
         &self,
@@ -866,27 +859,27 @@ impl Store {
     /// leaving the execution with a truncated file list, and the batch costs
     /// one WAL commit rather than one per row on the turn-finalize path.
     pub fn record_files_touched(&self, execution_id: i64, files: &[FileTouchRow]) -> Result<()> {
-        let mut conn = self.lock();
-        let tx = conn.transaction()?;
-        for row in files {
-            let lines_added = sqlite_i64("file lines added", row.lines_added)?;
-            let lines_removed = sqlite_i64("file lines removed", row.lines_removed)?;
-            tx.execute(
-                "INSERT INTO files_touched \
-                 (execution_id, path, ops, lines_added, lines_removed, events) \
-                 VALUES (?, ?, ?, ?, ?, ?)",
-                params![
-                    execution_id,
-                    row.path,
-                    row.ops,
-                    lines_added,
-                    lines_removed,
-                    row.events_json,
-                ],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
+        self.lock().transaction(|tx| {
+            for row in files {
+                let lines_added = sqlite_i64("file lines added", row.lines_added)?;
+                let lines_removed = sqlite_i64("file lines removed", row.lines_removed)?;
+                tx.execute(
+                    "INSERT INTO files_touched \
+                     (execution_id, path, ops, lines_added, lines_removed, events) \
+                     VALUES (?, ?, ?, ?, ?, ?)",
+                    params![
+                        execution_id,
+                        row.path,
+                        row.ops,
+                        lines_added,
+                        lines_removed,
+                        row.events_json,
+                    ],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
     }
 
     /// Persist one citation row per execution/memory pair. One transaction —
@@ -900,24 +893,24 @@ impl Store {
         execution_id: i64,
         citations: &[MemoryCitationRow],
     ) -> Result<()> {
-        let mut conn = self.lock();
-        let tx = conn.transaction()?;
-        for row in citations {
-            tx.execute(
-                "INSERT INTO memory_citations \
-                 (execution_id, memory_id, useful_score, truthful, remark) \
-                 VALUES (?, ?, ?, ?, ?)",
-                params![
-                    execution_id,
-                    row.memory_id,
-                    row.useful_score,
-                    row.truthful,
-                    row.remark,
-                ],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
+        self.lock().transaction(|tx| {
+            for row in citations {
+                tx.execute(
+                    "INSERT INTO memory_citations \
+                     (execution_id, memory_id, useful_score, truthful, remark) \
+                     VALUES (?, ?, ?, ?, ?)",
+                    params![
+                        execution_id,
+                        row.memory_id,
+                        row.useful_score,
+                        row.truthful,
+                        row.remark,
+                    ],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
     }
 
     /// Record the skills applied in one execution — one row per skill at its
@@ -925,17 +918,17 @@ impl Store {
     /// of [`Self::record_agent_uses`] for the SKILLS tab. One transaction —
     /// see [`Self::record_files_touched`].
     pub fn record_skill_usage(&self, execution_id: i64, skills: &[SkillUsageRow]) -> Result<()> {
-        let mut conn = self.lock();
-        let tx = conn.transaction()?;
-        for row in skills {
-            tx.execute(
-                "INSERT INTO skill_usage (execution_id, skill, version, reason) \
-                 VALUES (?, ?, ?, ?)",
-                params![execution_id, row.skill, row.version as i64, row.reason],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
+        self.lock().transaction(|tx| {
+            for row in skills {
+                tx.execute(
+                    "INSERT INTO skill_usage (execution_id, skill, version, reason) \
+                     VALUES (?, ?, ?, ?)",
+                    params![execution_id, row.skill, row.version as i64, row.reason],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
     }
 
     /// Per-memory citation aggregates ([`MemoryCitationStats`]) — the data
@@ -1434,7 +1427,6 @@ impl Store {
                 |row| row.get(0),
             )
             .optional()
-            .map_err(StoreError::from)
     }
 
     /// Release a lock (only the holder's release removes it).

@@ -17,9 +17,7 @@
 //! interrupt count at all, rather than carrying a zero that would read as "none
 //! happened".
 
-use rusqlite::Result;
-
-use crate::Store;
+use crate::{Result, Store};
 
 /// One session's countable facts.
 #[derive(Debug, Clone, PartialEq, Eq)]

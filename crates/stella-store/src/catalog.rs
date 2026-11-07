@@ -36,7 +36,8 @@ use std::time::Duration;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::{Result, StoreError, fnv_hex};
+use crate::conn::OptionalExt as _;
+use crate::{Result, StoreError, fnv_hex, integrity::classify_store_corruption};
 
 /// Where the user-tier catalog lives: `data_dir()/catalog.db` (honors
 /// `STELLA_DATA_DIR`, like every user-tier store).
@@ -284,6 +285,11 @@ impl CatalogStore {
     /// the cost and budget metering reads, so another local account able to write
     /// it can silently falsify spend accounting.
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_unnamed(path).map_err(|error| classify_store_corruption(error, Some(path)))
+    }
+
+    /// [`CatalogStore::open`] before a corrupt-file error gets the file name.
+    fn open_unnamed(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {
@@ -307,8 +313,8 @@ impl CatalogStore {
         Self::open(&catalog_db_path())
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Connection> {
-        self.conn.lock().unwrap_or_else(|p| p.into_inner())
+    fn lock(&self) -> crate::conn::Guard<'_> {
+        crate::conn::Guard::new(self.conn.lock().unwrap_or_else(|p| p.into_inner()))
     }
 
     /// Apply one refresh batch in a single transaction: upsert cards,
@@ -318,139 +324,140 @@ impl CatalogStore {
     pub fn apply_batch(&self, models: &[ModelUpsert]) -> Result<RefreshCounts> {
         let mut counts = RefreshCounts::default();
         let mut guard = self.lock();
-        let tx = guard.transaction()?;
-        for model in models {
-            counts.models_seen += 1;
+        guard.transaction(|tx| {
+            for model in models {
+                counts.models_seen += 1;
 
-            // Card: insert-or-update keyed (api_provider, slug). Metadata
-            // (display name, family, model_provider, source) tracks the
-            // latest sync; identity never changes.
-            let existing: Option<i64> = tx
-                .query_row(
-                    "SELECT id FROM model_cards WHERE api_provider = ?1 AND slug = ?2",
-                    params![model.api_provider, model.slug],
-                    |row| row.get(0),
-                )
-                .optional()?;
-            let card_id = match existing {
-                Some(id) => {
+                // Card: insert-or-update keyed (api_provider, slug). Metadata
+                // (display name, family, model_provider, source) tracks the
+                // latest sync; identity never changes.
+                let existing: Option<i64> = tx
+                    .query_row(
+                        "SELECT id FROM model_cards WHERE api_provider = ?1 AND slug = ?2",
+                        params![model.api_provider, model.slug],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                let card_id = match existing {
+                    Some(id) => {
+                        tx.execute(
+                            "UPDATE model_cards SET
+                                 model_provider = ?2,
+                                 display_name   = COALESCE(?3, display_name),
+                                 family         = COALESCE(?4, family),
+                                 source         = ?5
+                             WHERE id = ?1",
+                            params![
+                                id,
+                                model.model_provider,
+                                model.display_name,
+                                model.family,
+                                model.source
+                            ],
+                        )?;
+                        id
+                    }
+                    None => {
+                        tx.execute(
+                            "INSERT INTO model_cards
+                                 (api_provider, model_provider, slug, display_name, family, source)
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                            params![
+                                model.api_provider,
+                                model.model_provider,
+                                model.slug,
+                                model.display_name,
+                                model.family,
+                                model.source
+                            ],
+                        )?;
+                        counts.cards_added += 1;
+                        tx.last_insert_rowid()
+                    }
+                };
+
+                // Version: append-only, and ONLY on a real pricing change.
+                let new_hash = model.version.content_hash();
+                let latest: Option<(i64, String)> = tx
+                    .query_row(
+                        "SELECT version, content_hash FROM model_card_versions
+                         WHERE model_card_id = ?1 ORDER BY version DESC LIMIT 1",
+                        params![card_id],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .optional()?;
+                let needs_version = match &latest {
+                    Some((_, hash)) => *hash != new_hash,
+                    None => true,
+                };
+                if needs_version {
+                    let next = latest.map(|(v, _)| v + 1).unwrap_or(1);
                     tx.execute(
-                        "UPDATE model_cards SET
-                             model_provider = ?2,
-                             display_name   = COALESCE(?3, display_name),
-                             family         = COALESCE(?4, family),
-                             source         = ?5
-                         WHERE id = ?1",
+                        "INSERT INTO model_card_versions
+                             (model_card_id, version, input_usd_per_mtok, output_usd_per_mtok,
+                              cached_input_usd_per_mtok, cache_write_usd_per_mtok, context_window,
+                              max_output_tokens, release_date, last_updated, source, content_hash,
+                              supports_reasoning, supports_tools, knowledge)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
                         params![
-                            id,
-                            model.model_provider,
-                            model.display_name,
-                            model.family,
-                            model.source
+                            card_id,
+                            next,
+                            model.version.input_usd_per_mtok,
+                            model.version.output_usd_per_mtok,
+                            model.version.cached_input_usd_per_mtok,
+                            model.version.cache_write_usd_per_mtok,
+                            model.version.context_window.map(|v| v as i64),
+                            model.version.max_output_tokens.map(|v| v as i64),
+                            model.version.release_date,
+                            model.version.last_updated,
+                            model.source,
+                            new_hash,
+                            model.version.supports_reasoning,
+                            model.version.supports_tools,
+                            model.version.knowledge
                         ],
                     )?;
-                    id
+                    counts.versions_added += 1;
                 }
-                None => {
-                    tx.execute(
-                        "INSERT INTO model_cards
-                             (api_provider, model_provider, slug, display_name, family, source)
+
+                // Aliases: caller-provided forms first (they may carry version
+                // tokens), then the slug itself as a guaranteed fallback so a
+                // card is always resolvable by its own id. OR IGNORE keeps the
+                // first registration of a form — an exact catalog id can never
+                // be overwritten by a later derived collision.
+                for alias in &model.aliases {
+                    let changed = tx.execute(
+                        "INSERT OR IGNORE INTO model_aliases
+                             (alias, api_provider, model_provider, model_version, model_card_id, source)
                          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                         params![
+                            alias.alias,
                             model.api_provider,
                             model.model_provider,
-                            model.slug,
-                            model.display_name,
-                            model.family,
-                            model.source
+                            alias.model_version,
+                            card_id,
+                            alias.source
                         ],
                     )?;
-                    counts.cards_added += 1;
-                    tx.last_insert_rowid()
+                    counts.aliases_added += changed as u64;
                 }
-            };
-
-            // Version: append-only, and ONLY on a real pricing change.
-            let new_hash = model.version.content_hash();
-            let latest: Option<(i64, String)> = tx
-                .query_row(
-                    "SELECT version, content_hash FROM model_card_versions
-                     WHERE model_card_id = ?1 ORDER BY version DESC LIMIT 1",
-                    params![card_id],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .optional()?;
-            let needs_version = match &latest {
-                Some((_, hash)) => *hash != new_hash,
-                None => true,
-            };
-            if needs_version {
-                let next = latest.map(|(v, _)| v + 1).unwrap_or(1);
-                tx.execute(
-                    "INSERT INTO model_card_versions
-                         (model_card_id, version, input_usd_per_mtok, output_usd_per_mtok,
-                          cached_input_usd_per_mtok, cache_write_usd_per_mtok, context_window,
-                          max_output_tokens, release_date, last_updated, source, content_hash,
-                          supports_reasoning, supports_tools, knowledge)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
-                    params![
-                        card_id,
-                        next,
-                        model.version.input_usd_per_mtok,
-                        model.version.output_usd_per_mtok,
-                        model.version.cached_input_usd_per_mtok,
-                        model.version.cache_write_usd_per_mtok,
-                        model.version.context_window.map(|v| v as i64),
-                        model.version.max_output_tokens.map(|v| v as i64),
-                        model.version.release_date,
-                        model.version.last_updated,
-                        model.source,
-                        new_hash,
-                        model.version.supports_reasoning,
-                        model.version.supports_tools,
-                        model.version.knowledge
-                    ],
-                )?;
-                counts.versions_added += 1;
-            }
-
-            // Aliases: caller-provided forms first (they may carry version
-            // tokens), then the slug itself as a guaranteed fallback so a
-            // card is always resolvable by its own id. OR IGNORE keeps the
-            // first registration of a form — an exact catalog id can never
-            // be overwritten by a later derived collision.
-            for alias in &model.aliases {
                 let changed = tx.execute(
                     "INSERT OR IGNORE INTO model_aliases
                          (alias, api_provider, model_provider, model_version, model_card_id, source)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                     VALUES (?1, ?2, ?3, NULL, ?4, ?5)",
                     params![
-                        alias.alias,
+                        model.slug,
                         model.api_provider,
                         model.model_provider,
-                        alias.model_version,
                         card_id,
-                        alias.source
+                        model.source
                     ],
                 )?;
                 counts.aliases_added += changed as u64;
             }
-            let changed = tx.execute(
-                "INSERT OR IGNORE INTO model_aliases
-                     (alias, api_provider, model_provider, model_version, model_card_id, source)
-                 VALUES (?1, ?2, ?3, NULL, ?4, ?5)",
-                params![
-                    model.slug,
-                    model.api_provider,
-                    model.model_provider,
-                    card_id,
-                    model.source
-                ],
-            )?;
-            counts.aliases_added += changed as u64;
-        }
-        tx.commit()?;
-        Ok(counts)
+            tx.commit()?;
+            Ok(counts)
+        })
     }
 
     /// Record a completed sync for `source` (e.g. `models.dev`): the ETag
@@ -478,8 +485,7 @@ impl CatalogStore {
     /// uses both for validation strictness and for the auto-refresh
     /// opt-in (no sync row → never fetch implicitly).
     pub fn sync_info(&self, source: &str) -> Result<Option<SyncInfo>> {
-        Ok(self
-            .lock()
+        self.lock()
             .query_row(
                 "SELECT etag, payload_hash, refreshed_at FROM catalog_sync WHERE source = ?1",
                 params![source],
@@ -491,14 +497,13 @@ impl CatalogStore {
                     })
                 },
             )
-            .optional()?)
+            .optional()
     }
 
     /// Seconds since the last completed sync for `source` — `None` when
     /// never synced (or the stored timestamp is unreadable).
     pub fn seconds_since_sync(&self, source: &str) -> Result<Option<i64>> {
-        Ok(self
-            .lock()
+        self.lock()
             .query_row(
                 "SELECT CAST(strftime('%s','now') AS INTEGER)
                         - CAST(strftime('%s', refreshed_at) AS INTEGER)
@@ -506,14 +511,13 @@ impl CatalogStore {
                 params![source],
                 |row| row.get(0),
             )
-            .optional()?)
+            .optional()
     }
 
     /// Resolve any string form against the alias table, returning the card
     /// it names plus the latest version's pricing configuration.
     pub fn resolve(&self, api_provider: &str, alias: &str) -> Result<Option<ResolvedModel>> {
-        Ok(self
-            .lock()
+        self.lock()
             .query_row(
                 "SELECT c.id, c.api_provider, c.model_provider, c.slug, c.display_name, c.family,
                         a.model_version, a.alias,
@@ -556,7 +560,7 @@ impl CatalogStore {
                     })
                 },
             )
-            .optional()?)
+            .optional()
     }
 
     /// How many cards an API provider has, optionally filtered by card

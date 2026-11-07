@@ -76,6 +76,7 @@
 use rusqlite::{OptionalExtension, TransactionBehavior, params};
 
 use super::{MAX_EXPORT_PAGE_ROWS, random_export_nonce, validate_sink_fingerprint};
+use crate::conn::OptionalExt as _;
 use crate::{Result, StoreError};
 
 /// Bounded, content-free reason for permanently skipping one malformed legacy export.
@@ -140,7 +141,6 @@ impl crate::Store {
             [],
             |row| row.get(0),
         )
-        .map_err(Into::into)
     }
 
     /// Enroll this store with one sink, stamping the current maximum execution
@@ -180,63 +180,64 @@ impl crate::Store {
     ) -> Result<Option<String>> {
         validate_sink_fingerprint(sink_fingerprint)?;
         let mut conn = self.lock();
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let eligible: bool = tx.query_row(
-            "SELECT EXISTS(
-                SELECT 1 FROM executions e JOIN enterprise_export_enrollment x
-                  ON x.sink_fingerprint = ?1
-                WHERE e.id = ?2 AND e.id > x.enrolled_after_execution_id
-                  AND e.id > x.compacted_through_execution_id
-                  AND e.finished_at IS NOT NULL AND e.outcome IS NOT NULL
-                  AND NOT EXISTS (
-                      SELECT 1 FROM enterprise_export_skips s
-                      WHERE s.sink_fingerprint = ?1 AND s.execution_id = ?2
-                  ))",
-            params![sink_fingerprint, execution_id],
-            |row| row.get(0),
-        )?;
-        if !eligible {
-            tx.commit()?;
-            return Ok(None);
-        }
-        if let Some(existing) = tx
-            .query_row(
+        conn.transaction_with_behavior(TransactionBehavior::Immediate, |tx| {
+            let eligible: bool = tx.query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM executions e JOIN enterprise_export_enrollment x
+                      ON x.sink_fingerprint = ?1
+                    WHERE e.id = ?2 AND e.id > x.enrolled_after_execution_id
+                      AND e.id > x.compacted_through_execution_id
+                      AND e.finished_at IS NOT NULL AND e.outcome IS NOT NULL
+                      AND NOT EXISTS (
+                          SELECT 1 FROM enterprise_export_skips s
+                          WHERE s.sink_fingerprint = ?1 AND s.execution_id = ?2
+                      ))",
+                params![sink_fingerprint, execution_id],
+                |row| row.get(0),
+            )?;
+            if !eligible {
+                tx.commit()?;
+                return Ok(None);
+            }
+            if let Some(existing) = tx
+                .query_row(
+                    "SELECT export_nonce FROM enterprise_export_ledger
+                     WHERE sink_fingerprint = ?1 AND execution_id = ?2",
+                    params![sink_fingerprint, execution_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+            {
+                if existing.is_empty() {
+                    let nonce = random_export_nonce();
+                    tx.execute(
+                        "UPDATE enterprise_export_ledger SET export_nonce = ?1
+                         WHERE sink_fingerprint = ?2 AND execution_id = ?3
+                           AND export_nonce = ''",
+                        params![nonce, sink_fingerprint, execution_id],
+                    )?;
+                    tx.commit()?;
+                    return Ok(Some(nonce));
+                }
+                tx.commit()?;
+                return Ok(Some(existing));
+            }
+            let nonce = random_export_nonce();
+            tx.execute(
+                "INSERT OR IGNORE INTO enterprise_export_ledger
+                 (sink_fingerprint, execution_id, export_nonce, status)
+                 VALUES (?1, ?2, ?3, 'pending')",
+                params![sink_fingerprint, execution_id, nonce],
+            )?;
+            let persisted = tx.query_row(
                 "SELECT export_nonce FROM enterprise_export_ledger
                  WHERE sink_fingerprint = ?1 AND execution_id = ?2",
                 params![sink_fingerprint, execution_id],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?
-        {
-            if existing.is_empty() {
-                let nonce = random_export_nonce();
-                tx.execute(
-                    "UPDATE enterprise_export_ledger SET export_nonce = ?1
-                     WHERE sink_fingerprint = ?2 AND execution_id = ?3
-                       AND export_nonce = ''",
-                    params![nonce, sink_fingerprint, execution_id],
-                )?;
-                tx.commit()?;
-                return Ok(Some(nonce));
-            }
+                |row| row.get(0),
+            )?;
             tx.commit()?;
-            return Ok(Some(existing));
-        }
-        let nonce = random_export_nonce();
-        tx.execute(
-            "INSERT OR IGNORE INTO enterprise_export_ledger
-             (sink_fingerprint, execution_id, export_nonce, status)
-             VALUES (?1, ?2, ?3, 'pending')",
-            params![sink_fingerprint, execution_id, nonce],
-        )?;
-        let persisted = tx.query_row(
-            "SELECT export_nonce FROM enterprise_export_ledger
-             WHERE sink_fingerprint = ?1 AND execution_id = ?2",
-            params![sink_fingerprint, execution_id],
-            |row| row.get(0),
-        )?;
-        tx.commit()?;
-        Ok(Some(persisted))
+            Ok(Some(persisted))
+        })
     }
 
     /// One page of what this store still owes `sink_fingerprint`, in ascending
@@ -275,41 +276,42 @@ impl crate::Store {
         let sql_limit = i64::try_from(limit)
             .map_err(|_| StoreError::Other("invalid enterprise export page limit".into()))?;
         let mut conn = self.lock();
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let mut pending = {
-            let mut stmt = tx.prepare(
-                "SELECT l.execution_id, l.export_nonce FROM enterprise_export_ledger l
-                 JOIN executions e ON e.id = l.execution_id
-                 WHERE l.sink_fingerprint = ?1 AND l.status = 'pending'
-                   AND l.execution_id > ?2 AND e.usage_complete = 1
-                   AND NOT EXISTS (
-                       SELECT 1 FROM enterprise_export_skips s
-                       WHERE s.sink_fingerprint = l.sink_fingerprint
-                         AND s.execution_id = l.execution_id
-                   )
-                 ORDER BY l.execution_id LIMIT ?3",
-            )?;
-            let rows = stmt.query_map(params![sink_fingerprint, after, sql_limit], |row| {
-                Ok(PendingEnterpriseExport {
-                    execution_id: row.get(0)?,
-                    export_nonce: row.get(1)?,
-                })
-            })?;
-            rows.collect::<std::result::Result<Vec<_>, _>>()?
-        };
-        for row in &mut pending {
-            if row.export_nonce.is_empty() {
-                row.export_nonce = random_export_nonce();
-                tx.execute(
-                    "UPDATE enterprise_export_ledger SET export_nonce = ?1
-                     WHERE sink_fingerprint = ?2 AND execution_id = ?3
-                       AND export_nonce = ''",
-                    params![row.export_nonce, sink_fingerprint, row.execution_id],
+        conn.transaction_with_behavior(TransactionBehavior::Immediate, |tx| {
+            let mut pending = {
+                let mut stmt = tx.prepare(
+                    "SELECT l.execution_id, l.export_nonce FROM enterprise_export_ledger l
+                     JOIN executions e ON e.id = l.execution_id
+                     WHERE l.sink_fingerprint = ?1 AND l.status = 'pending'
+                       AND l.execution_id > ?2 AND e.usage_complete = 1
+                       AND NOT EXISTS (
+                           SELECT 1 FROM enterprise_export_skips s
+                           WHERE s.sink_fingerprint = l.sink_fingerprint
+                             AND s.execution_id = l.execution_id
+                       )
+                     ORDER BY l.execution_id LIMIT ?3",
                 )?;
+                let rows = stmt.query_map(params![sink_fingerprint, after, sql_limit], |row| {
+                    Ok(PendingEnterpriseExport {
+                        execution_id: row.get(0)?,
+                        export_nonce: row.get(1)?,
+                    })
+                })?;
+                rows.collect::<std::result::Result<Vec<_>, _>>()?
+            };
+            for row in &mut pending {
+                if row.export_nonce.is_empty() {
+                    row.export_nonce = random_export_nonce();
+                    tx.execute(
+                        "UPDATE enterprise_export_ledger SET export_nonce = ?1
+                         WHERE sink_fingerprint = ?2 AND execution_id = ?3
+                           AND export_nonce = ''",
+                        params![row.export_nonce, sink_fingerprint, row.execution_id],
+                    )?;
+                }
             }
-        }
-        tx.commit()?;
-        Ok(pending)
+            tx.commit()?;
+            Ok(pending)
+        })
     }
 
     /// Settle one ledger row as handed to the spool. Call it AFTER the enqueue
@@ -350,40 +352,41 @@ impl crate::Store {
     ) -> Result<()> {
         validate_sink_fingerprint(sink_fingerprint)?;
         let mut conn = self.lock();
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let inserted = tx.execute(
-            "INSERT OR IGNORE INTO enterprise_export_skips
-                 (sink_fingerprint, execution_id, reason)
-             SELECT ?2, ?3, ?1
-             WHERE EXISTS (
-                 SELECT 1 FROM enterprise_export_ledger
-                 WHERE sink_fingerprint = ?2 AND execution_id = ?3 AND status = 'pending'
-             )",
-            params![reason.as_str(), sink_fingerprint, execution_id],
-        )?;
-        if inserted == 1 {
-            let deleted = tx.execute(
-                "DELETE FROM enterprise_export_ledger
-                 WHERE sink_fingerprint = ?1 AND execution_id = ?2 AND status = 'pending'",
-                params![sink_fingerprint, execution_id],
+        conn.transaction_with_behavior(TransactionBehavior::Immediate, |tx| {
+            let inserted = tx.execute(
+                "INSERT OR IGNORE INTO enterprise_export_skips
+                     (sink_fingerprint, execution_id, reason)
+                 SELECT ?2, ?3, ?1
+                 WHERE EXISTS (
+                     SELECT 1 FROM enterprise_export_ledger
+                     WHERE sink_fingerprint = ?2 AND execution_id = ?3 AND status = 'pending'
+                 )",
+                params![reason.as_str(), sink_fingerprint, execution_id],
             )?;
-            if deleted != 1 {
-                return Err(StoreError::Other(
-                    "enterprise export skip did not consume exactly one pending row".into(),
-                ));
+            if inserted == 1 {
+                let deleted = tx.execute(
+                    "DELETE FROM enterprise_export_ledger
+                     WHERE sink_fingerprint = ?1 AND execution_id = ?2 AND status = 'pending'",
+                    params![sink_fingerprint, execution_id],
+                )?;
+                if deleted != 1 {
+                    return Err(StoreError::Other(
+                        "enterprise export skip did not consume exactly one pending row".into(),
+                    ));
+                }
+                let sql = format!(
+                    "UPDATE enterprise_export_enrollment
+                     SET skipped_rows = skipped_rows + 1,
+                         {} = {} + 1
+                     WHERE sink_fingerprint = ?1",
+                    reason.counter_column(),
+                    reason.counter_column()
+                );
+                tx.execute(&sql, params![sink_fingerprint])?;
             }
-            let sql = format!(
-                "UPDATE enterprise_export_enrollment
-                 SET skipped_rows = skipped_rows + 1,
-                     {} = {} + 1
-                 WHERE sink_fingerprint = ?1",
-                reason.counter_column(),
-                reason.counter_column()
-            );
-            tx.execute(&sql, params![sink_fingerprint])?;
-        }
-        tx.commit()?;
-        Ok(())
+            tx.commit()?;
+            Ok(())
+        })
     }
 
     /// Durable skip counters for one sink — what `stella telemetry status`
@@ -446,48 +449,50 @@ impl crate::Store {
         let offset = i64::try_from(retain_completed)
             .map_err(|_| StoreError::Other("invalid enterprise export retention".into()))?;
         let mut conn = self.lock();
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let cutoff: Option<i64> = tx
-            .query_row(
-                "SELECT execution_id FROM (
-                     SELECT execution_id FROM enterprise_export_ledger
-                     WHERE sink_fingerprint = ?1 AND status = 'spooled'
-                     UNION ALL
-                     SELECT execution_id FROM enterprise_export_skips
-                     WHERE sink_fingerprint = ?1
-                 )
-                 ORDER BY execution_id DESC LIMIT 1 OFFSET ?2",
-                params![sink_fingerprint, offset],
-                |row| row.get(0),
-            )
-            .optional()?;
-        let Some(cutoff) = cutoff else {
+        conn.transaction_with_behavior(TransactionBehavior::Immediate, |tx| {
+            let cutoff: Option<i64> = tx
+                .query_row(
+                    "SELECT execution_id FROM (
+                         SELECT execution_id FROM enterprise_export_ledger
+                         WHERE sink_fingerprint = ?1 AND status = 'spooled'
+                         UNION ALL
+                         SELECT execution_id FROM enterprise_export_skips
+                         WHERE sink_fingerprint = ?1
+                     )
+                     ORDER BY execution_id DESC LIMIT 1 OFFSET ?2",
+                    params![sink_fingerprint, offset],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let Some(cutoff) = cutoff else {
+                tx.commit()?;
+                return Ok(0);
+            };
+            let deleted_ledger = tx.execute(
+                "DELETE FROM enterprise_export_ledger
+                 WHERE sink_fingerprint = ?1 AND status = 'spooled'
+                   AND execution_id <= ?2",
+                params![sink_fingerprint, cutoff],
+            )?;
+            let deleted_skips = tx.execute(
+                "DELETE FROM enterprise_export_skips
+                 WHERE sink_fingerprint = ?1 AND execution_id <= ?2",
+                params![sink_fingerprint, cutoff],
+            )?;
+            tx.execute(
+                "UPDATE enterprise_export_enrollment
+                 SET compacted_through_execution_id = MAX(compacted_through_execution_id, ?2)
+                 WHERE sink_fingerprint = ?1",
+                params![sink_fingerprint, cutoff],
+            )?;
             tx.commit()?;
-            return Ok(0);
-        };
-        let deleted_ledger = tx.execute(
-            "DELETE FROM enterprise_export_ledger
-             WHERE sink_fingerprint = ?1 AND status = 'spooled'
-               AND execution_id <= ?2",
-            params![sink_fingerprint, cutoff],
-        )?;
-        let deleted_skips = tx.execute(
-            "DELETE FROM enterprise_export_skips
-             WHERE sink_fingerprint = ?1 AND execution_id <= ?2",
-            params![sink_fingerprint, cutoff],
-        )?;
-        tx.execute(
-            "UPDATE enterprise_export_enrollment
-             SET compacted_through_execution_id = MAX(compacted_through_execution_id, ?2)
-             WHERE sink_fingerprint = ?1",
-            params![sink_fingerprint, cutoff],
-        )?;
-        tx.commit()?;
-        let deleted = deleted_ledger.checked_add(deleted_skips).ok_or_else(|| {
-            StoreError::Other("enterprise export compaction count exceeds usize".into())
-        })?;
-        u64::try_from(deleted)
-            .map_err(|_| StoreError::Other("enterprise export compaction count exceeds u64".into()))
+            let deleted = deleted_ledger.checked_add(deleted_skips).ok_or_else(|| {
+                StoreError::Other("enterprise export compaction count exceeds usize".into())
+            })?;
+            u64::try_from(deleted).map_err(|_| {
+                StoreError::Other("enterprise export compaction count exceeds u64".into())
+            })
+        })
     }
 }
 

@@ -50,44 +50,45 @@ impl Store {
         now_ms: u64,
     ) -> Result<()> {
         let mut conn = self.lock();
-        let tx = conn.transaction()?;
-        for item in tasks {
-            let status = task_status_to_string(item.status)?;
-            // The contract rides as its own JSON, which round-trips
-            // byte-for-byte (AGENTS.md #4). `None` writes SQL NULL and means
-            // *this row records no contract* — never `read_only`, which is a
-            // declaration somebody made.
-            let contract = item
-                .contract
-                .as_ref()
-                .map(serde_json::to_string)
-                .transpose()
-                .map_err(|e| StoreError::serde("encoding a task contract", e))?;
-            tx.execute(
-                "INSERT INTO tasks \
-                 (execution_id, session_id, task_id, subject, description, status, owner, \
-                  contract, updated_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
-                 ON CONFLICT (session_id, task_id) DO UPDATE SET \
-                 execution_id = excluded.execution_id, subject = excluded.subject, \
-                 description = excluded.description, status = excluded.status, \
-                 owner = excluded.owner, contract = excluded.contract, \
-                 updated_at = excluded.updated_at",
-                params![
-                    execution_id,
-                    session_id,
-                    item.id,
-                    item.subject,
-                    item.description,
-                    status,
-                    item.owner,
-                    contract,
-                    now_ms as i64,
-                ],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
+        conn.transaction(|tx| {
+            for item in tasks {
+                let status = task_status_to_string(item.status)?;
+                // The contract rides as its own JSON, which round-trips
+                // byte-for-byte (AGENTS.md #4). `None` writes SQL NULL and means
+                // *this row records no contract* — never `read_only`, which is a
+                // declaration somebody made.
+                let contract = item
+                    .contract
+                    .as_ref()
+                    .map(serde_json::to_string)
+                    .transpose()
+                    .map_err(|e| StoreError::serde("encoding a task contract", e))?;
+                tx.execute(
+                    "INSERT INTO tasks \
+                     (execution_id, session_id, task_id, subject, description, status, owner, \
+                      contract, updated_at) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                     ON CONFLICT (session_id, task_id) DO UPDATE SET \
+                     execution_id = excluded.execution_id, subject = excluded.subject, \
+                     description = excluded.description, status = excluded.status, \
+                     owner = excluded.owner, contract = excluded.contract, \
+                     updated_at = excluded.updated_at",
+                    params![
+                        execution_id,
+                        session_id,
+                        item.id,
+                        item.subject,
+                        item.description,
+                        status,
+                        item.owner,
+                        contract,
+                        now_ms as i64,
+                    ],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
     }
 
     /// Read back a session's task board — each task's latest recorded state,

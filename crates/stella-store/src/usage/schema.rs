@@ -49,9 +49,11 @@
 //! be known to have run before any write, not merely before any read. Neither
 //! is true today.
 
+use std::path::PathBuf;
+
 use rusqlite::Connection;
 
-use crate::Result;
+use crate::{Result, integrity::classify_store_corruption};
 
 pub(super) const USAGE_SCHEMA: &str = "\
 CREATE TABLE IF NOT EXISTS projects (
@@ -264,6 +266,23 @@ const HUB_MIGRATIONS: [HubMigrationStep; 4] = [
 /// The hub schema version this build writes -- the `PRAGMA user_version` of
 /// every hub it has opened.
 const HUB_SCHEMA_VERSION: i64 = HUB_MIGRATIONS.len() as i64;
+
+/// Set the hub's pragmas, then [`apply`] the schema. These are the first
+/// reads of a file just opened, so a damaged usage.db fails here. The error
+/// names the file.
+pub(super) fn prepare(conn: &mut Connection) -> Result<()> {
+    let path = conn.path().map(PathBuf::from);
+    pragmas_then_apply(conn).map_err(|error| classify_store_corruption(error, path.as_deref()))
+}
+
+fn pragmas_then_apply(conn: &mut Connection) -> Result<()> {
+    conn.execute_batch(
+        "PRAGMA journal_mode=WAL;
+         PRAGMA synchronous=NORMAL;
+         PRAGMA busy_timeout=5000;",
+    )?;
+    apply(conn)
+}
 
 /// Apply the schema to a freshly opened hub connection: converge the tables,
 /// then step any outstanding migrations.

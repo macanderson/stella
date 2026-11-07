@@ -16,7 +16,9 @@
 //! dashboard; the store persists and returns bytes, exactly as it does for
 //! `events.payload`.
 
-use rusqlite::{OptionalExtension, params};
+use rusqlite::params;
+
+use crate::conn::OptionalExt as _;
 
 use crate::{Result, Store};
 
@@ -66,8 +68,7 @@ impl Store {
         session_id: &str,
         turn: u32,
     ) -> Result<Option<SessionTurnDiffRow>> {
-        Ok(self
-            .lock()
+        self.lock()
             .query_row(
                 "SELECT turn, execution_id, recorded_at, files \
                  FROM session_turn_diffs WHERE session_id = ? AND turn = ?",
@@ -81,7 +82,7 @@ impl Store {
                     })
                 },
             )
-            .optional()?)
+            .optional()
     }
 }
 

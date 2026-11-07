@@ -57,24 +57,25 @@ impl Store {
     /// half batch behind, so a fixed batch can be written again.
     pub fn record_mcp_usage(&self, execution_id: i64, calls: &[McpUsageRow]) -> Result<()> {
         let mut conn = self.lock();
-        let tx = conn.transaction()?;
-        for (seq, row) in calls.iter().enumerate() {
-            tx.execute(
-                "INSERT INTO mcp_usage \
-                 (execution_id, seq, server, tool, reason, called_at_ms) \
-                 VALUES (?, ?, ?, ?, ?, ?)",
-                params![
-                    execution_id,
-                    seq as i64,
-                    row.server,
-                    row.tool,
-                    row.reason,
-                    row.called_at_ms,
-                ],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
+        conn.transaction(|tx| {
+            for (seq, row) in calls.iter().enumerate() {
+                tx.execute(
+                    "INSERT INTO mcp_usage \
+                     (execution_id, seq, server, tool, reason, called_at_ms) \
+                     VALUES (?, ?, ?, ?, ?, ?)",
+                    params![
+                        execution_id,
+                        seq as i64,
+                        row.server,
+                        row.tool,
+                        row.reason,
+                        row.called_at_ms,
+                    ],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
     }
 
     /// Call counts per server and tool ([`McpUsageStat`]). This is what the

@@ -18,7 +18,9 @@ pub mod graph;
 
 pub use graph::{PlanGraph, PlanGraphError, RevisionError, RevisionGate};
 
-use rusqlite::{OptionalExtension, params};
+use rusqlite::params;
+
+use crate::conn::OptionalExt as _;
 use stella_protocol::plan_graph::{
     DivergenceCause, PlanEdge, PlanEdgeKind, PlanEdgeSource, PlanNode, PlanRevision, TaskNode,
 };
@@ -52,46 +54,47 @@ impl Store {
         now_ms: u64,
     ) -> Result<()> {
         let mut conn = self.lock();
-        let tx = conn.transaction()?;
-        for node in nodes {
-            tx.execute(
-                "INSERT INTO plan_revisions (execution_id, revision, cause, recorded_at) \
-                 VALUES (?, ?, ?, ?) \
-                 ON CONFLICT (execution_id, revision) DO UPDATE SET \
-                 cause = excluded.cause, recorded_at = excluded.recorded_at",
-                params![
-                    execution_id,
-                    node.revision.get(),
-                    node.cause.as_ref().map(DivergenceCause::as_str),
-                    now_ms as i64,
-                ],
-            )?;
-        }
-        for edge in edges {
-            let from_task = match &edge.from {
-                PlanEdgeSource::Plan => LANE_HEAD,
-                PlanEdgeSource::Task(id) => Some(id.clone()),
-            };
-            tx.execute(
-                "INSERT INTO plan_edges \
-                 (execution_id, revision, kind, position, from_task, to_task, to_subject) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?) \
-                 ON CONFLICT (execution_id, kind, revision, position) DO UPDATE SET \
-                 from_task = excluded.from_task, to_task = excluded.to_task, \
-                 to_subject = excluded.to_subject",
-                params![
-                    execution_id,
-                    edge.revision.get(),
-                    edge.kind.as_wire_str(),
-                    edge.position,
-                    from_task,
-                    edge.to.id,
-                    edge.to.subject,
-                ],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
+        conn.transaction(|tx| {
+            for node in nodes {
+                tx.execute(
+                    "INSERT INTO plan_revisions (execution_id, revision, cause, recorded_at) \
+                     VALUES (?, ?, ?, ?) \
+                     ON CONFLICT (execution_id, revision) DO UPDATE SET \
+                     cause = excluded.cause, recorded_at = excluded.recorded_at",
+                    params![
+                        execution_id,
+                        node.revision.get(),
+                        node.cause.as_ref().map(DivergenceCause::as_str),
+                        now_ms as i64,
+                    ],
+                )?;
+            }
+            for edge in edges {
+                let from_task = match &edge.from {
+                    PlanEdgeSource::Plan => LANE_HEAD,
+                    PlanEdgeSource::Task(id) => Some(id.clone()),
+                };
+                tx.execute(
+                    "INSERT INTO plan_edges \
+                     (execution_id, revision, kind, position, from_task, to_task, to_subject) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?) \
+                     ON CONFLICT (execution_id, kind, revision, position) DO UPDATE SET \
+                     from_task = excluded.from_task, to_task = excluded.to_task, \
+                     to_subject = excluded.to_subject",
+                    params![
+                        execution_id,
+                        edge.revision.get(),
+                        edge.kind.as_wire_str(),
+                        edge.position,
+                        from_task,
+                        edge.to.id,
+                        edge.to.subject,
+                    ],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
     }
 
     /// Read one execution's plan graph back: its revisions oldest first, then

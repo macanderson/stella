@@ -161,7 +161,7 @@ fn the_table_arrives_by_migration_on_an_existing_database() {
         .expect("drop");
     store
         .lock()
-        .pragma_update(None, "user_version", 13i64)
+        .execute_batch("PRAGMA user_version = 13;")
         .expect("rewind version");
     drop(store);
 
