@@ -675,7 +675,8 @@ mod tests {
         let path = dir.path().join("legacy-fleet.db");
         {
             let conn = rusqlite::Connection::open(&path).unwrap();
-            conn.execute_batch(super::super::MIGRATION_V1).unwrap();
+            conn.execute_batch(super::super::migrations::MIGRATION_V1)
+                .unwrap();
         }
         let ledger = Ledger::open(&path).unwrap();
         let lease = granted(
