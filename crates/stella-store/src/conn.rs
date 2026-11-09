@@ -197,7 +197,7 @@ impl<'stmt> Statement<'stmt> {
     }
 
     pub(crate) fn column_names(&self) -> Vec<&str> {
-        self.inner.column_names()
+        self.inner.column_names().collect()
     }
 }
 
