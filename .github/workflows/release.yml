@@ -41,13 +41,13 @@ jobs:
       matrix:
         include:
           - target: aarch64-apple-darwin
-            os: macos-14
+            os: macos-15
           # Cross-compiled from the Apple Silicon runner: Apple's clang/ld is a
           # universal toolchain, so `rustup target add x86_64-apple-darwin`
           # (via the `targets:` input below) builds the x86_64 slice — bundled
           # C deps included — without needing a (now-retired) Intel runner.
           - target: x86_64-apple-darwin
-            os: macos-14
+            os: macos-15
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
           # Built natively on GitHub's arm64 runner (free for public repos).
@@ -340,7 +340,7 @@ jobs:
       matrix:
         include:
           - target: aarch64-apple-darwin
-            os: macos-14
+            os: macos-15
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
     steps:
