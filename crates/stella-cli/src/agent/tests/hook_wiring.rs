@@ -91,6 +91,23 @@ async fn a_deny_decision_rejects_the_prompt_with_the_hooks_reason() {
     assert_eq!(result, Err("no prompts before coffee".to_string()));
 }
 
+/// A hook that refuses the prompt the way a Claude Code hook does is a deny
+/// too. The prompt is not sent, and the reason the hook gave is what the
+/// person is shown.
+#[tokio::test]
+async fn a_claude_code_block_rejects_the_prompt_with_the_hooks_reason() {
+    let cfg = cfg_with_user_prompt_submit_hook(
+        r#"echo '{"decision":"block","reason":"Answer the recording question first."}'"#,
+    );
+
+    let result = user_prompt_submit_hook(&cfg, "fix the flaky test").await;
+
+    assert_eq!(
+        result,
+        Err("Answer the recording question first.".to_string())
+    );
+}
+
 /// A `modify` decision rewrites the prompt the turn actually runs with.
 #[tokio::test]
 async fn a_modify_decision_rewrites_the_prompt() {

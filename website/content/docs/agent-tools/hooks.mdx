@@ -144,7 +144,7 @@ Runs before each overflow-summarization round (the model-written summary that re
 
 ### `UserPromptSubmit`
 
-Runs when you submit a prompt, before any turn is built. The prompt is in the payload's `prompt`. Print `{"action":"deny","reason":"…"}` and the prompt is rejected. No turn runs. Your reason is shown in its place. Print `{"action":"modify","payload":{"prompt":"…"}}` and the turn runs with the new text instead. Use this to log every prompt, redact something before a model sees it, or block a prompt that matches a pattern you don't want run at all.
+Runs when you submit a prompt, before any turn is built. The prompt is in the payload's `prompt`. Print `{"action":"deny","reason":"…"}` and the prompt is rejected. No turn runs. Your reason is shown in its place. Print `{"action":"modify","payload":{"prompt":"…"}}` and the turn runs with the new text instead. A hook written for Claude Code works here too: its `{"decision":"block","reason":"…"}` or `{"continue":false,"stopReason":"…"}` rejects the prompt the same way, and its reason is shown. Use this to log every prompt, redact something before a model sees it, or block a prompt that matches a pattern you don't want run at all.
 
 This runs **host-side**, before any `Engine` exists, the same job `SessionStart` already does. A hook that never ran, timed out, or exited non-zero **rejects the prompt too**. This is a permission gate like `PreToolUse`, so it fails closed instead of waving a broken hook through. A `require_approval` decision is refused the same way: like a `PreToolUse` call with no one there to answer it.
 
