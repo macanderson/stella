@@ -61,7 +61,30 @@ pub(crate) fn user_mcp_toml_path() -> Option<PathBuf> {
 /// A repo entry takes the place of the user entry as a whole. That includes
 /// `granted` and `candidate_safe`. If the two were merged field by field, a
 /// grant in your file could let a command the repo chose run.
+///
+/// The servers in this launch's `--config-overlay` file go on last
+/// (`crate::settings::overlay`).
 pub(crate) fn load_own_config(workspace_root: &Path, workspace_trusted: bool) -> OwnMcpConfig {
+    load_own_config_with(
+        workspace_root,
+        workspace_trusted,
+        crate::settings::overlay::active_mcp(),
+    )
+}
+
+/// [`load_own_config`], with the overlay's servers passed in so a test can
+/// supply them.
+///
+/// The overlay's servers are added to yours. One that has the name of a
+/// server you already run takes its place for this process, the way a repo
+/// entry takes the place of a user entry. The launcher that named the overlay
+/// is trusted like your own file, so its servers start in a repo you have not
+/// trusted too.
+fn load_own_config_with(
+    workspace_root: &Path,
+    workspace_trusted: bool,
+    overlay: Option<&McpConfig>,
+) -> OwnMcpConfig {
     let mut own = OwnMcpConfig::default();
     if let Some(path) = user_mcp_toml_path() {
         own.lay_over(&path);
@@ -78,6 +101,9 @@ pub(crate) fn load_own_config(workspace_root: &Path, workspace_trusted: bool) ->
                 workspace.display()
             ));
         }
+    }
+    if let Some(overlay) = overlay {
+        own.config.servers.extend(overlay.servers.clone());
     }
     own
 }

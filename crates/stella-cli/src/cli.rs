@@ -185,6 +185,26 @@ pub(crate) struct GlobalArgs {
     )]
     pub(crate) allow_dir: Vec<String>,
 
+    /// Read one more stella.toml for this run only, over the other scopes
+    ///
+    /// A launcher that starts stella for you can give one run its hooks, its
+    /// provider endpoint and key, and its MCP servers this way, without
+    /// editing your files. Hooks and MCP servers add to your own, and every
+    /// other value the file sets replaces yours. Org-managed limits still
+    /// apply, and nothing is written back to disk.
+    ///
+    /// The file must exist and parse, or stella stops before the run starts.
+    /// It must be a file you own, in a directory only you can write to. It is
+    /// refused alongside STELLA_NO_SETTINGS=1. Env: STELLA_CONFIG_OVERLAY.
+    #[arg(
+        long,
+        global = true,
+        env = "STELLA_CONFIG_OVERLAY",
+        value_name = "FILE",
+        hide_short_help = true
+    )]
+    pub(crate) config_overlay: Option<std::path::PathBuf>,
+
     /// Hard USD spend limit for the whole invocation
     ///
     /// Scoped to the invocation, not the turn: enforced mode aborts cleanly

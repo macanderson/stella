@@ -274,6 +274,7 @@ mod tests {
             &user,
             &managed,
             &project,
+            None,
             ProjectTrust {
                 hooks: false,
                 credentials: false,
@@ -298,6 +299,7 @@ mod tests {
             &user,
             &managed,
             &project,
+            None,
             ProjectTrust {
                 hooks: true,
                 credentials: true,
@@ -347,6 +349,7 @@ mod tests {
             &user,
             &managed,
             &project,
+            None,
             ProjectTrust {
                 hooks: false,
                 credentials: false,
@@ -365,6 +368,7 @@ mod tests {
             &user,
             &managed,
             &project,
+            None,
             ProjectTrust {
                 hooks: true,
                 credentials: true,

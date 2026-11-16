@@ -62,6 +62,7 @@ fn merge_captured_scopes_never_honors_the_projects_own_auto_trust_project() {
         &trusted_only_false,
         &Settings::default(),
         &project_claims_trusted,
+        None,
         // Trust is passed in already resolved, exactly as `Settings::load`
         // would derive it from `resolve_project_trust` — untrusted here,
         // because a project self-declaring `auto_trust_project` must not
@@ -87,6 +88,7 @@ fn merge_captured_scopes_never_honors_the_projects_own_auto_trust_project() {
         &user_grants_it,
         &Settings::default(),
         &Settings::default(),
+        None,
         ProjectTrust {
             hooks: true,
             credentials: true,

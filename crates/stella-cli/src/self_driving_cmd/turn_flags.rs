@@ -58,6 +58,7 @@
 //! What the refusal costs a user is one exported variable; what it ends is a
 //! flag that looked like it worked.
 
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
@@ -92,6 +93,9 @@ pub(crate) struct TurnFlags {
     pub(crate) max_output_tokens: Option<u32>,
     /// `--max-steps` — the per-turn step cap.
     pub(crate) max_steps: Option<usize>,
+    /// `--config-overlay`: the launch's overlay file. Absolute, because a
+    /// turn runs in its own worktree and would read a relative path against it.
+    pub(crate) config_overlay: Option<PathBuf>,
 }
 
 impl TurnFlags {
@@ -105,6 +109,12 @@ impl TurnFlags {
         if globals.api_key.is_some() {
             return Err(Self::api_key_refusal());
         }
+        let config_overlay = globals
+            .config_overlay
+            .as_deref()
+            .map(std::path::absolute)
+            .transpose()
+            .map_err(|error| format!("cannot resolve the --config-overlay path: {error}"))?;
         Ok(Self {
             model: globals.model.clone(),
             base_url: globals.base_url.clone(),
@@ -114,6 +124,7 @@ impl TurnFlags {
             turn_timeout: globals.turn_timeout,
             max_output_tokens: globals.max_output_tokens,
             max_steps: globals.max_steps,
+            config_overlay,
         })
     }
 
@@ -168,6 +179,9 @@ impl TurnFlags {
         }
         if let Some(cap) = self.max_steps {
             cmd.arg("--max-steps").arg(cap.to_string());
+        }
+        if let Some(overlay) = &self.config_overlay {
+            cmd.arg(crate::settings::overlay::FLAG).arg(overlay);
         }
     }
 }
@@ -227,5 +241,25 @@ mod tests {
         .expect("no credential, no refusal");
         assert_eq!(flags.model.as_deref(), Some("openrouter/kimi-k3"));
         assert_eq!(flags.spend_limit, Some(30.0));
+    }
+
+    /// A launch's overlay reaches every turn, as an absolute path. A turn runs
+    /// in its own worktree, so a relative path would name another file there,
+    /// or none, and the turn would run without the overlay.
+    #[test]
+    fn the_config_overlay_reaches_the_turn_as_an_absolute_path() {
+        let flags = TurnFlags::from_globals(&globals(&[
+            "stella",
+            "self-driving",
+            "state",
+            "--config-overlay",
+            "launch/overlay.toml",
+        ]))
+        .expect("no credential, no refusal");
+
+        let overlay = flags.config_overlay.expect("the overlay is carried");
+        let shown = overlay.display().to_string();
+        assert!(overlay.is_absolute(), "{shown}");
+        assert!(overlay.ends_with("launch/overlay.toml"), "{shown}");
     }
 }

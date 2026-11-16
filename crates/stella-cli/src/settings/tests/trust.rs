@@ -75,6 +75,7 @@ fn an_untrusted_project_cannot_switch_a_plugin_on() {
         &user,
         &managed,
         &project,
+        None,
         crate::settings::ProjectTrust {
             credentials: false,
             hooks: false,
@@ -89,6 +90,7 @@ fn an_untrusted_project_cannot_switch_a_plugin_on() {
         &user,
         &managed,
         &project,
+        None,
         crate::settings::ProjectTrust {
             credentials: true,
             hooks: true,

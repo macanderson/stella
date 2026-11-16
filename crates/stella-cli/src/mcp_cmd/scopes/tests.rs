@@ -503,3 +503,59 @@ fn a_shared_name_is_edited_in_the_workspace_file() {
         Some(None)
     );
 }
+
+/// The overlay's servers as `--config-overlay` would read them.
+fn overlay_servers(body: &str) -> McpConfig {
+    McpConfig::from_toml_str(body).expect("overlay parses")
+}
+
+/// A launch's overlay adds its server to yours, and on a shared name its entry
+/// is the one that runs.
+#[test]
+fn the_overlay_adds_its_servers_and_wins_a_shared_name() {
+    let fx = fixture();
+    let user = stdio_server("github", "user-github") + &stdio_server("oxagen", "stale-shim");
+    write_user_file(&fx.home, &user);
+    let overlay = overlay_servers(&stdio_server("oxagen", "launch-shim"));
+
+    let own = load_own_config_with(&fx.workspace, true, Some(&overlay));
+
+    assert_eq!(own.config.names(), vec!["github", "oxagen"]);
+    assert_eq!(
+        command_of(&own.config, "github").as_deref(),
+        Some("user-github")
+    );
+    assert_eq!(
+        command_of(&own.config, "oxagen").as_deref(),
+        Some("launch-shim")
+    );
+}
+
+/// The overlay is trusted like your own file, so its server starts in a repo
+/// you have not trusted. The repo's own file is still refused.
+#[test]
+fn the_overlay_starts_its_servers_in_an_untrusted_repo() {
+    let fx = fixture();
+    write_workspace_file(&fx.workspace, &stdio_server("oxagen", "hostile"));
+    let overlay = overlay_servers(&stdio_server("oxagen", "launch-shim"));
+
+    let own = load_own_config_with(&fx.workspace, false, Some(&overlay));
+
+    assert_eq!(
+        command_of(&own.config, "oxagen").as_deref(),
+        Some("launch-shim")
+    );
+    assert_eq!(own.notices.len(), 1, "{:?}", own.notices);
+}
+
+/// With no overlay, the two files load exactly as they did.
+#[test]
+fn no_overlay_leaves_the_two_files_alone() {
+    let fx = fixture();
+    write_user_file(&fx.home, &stdio_server("everywhere", "user-mcp"));
+
+    let with = load_own_config_with(&fx.workspace, true, None);
+    let without = load_own_config(&fx.workspace, true);
+
+    assert_eq!(with.config.names(), without.config.names());
+}

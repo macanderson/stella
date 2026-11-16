@@ -195,6 +195,13 @@ Every flag below works in either position: `stella --spend-limit 5 run "…"` an
     `[workspace] allowed_dirs` list for one run rather than replacing it, so adding one
     directory never removes the rest. Env `STELLA_ALLOW_DIR`.
   </OptionCard>
+  <OptionCard name="--config-overlay <file>" defaultValue="none">
+    One more `stella.toml` for this run only, laid over the user, managed, and project
+    files. A launcher uses it to give one run its hooks, provider endpoint and key, and MCP
+    servers without editing yours. Hooks and MCP servers add to your own, and every other
+    value replaces yours. A missing or invalid file stops the run before it starts. Env
+    `STELLA_CONFIG_OVERLAY`.
+  </OptionCard>
   <OptionCard name="--spend-limit <usd>" defaultValue="none (observed)">
     A hard USD spend cap for the whole run or session. Must be a positive, finite number. Env
     `STELLA_SPEND_LIMIT`.

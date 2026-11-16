@@ -49,6 +49,7 @@ pub(crate) mod lanes;
 mod managed;
 mod merge;
 pub(crate) mod migrate;
+pub(crate) mod overlay;
 mod private;
 mod steering;
 pub(crate) mod toml_config;

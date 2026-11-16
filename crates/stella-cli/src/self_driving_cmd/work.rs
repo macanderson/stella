@@ -1120,6 +1120,7 @@ mod tests {
             turn_timeout: Some(std::time::Duration::from_secs(900)),
             max_output_tokens: Some(8192),
             max_steps: Some(40),
+            config_overlay: Some(std::path::PathBuf::from("/opt/launch/overlay.toml")),
         });
 
         // The turn is still a machine-format `run`: the flags are additive to
@@ -1135,6 +1136,7 @@ mod tests {
             ("--turn-timeout", "900"),
             ("--max-output-tokens", "8192"),
             ("--max-steps", "40"),
+            ("--config-overlay", "/opt/launch/overlay.toml"),
         ] {
             assert!(
                 args.windows(2).any(|w| w == [flag, value]),

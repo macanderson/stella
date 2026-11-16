@@ -61,6 +61,45 @@ fields merge per field, whole block, or by concatenating. See
 [The scope hierarchy](/docs/configuration/settings#the-scope-hierarchy) for the full
 rules; <SettingsCascadeDiagram /> shows the same shape either format reads through.
 
+### Launch overlay
+
+A launcher that starts stella for you can hand one run its own hooks, provider endpoint
+and key, and MCP servers without editing your files. It passes `--config-overlay <file>`,
+or sets `STELLA_CONFIG_OVERLAY`, naming one more `stella.toml` that is laid over every
+scope above for that process only. Nothing is written back to disk.
+
+- **Hooks** are added after your own, and **`[mcp.servers]`** entries are added to the
+  servers in your `mcp.toml` files. An overlay server with the name of one of yours runs in
+  its place for that run.
+- **Every other value** the overlay sets replaces yours. A project's file sits below it,
+  trusted or not, so a repository cannot remove an overlay hook or redirect its endpoint.
+- **Org-managed limits** still apply. The overlay is trusted like your user file, and it
+  cannot lift a managed ceiling.
+- **A missing or invalid file** stops the launch with an error naming it. So does a file
+  another user owns or could replace: it must sit in a directory only you can write to.
+  `STELLA_NO_SETTINGS=1` and an overlay together are refused too.
+- **A project `.env` file** cannot set `STELLA_CONFIG_OVERLAY`.
+
+```toml title="overlay.toml"
+[meta]
+scope = "overlay"
+
+[providers.anthropic]
+base_url = "http://127.0.0.1:47700/anthropic"
+api_key  = "run-token"
+
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type      = "command"
+command   = "my-launcher hook UserPromptSubmit"
+timeoutMs = 30000
+
+[mcp.servers.launcher]
+transport = "stdio"
+cmd       = "/usr/local/bin/my-launcher"
+args      = ["mcp"]
+```
+
 ## Migrating to TOML
 
 ```bash
@@ -103,8 +142,8 @@ what tells them apart.
     version 1 by definition.
   </OptionCard>
   <OptionCard name="meta.scope">
-    Self-declared as `"user"`, `"managed"`, or `"project"` — checked against the file's
-    actual **location**, not the other way around. The path decides the scope; this field
+    Self-declared as `"user"`, `"managed"`, `"project"`, or `"overlay"`, and checked against
+    the file's actual **location**, not the other way around. The path decides the scope; this field
     only has to agree with it. A project file declaring `scope = "managed"` is refused
     with a named error, because that mismatch is either a copy-paste mistake or an attempt
     to claim authority the file's location doesn't grant.
@@ -114,7 +153,7 @@ what tells them apart.
 ```toml title="stella.toml"
 [meta]
 schema_version = 1
-scope          = "project"   # "user" | "managed" | "project"
+scope          = "project"   # "user" | "managed" | "project" | "overlay"
 ```
 
 ## What moved
@@ -381,7 +420,8 @@ matcher = "mcp__github__push_files"
 `registry_url` carries over unchanged — see [The mcp section](/docs/configuration/settings#the-mcp-section).
 
 <Callout type="warn">
-  **`[mcp.servers]` parses, but does nothing yet.** MCP servers still load only from
+  **`[mcp.servers]` parses, but does nothing yet** outside a
+  [launch overlay](#launch-overlay). MCP servers still load from
   [`.stella/mcp.toml`](/docs/agent-tools/mcp). A `stella.toml` declaring
   `[mcp.servers.*]` entries loads without error and prints a startup notice naming the
   count, so nothing is silently dropped — but those servers won't start yet. Keep server

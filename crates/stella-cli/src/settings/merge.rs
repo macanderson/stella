@@ -209,7 +209,8 @@ impl Settings {
 
     /// The trusted scopes' own opinion on `run.auto_trust_project` —
     /// `~/.stella/stella.toml` (or the settings.json it shadows) folded with
-    /// the org-managed file, and **only** those two. The project's own
+    /// the org-managed file and the launch's `--config-overlay` file, and
+    /// **only** those. The project's own
     /// `stella.toml` is never consulted here: this is the value
     /// [`settings::project_trust`](super::project_trust) falls back to when no
     /// `STELLA_TRUST_PROJECT` env var is set, and a project scope supplying
@@ -243,7 +244,9 @@ impl Settings {
         let managed = Self::load_managed_scope_dual(&mut notices)
             .map(|(_, managed)| managed)
             .unwrap_or_default();
-        Self::merge_snapshots(&[&user, &managed])
+        let mut trusted = vec![&user, &managed];
+        trusted.extend(super::overlay::active_settings());
+        Self::merge_snapshots(&trusted)
             .auto_trust_project
             .unwrap_or(false)
     }
@@ -458,17 +461,28 @@ impl Settings {
         merged
     }
 
-    /// Resolve authority from three immutable snapshots captured by
+    /// Resolve authority from the immutable snapshots captured by
     /// [`Settings::load`]. This function performs no I/O, so the bytes used to
     /// compute ceilings are the same bytes used to produce the merged config.
+    ///
+    /// `overlay` is the launch's `--config-overlay` file
+    /// ([`super::overlay`]). It is laid last in both folds below. So it wins
+    /// over the project's file, and every restoration that falls back to the
+    /// trusted scopes falls back to it too. The ceilings still come from the
+    /// managed snapshot alone, so an overlay cannot lift one.
     pub(super) fn merge_captured_scopes(
         user: &Settings,
         managed: &Settings,
         project: &Settings,
+        overlay: Option<&Settings>,
         trust: ProjectTrust,
     ) -> Self {
-        let trusted_only = Self::merge_snapshots(&[user, managed]);
-        let mut merged = Self::merge_snapshots(&[user, managed, project]);
+        let mut trusted_scopes = vec![user, managed];
+        trusted_scopes.extend(overlay);
+        let trusted_only = Self::merge_snapshots(&trusted_scopes);
+        let mut every_scope = vec![user, managed, project];
+        every_scope.extend(overlay);
+        let mut merged = Self::merge_snapshots(&every_scope);
         // `auto_trust_project` must never be honored from the project scope —
         // it is itself a trust grant, and the whole point of the boundary is
         // that a project file cannot vote on its own trust. `overlay_scope`
@@ -634,7 +648,13 @@ impl Settings {
             project_json
         };
         let trust = project_trust();
-        let mut merged = Self::merge_captured_scopes(&user, &managed, &project, trust);
+        let mut merged = Self::merge_captured_scopes(
+            &user,
+            &managed,
+            &project,
+            super::overlay::active_settings(),
+            trust,
+        );
 
         // One launch loads the chain several times over — `Config::load`,
         // `settings_check::validate_at_launch`, `discover_configured_providers`

@@ -1017,12 +1017,19 @@ pub(crate) fn resume_supervised(
     // here is safe where appending it to a user's argv was not. The launch
     // sets `STELLA_FOREGROUND` too; the flag keeps the child's command line
     // self-describing in `ps`.
-    let args: Vec<std::ffi::OsString> = vec![
+    let mut args: Vec<std::ffi::OsString> = vec![
         "daemon".into(),
         "resume".into(),
         record.id.clone().into(),
         "--foreground".into(),
     ];
+    // A `--config-overlay` given to this command belongs to the resumed turn
+    // too, so the child reads the same file. Its path is already absolute,
+    // because the child starts in the record's workspace.
+    if let Some(overlay) = crate::settings::overlay::active() {
+        args.push(crate::settings::overlay::FLAG.into());
+        args.push(overlay.path.clone().into_os_string());
+    }
     let id = record.id.clone();
     let run = launch(
         &registry,

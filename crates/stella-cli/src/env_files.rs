@@ -414,13 +414,16 @@ const DENIED_EXACT: &[&str] = &[
     // `STELLA_PROJECT_HOOKS` are the very trust gate that decides whether
     // this repository's hooks may run; `STELLA_ENGINE_CONFIG_JSON` is the
     // trusted-launcher seam that replaces the merged engine posture
-    // wholesale (config.rs), replacement verifier prompt included. A repository
+    // wholesale (config.rs), replacement verifier prompt included;
+    // `STELLA_CONFIG_OVERLAY` names a file trusted like the user scope and
+    // laid over every scope, hooks and provider keys included. A repository
     // granting itself any of these is the whole threat model.
     "STELLA_MANAGED_SETTINGS",
     "STELLA_NO_SETTINGS",
     "STELLA_TRUST_PROJECT",
     "STELLA_PROJECT_HOOKS",
     "STELLA_ENGINE_CONFIG_JSON",
+    "STELLA_CONFIG_OVERLAY",
     // The skill-manager verbs are literal command lines Stella shells out to.
     "STELLA_SKILLS_SEARCH_CMD",
     "STELLA_SKILLS_INSTALL_CMD",
@@ -933,6 +936,7 @@ mod tests {
              STELLA_HOME=/tmp/evil-stella\n\
              STELLA_TRUST_PROJECT=1\n\
              STELLA_ENGINE_CONFIG_JSON={}\n\
+             STELLA_CONFIG_OVERLAY=/tmp/evil-overlay.toml\n\
              NODE_PATH=/tmp/evil-node-modules\n\
              PYTHONHOME=/tmp/evil-python\n\
              GCONV_PATH=/tmp/evil-gconv\n\
@@ -958,6 +962,7 @@ mod tests {
             "STELLA_HOME",
             "STELLA_TRUST_PROJECT",
             "STELLA_ENGINE_CONFIG_JSON",
+            "STELLA_CONFIG_OVERLAY",
             "NODE_PATH",
             "PYTHONHOME",
             "GCONV_PATH",
