@@ -1,14 +1,15 @@
-//! The overlay's read, its errors, and how it merges with the other scopes.
+//! How the overlay is read, how it fails, and how it merges with the other
+//! files.
 //!
-//! None of these calls [`install`]: it fills a process-wide cell once, and
-//! every other test in the binary would then load settings under it.
+//! No test here calls [`install`]. It sets the overlay once for the whole
+//! process. Then each other test in the binary would load settings with it.
 
 use stella_core::hooks::HookEvent;
 
 use super::*;
 use crate::settings::ProjectTrust;
 
-/// What a launcher writes for one recorded launch: hooks, the Anthropic
+/// What a tool writes for one launch it records: hooks, the Anthropic
 /// endpoint and key, and one MCP server.
 const LAUNCH_OVERLAY: &str = r#"
 [meta]
@@ -107,7 +108,7 @@ fn a_launch_overlay_reads_its_hooks_provider_and_server() {
     assert_eq!(overlay.mcp.names(), vec!["oxagen"]);
 }
 
-/// A missing file stops the launch, and the message names the file. Running on
+/// A missing file stops the launch. The error names the file. Going on
 /// without it would start the session as if no overlay had been given.
 #[test]
 fn a_missing_overlay_is_an_error_that_names_the_file() {
@@ -130,7 +131,8 @@ fn an_overlay_that_is_not_toml_is_an_error_that_names_the_file() {
     assert!(error.contains(&path.display().to_string()), "{error}");
 }
 
-/// The file's own `[meta]` may restate that it is an overlay, and nothing else.
+/// The file's own `[meta]` may say it is an overlay. It may say no other
+/// scope.
 #[test]
 fn an_overlay_cannot_claim_another_scope() {
     let dir = tempfile::tempdir().unwrap();
@@ -142,8 +144,8 @@ fn an_overlay_cannot_claim_another_scope() {
     assert!(error.contains(&path.display().to_string()), "{error}");
 }
 
-/// The file can carry hooks and a key, so another user must not be able to
-/// swap it. A directory others can write to is refused.
+/// The file can hold hooks and a key, so no other user may swap it. The
+/// read refuses a folder that others can write to.
 #[cfg(unix)]
 #[test]
 fn an_overlay_in_a_directory_others_can_write_is_refused() {
@@ -161,11 +163,11 @@ fn an_overlay_in_a_directory_others_can_write_is_refused() {
     assert!(error.contains(&path.display().to_string()), "{error}");
 }
 
-/// `STELLA_NO_SETTINGS=1` reads no config file. An overlay asked for in the
-/// same launch is refused, so neither ask is quietly dropped.
+/// `STELLA_NO_SETTINGS=1` reads no config file. So an overlay in the same
+/// launch is refused, and neither ask is dropped with no word.
 ///
-/// The path names no file. If the refusal ever stopped working, the read
-/// would fail too, and no test binary would be left running under an overlay.
+/// The path names no file. If the refusal broke, the read would fail too.
+/// So no test binary is left to run with an overlay set.
 #[test]
 fn an_overlay_is_refused_when_settings_are_switched_off() {
     let _isolated = crate::paths::test_filesystem_isolation(true);
@@ -186,9 +188,8 @@ fn overlay_hooks_run_after_the_users_own() {
     let dir = tempfile::tempdir().unwrap();
     let path = write_overlay(dir.path(), LAUNCH_OVERLAY);
     let overlay = read(&path).unwrap();
-    let user = parsed(
-        r#"{"hooks": {"UserPromptSubmit": [{"hooks": [{"command": "my-own-hook"}]}]}}"#,
-    );
+    let user =
+        parsed(r#"{"hooks": {"UserPromptSubmit": [{"hooks": [{"command": "my-own-hook"}]}]}}"#);
 
     let merged = Settings::merge_captured_scopes(
         &user,
@@ -204,8 +205,8 @@ fn overlay_hooks_run_after_the_users_own() {
     );
 }
 
-/// A scalar the overlay sets replaces the user's, and one it leaves out keeps
-/// the user's value.
+/// A plain value the overlay sets takes the place of the user's. One it
+/// leaves out keeps the user's value.
 #[test]
 fn overlay_scalars_replace_the_users_and_leave_the_rest() {
     let dir = tempfile::tempdir().unwrap();
@@ -236,8 +237,8 @@ fn overlay_scalars_replace_the_users_and_leave_the_rest() {
     assert_eq!(entry.default_model.as_deref(), Some("claude-fable-5"));
 }
 
-/// An untrusted repository's file loses its hooks and its endpoint, and the
-/// overlay's survive the restoration that drops them.
+/// A repo file we don't trust loses its hooks and its endpoint. The
+/// overlay's hooks and endpoint stay.
 #[test]
 fn an_untrusted_project_cannot_remove_the_overlay() {
     let dir = tempfile::tempdir().unwrap();
@@ -268,16 +269,14 @@ fn an_untrusted_project_cannot_remove_the_overlay() {
     );
 }
 
-/// A trusted repository still sits below the overlay, so its endpoint does not
-/// win over the one the launch set.
+/// A trusted repo still sits below the overlay. So its endpoint does not
+/// beat the one the launch set.
 #[test]
 fn a_trusted_project_sits_below_the_overlay() {
     let dir = tempfile::tempdir().unwrap();
     let path = write_overlay(dir.path(), LAUNCH_OVERLAY);
     let overlay = read(&path).unwrap();
-    let project = parsed(
-        r#"{"providers": {"anthropic": {"base_url": "https://repo.invalid"}}}"#,
-    );
+    let project = parsed(r#"{"providers": {"anthropic": {"base_url": "https://repo.invalid"}}}"#);
 
     let merged = Settings::merge_captured_scopes(
         &Settings::default(),
@@ -293,7 +292,7 @@ fn a_trusted_project_sits_below_the_overlay() {
     );
 }
 
-/// The org-managed ceiling caps the overlay as it caps every other scope.
+/// The org's limit caps the overlay as it caps each other file.
 #[test]
 fn a_managed_denial_caps_the_overlay() {
     let dir = tempfile::tempdir().unwrap();
@@ -312,7 +311,7 @@ fn a_managed_denial_caps_the_overlay() {
     assert!(!merged.tool_policy().allows("task_list"));
 }
 
-/// No overlay merges exactly as before.
+/// With no overlay, the merge gives the same result as it did before.
 #[test]
 fn no_overlay_changes_nothing() {
     let user = parsed(r#"{"providers": {"anthropic": {"api_key": "sk-mine"}}}"#);

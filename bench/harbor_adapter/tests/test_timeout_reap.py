@@ -369,12 +369,19 @@ class TestReapProgram:
         The agent is identified by ``/proc/<pid>/exe``, so the stand-in has to
         be a copied binary at its own path rather than an interpreter running a
         script — that is the identification the program actually performs.
+
+        The copy runs with ``sleep`` as its first argument. On Ubuntu 26.04,
+        ``sleep`` is one Rust coreutils binary that picks its tool from that
+        argument, and BusyBox does the same. Started as ``stella``, it prints
+        "unknown program" and exits, so the reap finds no agent.
+        ``executable=`` still runs the copy, so ``/proc/<pid>/exe`` names the
+        copy's path.
         """
         agent_binary = tmp_path / "stella"
         shutil.copy(shutil.which("sleep") or "/bin/sleep", agent_binary)
         agent_binary.chmod(0o755)
         agent = subprocess.Popen(  # noqa: S603 - fixture, fixed argv
-            [str(agent_binary), "60"], start_new_session=True
+            ["sleep", "60"], executable=str(agent_binary), start_new_session=True
         )
         try:
             completed = subprocess.run(  # noqa: S603 - fixed argv

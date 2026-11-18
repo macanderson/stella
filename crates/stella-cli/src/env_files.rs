@@ -414,10 +414,10 @@ const DENIED_EXACT: &[&str] = &[
     // `STELLA_PROJECT_HOOKS` are the very trust gate that decides whether
     // this repository's hooks may run; `STELLA_ENGINE_CONFIG_JSON` is the
     // trusted-launcher seam that replaces the merged engine posture
-    // wholesale (config.rs), replacement verifier prompt included;
-    // `STELLA_CONFIG_OVERLAY` names a file trusted like the user scope and
-    // laid over every scope, hooks and provider keys included. A repository
-    // granting itself any of these is the whole threat model.
+    // wholesale (config.rs), replacement verifier prompt included.
+    // `STELLA_CONFIG_OVERLAY` names a file Stella trusts like the user's own.
+    // It lies over every file, with its hooks and keys. A repo that grants
+    // itself any of these is the whole threat model.
     "STELLA_MANAGED_SETTINGS",
     "STELLA_NO_SETTINGS",
     "STELLA_TRUST_PROJECT",

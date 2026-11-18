@@ -1,20 +1,20 @@
 //! `--config-overlay <FILE>` (`STELLA_CONFIG_OVERLAY`): one more `stella.toml`
 //! for this process only.
 //!
-//! A launcher that starts Stella for someone can hand one launch its hooks,
-//! its provider endpoint and key, and its MCP servers without editing that
-//! person's files. The file is read once, at startup, and laid over the user,
-//! managed and project scopes on every load. Nothing writes it back to disk.
+//! A tool that starts Stella for a person can give one launch its own hooks,
+//! endpoint, key and MCP servers. It does not touch that person's files.
+//! Stella reads the file once, at start. Each load lays it over the user,
+//! managed and project files. Nothing writes it back.
 //!
-//! Hooks and MCP servers add to the person's own, and an overlay server
-//! replaces one of the same name. Every other field takes the overlay's value.
-//! The overlay is trusted like `~/.stella/stella.toml`, because whoever started
-//! the process named it. A repository's file cannot remove an overlay hook,
-//! and the org-managed ceilings still cap everything the overlay asks for.
+//! Hooks and MCP servers add to the person's own. An overlay server takes
+//! the place of one with the same name. Every other field takes the
+//! overlay's value. Stella trusts the file like `~/.stella/stella.toml`,
+//! since the one who started Stella named it. A repo's file can't drop an
+//! overlay hook. The org's limits still cap all the overlay asks for.
 //!
-//! A file that is missing, unreadable or invalid stops the launch with an
-//! error that names it. Going on without it would run a session the launcher
-//! meant to configure as if no overlay had been given.
+//! A file that is missing, can't be read or does not parse stops the launch.
+//! The error names the file. Going on without it would run the session as
+//! if no overlay had been given.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -30,8 +30,8 @@ pub(crate) const FLAG: &str = "--config-overlay";
 /// One overlay file, read and parsed.
 #[derive(Debug)]
 pub(crate) struct Overlay {
-    /// The file, made absolute against the directory Stella started in, so a
-    /// resumed run started from another directory reads the same file.
+    /// The file's full path, from the folder Stella started in. A run you
+    /// resume from some other folder still reads the same file.
     pub(crate) path: PathBuf,
     /// What the file sets, in the shape the scope merge reads.
     pub(crate) settings: Settings,
@@ -39,17 +39,16 @@ pub(crate) struct Overlay {
     pub(crate) mcp: McpConfig,
 }
 
-/// Set once by [`install`]. Tests never set it, so every test that loads
-/// settings sees no overlay; they call [`read`] and pass the result in.
+/// Set once by [`install`]. Tests never set it, so a test that loads
+/// settings sees no overlay. Tests call [`read`] and pass the result in.
 static OVERLAY: OnceLock<Overlay> = OnceLock::new();
 
-/// Read the overlay `path` names before anything loads settings, and keep it
-/// for the rest of the process. `None` installs nothing. A later call is
-/// ignored, so nothing after startup can change the overlay a session runs
-/// with.
+/// Read the overlay at `path` before any settings load, and keep it until
+/// Stella exits. `None` sets nothing. A later call does nothing, so the
+/// overlay can't change once a session starts.
 ///
-/// Refused under `STELLA_NO_SETTINGS=1`, which promises that no config file is
-/// read. Honoring one of the two asks would silently break the other.
+/// `STELLA_NO_SETTINGS=1` says no config file is read, so it refuses the
+/// flag. To honor one would break the other with no word.
 pub(crate) fn install(path: Option<&Path>) -> Result<(), String> {
     let Some(path) = path else {
         return Ok(());
@@ -87,12 +86,12 @@ pub(crate) fn active_mcp() -> Option<&'static McpConfig> {
     active().map(|overlay| &overlay.mcp)
 }
 
-/// Read and parse one overlay file. Every error names the file.
+/// Read and parse one overlay file. Each error names the file.
 ///
-/// The read refuses a symlink at the end of the path and a parent directory
-/// that another user can write to. The file can carry a provider key and
-/// hooks that run commands, so it gets the same check as `~/.stella/mcp.toml`
-/// and the credentials file.
+/// The read refuses a symlink as the file. It refuses a parent folder that
+/// some other user can write to. The file can hold a key and hooks that run
+/// commands. So it gets the same check as `~/.stella/mcp.toml` and the
+/// credentials file.
 pub(crate) fn read(path: &Path) -> Result<Overlay, String> {
     let path = std::path::absolute(path)
         .map_err(|error| format!("cannot read {FLAG} {}: {error}", path.display()))?;
