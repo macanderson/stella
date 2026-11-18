@@ -31,9 +31,8 @@ pub fn current() -> Option<String> {
     TOOL_USE_ID.try_with(Clone::clone).ok()
 }
 
-/// The id of a call the engine makes on its own, with no model call behind
-/// it, such as a parked wait's probe or a read that restores files after
-/// compaction.
+/// The id of a call the engine makes on its own. No model asked for it.
+/// A probe in a parked wait is one. So is a read that restores files.
 ///
 /// The id starts with the id of the last call the model made, then names
 /// `kind` and `ordinal`. So each replay gets its own id, and a gateway never
