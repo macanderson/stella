@@ -20,10 +20,13 @@ use crate::event_sender::EventSender;
 use crate::step::{StepOutcome, TurnState};
 use crate::waiting::{WaitCall, WakeReason, decide, probe_fingerprint, wake_message};
 
-/// The synthetic `call_id` probe and wake replays carry. They never enter
-/// the transcript, so the id only needs to be recognizable in hook payloads
-/// and diagnostics.
+/// What a probe replay's id names (see [`crate::tool_use::replay_id`]).
+/// Replays never enter the transcript. Each one gets its own id, so a hook
+/// or a gateway can tell one poll from the next.
 const PARKED_CALL_ID: &str = "parked-wait";
+
+/// What the wake replay's id names, the one call a park makes on waking.
+const WAKE_CALL_ID: &str = "parked-wake";
 
 impl<'a> Engine<'a> {
     /// Park the turn on a deposited wait request, if the step's tools left
@@ -106,7 +109,9 @@ impl<'a> Engine<'a> {
             if let Some(cancelled) = state.cancel_outcome(events) {
                 return Some(cancelled);
             }
-            let output = self.replay(&request.probe, events).await;
+            let poll = usize::try_from(polls_used + 1).unwrap_or(usize::MAX);
+            let probe_id = crate::tool_use::replay_id(&state.messages, PARKED_CALL_ID, poll);
+            let output = self.replay(&request.probe, probe_id, events).await;
             polls_used += 1;
             let observed = probe_fingerprint(&output);
             if observed.is_some() {
@@ -120,8 +125,9 @@ impl<'a> Engine<'a> {
         // The delta the model wakes to: the rich wake call's output when the
         // request named one (and the state actually changed), otherwise the
         // last thing the probe saw.
+        let wake_id = crate::tool_use::replay_id(&state.messages, WAKE_CALL_ID, 1);
         let detail = match (reason, &request.on_wake) {
-            (WakeReason::Changed, Some(call)) => match self.replay(call, events).await {
+            (WakeReason::Changed, Some(call)) => match self.replay(call, wake_id, events).await {
                 ToolOutput::Ok { content, .. } => Some(content),
                 // The wake call failing must not hide that the wait ended —
                 // surface the error as the detail and let the model re-query.
@@ -155,9 +161,9 @@ impl<'a> Engine<'a> {
     /// output never reaches the transcript. Hook diagnostics still surface
     /// on the turn stream; a `PreToolUse` block comes back as an error
     /// output, which the wait loop reads as "no observation, keep waiting".
-    async fn replay(&self, call: &WaitCall, events: &EventSender) -> ToolOutput {
+    async fn replay(&self, call: &WaitCall, call_id: String, events: &EventSender) -> ToolOutput {
         let tool_call = ToolCall {
-            call_id: PARKED_CALL_ID.into(),
+            call_id,
             name: call.name.clone(),
             input: call.input.clone(),
         };

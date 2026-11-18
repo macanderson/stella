@@ -104,9 +104,9 @@ fn summary_request(rendered: &str) -> Vec<CompletionMessage> {
     ]
 }
 
-/// The synthetic `call_id` restoration replays carry — the
-/// `driver::waiting::PARKED_CALL_ID` shape: it never enters the transcript,
-/// so it only needs to be recognizable in hook payloads and diagnostics.
+/// What a restoring read's id names (see [`crate::tool_use::replay_id`]).
+/// The read never enters the transcript. Each read gets its own id, as a
+/// parked wait's probes do.
 const RESTORE_CALL_ID: &str = "working-set-restore";
 
 impl<'a> Engine<'a> {
@@ -511,9 +511,9 @@ impl<'a> Engine<'a> {
             .any(|s| s.name == crate::restore::READ_TOOL && s.read_only);
         let mut fresh: Vec<FreshRead> = Vec::new();
         if read_tool_is_read_only {
-            for read in &working_set.reads {
+            for (index, read) in working_set.reads.iter().enumerate() {
                 let call = ToolCall {
-                    call_id: RESTORE_CALL_ID.into(),
+                    call_id: crate::tool_use::replay_id(messages, RESTORE_CALL_ID, index + 1),
                     name: crate::restore::READ_TOOL.into(),
                     input: read.input.clone(),
                 };

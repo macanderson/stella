@@ -130,6 +130,8 @@ stella run --resume "$id" -- "Now add a regression test"
 
 A resumed run keeps the session's id, so its hooks, its audit rows, and `stella resume --list` all show one session. Its `SessionStart` hooks fire with `"source": "resume"`, and a new run's fire with `"source": "startup"`, so a recorder can tell the two apart (see [Hooks](/docs/agent-tools/hooks#sessionstart)). The resumed turn runs on the conversation the session saved, under today's system prompt. When the old process was killed mid-turn, the steps it finished stay done and do not run again.
 
+`--spend-limit` caps what the resumed run spends, counted from zero. It leaves out what the session spent before, so a launcher that restarts one run several times sets each limit with that in mind.
+
 `--resume` refuses to start, and names the id, when:
 
 - no session on this machine has that id,

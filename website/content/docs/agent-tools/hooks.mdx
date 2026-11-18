@@ -251,7 +251,7 @@ A gateway in front of an MCP server sees each `tools/call` request, and a run's 
 
 The value is the `tool.tool_use_id` of that call's `PreToolUse` and `PostToolUse` payloads, so a gateway joins a request to its hooks by one exact match. A server that doesn't know the key ignores it. A call made outside a run, with no tool call behind it, sends no `_meta`.
 
-The id comes from the model provider. When the model asks for the same call again on a later step, that is a new tool call with a new id. Gemini and Vertex send no call ids, so stella builds one from the provider's response id and the call's place in the response. A Gemini or Vertex response with no response id falls back to `call_0`, `call_1`, and so on, and those can repeat on a later step.
+The id comes from the model provider. When the model asks for the same call again on a later step, that is a new tool call with a new id. A call stella makes on its own, such as each probe while a turn waits on CI, gets its own id too: the id of the model's last call, then what the call is for and its number, as in `toolu_01A09q90qw90lq917835lq9.parked-wait-2`. Gemini and Vertex send no call ids, so stella builds one from the provider's response id and the call's place in the response. A Gemini or Vertex response with no response id falls back to `call_0`, `call_1`, and so on, and those can repeat on a later step.
 
 When the connection drops and stella sends a read-only or idempotent call again, the second request carries the same id, because it is the same call. Any other call is sent once.
 

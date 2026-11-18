@@ -11,6 +11,8 @@
 
 use std::future::Future;
 
+use stella_protocol::CompletionMessage;
+
 tokio::task_local! {
     static TOOL_USE_ID: String;
 }
@@ -29,9 +31,30 @@ pub fn current() -> Option<String> {
     TOOL_USE_ID.try_with(Clone::clone).ok()
 }
 
+/// The id of a call the engine makes on its own, with no model call behind
+/// it, such as a parked wait's probe or a read that restores files after
+/// compaction.
+///
+/// The id starts with the id of the last call the model made, then names
+/// `kind` and `ordinal`. So each replay gets its own id, and a gateway never
+/// sees one id on two requests.
+#[must_use]
+pub fn replay_id(messages: &[CompletionMessage], kind: &str, ordinal: usize) -> String {
+    let anchor = messages
+        .iter()
+        .rev()
+        .find_map(|message| message.tool_calls.last());
+    match anchor {
+        Some(call) => format!("{}.{kind}-{ordinal}", call.call_id),
+        None => format!("{kind}-{ordinal}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{current, scope};
+    use stella_protocol::{CompletionMessage, ToolCall};
+
+    use super::{current, replay_id, scope};
 
     fn id(text: &str) -> Option<String> {
         Some(text.to_string())
@@ -74,5 +97,30 @@ mod tests {
         let (first, second) = tokio::join!(first, second);
         assert_eq!(first, (id("call_a"), id("call_a")));
         assert_eq!(second, id("call_b"));
+    }
+
+    /// A replay is named after the last call the model made, and two
+    /// replays never share an id.
+    #[test]
+    fn a_replay_is_named_after_the_last_model_call() {
+        let mut asked = CompletionMessage::assistant("");
+        asked.tool_calls = ["call_1", "call_2"]
+            .iter()
+            .map(|id| ToolCall {
+                call_id: (*id).to_string(),
+                name: "ci_status".to_string(),
+                input: serde_json::json!({}),
+            })
+            .collect();
+        let messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("watch CI"),
+            asked,
+            CompletionMessage::user("a later turn"),
+        ];
+        assert_eq!(replay_id(&messages, "parked-wait", 1), "call_2.parked-wait-1");
+        assert_eq!(replay_id(&messages, "parked-wait", 2), "call_2.parked-wait-2");
+        let none = vec![CompletionMessage::user("no calls yet")];
+        assert_eq!(replay_id(&none, "working-set-restore", 1), "working-set-restore-1");
     }
 }
