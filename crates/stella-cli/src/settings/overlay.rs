@@ -205,12 +205,6 @@ pub(crate) fn install(path: Option<&Path>, sha256: Option<&str>) -> Result<(), S
         ));
     }
     let overlay = read(path, sha256)?;
-    for line in super::unknown::notices(
-        &overlay.path.display().to_string(),
-        super::unknown::unknown_toml_keys_in(&overlay.path),
-    ) {
-        eprintln!("{line}");
-    }
     let _ = OVERLAY.set(overlay);
     Ok(())
 }
@@ -264,6 +258,12 @@ pub(crate) fn read(path: &Path, sha256: Option<&str>) -> Result<Overlay, String>
         .map_err(|error| format!("the {FLAG} file is not valid: {error}"))?;
     for warning in &loaded.warnings {
         eprintln!("{warning}");
+    }
+    // The unknown-key scan reads the text the hash and the parse read.
+    // Opening the path again could see a file swapped in after this read.
+    let unknown_keys = super::unknown::unknown_toml_keys_in_text(&text);
+    for line in super::unknown::notices(&path.display().to_string(), unknown_keys) {
+        eprintln!("{line}");
     }
     Ok(Overlay {
         loop_sections: LoopSections::of(&text),

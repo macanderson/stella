@@ -628,7 +628,15 @@ pub(super) fn unknown_toml_keys_in(path: &Path) -> Vec<String> {
     let Ok(contents) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
-    let Ok(parsed) = toml::from_str::<toml::Value>(&contents) else {
+    unknown_toml_keys_in_text(&contents)
+}
+
+/// The unrecognized keys in `contents`, the text of a `stella.toml`.
+///
+/// For a caller that already holds the file's text, so it scans the same
+/// bytes it read and does not open the path a second time.
+pub(super) fn unknown_toml_keys_in_text(contents: &str) -> Vec<String> {
+    let Ok(parsed) = toml::from_str::<toml::Value>(contents) else {
         return Vec::new();
     };
     let Ok(root) = serde_json::to_value(parsed) else {
@@ -1119,5 +1127,22 @@ mod tests {
         assert!(scan("{ not json").is_empty());
         assert!(scan("[]").is_empty());
         assert!(unknown_keys_in(Path::new("/nonexistent/settings.json")).is_empty());
+    }
+
+    /// The text scan names the keys the path scan names, from text the
+    /// caller already read. The overlay's read uses it, so a file swapped in
+    /// after that read can't change what the notices say.
+    #[test]
+    fn the_text_scan_names_the_keys_the_path_scan_names() {
+        let text = "[runn]\nmodel = \"x\"\n";
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stella.toml");
+        std::fs::write(&path, text).unwrap();
+
+        let from_text = unknown_toml_keys_in_text(text);
+
+        assert_eq!(from_text, vec!["runn".to_string()]);
+        assert_eq!(from_text, unknown_toml_keys_in(&path));
+        assert!(unknown_toml_keys_in_text("not = [valid").is_empty());
     }
 }
