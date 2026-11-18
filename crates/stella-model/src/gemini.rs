@@ -39,7 +39,9 @@ const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta
 /// signature inside a `ToolCall::call_id`. Gemini's wire has no call ids at
 /// all — calls correlate to responses by function *name* and order — but the
 /// engine's internal protocol requires one, so this adapter mints
-/// `call_0`, `call_1`, …. Gemini 3 additionally attaches a `thoughtSignature`
+/// `call_<responseId>_0`, `call_<responseId>_1`, …, or `call_0`, `call_1`, …
+/// when the response names no `responseId` (see [`mint_call_id`]). Gemini 3
+/// additionally attaches a `thoughtSignature`
 /// to streamed `functionCall` parts and *requires* it to be echoed back on
 /// the matching part in conversation history (omitting it degrades or
 /// rejects the next turn). `CompletionMessage`/`ToolCall` have no slot for a
@@ -319,6 +321,10 @@ pub(crate) struct GeminiStreamChunk {
     pub(crate) candidates: Vec<GeminiCandidate>,
     #[serde(default)]
     pub(crate) usage_metadata: Option<GeminiUsageMetadata>,
+    /// The id Google gives this response. Every streamed chunk of one
+    /// response carries the same value, and no two responses share one.
+    #[serde(default)]
+    pub(crate) response_id: Option<String>,
     /// An in-band error frame (`data: {"error": {...}}`). Google can emit one
     /// mid-stream after a 200 status; without modelling it the frame would
     /// deserialize into an otherwise-empty chunk and be silently dropped,
@@ -429,7 +435,7 @@ pub(crate) fn map_thinking_level(effort: ReasoningEffort) -> &'static str {
     }
 }
 
-/// Split a minted call id back into `(wire ordinal, thought signature)` —
+/// Split a minted call id back into `(minted id, thought signature)` —
 /// the inverse of what [`aggregate_gemini_stream`] minted.
 fn split_call_id(call_id: &str) -> (&str, Option<&str>) {
     match call_id.split_once(SIGNATURE_SEPARATOR) {
@@ -758,6 +764,38 @@ pub(crate) struct GeminiAssembly {
     pub(crate) usage_seen: bool,
     /// Reported on the final chunk's candidate; last assignment wins.
     pub(crate) finish_raw: Option<String>,
+    /// The response's `responseId`, cleaned for use in a call id. The first
+    /// chunk that names one sets it.
+    pub(crate) response_id: Option<String>,
+}
+
+/// The call id for the `ordinal`-th call of a response.
+///
+/// The ordinal starts at 0 in every response, so `call_0` alone names a call
+/// in each step. The response's id makes it unique across steps, so a hook,
+/// an MCP request and a recorder can tell one step's first call from the
+/// next one's. A `thoughtSignature` rides after [`SIGNATURE_SEPARATOR`].
+fn mint_call_id(response_id: Option<&str>, ordinal: usize, signature: Option<&str>) -> String {
+    let base = match response_id {
+        Some(response) => format!("call_{response}_{ordinal}"),
+        None => format!("call_{ordinal}"),
+    };
+    match signature {
+        Some(sig) => format!("{base}{SIGNATURE_SEPARATOR}{sig}"),
+        None => base,
+    }
+}
+
+/// `responseId` reduced to the characters a call id may carry, or `None`
+/// when nothing is left. Keeping it to letters, digits, `-` and `_` keeps
+/// [`SIGNATURE_SEPARATOR`] out of the id, so the signature split stays
+/// unambiguous.
+fn id_token(response_id: &str) -> Option<String> {
+    let token: String = response_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(*c, '-' | '_'))
+        .collect();
+    (!token.is_empty()).then_some(token)
 }
 
 impl GeminiAssembly {
@@ -783,6 +821,9 @@ impl GeminiAssembly {
             self.usage.output_tokens = u.candidates_token_count + u.thoughts_token_count;
             self.usage.cached_input_tokens = u.cached_content_token_count;
         }
+        if self.response_id.is_none() {
+            self.response_id = chunk.response_id.as_deref().and_then(id_token);
+        }
         for candidate in chunk.candidates {
             if let Some(reason) = candidate.finish_reason {
                 self.finish_raw = Some(reason);
@@ -794,8 +835,8 @@ impl GeminiAssembly {
                 if let Some(call) = part.function_call {
                     let ordinal = self.tool_calls.len();
                     // The name is the tool to run, and it cannot be invented
-                    // here. The call id is minted below from the ordinal, so
-                    // the name is the one dispatch field this wire can drop.
+                    // here. The call id is minted below, so the name is
+                    // the one dispatch field this wire can drop.
                     // Committing a call named `""` would send the engine
                     // looking for a tool no registry holds.
                     if call.name.is_empty() {
@@ -806,10 +847,11 @@ impl GeminiAssembly {
                             &["name"],
                         ));
                     }
-                    let call_id = match &part.thought_signature {
-                        Some(sig) => format!("call_{ordinal}{SIGNATURE_SEPARATOR}{sig}"),
-                        None => format!("call_{ordinal}"),
-                    };
+                    let call_id = mint_call_id(
+                        self.response_id.as_deref(),
+                        ordinal,
+                        part.thought_signature.as_deref(),
+                    );
                     // A no-argument call omits `args` on the wire, which
                     // deserializes to `Value::Null` (the field is
                     // `#[serde(default)]`). That is an empty object, not
@@ -1003,6 +1045,8 @@ fn map_gemini_finish_reason(raw: Option<&str>, has_tool_calls: bool) -> Option<F
     }
 }
 
+#[cfg(test)]
+mod call_ids;
 #[cfg(test)]
 mod malformed_tool_call;
 #[cfg(test)]

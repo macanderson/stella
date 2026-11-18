@@ -30,7 +30,7 @@ use std::collections::BTreeSet;
 use serde_json::Value;
 use stella_core::hooks::{
     HookIssueInfo, HookIssueOutcome, HookPayload, HookPullRequestInfo, HookRunInfo,
-    HookSubAgentInfo, HookSubAgentResult, HookToolInfo,
+    HookSessionSource, HookSubAgentInfo, HookSubAgentResult, HookToolInfo,
 };
 use stella_plugin::{HOOK_FIELDS, HookEvent};
 
@@ -73,29 +73,20 @@ fn widest_payloads() -> Vec<(HookEvent, Vec<HookPayload>)> {
         title: Some("a title".into()),
         branch: Some("fix/branch".into()),
     };
+    let source = HookSessionSource::Resume;
+    let session_start = HookPayload::session_start("/w").with_session_source(source);
+    let input = serde_json::json!({ "command": "ls" });
+    let pre_tool_use = HookPayload::pre_tool_use("/w", "bash", input.clone(), false);
+    let post_tool_use = HookPayload::post_tool_use("/w", "bash", input, false, "a.txt\n");
     vec![
-        (
-            HookEvent::SessionStart,
-            vec![HookPayload::session_start("/w")],
-        ),
+        (HookEvent::SessionStart, vec![session_start]),
         (
             HookEvent::PreToolUse,
-            vec![HookPayload::pre_tool_use(
-                "/w",
-                "bash",
-                serde_json::json!({ "command": "ls" }),
-                false,
-            )],
+            vec![pre_tool_use.with_tool_use_id("call_1")],
         ),
         (
             HookEvent::PostToolUse,
-            vec![HookPayload::post_tool_use(
-                "/w",
-                "bash",
-                serde_json::json!({ "command": "ls" }),
-                false,
-                "a.txt\n",
-            )],
+            vec![post_tool_use.with_tool_use_id("call_1")],
         ),
         (HookEvent::Stop, vec![HookPayload::stop("/w", "done")]),
         (HookEvent::PreCompact, vec![HookPayload::pre_compact("/w")]),
@@ -323,6 +314,7 @@ fn every_hook_payload_field_is_named_in_the_disclosure_table() {
         event,
         cwd,
         session_id,
+        source,
         tool,
         tool_result,
         final_text,
@@ -339,6 +331,7 @@ fn every_hook_payload_field_is_named_in_the_disclosure_table() {
         name,
         input,
         read_only,
+        tool_use_id,
     } = tool.expect("the constructor above populates the tool");
     let HookIssueInfo {
         number,
@@ -396,9 +389,11 @@ fn every_hook_payload_field_is_named_in_the_disclosure_table() {
         named("event", event),
         named("cwd", cwd),
         named("session_id", session_id),
+        named("source", source),
         named("tool.name", name),
         named("tool.input", input),
         named("tool.read_only", read_only),
+        named("tool.tool_use_id", tool_use_id),
         named("toolResult", tool_result),
         named("finalText", final_text),
         named("prompt", prompt),

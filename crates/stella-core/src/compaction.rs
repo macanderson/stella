@@ -575,9 +575,10 @@ pub fn compact_measured(
     // NOT keyed by `call_id`. A call_id is unique only within ONE
     // step — `driver/loop_evidence.rs::snapshot_result_identities` says so and poisons any id
     // it sees carrying two different outputs — and Gemini/Vertex mint theirs as
-    // `call_{ordinal}` counted per response, so `call_0` recurs on every
-    // assistant step. A `HashMap<call_id, block_id>` keeps only the LAST
-    // occurrence, which collapsed every result sharing a recurring id onto one
+    // `call_{ordinal}` counted per response when a response names no
+    // `responseId`, so `call_0` can recur on every assistant step. A
+    // `HashMap<call_id, block_id>` keeps only the LAST occurrence, which
+    // collapsed every result sharing a recurring id onto one
     // identity: pass 1 then read three distinct outputs as duplicates of each
     // other and stubbed the middle ones, and the receipt cited the wrong block.
     let original_ids: Vec<Vec<String>> = messages
@@ -683,7 +684,7 @@ pub fn compact_measured(
         // bearing that call_id, so a result is matched to the call it actually
         // answered. A conversation-wide `call_id -> invocation` map would bind
         // an old result to a NEWER, unrelated call whenever a provider reuses a
-        // call_id across steps (Gemini/Vertex do, by construction) — and then
+        // call_id across steps (Gemini/Vertex can, see `loop_evidence`) — and then
         // stub a live, distinct output as "stale". Input serialization is
         // deterministic for a given call because it round-trips the same
         // serde_json Value.

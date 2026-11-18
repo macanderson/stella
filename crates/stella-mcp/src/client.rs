@@ -33,8 +33,11 @@
 //! transport drops those silently.
 
 mod authz;
+mod call_meta;
 mod health;
 pub(crate) mod ingest;
+
+pub use call_meta::TOOL_USE_ID_META_KEY;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -239,6 +242,10 @@ impl McpClient {
     /// risking double execution. If the call *hangs* (timeout) or the
     /// reconnect is still backing off, a clear, server-named error is
     /// returned as data — the agent's turn is never aborted.
+    ///
+    /// The request's `_meta` names the engine's tool call under
+    /// [`TOOL_USE_ID_META_KEY`] when one is running. A re-send after a drop
+    /// carries the same id, because it is the same call.
     pub async fn call_tool(&self, tool: &str, arguments: Value) -> Result<ToolOutput, McpError> {
         let params = CallToolParams {
             name: tool.to_string(),
@@ -247,6 +254,7 @@ impl McpClient {
             } else {
                 arguments
             },
+            meta: call_meta::for_current_call(),
         };
         let raw_params = to_value(&params)?;
 

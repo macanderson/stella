@@ -42,6 +42,7 @@ pub mod subagent;
 mod summarize;
 #[cfg(test)]
 pub(crate) mod tests;
+pub mod tool_use;
 pub mod waiting;
 
 pub use budget::{BudgetGuard, BudgetOutcome};

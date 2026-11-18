@@ -99,7 +99,9 @@ pub mod suppress;
 pub mod toolset;
 pub mod transport;
 
-pub use client::{HealthState, MAX_TOOLS_PER_SERVER, McpClient, McpToolInfo, ServerHealth};
+pub use client::{
+    HealthState, MAX_TOOLS_PER_SERVER, McpClient, McpToolInfo, ServerHealth, TOOL_USE_ID_META_KEY,
+};
 pub use config::{McpConfig, McpServerConfig, McpTransport, ServerCard};
 pub use error::McpError;
 pub use http::HttpTransport;

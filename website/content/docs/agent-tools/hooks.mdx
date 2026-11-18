@@ -124,6 +124,8 @@ While the loop polls, a repeated answer is only reported **once**. A pull reques
 
 Runs once before the turn begins. Anything the hook prints to **stdout is appended to the system prompt** as extra context. This is a handy way to inject environment details, project conventions, or the current date into every session. The matcher is **ignored** for this event.
 
+On `stella run`, the payload's `source` says how the session began: `"startup"` for a new session, or `"resume"` for one that [`stella run --resume`](/docs/commands/run#continue-a-session) continues. A recorder reads it to tell a continued session from a new one.
+
 ### `PreToolUse`
 
 Runs before a tool executes. A **non-zero exit status blocks the tool**: the tool doesn't run, and the model gets the hook's message instead. This is how you gate or veto tool calls (see [Permissions](/docs/agent-tools/permissions)). The matcher is a **glob over the tool name**, so you can target one tool, such as `task_assign`, or a family of tools, such as `mcp__github__*`.
@@ -180,9 +182,12 @@ Every hook receives one JSON document on stdin. Here's its shape:
 {
   "event": "PostToolUse",
   "cwd": "/path/to/workspace",
+  "session_id": "ses-1763337600000-4242",
   "tool": {
     "name": "task_create",
-    "input": { "subject": "Fix the auth redirect loop" }
+    "input": { "subject": "Fix the auth redirect loop" },
+    "read_only": false,
+    "tool_use_id": "toolu_01A09q90qw90lq917835lq9"
   },
   "toolResult": "created 1 task:\n[ ] #1 Fix the auth redirect loop"
 }
@@ -195,8 +200,17 @@ Every hook receives one JSON document on stdin. Here's its shape:
   <OptionCard name="cwd">
     String, always present. The workspace root, which is also the hook's working directory.
   </OptionCard>
+  <OptionCard name="session_id">
+    String, present when the host knows the session. On `stella run`, it's the session's registry id, the one `stella resume --list` prints and `stella run --resume` takes. A self-driving drive puts its own id here.
+  </OptionCard>
+  <OptionCard name="source">
+    String, present on `SessionStart` from `stella run`. `"startup"` for a new session, or `"resume"` for one `stella run --resume` continues.
+  </OptionCard>
   <OptionCard name="tool">
-    Object, present on `PreToolUse` and `PostToolUse`. `{ "name": …, "input": …, "read_only": … }`: the tool's exact name, the JSON input it was (or will be) called with, and the `read_only` flag from its schema. This means "deny anything non-read-only" is one `jq` expression. More tool metadata will join this object over time.
+    Object, present on `PreToolUse` and `PostToolUse`. `{ "name": …, "input": …, "read_only": …, "tool_use_id": … }`: the tool's exact name, the JSON input it was (or will be) called with, the `read_only` flag from its schema, and the call's id. The `read_only` flag means "deny anything non-read-only" is one `jq` expression. More tool metadata will join this object over time.
+  </OptionCard>
+  <OptionCard name="tool.tool_use_id">
+    String, present on `PreToolUse` and `PostToolUse`. The id of this one tool call, the same `call_id` the `tool_start` and `tool_result` events carry. Both hooks for one call carry the same id. Two calls in one model step never share one, even with the same tool and the same input. See [Matching an MCP call to its hooks](#matching-an-mcp-call-to-its-hooks).
   </OptionCard>
   <OptionCard name="toolResult">
     String, present on `PostToolUse` only. The result string the tool returned, either the success content or the error message. **Nothing shortens it.** A hook matched against a tool that returns a large body receives that whole body on stdin, so if you only want a summary, trim it yourself.
@@ -221,7 +235,25 @@ Every hook receives one JSON document on stdin. Here's its shape:
   </OptionCard>
 </CardGrid>
 
-A field that doesn't apply is **left out entirely**, not set to `null`. A `SessionStart` payload is just `{ "event": "SessionStart", "cwd": "…" }`, and `toolResult` never shows up on a `PreToolUse` payload.
+A field that doesn't apply is **left out entirely**, not set to `null`. A `SessionStart` payload carries `event`, `cwd`, and, when the host has them, `session_id` and `source`. `toolResult` never shows up on a `PreToolUse` payload. A payload written before a field existed still parses: a missing `tool_use_id` reads as absent.
+
+### Matching an MCP call to its hooks
+
+A gateway in front of an MCP server sees each `tools/call` request, and a run's hooks see each tool call. Two calls to one tool with the same input look the same on the wire. So stella names the call in the request: every `tools/call` it sends carries the call's `tool_use_id` in the MCP request metadata, `_meta`, under the key `dev.stella/tool_use_id`.
+
+```json title="params of a tools/call request"
+{
+  "name": "search_code",
+  "arguments": { "query": "retry policy" },
+  "_meta": { "dev.stella/tool_use_id": "toolu_01A09q90qw90lq917835lq9" }
+}
+```
+
+The value is the `tool.tool_use_id` of that call's `PreToolUse` and `PostToolUse` payloads, so a gateway joins a request to its hooks by one exact match. A server that doesn't know the key ignores it. A call made outside a run, with no tool call behind it, sends no `_meta`.
+
+The id comes from the model provider. When the model asks for the same call again on a later step, that is a new tool call with a new id. Gemini and Vertex send no call ids, so stella builds one from the provider's response id and the call's place in the response. A Gemini or Vertex response with no response id falls back to `call_0`, `call_1`, and so on, and those can repeat on a later step.
+
+When the connection drops and stella sends a read-only or idempotent call again, the second request carries the same id, because it is the same call. Any other call is sent once.
 
 <Callout type="warn">
   Because `toolResult` has no size limit, a `PostToolUse` hook matched on `"*"` gets the full output of every tool call in the session, including a large body from an MCP or custom tool. Match narrowly, and if your hook logs stdin anywhere, read it in a streaming or size-capped way.

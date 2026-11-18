@@ -385,12 +385,14 @@ pub(super) fn stamp_origins(
 /// provider's `call_id` PLUS the call's name and input.
 ///
 /// `call_id` alone is not enough. Providers only guarantee ids unique within
-/// one response, and Gemini and Vertex mint them as `call_{ordinal}` where
-/// the ordinal is local to a single assistant step (`stella-model/src/
-/// gemini.rs`; `vertex.rs` reuses the same aggregation path). So `call_0`
-/// restarts on EVERY step, and a bare-`call_id` key collides across steps by
-/// construction on two real providers — poisoning the id on the first step
-/// whose first call differs, and keeping it poisoned for the rest of the turn.
+/// one response. Gemini and Vertex mint them as `call_{ordinal}` where the
+/// ordinal is local to a single assistant step, whenever a response names no
+/// `responseId`, and every transcript saved before they read one holds them
+/// (`stella-model/src/gemini.rs`; `vertex.rs` reuses the same aggregation
+/// path). So `call_0` can restart on every step, and a bare-`call_id` key
+/// collides across steps on two real providers — poisoning the id on the
+/// first step whose first call differs, and keeping it poisoned for the rest
+/// of the turn.
 ///
 /// Name and input are exactly the fields `loop_detect::same_record` already
 /// requires to match before two records are "the same", so widening the key

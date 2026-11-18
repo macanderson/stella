@@ -30,6 +30,12 @@ pub struct HookToolInfo {
     /// still deserializes.
     #[serde(default)]
     pub read_only: bool,
+    /// The engine's id for this call, the `call_id` its `ToolStart` and
+    /// `ToolResult` events carry. `PreToolUse` and `PostToolUse` for one
+    /// call carry the same value, and an MCP `tools/call` sends it in
+    /// `_meta`. Absent from a payload built before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_use_id: Option<String>,
 }
 
 /// The JSON payload fed to a hook command on stdin (TS: `HookPayload`).
@@ -41,6 +47,10 @@ pub struct HookPayload {
     /// self-driving loop names its drive here, when a drive is open.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    /// Present for `SessionStart` when the host knows how the session
+    /// began: `startup` for a new one, `resume` for one continued by id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<HookSessionSource>,
     /// Present for `PreToolUse` / `PostToolUse`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool: Option<HookToolInfo>,
@@ -114,6 +124,16 @@ impl HookPayload {
         self
     }
 
+    /// Name the tool call this payload is about. A payload with no tool is
+    /// returned as it was.
+    #[must_use]
+    pub fn with_tool_use_id(mut self, tool_use_id: impl Into<String>) -> Self {
+        if let Some(tool) = self.tool.as_mut() {
+            tool.tool_use_id = Some(tool_use_id.into());
+        }
+        self
+    }
+
     /// A payload carrying only the event and the workspace — the shape
     /// every non-tool event shares.
     fn bare(event: HookEvent, cwd: String) -> Self {
@@ -121,6 +141,7 @@ impl HookPayload {
             event,
             cwd,
             session_id: None,
+            source: None,
             tool: None,
             tool_result: None,
             final_text: None,
@@ -140,6 +161,13 @@ impl HookPayload {
         Self::bare(HookEvent::SessionStart, cwd.into())
     }
 
+    /// Say how the session began, on a `SessionStart` payload.
+    #[must_use]
+    pub fn with_session_source(mut self, source: HookSessionSource) -> Self {
+        self.source = Some(source);
+        self
+    }
+
     /// A `PreToolUse` payload for the given tool call. `read_only` is the
     /// tool's advertised bit from its schema (#2684).
     pub fn pre_tool_use(
@@ -153,6 +181,7 @@ impl HookPayload {
                 name: name.into(),
                 input,
                 read_only,
+                tool_use_id: None,
             }),
             ..Self::bare(HookEvent::PreToolUse, cwd.into())
         }
@@ -171,6 +200,7 @@ impl HookPayload {
                 name: name.into(),
                 input,
                 read_only,
+                tool_use_id: None,
             }),
             tool_result: Some(tool_result.into()),
             ..Self::bare(HookEvent::PostToolUse, cwd.into())
@@ -298,6 +328,19 @@ impl HookPayload {
             ..Self::bare(event, cwd.into())
         }
     }
+}
+
+/// How a session began, for [`HookEvent::SessionStart`].
+///
+/// A recorder reads it to tell a continued session from a new one, the way
+/// it does for Claude Code's `source`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookSessionSource {
+    /// A new session.
+    Startup,
+    /// A session continued by its id (`stella run --resume`).
+    Resume,
 }
 
 /// The child turn a `SubagentStart`/`SubagentStop` hook observes.
@@ -453,4 +496,47 @@ pub enum HookIssueOutcome {
         /// Why, in the loop's own words.
         reason: String,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HookPayload, HookSessionSource};
+
+    #[test]
+    fn a_resumed_session_says_so_and_a_plain_one_says_nothing() {
+        let source = HookSessionSource::Resume;
+        let resumed = HookPayload::session_start("/w").with_session_source(source);
+        let json = serde_json::to_value(&resumed).expect("a payload serializes");
+        assert_eq!(json["source"], "resume");
+        let plain = serde_json::to_value(HookPayload::session_start("/w")).expect("serializes");
+        assert!(plain.get("source").is_none(), "{plain}");
+    }
+
+    #[test]
+    fn a_named_call_serializes_its_id_inside_the_tool() {
+        let payload = HookPayload::pre_tool_use("/w", "bash", serde_json::json!({}), false)
+            .with_tool_use_id("call_1");
+        let json = serde_json::to_value(&payload).expect("a payload serializes");
+        assert_eq!(json["tool"]["tool_use_id"], "call_1");
+    }
+
+    #[test]
+    fn a_payload_with_no_tool_ignores_the_id() {
+        let payload = HookPayload::stop("/w", "done").with_tool_use_id("call_1");
+        assert_eq!(payload.tool, None);
+    }
+
+    /// A payload written before the field existed still parses.
+    #[test]
+    fn a_payload_without_the_id_still_deserializes() {
+        let legacy = r#"{"event":"PostToolUse","cwd":"/w","tool":{"name":"bash","input":{},"read_only":false},"toolResult":"ok"}"#;
+        let parsed: HookPayload = serde_json::from_str(legacy).expect("a legacy payload parses");
+        let tool = parsed.tool.expect("the tool is present");
+        assert_eq!(tool.tool_use_id, None);
+        let json = serde_json::to_string(&tool).expect("the tool serializes");
+        assert!(
+            !json.contains("tool_use_id"),
+            "an absent id is left out: {json}"
+        );
+    }
 }

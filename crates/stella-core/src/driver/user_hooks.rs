@@ -198,6 +198,10 @@ impl<'a> Engine<'a> {
     /// wraps in the timeout backstop. `read_only` is the tool's advertised
     /// bit, threaded from the caller's schema snapshot so the hook payload
     /// can carry it without re-walking `schemas()` per call.
+    ///
+    /// The executor runs inside [`crate::tool_use::scope`] under the call's
+    /// `call_id`, the id the hook payloads carry too. That is how an MCP
+    /// request names the call it serves.
     pub(super) async fn dispatch_tool_call(
         &self,
         call: &ToolCall,
@@ -215,13 +219,17 @@ impl<'a> Engine<'a> {
                 ),
             );
         }
-        match self.hooks {
-            None => self.tools.execute(&call.name, &call.input).await,
-            Some(handle) => {
-                self.execute_with_hooks(handle, call, read_only, events)
-                    .await
+        let tool_use_id = call.call_id.clone();
+        let dispatch = async {
+            match self.hooks {
+                None => self.tools.execute(&call.name, &call.input).await,
+                Some(handle) => {
+                    self.execute_with_hooks(handle, call, read_only, events)
+                        .await
+                }
             }
-        }
+        };
+        crate::tool_use::scope(tool_use_id, dispatch).await
     }
 
     /// Wrap a single (well-formed) executor invocation in its `PreToolUse` /
@@ -254,6 +262,7 @@ impl<'a> Engine<'a> {
                 call.input.clone(),
                 read_only,
             )
+            .with_tool_use_id(call.call_id.clone())
             .with_session_context(self.config.session_context.as_ref()),
         )
         .await;
@@ -326,6 +335,7 @@ impl<'a> Engine<'a> {
                 read_only,
                 result_str,
             )
+            .with_tool_use_id(call.call_id.clone())
             .with_session_context(self.config.session_context.as_ref()),
         )
         .await;
