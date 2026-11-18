@@ -506,6 +506,11 @@ fn headline(server: &McpServerInfo, selected: bool) -> Line<'static> {
     if !server.granted {
         spans.push(Span::styled("  · ungranted", Style::new().fg(token::RED)));
     }
+    // A server from the launch's `--config-overlay` file. The keys that
+    // would write its file refuse it, so the row says where it came from.
+    if server.from_overlay {
+        spans.push(Span::styled("  · from --config-overlay", muted));
+    }
     if !server.auth_fields.is_empty() {
         spans.push(Span::styled(
             format!("  ⚿ {}", server.auth_fields.join(",")),
@@ -1173,6 +1178,19 @@ mod tests {
         assert!(text.contains("ungranted"), "{text}");
         assert!(rows(&[graph()]).join("\n").contains("live"));
         assert!(!rows(&[graph()]).join("\n").contains("ungranted"));
+    }
+
+    /// A server only the `--config-overlay` file names says so on its row,
+    /// and a server from a `mcp.toml` file does not.
+    #[test]
+    fn an_overlay_row_says_where_it_came_from() {
+        let mut launch = stripe();
+        launch.from_overlay = true;
+        assert!(
+            rows(&[launch]).join("\n").contains("from --config-overlay"),
+            "the row names the overlay"
+        );
+        assert!(!rows(&[stripe()]).join("\n").contains("--config-overlay"));
     }
 
     #[test]

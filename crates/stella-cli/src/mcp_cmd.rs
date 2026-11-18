@@ -25,7 +25,11 @@ use crate::settings::Settings;
 
 mod scopes;
 
-pub(crate) use scopes::{OwnMcpConfig, load_listed_config, load_own_config};
+pub(crate) use scopes::{
+    OwnMcpConfig, TabConfig, load_listed_config, load_own_config, load_tab_config,
+};
+#[cfg(test)]
+pub(crate) use scopes::load_tab_config_with;
 
 /// The workspace's MCP server config file.
 pub fn mcp_toml_path(workspace_root: &Path) -> PathBuf {
@@ -146,7 +150,38 @@ pub(crate) fn mcp_outcome_report(
 /// — that word is [`mcp_outcome_report`]'s `failed`, and this server can be
 /// fixed.
 pub(crate) fn auth_required_note(name: &str) -> String {
+    auth_required_note_with(name, crate::settings::overlay::active())
+}
+
+/// [`auth_required_note`], with the overlay passed in so a test can supply it.
+///
+/// `stella mcp login` finds a server from the overlay, and reaches the entry
+/// the session runs, only when it reads the same file. So for such a server
+/// the hint passes that file along.
+fn auth_required_note_with(
+    name: &str,
+    overlay: Option<&crate::settings::overlay::Overlay>,
+) -> String {
+    if let Some(overlay) = overlay.filter(|overlay| overlay.mcp.get(name).is_some()) {
+        let flag = crate::settings::overlay::FLAG;
+        let path = shell_word(&overlay.path.display().to_string());
+        return format!(
+            "MCP server `{name}` requires authentication. It comes from the {flag} file, so \
+             pass that file to the login: run `stella {flag} {path} mcp login {name}`, or set \
+             STELLA_CONFIG_OVERLAY={path} first"
+        );
+    }
     format!("MCP server `{name}` requires authentication — run `stella mcp login {name}`")
+}
+
+/// `text` as one word for a POSIX shell. It stays as it is when no character
+/// in it means anything to the shell, and goes in single quotes otherwise.
+fn shell_word(text: &str) -> String {
+    let safe = |c: char| c.is_ascii_alphanumeric() || "/._-+=:,@%".contains(c);
+    if !text.is_empty() && text.chars().all(safe) {
+        return text.to_string();
+    }
+    format!("'{}'", text.replace('\'', r"'\''"))
 }
 
 /// The whole connect outcome for a live tool set, as one notice.
@@ -515,10 +550,25 @@ pub fn oauth_manager(
 /// target. A stdio server has no authorization server, so it is an error.
 ///
 /// The server can be in either `mcp.toml`; the workspace entry wins a shared
-/// name, as it does in the session. The tokens go to this workspace's store,
-/// the one the session reads.
+/// name, as it does in the session. A server in this launch's
+/// `--config-overlay` file is found too, and wins a shared name the same way.
+/// The tokens go to this workspace's store, the one the session reads.
 pub fn http_server_url(workspace_root: &Path, server: &str) -> Result<String, String> {
-    let cfg = load_listed_config(workspace_root)?;
+    http_server_url_with(
+        workspace_root,
+        server,
+        crate::settings::overlay::active_mcp(),
+    )
+}
+
+/// [`http_server_url`], with the overlay's servers passed in so a test can
+/// supply them.
+fn http_server_url_with(
+    workspace_root: &Path,
+    server: &str,
+    overlay: Option<&McpConfig>,
+) -> Result<String, String> {
+    let cfg = scopes::load_login_config(workspace_root, overlay)?;
     match cfg.get(server) {
         Some(stella_mcp::McpTransport::Http { url, .. }) => Ok(url.clone()),
         Some(_) => Err(format!(
@@ -1098,6 +1148,39 @@ fn redact_query(url: &str) -> String {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    /// A login finds a server from the overlay only when it reads the same
+    /// file, so that server's hint passes the file along, quoted for a shell.
+    /// A server the overlay does not name keeps the plain hint.
+    #[test]
+    fn the_login_hint_passes_the_overlay_along_for_an_overlay_server() {
+        let servers = "[servers.launch]\ntransport = \"stdio\"\ncmd = \"npx\"\n";
+        let overlay = crate::settings::overlay::Overlay {
+            path: PathBuf::from("/tmp/a b/o.toml"),
+            sha256: String::new(),
+            settings: Settings::default(),
+            mcp: McpConfig::from_toml_str(servers).expect("overlay"),
+            loop_sections: crate::settings::overlay::LoopSections::default(),
+        };
+
+        let note = auth_required_note_with("launch", Some(&overlay));
+
+        assert!(
+            note.contains("stella --config-overlay '/tmp/a b/o.toml' mcp login launch"),
+            "{note}"
+        );
+        assert!(
+            note.contains("STELLA_CONFIG_OVERLAY='/tmp/a b/o.toml'"),
+            "{note}"
+        );
+        assert_eq!(
+            auth_required_note_with("linear", Some(&overlay)),
+            auth_required_note("linear"),
+            "a server the overlay does not name keeps the plain hint"
+        );
+        assert_eq!(shell_word("/tmp/o.toml"), "/tmp/o.toml");
+        assert_eq!(shell_word("it's"), r"'it'\''s'");
+    }
 
     #[test]
     fn install_load_and_remove_roundtrip_through_mcp_toml() {

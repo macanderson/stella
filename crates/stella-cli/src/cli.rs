@@ -196,6 +196,10 @@ pub(crate) struct GlobalArgs {
     /// The file must exist and parse, or stella stops before the run starts.
     /// It must be a file you own, in a directory only you can write to. It is
     /// refused alongside STELLA_NO_SETTINGS=1. Env: STELLA_CONFIG_OVERLAY.
+    ///
+    /// Stella reads it only on Unix systems such as macOS and Linux. On
+    /// Windows it cannot check who may write the file, so it refuses the
+    /// flag.
     #[arg(
         long,
         global = true,
@@ -204,6 +208,15 @@ pub(crate) struct GlobalArgs {
         hide_short_help = true
     )]
     pub(crate) config_overlay: Option<std::path::PathBuf>,
+
+    /// SHA-256 of the overlay bytes the parent run read
+    ///
+    /// Stella passes it to each run it starts, beside --config-overlay. The
+    /// child refuses the file if its bytes have changed since, so every turn
+    /// of one run uses the same overlay. No env var sets it, so a project
+    /// .env cannot.
+    #[arg(long, global = true, value_name = "SHA256", hide = true)]
+    pub(crate) config_overlay_sha256: Option<String>,
 
     /// Hard USD spend limit for the whole invocation
     ///

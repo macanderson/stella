@@ -193,6 +193,7 @@ fn the_tools_panel_reads_as_labelled_records() {
                     off: None,
                 }],
                 switches: Default::default(),
+                overlay_switches: Default::default(),
             },
             status: None,
         },

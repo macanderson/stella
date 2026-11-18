@@ -26,7 +26,7 @@ versions safely instead of just guessing.
   <SpecCard
     title="project"
     meta={[
-      { label: "Preference", value: "highest", mono: false },
+      { label: "Preference", value: "high", mono: false },
       { label: "Path", value: <code>{"<repo>/stella.toml"}</code> },
     ]}
   >
@@ -54,12 +54,24 @@ versions safely instead of just guessing.
     `/etc/stella/stella.toml` elsewhere. An administrator deploys this file, and its
     extension decides its format. There is never a second managed file competing with it.
   </SpecCard>
+  <SpecCard
+    title="overlay"
+    meta={[
+      { label: "Preference", value: "highest", mono: false },
+      { label: "Path", value: <code>--config-overlay</code> },
+    ]}
+  >
+    One launch's own file, named by the tool that starts stella. It wins over the project's
+    file, trusted or not. The managed file's ceilings still cap it. See
+    [Launch overlay](#launch-overlay).
+  </SpecCard>
 </CardGrid>
 
 The scope hierarchy is unchanged from JSON: precedence, the trust boundary, and which
 fields merge per field, whole block, or by concatenating. See
 [The scope hierarchy](/docs/configuration/settings#the-scope-hierarchy) for the full
-rules; <SettingsCascadeDiagram /> shows the same shape either format reads through.
+rules; <SettingsCascadeDiagram /> shows the same shape either format reads through. The
+launch overlay is the one scope JSON has no file for. It sits above the project.
 
 ### Launch overlay
 

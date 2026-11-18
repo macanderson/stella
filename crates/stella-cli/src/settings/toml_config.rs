@@ -870,6 +870,10 @@ impl TomlConfig {
             // would put loop bookkeeping and tracker vocabulary on the type
             // every session-building code path already carries.
             //
+            // A `--config-overlay` file's two tables are kept apart by
+            // `super::overlay`, and those loaders lay them over the
+            // workspace's.
+            //
             // Named rather than `..` so this stays an exhaustive destructure:
             // the next section added here must still be consciously placed.
             self_driving: _,

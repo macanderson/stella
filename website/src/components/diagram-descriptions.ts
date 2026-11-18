@@ -20,7 +20,7 @@ export const DIAGRAM_DESCRIPTIONS: Record<string, string> = {
   FleetFanoutDiagram: "A pinned base commit fans out to isolated worktree branches; finished branches converge on your review.",
   QuickstartDiagram: "Four steps: install, authenticate, init, run.",
   CredentialChainDiagram: "Five credential sources tried in order — flag, environment variable, settings.json, credentials.toml, interactive prompt — and the first one that resolves is used.",
-  SettingsCascadeDiagram: "Org-managed, project, and user settings merge per key into the effective settings; the org layer is a ceiling that lower scopes can narrow but never re-open.",
+  SettingsCascadeDiagram: "Org-managed, launch overlay, project, and user settings merge per key into the effective settings; the launch overlay beats the project, and the org layer is a ceiling that no other scope can re-open.",
   PermissionGateDiagram: "A tool call passes through the PreToolUse hook and the permission rules; allowed calls execute and fire PostToolUse, denied calls come back to the model as a refusal.",
   EngineOwnershipDiagram: "Your app keeps keys, tools, and data; the engine keeps the loop, compaction, and retries. Only requests and results cross between them.",
   EngineTestHarnessDiagram: "One host drives either your real gateway or a scripted reply function; both exercise the identical agent loop, but only one of them spends money.",

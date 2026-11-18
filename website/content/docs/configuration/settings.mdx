@@ -178,20 +178,31 @@ the built-in with an empty value, which breaks the provider or its model selecti
 
 ## The scope hierarchy
 
-stella reads `settings.json` from three scopes and merges them, applying the lowest
-scope first so the more specific scope wins. The merge is **field by field** for
-`providers` and `agent_engine_config` (though `agent_engine_config`'s `allowed_models`
+stella merges four scopes: three `settings.json` files, and the [launch
+overlay](/docs/configuration/stella-toml#launch-overlay) a launcher may name for one run.
+It applies the lowest scope first, so a later scope wins. The merge is **field by field**
+for `providers` and `agent_engine_config` (though `agent_engine_config`'s `allowed_models`
 list replaces wholesale instead of merging), **last-scope-wins** for `mcp` and `tools`,
-and `hooks` is the exception — scopes **concatenate** instead (see
-[Lifecycle hooks](#lifecycle-hooks)).
+and `hooks` is the exception — scopes **concatenate** instead (see [Lifecycle
+hooks](#lifecycle-hooks)).
 
 <SettingsCascadeDiagram />
 
 <CardGrid size="sm">
   <SpecCard
-    title="project"
+    title="overlay"
     meta={[
       { label: "Preference", value: "highest", mono: false },
+      { label: "Path", value: <code>--config-overlay</code> },
+    ]}
+  >
+    One run's own `stella.toml`, named by the tool that starts stella. It wins over the
+    project's file, trusted or not.
+  </SpecCard>
+  <SpecCard
+    title="project"
+    meta={[
+      { label: "Preference", value: "high", mono: false },
       { label: "Path", value: <code>{"<workspace>/.stella/settings.json"}</code> },
     ]}
   >
@@ -226,11 +237,13 @@ stella resolves the org-managed path this way:
 2. `/Library/Application Support/stella/settings.json` on macOS, or
 3. `/etc/stella/settings.json` on other Unix systems
 
-Ordinary fields merge project over org-managed over user. Fields tied to authority are
-stricter: a project can narrow a grant with `"off"`, but it can't enable tools, replace
-an agent prompt, redirect credentials, register a context provider, or load executable
-custom tools, until you set `STELLA_TRUST_PROJECT=1`. An org-managed denial stays a limit
-even after that trust is granted. The `STELLA_PROJECT_HOOKS=1` flag grants hooks only.
+Ordinary fields merge overlay over project over org-managed over user. The overlay is
+trusted like your user file. A repository can't drop its hooks or redirect its endpoint,
+and an org-managed denial still caps it. Fields tied to authority are stricter: a project
+can narrow a grant with `"off"`, but it can't enable tools, replace an agent prompt,
+redirect credentials, register a context provider, or load executable custom tools, until
+you set `STELLA_TRUST_PROJECT=1`. An org-managed denial stays a limit even after that
+trust is granted. The `STELLA_PROJECT_HOOKS=1` flag grants hooks only.
 
 <Callout type="info">
   A missing file at any scope is fine — stella just skips it. A file that exists but is

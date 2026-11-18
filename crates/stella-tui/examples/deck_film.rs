@@ -703,6 +703,7 @@ fn fixture_tool_policy() -> ToolPolicyState {
         })
         .collect(),
         switches: std::collections::BTreeMap::from([("task_assign".to_string(), false)]),
+        overlay_switches: std::collections::BTreeMap::new(),
     }
 }
 

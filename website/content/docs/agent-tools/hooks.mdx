@@ -392,9 +392,9 @@ This same pattern covers other cases too, with no changes to stella:
 - **Scope limits.** Deny anything not labelled `good-first-issue`, or anything whose estimate is bigger than what you want an agent attempting unattended.
 
 <Callout type="warn">
-**Project-scope hooks are a trust boundary.** Hooks declared in a repository's project-scope file (`<workspace>/.stella/settings.json`) do **not** load unless the repo is trusted. Set `STELLA_TRUST_PROJECT=1`, or the older hooks-only `STELLA_PROJECT_HOOKS=1`. Either flag unlocks them. Without one, the merged hook set is built from the user and org-managed scopes alone, and a stderr message names what was skipped. This stops a cloned repo from running arbitrary commands on your machine. Hooks in the user scope (`~/.stella/settings.json`) always load. See [the project trust boundary](/docs/configuration/settings#the-project-trust-boundary).
+**Project-scope hooks are a trust boundary.** Hooks declared in a repository's project-scope file (`<workspace>/.stella/settings.json`) do **not** load unless the repo is trusted. Set `STELLA_TRUST_PROJECT=1`, or the older hooks-only `STELLA_PROJECT_HOOKS=1`. Either flag unlocks them. Without one, only hooks from the user file, the org's file and any [launch overlay](/docs/configuration/stella-toml#launch-overlay) load. A stderr message names what was skipped. This stops a cloned repo from running arbitrary commands on your machine. Hooks in the user scope (`~/.stella/settings.json`) always load. So do a launch overlay's, added after the hooks from every other scope. See [the project trust boundary](/docs/configuration/settings#the-project-trust-boundary).
 </Callout>
 
 <Callout type="info">
-Hooks live in the same `settings.json` that carries your provider configuration. See the [settings documentation](/docs/configuration/settings) for how the file is resolved and merged across scopes, and [Team settings](/docs/examples#team-shared-settings) for a worked example of a team-shared settings file with hooks.
+Hooks live in the same `settings.json` that carries your provider configuration. The [settings documentation](/docs/configuration/settings) says how the file is found and merged across scopes. [Team settings](/docs/examples#team-shared-settings) shows a team's shared settings file with hooks.
 </Callout>

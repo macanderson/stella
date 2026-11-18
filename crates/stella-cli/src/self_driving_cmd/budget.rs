@@ -372,7 +372,10 @@ mod tests {
             turn_timeout: Some(std::time::Duration::from_secs(600)),
             max_output_tokens: Some(8192),
             max_steps: Some(40),
-            config_overlay: Some("/opt/launch/overlay.toml".into()),
+            config_overlay: Some(crate::settings::overlay::Pin {
+                path: "/opt/launch/overlay.toml".into(),
+                sha256: "ab".repeat(32),
+            }),
         };
         let mut budget = RunBudget::new(flags.clone());
         budget.record(&summary(3.0));

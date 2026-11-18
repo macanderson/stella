@@ -44,7 +44,8 @@ use stella_autonomy::Attribution;
 use stella_protocol::issue::Vocabulary;
 
 use crate::issue_provider::ProviderManifest;
-use crate::settings::toml_config::TomlConfig;
+use crate::settings::overlay::{self, LoopSections};
+use crate::settings::toml_config::{IssuesSection, SelfDrivingSection, TomlConfig, WorkerKind};
 
 /// Everything the self-driving verbs read out of configuration.
 #[derive(Debug, Clone)]
@@ -135,49 +136,87 @@ impl Default for LoopConfig {
 /// a warning on stderr is not a stop.
 #[must_use]
 pub(crate) fn load(root: &Path) -> LoopConfig {
-    let parsed = match read_toml(root) {
-        LoopDocument::Parsed(parsed) => parsed,
-        LoopDocument::Absent => {
-            return LoopConfig {
-                manifest: ProviderManifest::for_workspace(root),
-                ..LoopConfig::default()
-            };
+    load_with(root, overlay::active_loop_sections())
+}
+
+/// [`load`] with the launch's `--config-overlay` sections passed in, so a
+/// test can give one without setting it for the whole process.
+///
+/// The overlay's `[self_driving]` and `[issues]` lie over the workspace's,
+/// key by key ([`overlay::lay_section`]). Each key the overlay sets takes
+/// the overlay's value, as in every other section. A workspace file that
+/// is missing or does not parse adds nothing, so the overlay lies over the
+/// defaults.
+///
+/// The worker still fails closed. A workspace file that does not parse but
+/// names a worker resolves [`WorkerKind::Unreadable`], unless the overlay
+/// names the worker's `kind` itself.
+#[must_use]
+pub(crate) fn load_with(root: &Path, sections: Option<&LoopSections>) -> LoopConfig {
+    let (self_driving, issues, written, names_a_worker) = match read_toml(root) {
+        LoopDocument::Absent => (
+            SelfDrivingSection::default(),
+            IssuesSection::default(),
+            None,
+            false,
+        ),
+        LoopDocument::Parsed { parsed, raw } => {
+            let parsed = *parsed;
+            (parsed.self_driving, parsed.issues, Some(raw), false)
         }
-        LoopDocument::Unparsed { names_a_worker } => {
-            return LoopConfig {
-                manifest: ProviderManifest::for_workspace(root),
-                worker: crate::settings::toml_config::WorkerSection {
-                    kind: if names_a_worker {
-                        crate::settings::toml_config::WorkerKind::Unreadable
-                    } else {
-                        crate::settings::toml_config::WorkerKind::default()
-                    },
-                    ..crate::settings::toml_config::WorkerSection::default()
-                },
-                ..LoopConfig::default()
-            };
-        }
+        LoopDocument::Unparsed { names_a_worker } => (
+            SelfDrivingSection::default(),
+            IssuesSection::default(),
+            None,
+            names_a_worker,
+        ),
     };
+    let mut self_driving = overlay::lay_section(
+        "self_driving",
+        self_driving,
+        written.as_deref(),
+        sections.and_then(|sections| sections.self_driving.as_ref()),
+    );
+    let issues = overlay::lay_section(
+        "issues",
+        issues,
+        written.as_deref(),
+        sections.and_then(|sections| sections.issues.as_ref()),
+    );
+    if names_a_worker && !sections.is_some_and(names_the_worker_kind) {
+        self_driving.worker.kind = WorkerKind::Unreadable;
+    }
 
     LoopConfig {
-        attribution: parsed.self_driving.attribution.clone(),
-        manifest: ProviderManifest::resolve(root, &parsed.issues),
-        triage: parsed.self_driving.triage.policy(),
-        container_labels: if parsed.self_driving.container_labels.is_empty() {
+        attribution: self_driving.attribution,
+        manifest: ProviderManifest::resolve(root, &issues),
+        triage: self_driving.triage.policy(),
+        container_labels: if self_driving.container_labels.is_empty() {
             default_container_labels()
         } else {
-            parsed.self_driving.container_labels.clone()
+            self_driving.container_labels
         },
-        doctrine: parsed.self_driving.doctrine,
-        escalation: parsed.self_driving.escalation,
-        merge: parsed.self_driving.merge.policy(),
-        verify_command: parsed.self_driving.verify.command.clone(),
-        verify_timeout_secs: parsed.self_driving.verify.timeout_secs.unwrap_or(1800),
-        residue_gate: parsed.self_driving.residue_gate.enabled(),
-        deploy_watch: parsed.self_driving.deploy_watch.enabled(),
-        supply: parsed.self_driving.supply.policy(),
-        worker: parsed.self_driving.worker,
+        doctrine: self_driving.doctrine,
+        escalation: self_driving.escalation,
+        merge: self_driving.merge.policy(),
+        verify_command: self_driving.verify.command,
+        verify_timeout_secs: self_driving.verify.timeout_secs.unwrap_or(1800),
+        residue_gate: self_driving.residue_gate.enabled(),
+        deploy_watch: self_driving.deploy_watch.enabled(),
+        supply: self_driving.supply.policy(),
+        worker: self_driving.worker,
     }
+}
+
+/// Whether the overlay sets `[self_driving.worker] kind`. Its choice stands
+/// even when the workspace's file does not parse.
+fn names_the_worker_kind(sections: &LoopSections) -> bool {
+    sections
+        .self_driving
+        .as_ref()
+        .and_then(|table| table.get("worker"))
+        .and_then(toml::Value::as_table)
+        .is_some_and(|worker| worker.contains_key("kind"))
 }
 
 /// The built-in tracking-label set, as the config layer's owned copy.
@@ -196,8 +235,11 @@ fn default_container_labels() -> Vec<String> {
 enum LoopDocument {
     /// No file, or one this process cannot read.
     Absent,
-    /// The document parsed.
-    Parsed(Box<TomlConfig>),
+    /// The document parsed. `raw` is its text, for an overlay to lie over.
+    Parsed {
+        parsed: Box<TomlConfig>,
+        raw: String,
+    },
     /// The document did not parse. Every setting falls back to its default
     /// except the worker, which fails closed when the file declared one.
     Unparsed {
@@ -212,7 +254,10 @@ fn read_toml(root: &Path) -> LoopDocument {
         return LoopDocument::Absent;
     };
     match TomlConfig::parse(&raw, &path) {
-        Ok(parsed) => LoopDocument::Parsed(Box::new(parsed)),
+        Ok(parsed) => LoopDocument::Parsed {
+            parsed: Box::new(parsed),
+            raw,
+        },
         Err(error) => {
             eprintln!("warning: {error}; self-driving is using its defaults");
             LoopDocument::Unparsed {
@@ -762,5 +807,110 @@ container_labels = ["tracking"]
         );
 
         assert!(load(ws.path()).vocabulary().is_open("open"));
+    }
+
+    /// A workspace's loop settings, for the overlay tests below.
+    const WORKSPACE_LOOP: &str = r#"
+[meta]
+schema_version = 1
+scope = "project"
+
+[self_driving]
+deploy_watch = "off"
+
+[self_driving.worker]
+kind = "claude"
+command = "/opt/bin/claude"
+model = "opus"
+
+[self_driving.verify]
+command = "make test"
+"#;
+
+    /// An overlay's `[self_driving]` keys take the place of the workspace's,
+    /// and the keys it leaves out keep the workspace's values.
+    #[test]
+    fn an_overlay_sets_its_loop_keys_over_the_workspaces() {
+        let ws = workspace();
+        write(ws.path(), "stella.toml", WORKSPACE_LOOP);
+        let overlay = LoopSections::of(
+            r#"
+[self_driving.worker]
+model = "sonnet"
+max_turns = 12
+
+[self_driving.verify]
+timeout_secs = 60
+"#,
+        );
+
+        let cfg = load_with(ws.path(), Some(&overlay));
+
+        assert_eq!(cfg.worker.kind, WorkerKind::Claude);
+        assert_eq!(cfg.worker.command, "/opt/bin/claude");
+        assert_eq!(cfg.worker.model.as_deref(), Some("sonnet"));
+        assert_eq!(cfg.worker.max_turns, Some(12));
+        assert_eq!(cfg.verify_command.as_deref(), Some("make test"));
+        assert_eq!(cfg.verify_timeout_secs, 60);
+        assert!(!cfg.deploy_watch, "an unset key keeps the workspace's value");
+        assert_eq!(
+            load(ws.path()).worker.model.as_deref(),
+            Some("opus"),
+            "with no overlay the workspace's own value stands"
+        );
+    }
+
+    /// An overlay's `[issues]` picks the tracker over the one the workspace
+    /// named.
+    #[test]
+    fn an_overlay_picks_the_tracker() {
+        let ws = workspace();
+        write(
+            ws.path(),
+            "stella.toml",
+            "[meta]\nschema_version = 1\nscope = \"project\"\n\n[issues]\nprovider = \"github\"\n",
+        );
+        let overlay = LoopSections::of("[issues]\nprovider = \"linear\"\n");
+
+        let laid = load_with(ws.path(), Some(&overlay));
+
+        assert_eq!(laid.manifest.name, "linear");
+        assert_eq!(load(ws.path()).manifest.name, "github");
+    }
+
+    /// A workspace with no `stella.toml` still takes the overlay's keys, laid
+    /// over the defaults.
+    #[test]
+    fn an_overlay_reaches_a_workspace_with_no_stella_toml() {
+        let overlay = LoopSections::of("[self_driving]\ncontainer_labels = [\"tracking\"]\n");
+
+        let cfg = load_with(workspace().path(), Some(&overlay));
+
+        assert_eq!(cfg.container_labels, vec!["tracking".to_owned()]);
+        assert!(cfg.deploy_watch, "an unset key keeps its default");
+    }
+
+    /// A workspace file that names a worker and does not parse still fails
+    /// closed under an overlay, unless the overlay names the worker's kind.
+    #[test]
+    fn an_unreadable_worker_fails_closed_unless_the_overlay_names_one() {
+        let ws = workspace();
+        write(
+            ws.path(),
+            "stella.toml",
+            "[meta]\nscope = \"project\"\n\n[self_driving.worker]\nkind = \"clade\"\n",
+        );
+
+        let model_only = LoopSections::of("[self_driving.worker]\nmodel = \"opus\"\n");
+        assert_eq!(
+            load_with(ws.path(), Some(&model_only)).worker.kind,
+            WorkerKind::Unreadable
+        );
+
+        let names_claude = LoopSections::of("[self_driving.worker]\nkind = \"claude\"\n");
+        assert_eq!(
+            load_with(ws.path(), Some(&names_claude)).worker.kind,
+            WorkerKind::Claude
+        );
     }
 }

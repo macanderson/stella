@@ -1013,23 +1013,8 @@ pub(crate) fn resume_supervised(
     let checkpoint = resume_point(&record)?;
     let exe = std::env::current_exe()
         .map_err(|e| format!("cannot locate the stella binary to resume with: {e}"))?;
-    // A fixed, self-authored argv — never after a `--`, so naming the flag
-    // here is safe where appending it to a user's argv was not. The launch
-    // sets `STELLA_FOREGROUND` too; the flag keeps the child's command line
-    // self-describing in `ps`.
-    let mut args: Vec<std::ffi::OsString> = vec![
-        "daemon".into(),
-        "resume".into(),
-        record.id.clone().into(),
-        "--foreground".into(),
-    ];
-    // A `--config-overlay` given to this command belongs to the resumed turn
-    // too, so the child reads the same file. Its path is already absolute,
-    // because the child starts in the record's workspace.
-    if let Some(overlay) = crate::settings::overlay::active() {
-        args.push(crate::settings::overlay::FLAG.into());
-        args.push(overlay.path.clone().into_os_string());
-    }
+    let overlay = crate::settings::overlay::active().map(crate::settings::overlay::Overlay::pin);
+    let args = resume_args(&record.id, overlay.as_ref());
     let id = record.id.clone();
     let run = launch(
         &registry,
@@ -1047,6 +1032,33 @@ pub(crate) fn resume_supervised(
         checkpoint.step
     );
     watch(rt, &registry, run, ceiling)
+}
+
+/// The argv of the child that resumes run `id`.
+///
+/// A fixed, self-authored argv — never after a `--`, so naming the flag
+/// here is safe where appending it to a user's argv was not. The launch
+/// sets `STELLA_FOREGROUND` too; the flag keeps the child's command line
+/// self-describing in `ps`.
+///
+/// A `--config-overlay` given to this command belongs to the resumed turn
+/// too. The child gets the path and the SHA-256 of the bytes this process
+/// read, and refuses the file if it changed since. The path is already
+/// absolute, because the child starts in the record's workspace.
+fn resume_args(
+    id: &str,
+    overlay: Option<&crate::settings::overlay::Pin>,
+) -> Vec<std::ffi::OsString> {
+    let mut args: Vec<std::ffi::OsString> = vec![
+        "daemon".into(),
+        "resume".into(),
+        id.into(),
+        "--foreground".into(),
+    ];
+    if let Some(pin) = overlay {
+        args.extend(pin.child_args());
+    }
+    args
 }
 
 /// `stella daemon resume-all` — the boot-time sweep (#1627).

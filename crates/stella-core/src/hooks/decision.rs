@@ -155,8 +155,10 @@ const NO_REASON_GIVEN: &str = "the hook gave no reason";
 ///
 /// `Ok(Some(reason))` when the document refuses the prompt, `Ok(None)` when
 /// it carries neither `continue: false` nor a `decision`, and `Err` when
-/// either field holds a value Claude Code does not define. `continue: false`
-/// is read first, because Claude Code ranks it above `decision`.
+/// either field holds a value Claude Code does not define. `null` is such a
+/// value: a hook that writes the key meant to answer, and Stella can't tell
+/// what it meant. `continue: false` is read first, because Claude Code ranks
+/// it above `decision`.
 fn claude_code_prompt_refusal(value: &Value) -> Result<Option<String>, String> {
     let Some(object) = value.as_object() else {
         return Ok(None);
@@ -171,12 +173,12 @@ fn claude_code_prompt_refusal(value: &Value) -> Result<Option<String>, String> {
             .to_string()
     };
     match object.get("continue") {
-        None | Some(Value::Null | Value::Bool(true)) => {}
+        None | Some(Value::Bool(true)) => {}
         Some(Value::Bool(false)) => return Ok(Some(reason("stopReason"))),
         Some(other) => return Err(format!("`continue` must be true or false, not {other}")),
     }
     match object.get("decision") {
-        None | Some(Value::Null) => Ok(None),
+        None => Ok(None),
         Some(Value::String(decision)) if decision == "block" => Ok(Some(reason("reason"))),
         Some(other) => Err(format!("`decision` must be \"block\", not {other}")),
     }
@@ -737,12 +739,16 @@ mod tests {
     }
 
     /// A value Claude Code does not define fails closed rather than allowing.
+    /// An explicit `null` is one: the hook named the field and gave no answer.
     #[test]
     fn an_unknown_prompt_decision_is_malformed() {
         for stdout in [
             r#"{"decision":"approve"}"#,
             r#"{"decision":true}"#,
             r#"{"continue":"no"}"#,
+            r#"{"decision":null}"#,
+            r#"{"continue":null}"#,
+            r#"{"continue":null,"action":"allow"}"#,
         ] {
             match prompt_decision(stdout) {
                 DecisionParse::Malformed { .. } => {}

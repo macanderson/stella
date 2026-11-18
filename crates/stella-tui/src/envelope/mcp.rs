@@ -97,9 +97,27 @@ pub struct McpServerInfo {
     /// see `stella_mcp::McpServerEntry::granted` for why writing the transport
     /// by hand is itself the grant.
     pub granted: bool,
+    /// Only this launch's `--config-overlay` file names the server. Stella
+    /// never writes that file, so the tab refuses each key that would change
+    /// the server on disk ([`Self::write_refusal`]). An OAuth login still
+    /// works.
+    pub from_overlay: bool,
 }
 
 impl McpServerInfo {
+    /// Why a key that writes this server's config is refused, or `None` when
+    /// it may write. Remove, credentials, the grant, and a registry lookup
+    /// each save to the file that holds the server.
+    pub fn write_refusal(&self) -> Option<String> {
+        if !self.from_overlay {
+            return None;
+        }
+        Some(format!(
+            "{} comes from --config-overlay, which is read-only",
+            self.name
+        ))
+    }
+
     /// Whether this row is the pinned graph server — SPEC §9.3's
     /// `graph is pinned · it is the product, not an integration`.
     ///

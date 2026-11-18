@@ -842,8 +842,10 @@ pub(crate) fn load_mcp_plan(cfg: &Config) -> McpPlan {
     // A file of yours that is refused or does not parse adds a notice and no
     // servers, and the rest still start. When nothing at all is left, that
     // notice becomes the session's reason, below.
-    // In an untrusted repo, `servers()` starts them in `$STELLA_HOME`, so
-    // the repo's files do not decide what a runner such as `npx` loads.
+    // In an untrusted repo, `servers()` starts your servers in
+    // `$STELLA_HOME`, and each `--config-overlay` server in the folder that
+    // holds the overlay file. So the repo's files do not decide what a runner
+    // such as `npx` loads.
     let own = own_mcp_config(&cfg.workspace_root);
     let mut servers = own.servers();
     let mut notices = own.notices;

@@ -1,4 +1,4 @@
-//! Three-scope settings capture, overlay, trust restoration, and authority merge.
+//! Settings scope capture, merge, trust restoration, and authority.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -32,6 +32,11 @@ pub struct ToolScopePolicies {
     /// as written — trust restoration is not applied, because this is a report
     /// of what the file says, not of what the runtime honored.
     pub project: ToolPolicy,
+    /// The launch overlay's own switches, from the `--config-overlay` file
+    /// ([`super::overlay`]). The merge lays it after the project, so a key it
+    /// sets beats the same key in the project or user file. The panel can't
+    /// write this file, so a row it turns off has to name it.
+    pub overlay: ToolPolicy,
 }
 
 /// Append `extra`'s matchers onto `base`, per event. `None + None` stays
@@ -465,11 +470,13 @@ impl Settings {
     /// [`Settings::load`]. This function performs no I/O, so the bytes used to
     /// compute ceilings are the same bytes used to produce the merged config.
     ///
-    /// `overlay` is the launch's `--config-overlay` file
-    /// ([`super::overlay`]). It is laid last in both folds below. So it wins
-    /// over the project's file, and every restoration that falls back to the
-    /// trusted scopes falls back to it too. The ceilings still come from the
-    /// managed snapshot alone, so an overlay cannot lift one.
+    /// The scopes fold in this order, and a later scope wins each field: user,
+    /// managed, project, then `overlay`. The overlay is the launch's
+    /// `--config-overlay` file ([`super::overlay`]). So it beats the project's
+    /// file, trusted or not. The trusted fold is user, managed, then overlay.
+    /// So when a restoration below falls back to the trusted scopes, it falls
+    /// back to the overlay too. The ceilings come from the managed snapshot
+    /// alone, so no scope can lift one, the overlay included.
     pub(super) fn merge_captured_scopes(
         user: &Settings,
         managed: &Settings,
@@ -827,7 +834,20 @@ impl Settings {
     /// Cheap local reads, and deliberately re-read on every call rather than
     /// cached: the editor's whole job is to change these files, and a stale
     /// snapshot would attribute a switch to the scope that used to carry it.
+    ///
+    /// The launch overlay is the one scope not re-read. Stella parsed it once
+    /// at start ([`super::overlay`]), and it can't change after that.
     pub fn load_tool_scopes(workspace_root: &Path) -> Result<ToolScopePolicies, String> {
+        Self::load_tool_scopes_with(workspace_root, super::overlay::active_settings())
+    }
+
+    /// [`Settings::load_tool_scopes`] with the overlay passed in. A test calls
+    /// this to give one read an overlay. Installing the process's own overlay
+    /// would set it for every test in the binary.
+    pub(crate) fn load_tool_scopes_with(
+        workspace_root: &Path,
+        overlay: Option<&Settings>,
+    ) -> Result<ToolScopePolicies, String> {
         if filesystem_settings_disabled() {
             return Ok(ToolScopePolicies::default());
         }
@@ -848,6 +868,7 @@ impl Settings {
             managed: managed_tool_ceiling(managed.tools.as_ref()),
             user: own(&user),
             project: own(&project),
+            overlay: overlay.map(own).unwrap_or_default(),
         })
     }
 
