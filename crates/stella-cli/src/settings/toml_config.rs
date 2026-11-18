@@ -15,9 +15,9 @@
 //! `agent_engine_config.agents.<name>` to `[agents.<name>]`, moves
 //! `allowed_models` to `[models].allowed`, gives the bare `enable_recap` root
 //! scalar a table home at `[run].recap`, and reserves a home for
-//! `.stella/mcp.toml` under `[mcp.servers]` (parsed but NOT yet consumed —
-//! see `mcp_servers_not_yet_read`; `agent::load_mcp_plan` reads servers from
-//! `$STELLA_HOME/mcp.toml` and `.stella/mcp.toml` only).
+//! `.stella/mcp.toml` under `[mcp.servers]`. Only a `--config-overlay` file's
+//! servers start (`super::overlay`); a scope's own block is parsed and not read
+//! (`mcp_servers_not_yet_read`).
 //!
 //! Teaching one type to deserialize from both shapes would mean serde
 //! attributes that are correct for one format and misleading for the other.
@@ -66,6 +66,9 @@ pub enum ConfigScope {
     User,
     Managed,
     Project,
+    /// The file `--config-overlay` names, laid over the other three for one
+    /// process (`super::overlay`).
+    Overlay,
 }
 
 impl ConfigScope {
@@ -74,6 +77,7 @@ impl ConfigScope {
             ConfigScope::User => "user",
             ConfigScope::Managed => "managed",
             ConfigScope::Project => "project",
+            ConfigScope::Overlay => "overlay",
         }
     }
 }
@@ -866,6 +870,10 @@ impl TomlConfig {
             // would put loop bookkeeping and tracker vocabulary on the type
             // every session-building code path already carries.
             //
+            // A `--config-overlay` file's two tables are kept apart by
+            // `super::overlay`, and those loaders lay them over the
+            // workspace's.
+            //
             // Named rather than `..` so this stays an exhaustive destructure:
             // the next section added here must still be consciously placed.
             self_driving: _,
@@ -951,8 +959,18 @@ pub fn load_toml_scope(
         }
         Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
     };
+    lower_toml_scope(&contents, path, scope)
+}
 
-    let parsed = TomlConfig::parse(&contents, path)?;
+/// Parse, validate, and lower one scope's `stella.toml` text, already read
+/// from `path`. [`load_toml_scope`] reads the file first; the overlay reads its
+/// own, because a missing overlay is an error and a missing scope is not.
+pub fn lower_toml_scope(
+    contents: &str,
+    path: &Path,
+    scope: ConfigScope,
+) -> Result<LoadedToml, String> {
+    let parsed = TomlConfig::parse(contents, path)?;
     parsed.validate_meta(path, scope)?;
 
     // The entry's `id` may restate its key, but must then agree with it — so a
@@ -984,7 +1002,8 @@ pub fn load_toml_scope(
         .as_ref()
         .map(|mcp| mcp.servers.len())
         .unwrap_or(0);
-    if server_count > 0 {
+    // An overlay's servers do start, so only the other scopes get the notice.
+    if server_count > 0 && scope != ConfigScope::Overlay {
         warnings.push(mcp_servers_not_yet_read(path, server_count));
     }
 
@@ -1046,18 +1065,9 @@ pub fn path_is_toml(path: &Path) -> bool {
 /// What a scope's TOML file contributed, plus anything worth telling the user.
 pub struct LoadedToml {
     pub settings: Settings,
-    /// Servers declared under `[mcp.servers]`. **Parsed but not yet consumed**
-    /// — see [`mcp_servers_not_yet_read`].
-    ///
-    /// Carried rather than dropped so Phase 1b has a seam to attach to and so
-    /// the tests can prove the block parses today. `dead_code` is expected and
-    /// accurate until `agent::load_mcp_plan` reads it; silencing it here is
-    /// preferable to deleting the field and reconstructing it later, because
-    /// the parse is what the user-facing warning is claiming works.
-    #[allow(
-        dead_code,
-        reason = "Phase 1b seam; the warning below is its only reader today"
-    )]
+    /// Servers declared under `[mcp.servers]`. The overlay's start
+    /// (`super::overlay`). A user, managed, or project scope's are parsed and
+    /// not read ([`mcp_servers_not_yet_read`]).
     pub mcp: McpConfig,
     /// Advisory lines the caller prints once. Never a reason to fail a load.
     pub warnings: Vec<String>,

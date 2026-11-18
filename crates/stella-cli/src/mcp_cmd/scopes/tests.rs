@@ -503,3 +503,194 @@ fn a_shared_name_is_edited_in_the_workspace_file() {
         Some(None)
     );
 }
+
+/// One http server named `name` at `url`.
+fn http_server(name: &str, url: &str) -> String {
+    format!("[servers.{name}]\ntransport = \"http\"\nurl = \"{url}\"\n")
+}
+
+/// The overlay's servers as `--config-overlay` would read them.
+fn overlay_servers(body: &str) -> McpConfig {
+    McpConfig::from_toml_str(body).expect("overlay parses")
+}
+
+/// An overlay read from `<dir>/overlay.toml` with `body` as its servers.
+/// The loader takes the overlay as read, so no file is written.
+fn overlay_at(dir: &Path, body: &str) -> Overlay {
+    Overlay {
+        path: dir.join("overlay.toml"),
+        sha256: String::new(),
+        settings: crate::settings::Settings::default(),
+        mcp: overlay_servers(body),
+        loop_sections: crate::settings::overlay::LoopSections::default(),
+    }
+}
+
+/// A launch's overlay adds its server to yours, and on a shared name its entry
+/// is the one that runs.
+#[test]
+fn the_overlay_adds_its_servers_and_wins_a_shared_name() {
+    let fx = fixture();
+    let user = stdio_server("github", "user-github") + &stdio_server("oxagen", "stale-shim");
+    write_user_file(&fx.home, &user);
+    let launcher = fx.home.join("launcher");
+    let overlay = overlay_at(&launcher, &stdio_server("oxagen", "launch-shim"));
+
+    let own = load_own_config_with(&fx.workspace, true, Some(&overlay));
+
+    assert_eq!(own.config.names(), vec!["github", "oxagen"]);
+    assert_eq!(
+        command_of(&own.config, "github").as_deref(),
+        Some("user-github")
+    );
+    assert_eq!(
+        command_of(&own.config, "oxagen").as_deref(),
+        Some("launch-shim")
+    );
+}
+
+/// The overlay is trusted like your own file, so its server starts in a repo
+/// you have not trusted. The repo's own file is still refused.
+#[test]
+fn the_overlay_starts_its_servers_in_an_untrusted_repo() {
+    let fx = fixture();
+    write_workspace_file(&fx.workspace, &stdio_server("oxagen", "hostile"));
+    let launcher = fx.home.join("launcher");
+    let overlay = overlay_at(&launcher, &stdio_server("oxagen", "launch-shim"));
+
+    let own = load_own_config_with(&fx.workspace, false, Some(&overlay));
+
+    assert_eq!(
+        command_of(&own.config, "oxagen").as_deref(),
+        Some("launch-shim")
+    );
+    assert_eq!(own.notices.len(), 1, "{:?}", own.notices);
+}
+
+/// In a repo you have not trusted, your servers start in `$STELLA_HOME` and
+/// the overlay's start in the overlay file's folder. An overlay server that
+/// takes the name of one of yours starts in that folder too.
+#[test]
+fn an_untrusted_repo_starts_overlay_servers_in_the_overlay_folder() {
+    let fx = fixture();
+    let user = stdio_server("github", "user-github") + &stdio_server("oxagen", "stale-shim");
+    write_user_file(&fx.home, &user);
+    let launcher = fx.home.join("launcher");
+    let overlay = overlay_at(&launcher, &stdio_server("oxagen", "npx"));
+
+    let servers = load_own_config_with(&fx.workspace, false, Some(&overlay)).servers();
+
+    let cwd_of = |name: &str| {
+        servers
+            .iter()
+            .find(|server| server.name == name)
+            .map(|server| server.cwd.clone())
+    };
+    assert_eq!(cwd_of("github"), Some(Some(fx.home.join(".stella"))));
+    assert_eq!(cwd_of("oxagen"), Some(Some(launcher)));
+}
+
+/// With no home there is no `$STELLA_HOME` to start a server in. An overlay
+/// server in an untrusted repo still starts in the overlay file's folder, so
+/// the repo never picks what a runner such as `npx` loads.
+#[test]
+fn an_overlay_server_starts_outside_an_untrusted_repo_with_no_home() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let workspace = dir.path().join("repo");
+    let launcher = dir.path().join("launcher");
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let overlay = overlay_at(&launcher, &stdio_server("oxagen", "npx"));
+    assert_eq!(
+        crate::paths::user_extension_root(),
+        None,
+        "this test sets no home"
+    );
+
+    let servers = load_own_config_with(&workspace, false, Some(&overlay)).servers();
+
+    assert_eq!(servers.len(), 1, "{servers:?}");
+    assert_eq!(servers[0].cwd, Some(launcher));
+}
+
+/// In a trusted repo the overlay's servers start where Stella runs, as yours
+/// do.
+#[test]
+fn a_trusted_repo_starts_overlay_servers_where_stella_runs() {
+    let fx = fixture();
+    let overlay = overlay_at(&fx.home.join("launcher"), &stdio_server("oxagen", "npx"));
+
+    let servers = load_own_config_with(&fx.workspace, true, Some(&overlay)).servers();
+
+    assert_eq!(servers.len(), 1, "{servers:?}");
+    assert_eq!(servers[0].cwd, None);
+}
+
+/// With no overlay, the two files load as they always did: a server from
+/// each, the repo entry on a shared name, no notice, and every server where
+/// Stella runs. Both entry points are held to those values, so a fault in
+/// the loader they share fails here.
+#[test]
+fn no_overlay_leaves_the_two_files_alone() {
+    let fx = fixture();
+    let user = stdio_server("everywhere", "user-mcp") + &stdio_server("github", "user-github");
+    write_user_file(&fx.home, &user);
+    write_workspace_file(&fx.workspace, &stdio_server("github", "repo-github"));
+
+    for own in [
+        load_own_config_with(&fx.workspace, true, None),
+        load_own_config(&fx.workspace, true),
+    ] {
+        assert_eq!(own.config.names(), vec!["everywhere", "github"]);
+        assert_eq!(
+            command_of(&own.config, "everywhere").as_deref(),
+            Some("user-mcp")
+        );
+        assert_eq!(
+            command_of(&own.config, "github").as_deref(),
+            Some("repo-github")
+        );
+        assert!(own.notices.is_empty(), "{:?}", own.notices);
+        let servers = own.servers();
+        assert_eq!(servers.len(), 2, "{servers:?}");
+        assert!(
+            servers.iter().all(|server| server.cwd.is_none()),
+            "{servers:?}"
+        );
+    }
+}
+
+/// The session starts a server that only the overlay names, so an OAuth
+/// login finds it too. The login only reads, so your files gain nothing.
+#[test]
+fn a_login_finds_a_server_only_the_overlay_names() {
+    let fx = fixture();
+    write_user_file(&fx.home, &stdio_server("everywhere", "user-mcp"));
+    let overlay = overlay_servers(&http_server("launch", "https://launch.example/mcp"));
+
+    let url = super::super::http_server_url_with(&fx.workspace, "launch", Some(&overlay));
+
+    assert_eq!(url.as_deref(), Ok("https://launch.example/mcp"));
+    assert_eq!(
+        load_listed_config(&fx.workspace).expect("listing").names(),
+        vec!["everywhere"]
+    );
+}
+
+/// When the overlay names a server you already have, the session runs the
+/// overlay's entry. So a login goes to that entry's URL, not to the one in
+/// your files.
+#[test]
+fn a_login_reaches_the_overlay_entry_on_a_shared_name() {
+    let fx = fixture();
+    let user = http_server("remote", "https://user.example/mcp");
+    write_user_file(&fx.home, &user);
+    let repo = http_server("remote", "https://repo.example/mcp");
+    write_workspace_file(&fx.workspace, &repo);
+    let overlay = overlay_servers(&http_server("remote", "https://launch.example/mcp"));
+
+    let launch = super::super::http_server_url_with(&fx.workspace, "remote", Some(&overlay));
+    let files = super::super::http_server_url_with(&fx.workspace, "remote", None);
+
+    assert_eq!(launch.as_deref(), Ok("https://launch.example/mcp"));
+    assert_eq!(files.as_deref(), Ok("https://repo.example/mcp"));
+}

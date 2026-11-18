@@ -182,6 +182,7 @@ mod tests {
             &user,
             &Settings::default(),
             &project,
+            None,
             ProjectTrust {
                 credentials: false,
                 hooks: false,

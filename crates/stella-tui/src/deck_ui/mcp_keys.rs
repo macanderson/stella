@@ -112,6 +112,18 @@ fn handle_mcp_inspector_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
             if !helps {
                 return DeckAction::Handled;
             }
+            // A lookup that finds the server saves its card to the server's
+            // file, so a server from `--config-overlay` refuses it.
+            let refusal = ui
+                .mcp
+                .servers
+                .iter()
+                .find(|row| row.name == inspector.server)
+                .and_then(crate::envelope::McpServerInfo::write_refusal);
+            if let Some(refusal) = refusal {
+                ui.mcp.status = Some(refusal);
+                return DeckAction::Handled;
+            }
             DeckAction::Send(WorkspaceInput::McpInspect {
                 name: inspector.server.clone(),
                 lookup: true,
@@ -172,6 +184,10 @@ fn handle_mcp_browse_key(
             let server = ui.mcp.selected_server()?;
             let name = server.name.clone();
             if !server.granted {
+                // The grant is saved to the server's file.
+                if let Some(refused) = refuse_overlay_write(ui) {
+                    return Some(refused);
+                }
                 ui.mcp.handshake = Some(HandshakeGate {
                     server: name.clone(),
                     detail: None,
@@ -191,6 +207,9 @@ fn handle_mcp_browse_key(
         // Enter the auth prompt for the selected server, prefilled with its
         // first configured credential field (if any).
         KeyCode::Char('a') if composer_empty => {
+            if let Some(refused) = refuse_overlay_write(ui) {
+                return Some(refused);
+            }
             let server = ui.mcp.selected_server()?;
             let name = server.name.clone();
             let field = server.auth_fields.first().cloned().unwrap_or_default();
@@ -221,15 +240,26 @@ fn handle_mcp_browse_key(
             }))
         }
         // Remove the selected server from mcp.toml.
-        KeyCode::Char('x') if composer_empty => ui.mcp.selected_server().map(|s| {
-            DeckAction::Send(WorkspaceInput::McpRemove {
-                name: s.name.clone(),
-            })
-        }),
+        KeyCode::Char('x') if composer_empty => {
+            if let Some(refused) = refuse_overlay_write(ui) {
+                return Some(refused);
+            }
+            let name = ui.mcp.selected_server()?.name.clone();
+            Some(DeckAction::Send(WorkspaceInput::McpRemove { name }))
+        }
         // Rebuild the snapshot.
         KeyCode::Char('r') if composer_empty => Some(DeckAction::Send(WorkspaceInput::McpRefresh)),
         _ => None,
     }
+}
+
+/// Refuse a key that would write the highlighted server's file, when that
+/// server comes from `--config-overlay`. Stella never writes that file. The
+/// status line gives the reason, and `None` lets the key go on.
+fn refuse_overlay_write(ui: &mut DeckUi) -> Option<DeckAction> {
+    let refusal = ui.mcp.selected_server()?.write_refusal()?;
+    ui.mcp.status = Some(refusal);
+    Some(DeckAction::Handled)
 }
 
 fn handle_mcp_search_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {

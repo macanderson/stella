@@ -61,6 +61,8 @@
 use std::process::Command;
 use std::time::Duration;
 
+use crate::settings::overlay::{self, Overlay, Pin};
+
 /// What the parent invocation decided, in the form a child turn needs.
 ///
 /// Owned rather than borrowed from the clap struct: the loop outlives the
@@ -92,6 +94,12 @@ pub(crate) struct TurnFlags {
     pub(crate) max_output_tokens: Option<u32>,
     /// `--max-steps` — the per-turn step cap.
     pub(crate) max_steps: Option<usize>,
+    /// `--config-overlay`: the launch's overlay file and the SHA-256 of the
+    /// bytes this run read. The path is absolute, because a turn runs in its
+    /// own worktree and would read a relative path against it. The turn
+    /// refuses a file that changed since, so each turn runs with the
+    /// overlay the run began with.
+    pub(crate) config_overlay: Option<Pin>,
 }
 
 impl TurnFlags {
@@ -102,9 +110,34 @@ impl TurnFlags {
     /// `--api-key`, which this command cannot honour — see the module doc for
     /// why, and [`Self::api_key_refusal`] for what the sentence says.
     pub(crate) fn from_globals(globals: &crate::cli::GlobalArgs) -> Result<Self, String> {
+        Self::from_globals_and_overlay(globals, overlay::active())
+    }
+
+    /// [`Self::from_globals`] with the overlay this process read passed in,
+    /// so a test can give one without setting it for the whole process.
+    ///
+    /// The overlay comes from what `main` read, not from the flag's text. A
+    /// turn then gets the path and the hash of the bytes this run used.
+    ///
+    /// # Errors
+    ///
+    /// `--api-key`, as above. Also `--config-overlay` with no overlay read,
+    /// which would hand the turns a file this run never checked.
+    fn from_globals_and_overlay(
+        globals: &crate::cli::GlobalArgs,
+        read: Option<&Overlay>,
+    ) -> Result<Self, String> {
         if globals.api_key.is_some() {
             return Err(Self::api_key_refusal());
         }
+        if globals.config_overlay.is_some() && read.is_none() {
+            return Err(format!(
+                "{} names a file this run has not read, so its turns would run without it. \
+                 Stella stops here.",
+                overlay::FLAG
+            ));
+        }
+        let config_overlay = read.map(Overlay::pin);
         Ok(Self {
             model: globals.model.clone(),
             base_url: globals.base_url.clone(),
@@ -114,6 +147,7 @@ impl TurnFlags {
             turn_timeout: globals.turn_timeout,
             max_output_tokens: globals.max_output_tokens,
             max_steps: globals.max_steps,
+            config_overlay,
         })
     }
 
@@ -168,6 +202,9 @@ impl TurnFlags {
         }
         if let Some(cap) = self.max_steps {
             cmd.arg("--max-steps").arg(cap.to_string());
+        }
+        if let Some(pin) = &self.config_overlay {
+            cmd.args(pin.child_args());
         }
     }
 }
@@ -227,5 +264,67 @@ mod tests {
         .expect("no credential, no refusal");
         assert_eq!(flags.model.as_deref(), Some("openrouter/kimi-k3"));
         assert_eq!(flags.spend_limit, Some(30.0));
+    }
+
+    /// A launch's overlay reaches every turn: the absolute path this run
+    /// read, and the SHA-256 of its bytes. A turn runs in its own worktree,
+    /// so a relative path would name another file there, or none.
+    #[test]
+    fn the_config_overlay_reaches_the_turn_with_its_hash() {
+        let pin = Pin {
+            path: std::path::PathBuf::from("/opt/launch/overlay.toml"),
+            sha256: "ab".repeat(32),
+        };
+        let flags = TurnFlags {
+            config_overlay: Some(pin.clone()),
+            ..TurnFlags::default()
+        };
+        let mut cmd = Command::new("stella");
+
+        flags.push_onto(&mut cmd);
+
+        let args: Vec<_> = cmd.get_args().map(std::ffi::OsStr::to_os_string).collect();
+        assert_eq!(args, pin.child_args());
+    }
+
+    /// The pin comes from the overlay this process read, with the hash of
+    /// the bytes it read.
+    #[cfg(unix)]
+    #[test]
+    fn the_turns_pin_is_the_overlay_this_run_read() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("overlay.toml");
+        std::fs::write(&path, "[tools]\ntask_list = \"on\"\n").expect("write overlay");
+        let read = overlay::read(&path, None).expect("overlay reads");
+
+        let flags = TurnFlags::from_globals_and_overlay(
+            &globals(&["stella", "self-driving", "state"]),
+            Some(&read),
+        )
+        .expect("no credential, no refusal");
+
+        assert_eq!(flags.config_overlay, Some(read.pin()));
+    }
+
+    /// A flag this run never read must not reach a turn unchecked, nor be
+    /// dropped with no word.
+    #[test]
+    fn a_config_overlay_this_run_never_read_is_refused() {
+        let refused = TurnFlags::from_globals_and_overlay(
+            &globals(&[
+                "stella",
+                "self-driving",
+                "state",
+                "--config-overlay",
+                "launch/overlay.toml",
+            ]),
+            None,
+        )
+        .expect_err("an overlay nobody read");
+
+        assert!(
+            refused.contains(overlay::FLAG),
+            "the refusal names the overlay flag"
+        );
     }
 }

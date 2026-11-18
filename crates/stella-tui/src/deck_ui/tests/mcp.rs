@@ -186,3 +186,56 @@ fn the_handshake_swallows_the_browse_verbs_behind_it() {
     }
     assert_eq!(ui.mcp.mode, McpMode::Handshake);
 }
+
+/// A server only the launch's `--config-overlay` file names can be logged
+/// into from its row. The keys that would write its file refuse it, say why,
+/// and send nothing: remove, credentials, and the first-enable grant.
+#[test]
+fn an_overlay_row_logs_in_and_refuses_the_keys_that_write_a_file() {
+    let mut launch = server("launch", Some(false));
+    launch.from_overlay = true;
+    launch.granted = false;
+    let (model, mut ui) = mcp_ui(vec![launch]);
+
+    assert_eq!(
+        handle_deck_key(ch('o'), &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::McpOauthLogin {
+            server: "launch".into()
+        })
+    );
+    for verb in ['x', 'a', 'e'] {
+        ui.mcp.status = None;
+        assert_eq!(
+            handle_deck_key(ch(verb), &model, &mut ui),
+            DeckAction::Handled,
+            "`{verb}` would write the overlay's server to a file"
+        );
+        let status = ui.mcp.status.clone().unwrap_or_default();
+        assert!(
+            status.contains("--config-overlay"),
+            "`{verb}` says why: {status:?}"
+        );
+        assert_eq!(ui.mcp.mode, McpMode::Browse, "`{verb}` opened no prompt");
+    }
+}
+
+/// In the inspector, `r` asks the registry and saves what it finds to the
+/// server's file. On a server from `--config-overlay` it refuses instead.
+#[test]
+fn the_inspector_lookup_refuses_a_server_from_the_overlay() {
+    let mut launch = server("launch", Some(false));
+    launch.from_overlay = true;
+    let (model, mut ui) = mcp_ui(vec![launch]);
+    handle_deck_key(ctrl('o'), &model, &mut ui);
+    ui.mcp.apply_detail(McpServerDetail {
+        name: "launch".into(),
+        ..McpServerDetail::default()
+    });
+
+    assert_eq!(
+        handle_deck_key(ch('r'), &model, &mut ui),
+        DeckAction::Handled
+    );
+    let status = ui.mcp.status.clone().unwrap_or_default();
+    assert!(status.contains("--config-overlay"), "{status:?}");
+}

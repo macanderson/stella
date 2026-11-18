@@ -30,10 +30,10 @@
 //!
 //! Ownership mirrors [`crate::views::engine_panel`]: the driver owns the settings
 //! files and pushes snapshots; the pane accumulates **unsaved switch edits**
-//! and sends them back with [`WorkspaceInput::ToolsSave`]. What it sends is
-//! only the keys it changed — the driver merges them into the chosen scope's
-//! own `"tools"` object — because a whole-map save would copy the other two
-//! scopes' switches into the file being written and freeze them there.
+//! and sends them back with [`WorkspaceInput::ToolsSave`]. It sends only the
+//! keys it changed. The driver merges them into the chosen scope's own
+//! `"tools"` object. A whole-map save would copy the other two scopes'
+//! switches into the file being written and freeze them there.
 //!
 //! # Two rules
 //!
@@ -48,7 +48,10 @@
 //!    can re-enable it would misrepresent the security posture: the write
 //!    would be accepted, dropped by [`crate::envelope::AgentScope`]-level
 //!    merge on the next load, and the operator would believe they had a tool
-//!    they do not have.
+//!    they do not have. A launch overlay's denial locks a row the same way
+//!    while that launch runs. Its key beats the user and project files, so a
+//!    saved switch would stay off and never land. For the same reason, a row
+//!    or header whose key the overlay sets refuses to toggle.
 //!
 //! Interaction is [`crate::views::engine_panel`]'s vocabulary verbatim — modal while
 //! focused (`t` on the SETTINGS tab focuses, Esc hands the keyboard back),
@@ -215,6 +218,55 @@ pub fn off_reason(tool: &ToolRow) -> Option<String> {
     }
 }
 
+/// The settings that locked `tool`: `"launch overlay"` for an overlay's
+/// denial, and `"org-managed"` for every other lock.
+fn lock_source(tool: &ToolRow) -> &'static str {
+    match tool.off.as_ref().and_then(|denial| denial.scope) {
+        Some(ToolScope::Overlay) => ToolScope::Overlay.label(),
+        _ => ToolScope::Managed.label(),
+    }
+}
+
+/// The settings that locked every tool in `group`: one source when all the
+/// locks share it, and both names when the org locked some and the launch
+/// overlay the rest.
+fn group_lock_source(state: &ToolPolicyState, group: &str) -> &'static str {
+    let mut sources = state
+        .tools
+        .iter()
+        .filter(|tool| tool.group == group && tool.locked)
+        .map(lock_source);
+    let Some(first) = sources.next() else {
+        return ToolScope::Managed.label();
+    };
+    if sources.all(|source| source == first) {
+        first
+    } else {
+        "org-managed and launch overlay"
+    }
+}
+
+/// The refusal for a toggle that would write `key` while the launch overlay
+/// sets it.
+fn overlay_holds(key: &str) -> String {
+    format!(
+        "\"{key}\" is set by {} settings and cannot be changed here",
+        ToolScope::Overlay.label()
+    )
+}
+
+/// The short tag a locked row or header carries: `org-locked` for the org's
+/// ceiling, and `overlay-locked` for a launch overlay's denial.
+fn lock_tag(source: &str) -> &'static str {
+    if source == ToolScope::Overlay.label() {
+        "overlay-locked"
+    } else if source == ToolScope::Managed.label() {
+        "org-locked"
+    } else {
+        "locked"
+    }
+}
+
 // ── driver snapshot ingest ──────────────────────────────────────────────────
 
 /// Fold one [`crate::envelope::Inbound::ToolPolicy`] snapshot.
@@ -230,6 +282,19 @@ pub fn ingest_policy(ui: &mut DeckUi, state: &ToolPolicyState, status: &Option<S
     let t = &mut ui.tools;
     t.edits
         .retain(|key, want| state.switches.get(key) != Some(&*want));
+    // An edit made before its row locked can't land either: the org or the
+    // launch overlay holds that tool off. Nor can an edit to a key the
+    // overlay sets. Drop both, so the pane never shows an unsaved change that
+    // no save can apply.
+    let locked: Vec<&str> = state
+        .tools
+        .iter()
+        .filter(|tool| tool.locked)
+        .map(|tool| tool.name.as_str())
+        .collect();
+    t.edits.retain(|key, _| {
+        !locked.contains(&key.as_str()) && !state.overlay_switches.contains_key(key)
+    });
     t.state = Some(state.clone());
     if let Some(status) = status {
         t.status = Some(status.clone());
@@ -305,9 +370,14 @@ fn toggle_row(ui: &mut DeckUi) -> DeckAction {
             let tool = &state.tools[*i];
             if tool.locked {
                 ui.tools.status = Some(format!(
-                    "{} is denied by org-managed settings — it cannot be switched on here",
-                    tool.name
+                    "{} is denied by {} settings — it cannot be switched on here",
+                    tool.name,
+                    lock_source(tool)
                 ));
+                return DeckAction::Handled;
+            }
+            if state.overlay_switches.contains_key(&tool.name) {
+                ui.tools.status = Some(overlay_holds(&tool.name));
                 return DeckAction::Handled;
             }
             let next = !tool_enabled(&state, &ui.tools.edits, tool);
@@ -316,9 +386,17 @@ fn toggle_row(ui: &mut DeckUi) -> DeckAction {
         ToolsRow::Group(group) => {
             if group_locked(&state, group) {
                 ui.tools.status = Some(format!(
-                    "the {group} tools are denied by org-managed settings — they cannot be \
-                     switched on here"
+                    "the {group} tools are denied by {} settings — they cannot be switched on \
+                     here",
+                    group_lock_source(&state, group)
                 ));
+                return DeckAction::Handled;
+            }
+            // The header writes the group key. When the overlay sets that key,
+            // its value beats the file the save writes, and the edit would
+            // never land.
+            if state.overlay_switches.contains_key(group) {
+                ui.tools.status = Some(overlay_holds(group));
                 return DeckAction::Handled;
             }
             let next = !group_enabled(&state, &ui.tools.edits, group);
@@ -423,17 +501,27 @@ fn render_header(t: &ToolsOverlay, area: Rect, buf: &mut Buffer) {
         return;
     }
     let muted = Style::new().fg(token::MUTED);
-    let (off_count, locked_count, total) = match &t.state {
-        None => (0, 0, 0),
-        Some(state) => (
-            state
-                .tools
-                .iter()
-                .filter(|tool| !tool_enabled(state, &t.edits, tool))
-                .count(),
-            state.tools.iter().filter(|tool| tool.locked).count(),
-            state.tools.len(),
-        ),
+    let (off_count, org_locked, overlay_locked, total) = match &t.state {
+        None => (0, 0, 0, 0),
+        Some(state) => {
+            let locked_by = |source: &str| {
+                state
+                    .tools
+                    .iter()
+                    .filter(|tool| tool.locked && lock_source(tool) == source)
+                    .count()
+            };
+            (
+                state
+                    .tools
+                    .iter()
+                    .filter(|tool| !tool_enabled(state, &t.edits, tool))
+                    .count(),
+                locked_by(ToolScope::Managed.label()),
+                locked_by(ToolScope::Overlay.label()),
+                state.tools.len(),
+            )
+        }
     };
 
     let mut left = vec![
@@ -443,8 +531,14 @@ fn render_header(t: &ToolsOverlay, area: Rect, buf: &mut Buffer) {
         ),
         Span::styled(format!(" · {off_count} off"), muted),
     ];
-    if locked_count > 0 {
-        left.push(Span::styled(format!(" · {locked_count} org-locked"), muted));
+    if org_locked > 0 {
+        left.push(Span::styled(format!(" · {org_locked} org-locked"), muted));
+    }
+    if overlay_locked > 0 {
+        left.push(Span::styled(
+            format!(" · {overlay_locked} overlay-locked"),
+            muted,
+        ));
     }
     if t.dirty() {
         // The one thing on the pane asking to be acted on, so it takes the
@@ -599,7 +693,8 @@ fn render_row(
                 Span::styled(format!("{n} {}", plural_tools(n)), muted),
             ];
             if locked {
-                spans.push(Span::styled(" · org-locked".to_string(), muted));
+                let tag = lock_tag(group_lock_source(state, group));
+                spans.push(Span::styled(format!(" · {tag}"), muted));
             }
             Line::from(spans)
         }
@@ -646,9 +741,9 @@ fn render_row(
     line
 }
 
-/// The `on`/`off` cell. Off is the exceptional state and takes the muted tone;
-/// on is ordinary and reads as text, because a pane where every row is lit is
-/// a pane where the lit rows say nothing.
+/// The `on`/`off` cell. Off is the rare state and takes the muted tone. On
+/// is ordinary and reads as text. In a pane where every row is lit, the lit
+/// rows say nothing.
 fn state_span(on: bool) -> Span<'static> {
     Span::styled(
         format!("{:<5}", if on { "on" } else { "off" }),
@@ -692,7 +787,7 @@ fn row_record(
                 (
                     "policy",
                     if group_locked(state, group) {
-                        "org-locked".to_string()
+                        lock_tag(group_lock_source(state, group)).to_string()
                     } else {
                         String::new()
                     },
@@ -733,541 +828,4 @@ fn row_record(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::deck::WorkspaceModel;
-    use crate::deck_ui::{handle_deck_key, ingest_inbound};
-    use crate::envelope::{Inbound, ToolDenial};
-
-    fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::NONE)
-    }
-    fn ch(c: char) -> KeyEvent {
-        key(KeyCode::Char(c))
-    }
-
-    fn tool(name: &str, group: &str) -> ToolRow {
-        ToolRow {
-            name: name.into(),
-            group: group.into(),
-            locked: false,
-            off: None,
-        }
-    }
-
-    /// A session with the built-in families, an MCP server's tool, and a
-    /// customer's own registered tool — the three sources the pane must show.
-    fn sample_state() -> ToolPolicyState {
-        ToolPolicyState {
-            tools: vec![
-                tool("get_environment", "environment"),
-                tool("delegate", "task"),
-                tool("get_state", "scratch"),
-                tool("save_state", "scratch"),
-                tool("mcp__gh__create_issue", "mcp"),
-                tool("deploy_to_staging", "custom"),
-            ],
-            switches: BTreeMap::new(),
-        }
-    }
-
-    fn open_ui() -> (WorkspaceModel, DeckUi) {
-        let model = WorkspaceModel::new();
-        let mut ui = DeckUi::default();
-        ui.splash.skip();
-        ui.set_tab(DeckTab::Settings);
-        ui.tools.focused = true;
-        ui.tools.state = Some(sample_state());
-        (model, ui)
-    }
-
-    #[test]
-    fn rows_group_every_source_including_mcp_and_custom_tools() {
-        let state = sample_state();
-        let labels: Vec<String> = rows(&state)
-            .into_iter()
-            .map(|row| match row {
-                ToolsRow::Group(g) => format!("[{g}]"),
-                ToolsRow::Tool(i) => state.tools[i].name.clone(),
-            })
-            .collect();
-        assert_eq!(
-            labels,
-            vec![
-                "[custom]".to_string(),
-                // A customer's own tool gets its own section, by name.
-                "deploy_to_staging".to_string(),
-                "[environment]".to_string(),
-                "get_environment".to_string(),
-                "[mcp]".to_string(),
-                "mcp__gh__create_issue".to_string(),
-                "[scratch]".to_string(),
-                // Sorted within the group.
-                "get_state".to_string(),
-                "save_state".to_string(),
-                "[task]".to_string(),
-                "delegate".to_string(),
-            ],
-            "groups sorted, tools sorted within them, one header each"
-        );
-    }
-
-    #[test]
-    fn a_row_resolves_most_specific_key_first_over_saved_switches_and_edits() {
-        let mut state = sample_state();
-        state.switches.insert(WILDCARD.into(), false);
-        state.switches.insert("scratch".into(), true);
-        state.switches.insert("save_state".into(), false);
-        let none = BTreeMap::new();
-
-        let at = |name: &str| {
-            state
-                .tools
-                .iter()
-                .find(|t| t.name == name)
-                .expect("tool present")
-        };
-        assert!(
-            !tool_enabled(&state, &none, at("get_environment")),
-            "wildcard off"
-        );
-        assert!(
-            tool_enabled(&state, &none, at("get_state")),
-            "group on beats the wildcard"
-        );
-        assert!(
-            !tool_enabled(&state, &none, at("save_state")),
-            "exact off beats the group"
-        );
-
-        // An edit at a LESS specific level must not defeat a saved exact key —
-        // the pane would otherwise show a tool as on that the runtime keeps off.
-        let mut edits = BTreeMap::new();
-        edits.insert("scratch".to_string(), true);
-        assert!(
-            !tool_enabled(&state, &edits, at("save_state")),
-            "a pending group grant does not outrank a saved exact denial"
-        );
-        // …and an edit at the SAME level does.
-        edits.insert("save_state".to_string(), true);
-        assert!(tool_enabled(&state, &edits, at("save_state")));
-    }
-
-    /// Over `save_state`, whose group (`scratch`) has a
-    /// DIFFERENT name. No catalog row is named after its own group any more
-    /// (#3192), so every row would now distinguish the two — but a row whose
-    /// name and group matched would hide the bug, and that is the shape this
-    /// test is written against.
-    #[test]
-    fn toggling_a_tool_writes_its_exact_name_never_its_group() {
-        let (model, mut ui) = open_ui();
-        let rows = ui.tools.rows();
-        let state = ui.tools.state.clone().unwrap();
-        ui.tools.row = rows
-            .iter()
-            .position(
-                |row| matches!(row, ToolsRow::Tool(i) if state.tools[*i].name == "save_state"),
-            )
-            .expect("save_state row");
-
-        handle_deck_key(ch(' '), &model, &mut ui);
-        assert_eq!(
-            ui.tools.edits,
-            BTreeMap::from([("save_state".to_string(), false)]),
-            "the exact tool key, and only it — never the `scratch` group"
-        );
-        // Its sibling in the same group is untouched, which is the whole point
-        // of writing the most specific key.
-        let get_state = state.tools.iter().find(|t| t.name == "get_state").unwrap();
-        assert!(tool_enabled(&state, &ui.tools.edits, get_state));
-
-        // Toggling back flips the same key rather than deleting it.
-        handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
-        assert_eq!(
-            ui.tools.edits,
-            BTreeMap::from([("save_state".to_string(), true)])
-        );
-        // `x` drops the unsaved edit entirely.
-        handle_deck_key(ch('x'), &model, &mut ui);
-        assert!(ui.tools.edits.is_empty(), "x clears the pending edit");
-        assert!(!ui.tools.dirty());
-    }
-
-    #[test]
-    fn toggling_a_group_header_writes_the_group_key() {
-        let (model, mut ui) = open_ui();
-        let rows = ui.tools.rows();
-        ui.tools.row = rows
-            .iter()
-            .position(|row| matches!(row, ToolsRow::Group(g) if g == "scratch"))
-            .expect("scratch header");
-        handle_deck_key(ch(' '), &model, &mut ui);
-        assert_eq!(
-            ui.tools.edits,
-            BTreeMap::from([("scratch".to_string(), false)]),
-            "the group key covers the family in one line"
-        );
-        let state = ui.tools.state.clone().unwrap();
-        for name in ["get_state", "save_state"] {
-            let tool = state.tools.iter().find(|t| t.name == name).unwrap();
-            assert!(
-                !tool_enabled(&state, &ui.tools.edits, tool),
-                "{name} is off"
-            );
-        }
-        // A member edit made afterwards is more specific and wins.
-        ui.tools.row = rows
-            .iter()
-            .position(|row| matches!(row, ToolsRow::Tool(i) if state.tools[*i].name == "get_state"))
-            .expect("get_state row");
-        handle_deck_key(ch(' '), &model, &mut ui);
-        assert_eq!(ui.tools.edits.get("get_state"), Some(&true));
-    }
-
-    #[test]
-    fn a_managed_denied_row_is_locked_and_refuses_to_toggle_on() {
-        let (model, mut ui) = open_ui();
-        let mut state = sample_state();
-        state.switches.insert("delegate".into(), false);
-        for tool in &mut state.tools {
-            if tool.name == "delegate" {
-                tool.locked = true;
-                tool.off = Some(ToolDenial {
-                    key: "delegate".into(),
-                    scope: Some(ToolScope::Managed),
-                });
-            }
-        }
-        ui.tools.state = Some(state);
-        let rows = ui.tools.rows();
-        let state_snapshot = ui.tools.state.clone().unwrap();
-        ui.tools.row = rows
-            .iter()
-            .position(
-                |row| matches!(row, ToolsRow::Tool(i) if state_snapshot.tools[*i].name == "delegate"),
-            )
-            .expect("the `delegate` tool row");
-
-        handle_deck_key(ch(' '), &model, &mut ui);
-        assert!(
-            ui.tools.edits.is_empty(),
-            "a locked row must not produce a switch the org will drop"
-        );
-        assert!(
-            ui.tools
-                .status
-                .as_deref()
-                .is_some_and(|s| s.contains("org-managed")),
-            "the refusal says why: {:?}",
-            ui.tools.status
-        );
-        let state = ui.tools.state.as_ref().unwrap();
-        let delegate = state.tools.iter().find(|t| t.name == "delegate").unwrap();
-        assert!(!tool_enabled(state, &ui.tools.edits, delegate));
-        assert_eq!(
-            off_reason(delegate).as_deref(),
-            Some("locked · \"delegate\" off in org-managed settings")
-        );
-
-        // Even a forged edit (a group or wildcard grant reaching the map any
-        // other way) cannot render it on.
-        let mut edits = BTreeMap::new();
-        edits.insert(WILDCARD.to_string(), true);
-        edits.insert("delegate".to_string(), true);
-        assert!(
-            !tool_enabled(state, &edits, delegate),
-            "locked short-circuits every level of the precedence ladder"
-        );
-        // The group header the org fully denies is locked too.
-        assert!(group_locked(state, "task"));
-    }
-
-    #[test]
-    fn s_and_shift_s_send_only_the_edited_keys_at_the_chosen_scope() {
-        let (model, mut ui) = open_ui();
-        ui.tools.row = 1; // deploy_to_staging, the first tool row
-        handle_deck_key(ch(' '), &model, &mut ui);
-
-        handle_deck_key(ch('s'), &model, &mut ui);
-        assert_eq!(
-            ui.pending_inputs,
-            vec![WorkspaceInput::ToolsSave {
-                switches: BTreeMap::from([("deploy_to_staging".to_string(), false)]),
-                scope: AgentScope::User,
-            }],
-            "only the changed key goes out, at user scope"
-        );
-        assert!(ui.tools.busy);
-
-        ui.pending_inputs.clear();
-        handle_deck_key(ch('S'), &model, &mut ui);
-        assert_eq!(
-            ui.pending_inputs,
-            vec![WorkspaceInput::ToolsSave {
-                switches: BTreeMap::from([("deploy_to_staging".to_string(), false)]),
-                scope: AgentScope::Project,
-            }]
-        );
-    }
-
-    #[test]
-    fn the_save_echo_retires_the_edit_and_a_failure_keeps_it() {
-        let mut model = WorkspaceModel::new();
-        let mut ui = DeckUi::default();
-        ui.splash.skip();
-        ui.tools.state = Some(sample_state());
-        ui.tools.edits.insert("delegate".into(), false);
-        ui.tools.busy = true;
-
-        // A failed save: the snapshot still says `delegate` is on, so the edit
-        // stands.
-        ingest_inbound(
-            &Inbound::ToolPolicy {
-                state: sample_state(),
-                status: Some("save failed: cannot read".into()),
-            },
-            &mut model,
-            &mut ui,
-        );
-        assert_eq!(
-            ui.tools.edits.get("delegate"),
-            Some(&false),
-            "still unsaved"
-        );
-        assert!(!ui.tools.busy, "a snapshot always ends the in-flight op");
-        assert!(ui.tools.dirty());
-
-        // The successful echo carries the switch — the marker clears.
-        let mut saved = sample_state();
-        saved.switches.insert("delegate".into(), false);
-        ingest_inbound(
-            &Inbound::ToolPolicy {
-                state: saved.clone(),
-                status: Some("saved to user settings".into()),
-            },
-            &mut model,
-            &mut ui,
-        );
-        assert!(ui.tools.edits.is_empty(), "the write landed");
-        assert!(!ui.tools.dirty());
-        assert_eq!(ui.tools.state.as_ref(), Some(&saved));
-        assert_eq!(ui.tools.status.as_deref(), Some("saved to user settings"));
-    }
-
-    #[test]
-    fn t_on_the_settings_tab_focuses_the_panel_and_esc_releases_it() {
-        let model = WorkspaceModel::new();
-        let mut ui = DeckUi::default();
-        ui.splash.skip();
-        ui.set_tab(DeckTab::Settings);
-
-        let action = handle_deck_key(ch('t'), &model, &mut ui);
-        assert_eq!(
-            action,
-            DeckAction::Send(WorkspaceInput::ToolsRefresh),
-            "focusing asks the driver for the live tool list"
-        );
-        assert!(ui.tools.focused);
-
-        handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
-        assert!(!ui.tools.focused, "esc hands the keyboard back to the tab");
-        // `e` then reaches the engine panel, which takes the keyboard from the
-        // tools pane — one editor owns the SETTINGS keyboard at a time.
-        handle_deck_key(ch('t'), &model, &mut ui);
-        crate::views::engine_panel::focus_panel(&mut ui);
-        assert!(ui.engine.focused);
-        assert!(
-            !ui.tools.focused,
-            "focusing the engine releases the tools pane"
-        );
-        focus_panel(&mut ui);
-        assert!(ui.tools.focused);
-        assert!(!ui.engine.focused, "and the other way around");
-    }
-
-    /// While one editor is modal, the other's focus key is swallowed rather
-    /// than leaking into the composer behind the pane — the same rule every
-    /// modal surface on the deck follows.
-    #[test]
-    fn a_focused_editor_swallows_the_other_editors_focus_key() {
-        let (model, mut ui) = open_ui();
-        let action = handle_deck_key(ch('e'), &model, &mut ui);
-        assert_eq!(action, DeckAction::Handled);
-        assert!(!ui.engine.focused, "e did not reach the engine panel");
-        assert!(ui.tools.focused);
-        assert!(ui.composer.is_empty(), "and nothing reached the composer");
-    }
-
-    #[test]
-    fn the_reason_names_the_key_and_the_scope_that_switched_it_off() {
-        let mut off = tool("save_state", "scratch");
-        off.off = Some(ToolDenial {
-            key: "scratch".into(),
-            scope: Some(ToolScope::Project),
-        });
-        assert_eq!(
-            off_reason(&off).as_deref(),
-            Some("\"scratch\" off in project settings")
-        );
-        assert_eq!(off_reason(&tool("get_state", "scratch")), None);
-    }
-
-    fn buffer_text(buf: &Buffer) -> String {
-        let area = buf.area();
-        (0..area.height)
-            .map(|y| {
-                (0..area.width)
-                    .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    fn drawn(ui: &DeckUi, w: u16, h: u16) -> String {
-        let area = Rect::new(0, 0, w, h);
-        let mut buf = Buffer::empty(area);
-        render_panel(ui, area, &mut buf);
-        buffer_text(&buf)
-    }
-
-    fn locked_ui() -> DeckUi {
-        let (_model, mut ui) = open_ui();
-        let mut state = sample_state();
-        state.switches.insert("scratch".into(), false);
-        for tool in &mut state.tools {
-            if tool.group == "scratch" {
-                tool.off = Some(ToolDenial {
-                    key: "scratch".into(),
-                    scope: Some(ToolScope::User),
-                });
-            }
-            if tool.name == "delegate" {
-                tool.locked = true;
-                tool.off = Some(ToolDenial {
-                    key: "delegate".into(),
-                    scope: Some(ToolScope::Managed),
-                });
-            }
-        }
-        ui.tools.state = Some(state);
-        ui
-    }
-
-    #[test]
-    fn render_smoke_draws_groups_states_and_reasons() {
-        let ui = locked_ui();
-        let text = drawn(&ui, 96, 24);
-        assert!(text.contains("tools ·"), "header drawn");
-        assert!(text.contains("SCRATCH"), "group headers drawn");
-        assert!(text.contains("MCP"), "an MCP section is listed");
-        assert!(text.contains("CUSTOM"), "a custom-tool section is listed");
-        assert!(
-            text.contains("deploy_to_staging"),
-            "the customer's own tool"
-        );
-        assert!(
-            text.contains("off in user settings"),
-            "an off row explains itself"
-        );
-        assert!(text.contains("locked"), "an org-denied row says so");
-        assert!(text.contains("org-locked"), "the header counts locked rows");
-    }
-
-    /// The state column holds under a wide-character tool name.
-    ///
-    /// An MCP server names its own tools, so the name is not ASCII by
-    /// construction. The field was elided by `char` count and padded by
-    /// `{:<width$}`, which is also a `char` count — so a CJK name rendered at
-    /// twice its budget and pushed `on`/`off` and everything after it right,
-    /// on that row alone. Measured with ratatui's own `Span::width`, not with
-    /// the helper under test.
-    #[test]
-    fn a_wide_character_tool_name_does_not_move_the_state_column() {
-        let (_model, ui) = open_ui();
-        let mut state = sample_state();
-        state
-            .tools
-            .push(tool("mcp__仓库__创建议题并附上一段很长的说明", "mcp"));
-        let ascii = state
-            .tools
-            .iter()
-            .position(|t| t.name == "mcp__gh__create_issue")
-            .unwrap();
-        let wide = state.tools.len() - 1;
-
-        // The caret and the name field are what precede the state cell.
-        let field = |i: usize| -> usize {
-            let line = render_row(&ui.tools, &state, &ToolsRow::Tool(i), false, 96);
-            line.spans[..2].iter().map(Span::width).sum()
-        };
-        assert_eq!(
-            field(ascii),
-            field(wide),
-            "a wide name moved the state column"
-        );
-    }
-
-    /// **The witness for the port.** The pane fills the body the frame carved
-    /// out and draws no box of its own: the counts are a header row and the
-    /// verbs are a key row, so nothing spends a column or a row on a border
-    /// that repeats what the tab strip already said.
-    #[test]
-    fn the_pane_draws_no_box_of_its_own() {
-        let ui = locked_ui();
-        let text = drawn(&ui, 96, 24);
-        for edge in ['┌', '┐', '└', '┘', '│', '─', '╭', '╮', '╰', '╯'] {
-            assert!(
-                !text.contains(edge),
-                "the pane drew a border glyph {edge:?}:\n{text}"
-            );
-        }
-        let first = text.lines().next().unwrap_or_default();
-        assert!(
-            first.trim_start().starts_with("tools ·"),
-            "the header is the first row, not a border: {first:?}"
-        );
-        assert!(
-            first.contains("6 tools"),
-            "the header carries the session's tool count: {first:?}"
-        );
-    }
-
-    /// The keys are the pane's last row either way, and they name what the
-    /// keyboard actually does right now — the verbs while it is focused, the
-    /// one key that focuses it while it is not.
-    #[test]
-    fn the_key_row_follows_the_keyboard() {
-        let mut ui = locked_ui();
-        let focused = drawn(&ui, 96, 24);
-        let last = focused.lines().last().unwrap_or_default().to_string();
-        assert!(last.contains("⏎/space toggle"), "{last:?}");
-        assert!(last.contains("esc done"), "{last:?}");
-
-        ui.tools.focused = false;
-        let browsing = drawn(&ui, 96, 24);
-        let last = browsing.lines().last().unwrap_or_default().to_string();
-        assert_eq!(last.trim_end(), " e edit tool switches");
-    }
-
-    /// A pane too short for its own bands still draws what fits rather than
-    /// panicking or painting outside the body.
-    #[test]
-    fn a_short_pane_still_renders() {
-        let ui = locked_ui();
-        for h in 1..=4u16 {
-            let text = drawn(&ui, 96, h);
-            assert_eq!(text.lines().count(), h as usize);
-        }
-        // Narrower than the caret plus a name is not a pane at all.
-        assert_eq!(drawn(&ui, 3, 24).trim(), "");
-    }
-
-    #[test]
-    fn the_modified_marker_appears_only_with_unsaved_edits() {
-        let mut ui = locked_ui();
-        assert!(!drawn(&ui, 96, 24).contains("modified"));
-        ui.tools.edits.insert("get_state".into(), false);
-        assert!(drawn(&ui, 96, 24).contains("· modified"));
-    }
-}
+mod tests;
