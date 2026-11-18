@@ -322,6 +322,9 @@ mod tests {
         )
         .expect_err("an overlay nobody read");
 
-        assert!(refused.contains(overlay::FLAG), "{refused}");
+        assert!(
+            refused.contains(overlay::FLAG),
+            "the refusal names the overlay flag"
+        );
     }
 }

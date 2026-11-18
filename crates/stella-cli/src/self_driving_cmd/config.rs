@@ -852,7 +852,10 @@ timeout_secs = 60
         assert_eq!(cfg.worker.max_turns, Some(12));
         assert_eq!(cfg.verify_command.as_deref(), Some("make test"));
         assert_eq!(cfg.verify_timeout_secs, 60);
-        assert!(!cfg.deploy_watch, "an unset key keeps the workspace's value");
+        assert!(
+            !cfg.deploy_watch,
+            "an unset key keeps the workspace's value"
+        );
         assert_eq!(
             load(ws.path()).worker.model.as_deref(),
             Some("opus"),

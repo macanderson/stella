@@ -25,11 +25,11 @@ use crate::settings::Settings;
 
 mod scopes;
 
+#[cfg(test)]
+pub(crate) use scopes::load_tab_config_with;
 pub(crate) use scopes::{
     OwnMcpConfig, TabConfig, load_listed_config, load_own_config, load_tab_config,
 };
-#[cfg(test)]
-pub(crate) use scopes::load_tab_config_with;
 
 /// The workspace's MCP server config file.
 pub fn mcp_toml_path(workspace_root: &Path) -> PathBuf {

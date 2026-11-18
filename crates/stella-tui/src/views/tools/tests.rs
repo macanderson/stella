@@ -129,9 +129,7 @@ fn toggling_a_tool_writes_its_exact_name_never_its_group() {
     let state = ui.tools.state.clone().unwrap();
     ui.tools.row = rows
         .iter()
-        .position(
-            |row| matches!(row, ToolsRow::Tool(i) if state.tools[*i].name == "save_state"),
-        )
+        .position(|row| matches!(row, ToolsRow::Tool(i) if state.tools[*i].name == "save_state"))
         .expect("save_state row");
 
     handle_deck_key(ch(' '), &model, &mut ui);

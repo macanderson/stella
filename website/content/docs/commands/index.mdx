@@ -200,7 +200,7 @@ Every flag below works in either position: `stella --spend-limit 5 run "…"` an
     files. A launcher uses it to give one run its hooks, provider endpoint and key, and MCP
     servers without editing yours. Hooks and MCP servers add to your own, and every other
     value replaces yours. A missing or invalid file stops the run before it starts. A turn
-    the run starts stops too if the file changed after the run read it. Stella reads the file
+    the run starts stops too if the file changed after the run read it. stella reads the file
     only on Unix systems such as macOS and Linux. On Windows it cannot check who may write
     the file, so it refuses the flag. Env `STELLA_CONFIG_OVERLAY`.
   </OptionCard>
