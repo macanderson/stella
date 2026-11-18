@@ -13,8 +13,8 @@ use std::collections::BTreeMap;
 /// Which settings file carries the `"tools"` key that switched a tool off.
 ///
 /// Not the same list as [`AgentScope`](super::AgentScope), and deliberately
-/// so: the editor writes to two scopes but has to *report* three, because the
-/// third one is the one it cannot write.
+/// so: the editor writes to two scopes but has to *report* four, because it
+/// cannot write the other two.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolScope {
     /// The org-managed settings file. A denial here is a ceiling — no user or
@@ -24,6 +24,10 @@ pub enum ToolScope {
     User,
     /// `<workspace>/.stella/settings.json`.
     Project,
+    /// The `--config-overlay` file the launcher named for this one launch.
+    /// It folds in after the project, and the panel can't write it. So a row
+    /// it turns off renders locked while this launch runs.
+    Overlay,
 }
 
 impl ToolScope {
@@ -32,6 +36,7 @@ impl ToolScope {
             ToolScope::Managed => "org-managed",
             ToolScope::User => "user",
             ToolScope::Project => "project",
+            ToolScope::Overlay => "launch overlay",
         }
     }
 }
@@ -66,8 +71,9 @@ pub struct ToolRow {
     /// `"custom"` for tools the catalog has never heard of). The editor's
     /// section headers, and the key a header toggle writes.
     pub group: String,
-    /// The org-managed scope denies this tool. The row is read-only: it cannot
-    /// be toggled on, and it must not render as though it could.
+    /// The org-managed scope or the launch overlay denies this tool. The row
+    /// is read-only: it cannot be toggled on, and it must not render as
+    /// though it could. [`ToolRow::off`] names which of the two did it.
     pub locked: bool,
     /// Why it is off under the SAVED settings, or `None` when it is on.
     /// Unsaved edits in the panel do not change this — it describes disk.
@@ -87,4 +93,8 @@ pub struct ToolPolicyState {
     /// The panel resolves a row's live value against this map (plus its own
     /// unsaved edits) using the policy's own most-specific-first precedence.
     pub switches: BTreeMap<String, bool>,
+    /// The keys the launch overlay sets, with its values. The overlay's value
+    /// beats the user and project files, the only two the panel writes. So
+    /// the panel refuses an edit to any of these keys, which could never land.
+    pub overlay_switches: BTreeMap<String, bool>,
 }

@@ -44,7 +44,8 @@ pub(crate) struct McpSession {
     pub(crate) grants: stella_mcp::CapabilityGrants,
 }
 
-/// Build the MCP tab snapshot. It lists the servers in both `mcp.toml` files.
+/// Build the MCP tab snapshot. It lists the servers in both `mcp.toml` files,
+/// then each server only this launch's `--config-overlay` file names.
 /// Each row joins a server with its live session state — enabled (not in the disabled set),
 /// connected (in the live tool set), health, per-server tool count (derived
 /// from the advertised schemas, so it is 0 the moment a server is disabled),
@@ -59,7 +60,23 @@ pub(crate) async fn mcp_snapshot(
     mcp: Option<&stella_mcp::McpToolSet>,
     disabled: &stella_mcp::DisabledServers,
 ) -> Result<Vec<stella_tui::McpServerInfo>, String> {
-    let config = crate::mcp_cmd::load_listed_config(&cfg.workspace_root)?;
+    let tab = crate::mcp_cmd::load_tab_config(&cfg.workspace_root)?;
+    mcp_rows(&tab, cfg, mcp, disabled).await
+}
+
+/// [`mcp_snapshot`] over servers already read, so a test can pass an overlay
+/// in.
+///
+/// A row from the overlay alone is marked, and the tab refuses each key that
+/// would write its file. Its `o` key reaches the entry the session runs, which
+/// for a shared name is the overlay's entry and not the one on the row.
+async fn mcp_rows(
+    tab: &crate::mcp_cmd::TabConfig,
+    cfg: &Config,
+    mcp: Option<&stella_mcp::McpToolSet>,
+    disabled: &stella_mcp::DisabledServers,
+) -> Result<Vec<stella_tui::McpServerInfo>, String> {
+    let config = &tab.rows;
     let connected: HashSet<String> = mcp
         .map(|s| {
             s.connected_names()
@@ -143,9 +160,10 @@ pub(crate) async fn mcp_snapshot(
                     .into_iter()
                     .map(str::to_string)
                     .collect(),
-                oauth: (transport.kind_label() == "http").then(|| oauth_logins.contains(name)),
+                oauth: tab.has_oauth(name).then(|| oauth_logins.contains(name)),
                 calls,
                 candidate_safe: config.is_candidate_safe(name),
+                from_overlay: tab.overlay_only.contains(name),
             }
         })
         .collect())
@@ -206,7 +224,8 @@ pub(crate) async fn mcp_detail(
     name: &str,
     lookup: McpLookupState,
 ) -> Result<stella_tui::McpServerDetail, String> {
-    let config = crate::mcp_cmd::load_listed_config(&cfg.workspace_root)?;
+    let tab = crate::mcp_cmd::load_tab_config(&cfg.workspace_root)?;
+    let config = &tab.rows;
     let transport = config
         .get(name)
         .ok_or_else(|| format!("`{name}` is not configured in either mcp.toml"))?;
@@ -232,7 +251,9 @@ pub(crate) async fn mcp_detail(
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .contains(name);
-    let oauth_logins = crate::mcp_cmd::oauth_logged_in(&cfg.workspace_root)?;
+    let logged_in = crate::mcp_cmd::oauth_logged_in(&cfg.workspace_root)?
+        .iter()
+        .any(|s| s == name);
 
     let live = mcp
         .and_then(|s| s.identity(name))
@@ -274,7 +295,7 @@ pub(crate) async fn mcp_detail(
             .into_iter()
             .map(str::to_string)
             .collect(),
-        oauth: (transport.kind_label() == "http").then(|| oauth_logins.iter().any(|s| s == name)),
+        oauth: tab.has_oauth(name).then_some(logged_in),
         candidate_safe: config.is_candidate_safe(name),
         enabled: !disabled_now,
         connected,
@@ -862,6 +883,38 @@ mod tests {
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
                 .contains("some")
+        );
+    }
+
+    /// A server only the launch's `--config-overlay` file names gets a row,
+    /// marked as the overlay's, so `o` can start its login. A server a file
+    /// holds keeps its file row, and its `o` reaches the overlay's http entry
+    /// that runs in its place this session.
+    #[tokio::test]
+    async fn an_overlay_server_gets_a_row_marked_as_the_overlays() {
+        let dir = workspace_with_a_server();
+        let cfg = config_at(dir.path());
+        let overlay = stella_mcp::McpConfig::from_toml_str(
+            "[servers.launch]\ntransport = \"http\"\nurl = \"https://launch.example/mcp\"\n\
+             [servers.some]\ntransport = \"http\"\nurl = \"https://shadow.example/mcp\"\n",
+        )
+        .expect("overlay");
+        let tab = crate::mcp_cmd::load_tab_config_with(dir.path(), Some(&overlay))
+            .expect("the tab's servers");
+        let disabled = session().disabled;
+
+        let rows = mcp_rows(&tab, &cfg, None, &disabled).await;
+
+        let rows = rows.expect("rows");
+        let row = |name: &str| rows.iter().find(|r| r.name == name).expect("a row");
+        assert!(row("launch").from_overlay, "{rows:?}");
+        assert_eq!(row("launch").oauth, Some(false));
+        assert!(!row("some").from_overlay, "a file keeps its row");
+        assert_eq!(row("some").kind, "stdio", "the file's entry");
+        assert_eq!(
+            row("some").oauth,
+            Some(false),
+            "login reaches the overlay's http entry"
         );
     }
 

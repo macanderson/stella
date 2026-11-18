@@ -1660,7 +1660,7 @@ editing Stella's own code should know what lives where:
 | `.stella/rules/*.toml` | Published **context records** — this repository's own steering policy, one record per file ([`docs/spec/adaptive-context/context-pr.md`](docs/spec/adaptive-context/context-pr.md)). The one part of `.stella/` that is **tracked in Git**, because a record only steers a teammate's session if it travels with the repository. Beside them, `governance.toml` sets the governance mode (this repo is `regulated`) and `promotions.jsonl` is the hash-chained ledger of enforcement grants and record lifecycle events (retirements and supersessions, #2728); `stella context validate` re-verifies both in CI on every PR. Edit through `stella context keep` / `promote`, not by hand. |
 | `.stella/tools/*.toml` | Developer-defined custom script tools. Also scanned at `~/.stella/tools/`. |
 | `.stella/issues/<provider>.toml` | The active tracker's provider manifest: which raw statuses mean open, how each resolution is spelled, and which labels mean which issue class (`doc:agent-native-delivery` §4.1). GitHub's and Linear's both ship embedded in the binary (`crates/stella-cli/src/issue_provider/github.toml` and `linear.toml`, listed in that module's `BUILT_IN` table) and a file here of the same name shadows one, key by key. Adding a tracker is a `.toml` beside those two and a row in that table — no code branches on a provider name. `stella.toml`'s `[issues]` says which provider is active. |
-| `.stella/settings.json` | Project-scope provider config (overrides built-ins or defines new providers) and tool switches (`tools.delegate: "off"` withholds the sub-agent delegation tool — every built-in is registered by default since #710). Merged per-field with org-managed and user scopes. |
+| `.stella/settings.json` | Project-scope provider config (overrides built-ins or defines new providers) and tool switches (`tools.delegate: "off"` withholds the sub-agent delegation tool — every built-in is registered by default since #710). Merged per-field with the user and org-managed scopes, and wins over both. A launch's `--config-overlay` file wins over it. Org-managed ceilings cap both. |
 | `.stella/mcp.toml` | MCP server config — extra tools merged into the registry at session start. `~/.stella/mcp.toml` holds servers for every repository, and an entry here with the same name replaces that one whole (`stella-cli`'s `mcp_cmd::scopes`). An installed plugin may also ship one (`<plugin_dir>/mcp.toml`, declared as `[[mcp]]`, #4733); a server of yours keeps its name on a collision, and the package's copy is dropped with a notice. |
 | `.stella/domains.toml` | Domain taxonomy for memory/reflection tagging, inferred by `stella init`. |
 | `.stella/workspace.json` | Durable per-workspace telemetry identity (`workspace_id`), written by `stella cloud register`. Deliberately **outside** `private/` and safe to commit — sharing it makes every clone/machine report under one `workspace_id` to a cloud org. |
@@ -1979,8 +1979,11 @@ machine.
   `error\[` rather than `^error` if you filter coloured output anyway.
 - **`.cargo/config.toml` is gitignored** — it holds per-developer cargo aliases
   (`tc` = test stella-core, etc.). It's not committed.
-- **Settings 3-scope merge**: user → org-managed (`STELLA_MANAGED_SETTINGS`) →
-  project (`.stella/settings.json`). Project wins per-field.
+- **Settings scope merge**: user → org-managed (`STELLA_MANAGED_SETTINGS`) →
+  project (`.stella/settings.json`) → launch overlay (`--config-overlay` or
+  `STELLA_CONFIG_OVERLAY`). A later scope wins per field, so the overlay wins
+  over the project file. Org-managed ceilings still cap every scope, the
+  overlay included.
 - **`context.db` vs `codegraph.db`**: `stella-context` and `stella-graph` used
   to share `.stella/private/context.db` — they now use separate files
   (`.stella/private/context.db` and `.stella/private/codegraph.db`

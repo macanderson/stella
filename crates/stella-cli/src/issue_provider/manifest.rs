@@ -49,6 +49,7 @@ use serde::Deserialize;
 use stella_autonomy::labels::same as same_label;
 use stella_protocol::issue::{IssueClass, Vocabulary};
 
+use crate::settings::overlay::LoopSections;
 use crate::settings::toml_config::{IssuesSection, TomlConfig};
 
 /// The provider id of the tracker whose manifest ships beside this file
@@ -412,15 +413,32 @@ impl ProviderManifest {
     }
 }
 
-/// The `[issues]` section of a workspace's `stella.toml`, or its default.
+/// The `[issues]` section of a workspace's `stella.toml`, or its default,
+/// with the launch's `--config-overlay` laid over it.
 fn issues_section(root: &Path) -> IssuesSection {
+    issues_section_with(root, crate::settings::overlay::active_loop_sections())
+}
+
+/// [`issues_section`] with the overlay's sections passed in, so a test can
+/// give them without setting them for the whole process.
+///
+/// Each `[issues]` key the overlay sets takes the overlay's value. A
+/// workspace file that is missing or does not parse adds nothing.
+fn issues_section_with(root: &Path, sections: Option<&LoopSections>) -> IssuesSection {
     let path = crate::settings::toml_config::project_toml_path(root);
-    let Ok(raw) = std::fs::read_to_string(&path) else {
-        return IssuesSection::default();
+    let (issues, written) = match std::fs::read_to_string(&path) {
+        Err(_) => (IssuesSection::default(), None),
+        Ok(raw) => match TomlConfig::parse(&raw, &path) {
+            Ok(parsed) => (parsed.issues, Some(raw)),
+            Err(_) => (IssuesSection::default(), None),
+        },
     };
-    TomlConfig::parse(&raw, &path)
-        .map(|parsed| parsed.issues)
-        .unwrap_or_default()
+    crate::settings::overlay::lay_section(
+        "issues",
+        issues,
+        written.as_deref(),
+        sections.and_then(|sections| sections.issues.as_ref()),
+    )
 }
 
 #[cfg(test)]
@@ -719,6 +737,33 @@ feature = ["kind/enhancement"]
         let manifest = ProviderManifest::for_workspace(ws.path());
         assert!(manifest.vocabulary.is_open("triage"));
         assert_eq!(manifest.classes.class_of(&["bug"]), IssueClass::Bug);
+    }
+
+    /// The launch's `--config-overlay` picks the tracker. Its `[issues]`
+    /// lies over the workspace's, key by key, so a key it leaves out keeps
+    /// the workspace's value.
+    #[test]
+    fn an_overlay_picks_the_tracker_over_the_workspaces() {
+        let ws = workspace();
+        write(
+            ws.path(),
+            "stella.toml",
+            r#"
+[meta]
+scope = "project"
+
+[issues]
+provider = "github"
+manifest = "tracker/github.toml"
+"#,
+        );
+        let overlay = LoopSections::of("[issues]\nprovider = \"linear\"\n");
+
+        let issues = issues_section_with(ws.path(), Some(&overlay));
+
+        assert_eq!(issues.provider, LINEAR);
+        assert_eq!(issues.manifest.as_deref(), Some("tracker/github.toml"));
+        assert_eq!(issues_section_with(ws.path(), None).provider, "github");
     }
 
     /// The keys a rendered manifest's `[classes]` block sets, as text.

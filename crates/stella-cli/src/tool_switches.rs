@@ -15,7 +15,8 @@
 //!    leaves an operator hunting three settings files, and because an
 //!    org-managed denial is categorically different from their own: it cannot
 //!    be lifted, so the row is reported LOCKED and the editor refuses to write
-//!    a grant the next load would silently drop.
+//!    a grant the next load would silently drop. A launch overlay's denial is
+//!    LOCKED the same way while that launch runs.
 //!
 //! The write path ([`save_switches`]) is a read-modify-write of ONE scope's
 //! own `"tools"` object via [`ToolsSettings::save_to`], so every other key in
@@ -59,12 +60,20 @@ pub(crate) fn session_tool_names(
 }
 
 /// Build the panel's rows: one per live tool, grouped and sorted, each
-/// carrying whether the org locked it and — when it is off — the key and scope
+/// carrying whether it is locked and — when it is off — the key and scope
 /// that did it.
 ///
+/// Two scopes lock a row. The org's ceiling does, for good. The launch
+/// overlay does too, for as long as this launch runs. The panel writes only
+/// to the user and project files, and the overlay's key beats the same key
+/// there. So a switch the panel saved would stay off and sit as an edit that
+/// never lands. When the overlay turns off a group or `"*"`, a tool's own
+/// name in the user file would still win. The row locks anyway, so the panel
+/// never works around the launcher's choice for this run.
+///
 /// `effective` is the merged policy the runtime enforces
-/// ([`crate::config::Config::tool_policy`]); `scopes` is the same three files
-/// read apart, which is the only way to attribute a switch to a file.
+/// ([`crate::config::Config::tool_policy`]); `scopes` is the same files read
+/// apart, which is the only way to attribute a switch to a file.
 pub(crate) fn tool_rows(
     names: &[String],
     effective: &ToolPolicy,
@@ -73,7 +82,7 @@ pub(crate) fn tool_rows(
     let mut rows: Vec<ToolRow> = names
         .iter()
         .map(|name| {
-            let locked = !scopes.managed.allows(name);
+            let org_locked = !scopes.managed.allows(name);
             // The merged policy carries the ceiling already, so it normally
             // answers for a locked tool too; falling back to the ceiling keeps
             // a locked row explained even if the two were read a moment apart.
@@ -81,8 +90,12 @@ pub(crate) fn tool_rows(
                 .or_else(|| crate::tool_policy::disabled_by(&scopes.managed, name));
             let off = key.map(|key| {
                 let denied_by = |policy: &ToolPolicy| policy.switches().get(&key) == Some(&false);
-                let scope = if locked {
+                // Highest scope first, in the merge's own order. The overlay
+                // folds in after the project, so its key is the one in force.
+                let scope = if org_locked {
                     Some(ToolScope::Managed)
+                } else if denied_by(&scopes.overlay) {
+                    Some(ToolScope::Overlay)
                 } else if denied_by(&scopes.project) {
                     Some(ToolScope::Project)
                 } else if denied_by(&scopes.user) {
@@ -92,10 +105,13 @@ pub(crate) fn tool_rows(
                 };
                 ToolDenial { key, scope }
             });
+            let overlay_locked = off
+                .as_ref()
+                .is_some_and(|denial| denial.scope == Some(ToolScope::Overlay));
             ToolRow {
                 name: name.clone(),
                 group: catalog::group_for(name).to_string(),
-                locked,
+                locked: org_locked || overlay_locked,
                 off,
             }
         })
@@ -114,6 +130,7 @@ pub(crate) fn tool_policy_state(
     ToolPolicyState {
         tools: tool_rows(names, effective, scopes),
         switches: effective.switches().clone(),
+        overlay_switches: scopes.overlay.switches().clone(),
     }
 }
 
@@ -237,6 +254,7 @@ mod tests {
             managed: ToolPolicy::allow_all(),
             user: ToolPolicy::from_switches([("scratch".into(), false)]),
             project: ToolPolicy::from_switches([("task_create".into(), false)]),
+            overlay: ToolPolicy::allow_all(),
         };
         let effective =
             ToolPolicy::from_switches([("scratch".into(), false), ("task_create".into(), false)]);
@@ -276,6 +294,7 @@ mod tests {
             // The user granted it; the ceiling is what stands.
             user: ToolPolicy::from_switches([("save_state".into(), true)]),
             project: ToolPolicy::allow_all(),
+            overlay: ToolPolicy::allow_all(),
         };
         let effective = ToolPolicy::from_switches([("save_state".into(), false)]);
         let rows = tool_rows(&names, &effective, &scopes);
@@ -290,6 +309,89 @@ mod tests {
             "the managed scope outranks the user's grant in the report too"
         );
         assert!(!row(&rows, "task_list").locked);
+    }
+
+    /// The overlay folds in after the project, so when the overlay, the
+    /// project and the user all turn one key off, the overlay's is in force.
+    /// The row names the overlay and is locked. An edit to the user or project
+    /// file can't turn the tool back on for this launch.
+    #[test]
+    fn an_overlay_denial_is_attributed_to_the_overlay_above_the_project() {
+        let base = Base(vec!["task_list", "task_create"]);
+        let names = session_tool_names(&base, &[]);
+        let scopes = ToolScopePolicies {
+            managed: ToolPolicy::allow_all(),
+            user: ToolPolicy::from_switches([("task_create".into(), false)]),
+            project: ToolPolicy::from_switches([("task_create".into(), false)]),
+            overlay: ToolPolicy::from_switches([("task_create".into(), false)]),
+        };
+        let effective = ToolPolicy::from_switches([("task_create".into(), false)]);
+        let rows = tool_rows(&names, &effective, &scopes);
+
+        let create = row(&rows, "task_create");
+        let denial = create.off.as_ref().expect("off");
+        assert_eq!(denial.key, "task_create");
+        assert_eq!(denial.scope, Some(ToolScope::Overlay));
+        assert!(create.locked, "no panel switch lifts the overlay's denial");
+        assert_eq!(ToolScope::Overlay.label(), "launch overlay");
+        assert!(
+            !row(&rows, "task_list").locked,
+            "a tool that is on is never locked"
+        );
+    }
+
+    /// The panel's own read carries the overlay's switches. Here the project
+    /// file turns the tool on and the overlay turns it off. The overlay wins
+    /// the merge, so the row names it and not the project.
+    #[test]
+    fn the_tool_scopes_read_carries_the_overlays_denial_to_the_row() {
+        let _env = crate::test_env::lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let workspace = tmp.path().join("workspace");
+        std::fs::create_dir_all(home.join(".stella")).unwrap();
+        std::fs::create_dir_all(workspace.join(".stella")).unwrap();
+        std::fs::write(
+            workspace.join(".stella").join("settings.json"),
+            r#"{"tools": {"task_create": "on"}}"#,
+        )
+        .unwrap();
+        let managed = tmp.path().join("managed.json");
+        std::fs::write(&managed, "{}").unwrap();
+        let _restore = crate::test_env::EnvRestore::capture(&["STELLA_MANAGED_SETTINGS"]);
+        let _home = crate::test_env::home_sandbox(&home);
+        // SAFETY: serialized behind the binary-wide environment lock.
+        unsafe {
+            std::env::set_var("STELLA_MANAGED_SETTINGS", &managed);
+        }
+        let overlay: crate::settings::Settings =
+            serde_json::from_str(r#"{"tools": {"task_create": "off"}}"#).unwrap();
+
+        let scopes =
+            crate::settings::Settings::load_tool_scopes_with(&workspace, Some(&overlay)).unwrap();
+        assert_eq!(scopes.overlay.switches().get("task_create"), Some(&false));
+        assert_eq!(scopes.project.switches().get("task_create"), Some(&true));
+
+        let names = session_tool_names(&Base(vec!["task_list", "task_create"]), &[]);
+        let effective = ToolPolicy::from_switches([("task_create".into(), false)]);
+        let rows = tool_rows(&names, &effective, &scopes);
+        let create = row(&rows, "task_create");
+        let denial = create.off.as_ref().expect("off");
+        assert_eq!(denial.key, "task_create");
+        assert_eq!(denial.scope, Some(ToolScope::Overlay));
+        assert!(create.locked, "the project's grant can't lift it");
+        let state = tool_policy_state(&names, &effective, &scopes);
+        assert_eq!(
+            state.overlay_switches.get("task_create"),
+            Some(&false),
+            "the panel learns which keys the overlay sets"
+        );
+
+        let without = crate::settings::Settings::load_tool_scopes_with(&workspace, None).unwrap();
+        assert!(
+            without.overlay.switches().is_empty(),
+            "no overlay, no overlay switches"
+        );
     }
 
     #[test]

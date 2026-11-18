@@ -1111,6 +1111,7 @@ mod tests {
     /// called could not satisfy it.
     #[test]
     fn every_session_flag_reaches_the_turn() {
+        let sha256 = "ab".repeat(32);
         let args = turn_args(&TurnFlags {
             model: Some("anthropic/claude-fable-5".to_owned()),
             base_url: Some("https://gateway.example/v1".to_owned()),
@@ -1120,6 +1121,10 @@ mod tests {
             turn_timeout: Some(std::time::Duration::from_secs(900)),
             max_output_tokens: Some(8192),
             max_steps: Some(40),
+            config_overlay: Some(crate::settings::overlay::Pin {
+                path: std::path::PathBuf::from("/opt/launch/overlay.toml"),
+                sha256: sha256.clone(),
+            }),
         });
 
         // The turn is still a machine-format `run`: the flags are additive to
@@ -1135,6 +1140,8 @@ mod tests {
             ("--turn-timeout", "900"),
             ("--max-output-tokens", "8192"),
             ("--max-steps", "40"),
+            ("--config-overlay", "/opt/launch/overlay.toml"),
+            ("--config-overlay-sha256", sha256.as_str()),
         ] {
             assert!(
                 args.windows(2).any(|w| w == [flag, value]),

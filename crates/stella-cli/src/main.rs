@@ -395,6 +395,19 @@ fn main() -> ExitCode {
         return semantic_worker::run();
     }
 
+    // The launch's config overlay, read once and before the first settings
+    // load below. A file that cannot be read stops the launch here rather than
+    // letting the run start without it. A child run also gets the hash of the
+    // bytes its parent read, and refuses a file that changed since.
+    if let Err(error) = settings::overlay::install(
+        cli.globals.config_overlay.as_deref(),
+        cli.globals.config_overlay_sha256.as_deref(),
+    ) {
+        eprintln!("{} {error}", "stella:".red().bold());
+        emit_error_summary(cli.output_format(), &error);
+        return ExitCode::FAILURE;
+    }
+
     // A machine-readable run has nobody to answer a masked password prompt,
     // and its caller is blocked reading stdout for an object that would never
     // come. Decided here, once, from the command's own declaration (#1493) —

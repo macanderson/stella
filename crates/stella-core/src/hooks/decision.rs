@@ -55,7 +55,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{HookExecError, HookPayload, HookRunner, Hooks, select_matchers};
+use super::{HookEvent, HookExecError, HookPayload, HookRunner, Hooks, select_matchers};
 use crate::bus::HookDecision;
 
 /// What one hook's stdout said, decision-wise.
@@ -85,11 +85,51 @@ pub enum DecisionParse {
 /// `cat`-style hook (whose stdout echoes the payload, itself a JSON object
 /// without `action`) on the legacy path.
 pub fn parse_decision(stdout: &str) -> DecisionParse {
+    match decision_document(stdout) {
+        Some(value) => stella_decision(value),
+        None => DecisionParse::NoDecision,
+    }
+}
+
+/// [`parse_decision`] for one event. On `UserPromptSubmit` it also reads the
+/// answer Claude Code's hooks give, so a hook written for Claude Code, or a
+/// wrapper that answers in Claude Code's words, can refuse a prompt here.
+///
+/// Claude Code refuses a submitted prompt with `{"decision": "block",
+/// "reason": "…"}`, or stops it with `{"continue": false, "stopReason":
+/// "…"}`. Either one is a deny carrying that text as its reason, so the
+/// prompt is never sent and the person who typed it is shown why. A document
+/// that also carries `action` is still a deny when it blocks: the more
+/// restrictive answer wins.
+///
+/// A `decision` other than `"block"`, or a `continue` that is not a
+/// boolean, is [`DecisionParse::Malformed`]. A hook that names an answer
+/// Stella cannot read must not wave the prompt through.
+///
+/// No other event reads this shape. Claude Code gives `block` meanings there
+/// that a Stella `deny` does not have: on `PostToolUse` it is feedback to the
+/// model about a tool call that already ran.
+pub fn parse_event_decision(event: HookEvent, stdout: &str) -> DecisionParse {
+    let Some(value) = decision_document(stdout) else {
+        return DecisionParse::NoDecision;
+    };
+    if event == HookEvent::UserPromptSubmit {
+        match claude_code_prompt_refusal(&value) {
+            Ok(Some(reason)) => return DecisionParse::Decision(HookDecision::Deny(reason.into())),
+            Ok(None) => {}
+            Err(error) => return DecisionParse::Malformed { error },
+        }
+    }
+    stella_decision(value)
+}
+
+/// The JSON document a hook's stdout ends with, or `None` when it holds none.
+fn decision_document(stdout: &str) -> Option<Value> {
     let trimmed = stdout.trim();
     if trimmed.is_empty() {
-        return DecisionParse::NoDecision;
+        return None;
     }
-    let candidate = match serde_json::from_str::<Value>(trimmed) {
+    match serde_json::from_str::<Value>(trimmed) {
         Ok(value) => Some(value),
         Err(_) => {
             // The document is the trailing block. Trying each `{`-opening
@@ -105,10 +145,47 @@ pub fn parse_decision(stdout: &str) -> DecisionParse {
                 .filter(|(_, line)| line.trim_start().starts_with('{'))
                 .find_map(|(from, _)| serde_json::from_str::<Value>(&lines[from..].join("\n")).ok())
         }
+    }
+}
+
+/// The reason a refusal carries when the hook wrote none.
+const NO_REASON_GIVEN: &str = "the hook gave no reason";
+
+/// Claude Code's refusal of a submitted prompt, read from one document.
+///
+/// `Ok(Some(reason))` when the document refuses the prompt, `Ok(None)` when
+/// it carries neither `continue: false` nor a `decision`, and `Err` when
+/// either field holds a value Claude Code does not define. `null` is such a
+/// value: a hook that writes the key meant to answer, and Stella can't tell
+/// what it meant. `continue: false` is read first, because Claude Code ranks
+/// it above `decision`.
+fn claude_code_prompt_refusal(value: &Value) -> Result<Option<String>, String> {
+    let Some(object) = value.as_object() else {
+        return Ok(None);
     };
-    let Some(value) = candidate else {
-        return DecisionParse::NoDecision;
+    let reason = |key: &str| {
+        object
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .unwrap_or(NO_REASON_GIVEN)
+            .to_string()
     };
+    match object.get("continue") {
+        None | Some(Value::Bool(true)) => {}
+        Some(Value::Bool(false)) => return Ok(Some(reason("stopReason"))),
+        Some(other) => return Err(format!("`continue` must be true or false, not {other}")),
+    }
+    match object.get("decision") {
+        None => Ok(None),
+        Some(Value::String(decision)) if decision == "block" => Ok(Some(reason("reason"))),
+        Some(other) => Err(format!("`decision` must be \"block\", not {other}")),
+    }
+}
+
+/// Stella's own decision vocabulary: an object carrying an `action` key.
+fn stella_decision(value: Value) -> DecisionParse {
     if !value
         .as_object()
         .is_some_and(|object| object.contains_key("action"))
@@ -249,7 +326,7 @@ pub async fn run_decision_hooks(
                 run.output = outputs.join("\n");
                 return run;
             }
-            match parse_decision(&result.stdout) {
+            match parse_event_decision(current.event, &result.stdout) {
                 DecisionParse::NoDecision => {
                     let trimmed = result.stdout.trim();
                     if !trimmed.is_empty() {
@@ -586,6 +663,146 @@ mod tests {
             DecisionParse::Malformed { .. } => {}
             other => panic!("{other:?}"),
         }
+    }
+
+    // ---- Claude Code's prompt refusal ----------------------------------
+
+    fn prompt_decision(stdout: &str) -> DecisionParse {
+        parse_event_decision(HookEvent::UserPromptSubmit, stdout)
+    }
+
+    /// The answer a Claude Code `UserPromptSubmit` hook gives to refuse a
+    /// prompt is a deny here, carrying its reason. The document has no
+    /// `action` key, so Stella's own vocabulary alone reads it as
+    /// informational output and sends the prompt with nothing shown.
+    #[test]
+    fn a_block_decision_on_a_prompt_is_a_deny_with_its_reason() {
+        assert_eq!(
+            prompt_decision(r#"{"decision":"block","reason":"answer first"}"#),
+            DecisionParse::Decision(HookDecision::Deny("answer first".into()))
+        );
+    }
+
+    #[test]
+    fn continue_false_on_a_prompt_is_a_deny_with_its_stop_reason() {
+        assert_eq!(
+            prompt_decision(r#"{"continue":false,"stopReason":"paused"}"#),
+            DecisionParse::Decision(HookDecision::Deny("paused".into()))
+        );
+    }
+
+    /// A refusal with no reason is still a refusal. The person is told the
+    /// hook gave none, rather than seeing an empty line.
+    #[test]
+    fn a_block_with_no_reason_still_denies() {
+        assert_eq!(
+            prompt_decision(r#"{"decision":"block"}"#),
+            DecisionParse::Decision(HookDecision::Deny(NO_REASON_GIVEN.into()))
+        );
+        assert_eq!(
+            prompt_decision(r#"{"decision":"block","reason":"   "}"#),
+            DecisionParse::Decision(HookDecision::Deny(NO_REASON_GIVEN.into()))
+        );
+    }
+
+    /// `continue: false` outranks `decision`, as it does in Claude Code, and a
+    /// block outranks an `action` that allows: the stricter answer wins.
+    #[test]
+    fn the_stricter_answer_wins_when_a_document_carries_two() {
+        let both = r#"{"continue":false,"stopReason":"stop","decision":"block","reason":"no"}"#;
+        assert_eq!(
+            prompt_decision(both),
+            DecisionParse::Decision(HookDecision::Deny("stop".into()))
+        );
+        assert_eq!(
+            prompt_decision(r#"{"action":"allow","decision":"block","reason":"no"}"#),
+            DecisionParse::Decision(HookDecision::Deny("no".into()))
+        );
+    }
+
+    /// A Claude Code document that refuses nothing leaves Stella's own
+    /// vocabulary to decide, and an empty one is no decision at all.
+    #[test]
+    fn a_prompt_answer_that_refuses_nothing_falls_through() {
+        assert_eq!(
+            prompt_decision(r#"{"continue":true}"#),
+            DecisionParse::NoDecision
+        );
+        assert_eq!(prompt_decision("{}"), DecisionParse::NoDecision);
+        let modify = r#"{"continue":true,"action":"modify","payload":{"prompt":"x"}}"#;
+        assert_eq!(
+            prompt_decision(modify),
+            DecisionParse::Decision(HookDecision::Modify {
+                payload: serde_json::json!({"prompt": "x"})
+            })
+        );
+    }
+
+    /// A value Claude Code does not define fails closed rather than allowing.
+    /// An explicit `null` is one: the hook named the field and gave no answer.
+    #[test]
+    fn an_unknown_prompt_decision_is_malformed() {
+        for stdout in [
+            r#"{"decision":"approve"}"#,
+            r#"{"decision":true}"#,
+            r#"{"continue":"no"}"#,
+            r#"{"decision":null}"#,
+            r#"{"continue":null}"#,
+            r#"{"continue":null,"action":"allow"}"#,
+        ] {
+            match prompt_decision(stdout) {
+                DecisionParse::Malformed { .. } => {}
+                other => panic!("{stdout} must fail closed: {other:?}"),
+            }
+        }
+    }
+
+    /// Only `UserPromptSubmit` reads the shape. On `PostToolUse` Claude Code's
+    /// `block` is feedback about a call that already ran, which a Stella deny
+    /// does not mean, so the document stays informational there.
+    #[test]
+    fn other_events_do_not_read_the_claude_code_shape() {
+        let block = r#"{"decision":"block","reason":"no"}"#;
+        assert_eq!(
+            parse_event_decision(HookEvent::PostToolUse, block),
+            DecisionParse::NoDecision
+        );
+        assert_eq!(parse_decision(block), DecisionParse::NoDecision);
+    }
+
+    /// Through the fold: a `UserPromptSubmit` chain whose hook blocks ends in a
+    /// deny verdict carrying the hook's reason.
+    #[tokio::test]
+    async fn a_prompt_hook_that_blocks_ends_the_chain_with_its_reason() {
+        let mut scripted = HashMap::new();
+        scripted.insert(
+            "ask-first".to_string(),
+            ok(
+                0,
+                r#"{"decision":"block","reason":"Answer the recording question first."}"#,
+                "",
+            ),
+        );
+        let runner = FakeRunner::new(scripted);
+        let hooks = Hooks {
+            user_prompt_submit: Some(vec![HookMatcher {
+                matcher: None,
+                hooks: vec![HookAction::new("ask-first")],
+            }]),
+            ..Hooks::default()
+        };
+        let run = run_decision_hooks(
+            &runner,
+            Some(&hooks),
+            &HookPayload::user_prompt_submit("/proj", "fix the flaky test"),
+        )
+        .await;
+        assert_eq!(
+            run.verdict(&OperatorPosture::NoOpinion, false),
+            GateVerdict::Deny {
+                reason: "Answer the recording question first.".to_string()
+            }
+        );
     }
 
     // ---- run_decision_hooks: the fold ---------------------------------

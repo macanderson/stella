@@ -862,3 +862,19 @@ fn a_resumed_launch_keeps_the_record_and_the_crashed_console() {
         "a relaunch re-owns the record as live"
     );
 }
+
+/// A resumed turn gets the overlay this process read: its path, then the
+/// SHA-256 its bytes had. With no overlay, the argv carries neither.
+#[test]
+fn a_resumed_turn_gets_the_overlay_path_and_hash() {
+    let pin = crate::settings::overlay::Pin {
+        path: PathBuf::from("/opt/launch/overlay.toml"),
+        sha256: "ab".repeat(32),
+    };
+    let resume = ["daemon", "resume", "run-1", "--foreground"].map(std::ffi::OsString::from);
+    let mut expected = resume.to_vec();
+    expected.extend(pin.child_args());
+
+    assert_eq!(resume_args("run-1", Some(&pin)), expected);
+    assert_eq!(resume_args("run-1", None), resume.to_vec());
+}

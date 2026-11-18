@@ -438,6 +438,7 @@ async fn main() -> std::io::Result<()> {
                         state: ToolPolicyState {
                             tools: demo_tool_rows(),
                             switches,
+                            overlay_switches: Default::default(),
                         },
                         status: Some("demo: switches accepted (not persisted)".to_string()),
                     });
@@ -447,6 +448,7 @@ async fn main() -> std::io::Result<()> {
                         state: ToolPolicyState {
                             tools: demo_tool_rows(),
                             switches: Default::default(),
+                            overlay_switches: Default::default(),
                         },
                         status: Some("the demo has no settings on disk".to_string()),
                     });

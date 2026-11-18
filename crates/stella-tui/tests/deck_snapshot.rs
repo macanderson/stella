@@ -255,6 +255,7 @@ fn settings_tab_lists_the_sessions_tools_grouped_with_mcp_and_custom_sections() 
         })
         .collect(),
         switches: std::collections::BTreeMap::from([("task_assign".to_string(), false)]),
+        overlay_switches: std::collections::BTreeMap::new(),
     });
 
     let mut terminal = Terminal::new(TestBackend::new(160, 30)).unwrap();

@@ -611,6 +611,7 @@ fn a_managed_steering_ceiling_cannot_be_lifted_by_the_project() {
         &Settings::default(),
         &off,
         &on,
+        None,
         ProjectTrust {
             credentials: true,
             hooks: true,
@@ -631,6 +632,7 @@ fn a_managed_steering_ceiling_cannot_be_lifted_by_the_project() {
         &Settings::default(),
         &Settings::default(),
         &on,
+        None,
         ProjectTrust {
             credentials: true,
             hooks: true,

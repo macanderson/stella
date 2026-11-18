@@ -380,19 +380,22 @@ export function CredentialChainDiagram() {
 }
 
 /**
- * Settings scopes: three files merged per key, with the org layer acting as a
+ * Settings scopes: four files merged per key, with the org layer acting as a
  * ceiling rather than another peer. The asymmetry is the whole diagram — a
- * cascade where one layer can only ever subtract.
+ * cascade where one layer can only ever subtract. The launch overlay is the
+ * top layer under that ceiling: it beats the project, and the org still caps
+ * it.
  */
 export function SettingsCascadeDiagram() {
   const layers: [string, string, boolean][] = [
     ["org-managed", "a ceiling — off stays off", true],
+    ["launch overlay", "--config-overlay: beats project for one run", false],
     ["project — .stella/settings.json", "beats user, for keys it is trusted with", false],
     ["user — ~/.stella/settings.json", "your defaults, always applied", false],
   ];
   return (
     <Drawing
-      viewBox="0 0 720 216"
+      viewBox="0 0 720 296"
       role="img"
       aria-label={DIAGRAM_DESCRIPTIONS.SettingsCascadeDiagram}
     >
@@ -403,14 +406,14 @@ export function SettingsCascadeDiagram() {
         return (
           <g key={label}>
             <Node x={24} y={y} w={330} h={52} label={label} sub={sub} accent={accent} />
-            <Wire d={`M354 ${y + 26} C420 ${y + 26} 420 110 464 110`} arrow={i === 1} />
+            <Wire d={`M354 ${y + 26} C420 ${y + 26} 420 142 464 142`} arrow={i === 1} />
           </g>
         );
       })}
-      <Node x={466} y={84} w={224} h={52} label="effective settings" sub="merged per key" accent />
-      <text className="sdg-sub" x="360" y="204" textAnchor="middle">
-        most specific wins — except that an org &ldquo;off&rdquo; can be narrowed further, never
-        re-opened
+      <Node x={466} y={116} w={224} h={52} label="effective settings" sub="merged per key" accent />
+      <text className="sdg-sub" x="360" y="284" textAnchor="middle">
+        under the org ceiling a higher row wins each key, and no row re-opens an org
+        &ldquo;off&rdquo;
       </text>
     </Drawing>
   );

@@ -185,6 +185,39 @@ pub(crate) struct GlobalArgs {
     )]
     pub(crate) allow_dir: Vec<String>,
 
+    /// Read one more stella.toml for this run only, over the other scopes
+    ///
+    /// A launcher that starts stella for you can give one run its hooks, its
+    /// provider endpoint and key, and its MCP servers this way, without
+    /// editing your files. Hooks and MCP servers add to your own, and every
+    /// other value the file sets replaces yours. Org-managed limits still
+    /// apply, and nothing is written back to disk.
+    ///
+    /// The file must exist and parse, or stella stops before the run starts.
+    /// It must be a file you own, in a directory only you can write to. It is
+    /// refused alongside STELLA_NO_SETTINGS=1. Env: STELLA_CONFIG_OVERLAY.
+    ///
+    /// Stella reads it only on Unix systems such as macOS and Linux. On
+    /// Windows it cannot check who may write the file, so it refuses the
+    /// flag.
+    #[arg(
+        long,
+        global = true,
+        env = "STELLA_CONFIG_OVERLAY",
+        value_name = "FILE",
+        hide_short_help = true
+    )]
+    pub(crate) config_overlay: Option<std::path::PathBuf>,
+
+    /// SHA-256 of the overlay bytes the parent run read
+    ///
+    /// Stella passes it to each run it starts, beside --config-overlay. The
+    /// child refuses the file if its bytes have changed since, so every turn
+    /// of one run uses the same overlay. No env var sets it, so a project
+    /// .env cannot.
+    #[arg(long, global = true, value_name = "SHA256", hide = true)]
+    pub(crate) config_overlay_sha256: Option<String>,
+
     /// Hard USD spend limit for the whole invocation
     ///
     /// Scoped to the invocation, not the turn: enforced mode aborts cleanly
