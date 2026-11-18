@@ -66,8 +66,8 @@ summary object — the same events `stream-json` would print line by line.
 Every summary object has a `schema_version` field (see
 [The envelope contract](#the-envelope-contract) below). The rest of the
 keys depend on how the run happened. A default run uses the raw step loop
-and reports `status`, `text`, `cost_usd`, `reason`, `model`, and `events`,
-plus a top-level `files_touched` key holding the
+and reports `status`, `text`, `cost_usd`, `reason`, `model`, `session_id`,
+and `events`, plus a top-level `files_touched` key holding the
 [file-touch telemetry](/docs/telemetry) payload, and a top-level `withheld`
 key holding whatever this checkout's trust gate held back. `--pipeline
 <variant>` runs the turn through an installed

@@ -9,6 +9,7 @@ Send a single prompt and let stella work until it finishes, without any back-and
 
 ```bash
 stella run <prompt> [--pipeline <VARIANT>] [--test-command <CMD>] [global flags]
+stella run --resume <ID> [-- <prompt>] [global flags]
 ```
 
 ## What it does
@@ -27,9 +28,16 @@ A run you start in a terminal is [supervised](/docs/commands/daemon): it keeps g
 
 ## Flags
 
-`stella run` adds four flags of its own, in addition to the [global flags](/docs/commands). Two of these flags are always refused right now. They're still listed here because if a flag exists but refuses to run, you deserve to know why.
+`stella run` adds the flags below, in addition to the [global flags](/docs/commands). Two of them are always refused right now. They're still listed here because if a flag exists but refuses to run, you deserve to know why.
 
 <CardGrid size="md">
+  <OptionCard name="--resume <ID>">
+    Continue the session with this id in non-interactive mode, in this process. A prompt after `--`
+    becomes the session's next user turn. With no prompt, the turn the session stopped in
+    runs on from its last finished step. An id that names no session exits non-zero with an
+    error naming the id, and starts nothing. It never falls back to another session. See
+    [Continue a session](#continue-a-session).
+  </OptionCard>
   <OptionCard name="--pipeline <VARIANT>">
     Run the turn through an installed **wrapper plugin**, using the `[wrapper] id` its
     manifest declares (see `stella plugin list`). The plugin adds context before the turn
@@ -102,6 +110,35 @@ stella run "…" --output-format json | jq -e '.status == "completed"'
     `STELLA_MAX_STEPS` environment variable.
   </OptionCard>
 </CardGrid>
+
+## Continue a session
+
+A cloud sandbox runs stella on a task with nobody attached. The sandbox reaches its time limit and moves to a new machine, or its process exits and the launcher starts it again. The run has to go on where it stopped, not start over.
+
+Every `stella run` names its session as it starts, before it calls a model: it writes `stella: session <id>` to stderr, in every output format. A launcher can read that line and keep the id before the run does any work. With `--output-format json`, the summary at the end carries the same id as `session_id`.
+
+```bash
+stella run --output-format json "Fix the flaky parser test" 2>run.log >summary.json
+id="$(sed -n 's/^stella: session //p' run.log | head -n 1)"
+
+# The process was killed partway. Continue the turn it stopped in:
+stella run --resume "$id"
+
+# Or give the session its next turn:
+stella run --resume "$id" -- "Now add a regression test"
+```
+
+A resumed run keeps the session's id, so its hooks, its audit rows, and `stella resume --list` all show one session. Its `SessionStart` hooks fire with `"source": "resume"`, and a new run's fire with `"source": "startup"`, so a recorder can tell the two apart (see [Hooks](/docs/agent-tools/hooks#sessionstart)). The resumed turn runs on the conversation the session saved, under today's system prompt. When the old process was killed mid-turn, the steps it finished stay done and do not run again.
+
+`--resume` refuses to start, and names the id, when:
+
+- no session on this machine has that id,
+- another stella process is running that session,
+- the session belongs to another workspace, so run it from there,
+- the session saved no conversation, or
+- no prompt was given and the session's last turn already finished.
+
+`stella run --resume` is for scripts and launchers. To reopen a session in interactive mode, use [`stella resume`](/docs/commands/resume).
 
 ## Examples
 

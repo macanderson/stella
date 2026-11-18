@@ -1115,6 +1115,7 @@ fn the_summary_envelope_leads_with_its_version() {
         cost_usd: None,
         reason: None,
         model: "anthropic/claude-opus".to_string(),
+        session_id: None,
         events: Vec::new(),
         files_touched: serde_json::Value::Null,
         withheld: serde_json::Value::Null,

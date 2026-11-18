@@ -34,11 +34,7 @@ impl SessionPresence {
     /// silent, because an unbound sink is indistinguishable from a session
     /// that simply never crashed.
     pub(crate) fn announce(cfg: &Config, prompt: Option<&str>) -> Self {
-        let name = cfg
-            .workspace_root
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| cfg.workspace_root.display().to_string());
+        let name = workspace_name(cfg);
         let registry = stella_store::SessionRegistry::open_default();
         // A supervised run continues the record its supervisor registered
         // rather than minting a second one for the same work (#1552). The
@@ -74,6 +70,48 @@ impl SessionPresence {
             eprintln!("  {warning}");
         }
         presence
+    }
+
+    /// Re-own the session `stella run --resume` continues.
+    ///
+    /// The record keeps its id and its name, so one session holds the whole
+    /// run. A new `prompt` refreshes its summary. The caller that found the
+    /// session has already bound its durable record.
+    pub(crate) fn adopt(
+        cfg: &Config,
+        record: stella_store::SessionRecord,
+        prompt: Option<&str>,
+    ) -> Self {
+        let record =
+            crate::session_persist::adopt_record(record, stella_store::SessionStatus::InProgress);
+        Self::begin(
+            stella_store::SessionRegistry::open_default(),
+            record,
+            workspace_name(cfg),
+            cfg.durability.clone(),
+            true,
+            prompt,
+        )
+    }
+
+    /// Print the session id on stderr before the run spends anything, so a
+    /// launcher can keep it for `stella run --resume`. Stderr in every output
+    /// format, because stdout carries JSON in two of them and the `json`
+    /// summary names the session too.
+    pub(crate) fn print_id(&self) {
+        eprintln!("{}", session_line(&self.record.id));
+    }
+
+    /// Save the conversation where `stella run --resume` reads it. A failed
+    /// write is said on stderr, and the run goes on.
+    pub(crate) fn snapshot(&self, messages: &[CompletionMessage]) {
+        if super::session_persistence() == stella_runtime::Persistence::Disabled {
+            return;
+        }
+        let sidecar = self.registry.sidecar_dir(&self.record.id);
+        if let Some(warning) = crate::session_persist::snapshot_history(&sidecar, messages) {
+            eprintln!("  {warning}");
+        }
     }
 
     /// Register `record`, named from `prompt` when there is one and `named`
@@ -194,6 +232,19 @@ impl SessionPresence {
     }
 }
 
+/// The stderr line that names a run's session as it starts.
+fn session_line(id: &str) -> String {
+    format!("stella: session {id}")
+}
+
+/// The workspace's folder name, which titles its sessions and notifications.
+fn workspace_name(cfg: &Config) -> String {
+    cfg.workspace_root
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| cfg.workspace_root.display().to_string())
+}
+
 /// A driver that returns through `?` never reaches [`SessionPresence::finish`],
 /// so its record still says a turn is running. The read side only corrects that
 /// where it can check a pid, and it cannot check one on every platform. A
@@ -209,7 +260,13 @@ impl Drop for SessionPresence {
 
 #[cfg(test)]
 mod tests {
-    use super::SessionPresence;
+    use super::{SessionPresence, session_line};
+
+    /// The line a launcher reads for the id has one fixed shape.
+    #[test]
+    fn the_start_line_names_the_session() {
+        assert_eq!(session_line("ses-1-2"), "stella: session ses-1-2");
+    }
 
     fn presence_in(registry: &stella_store::SessionRegistry) -> SessionPresence {
         SessionPresence::begin(

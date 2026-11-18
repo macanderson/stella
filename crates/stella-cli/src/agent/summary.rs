@@ -48,6 +48,9 @@ pub(crate) struct RawRunSummary {
     pub(crate) cost_usd: Option<f64>,
     pub(crate) reason: Option<String>,
     pub(crate) model: String,
+    /// The registry id of the session the turn ran in, which
+    /// `stella run --resume` takes. `null` for a door with no session.
+    pub(crate) session_id: Option<String>,
     pub(crate) events: Vec<AgentEvent>,
     /// The file-touch telemetry envelope. Filled from the turn's own measured
     /// `FileChange` events (`agent::summary::files_touched`) — the key stays
@@ -76,7 +79,12 @@ pub(crate) struct RawRunSummary {
 /// `events` is the turn's full journal — the same objects `stream-json` would
 /// have emitted line by line — and is consumed rather than borrowed because it
 /// is both the envelope's `events` array and the source of `files_touched`.
-pub(super) fn print_json_summary(cfg: &Config, outcome: &TurnOutcome, events: Vec<AgentEvent>) {
+pub(super) fn print_json_summary(
+    cfg: &Config,
+    outcome: &TurnOutcome,
+    session: Option<&str>,
+    events: Vec<AgentEvent>,
+) {
     let (status, text, cost_usd, reason) = match outcome {
         TurnOutcome::Completed { text, cost_usd } => {
             ("completed", Some(text.clone()), Some(*cost_usd), None)
@@ -92,6 +100,7 @@ pub(super) fn print_json_summary(cfg: &Config, outcome: &TurnOutcome, events: Ve
         cost_usd,
         reason,
         model: format!("{}/{}", cfg.provider.id, cfg.model_id),
+        session_id: session.map(str::to_string),
         files_touched: files_touched(&events),
         withheld: withheld(&events),
         // Read after the execution has been closed out, which is where the

@@ -18,6 +18,14 @@ pub(crate) enum Command {
         /// the usual `--` separator: `stella run -- --my-prompt`.
         prompt: Option<String>,
 
+        /// Continue the session with this registry id (`ses-…`), in
+        /// non-interactive mode. A prompt becomes its next user turn. With
+        /// no prompt, the turn it stopped in runs on, and stdin is read only
+        /// for `-`. An id that names no session fails and starts nothing. It
+        /// never falls back to another session.
+        #[arg(long, value_name = "ID")]
+        resume: Option<String>,
+
         /// Deprecated, does nothing (#3381). The raw step-loop is the default
         /// now; pass `--pipeline <variant>` to opt into a wrapper instead.
         /// Kept parseable so no script breaks the day this changed — passing

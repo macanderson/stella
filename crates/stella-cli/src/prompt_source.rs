@@ -79,6 +79,21 @@ pub(crate) fn resolve(
     non_empty(text)
 }
 
+/// The prompt `stella run --resume` adds, which may be none.
+///
+/// With no prompt the run only continues, so stdin is never read for one,
+/// even when it is a pipe that stays open. `-` reads stdin as it does on a
+/// new run.
+pub(crate) fn resolve_follow_up(
+    positional: Option<String>,
+    read_stdin: impl FnOnce() -> std::io::Result<String>,
+) -> Result<Option<String>, String> {
+    match positional {
+        None => Ok(None),
+        Some(text) => resolve(Some(text), false, read_stdin).map(Some),
+    }
+}
+
 /// Trim and reject the empty case. Trailing newlines are an artefact of every
 /// heredoc and every `echo`, and a prompt is not whitespace-sensitive at its
 /// edges.
@@ -101,6 +116,22 @@ pub(crate) fn read_stdin_to_string() -> std::io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_resume_with_no_prompt_never_reads_stdin() {
+        let got = resolve_follow_up(None, || panic!("a bare resume must not read stdin"));
+        assert_eq!(got, Ok(None));
+    }
+
+    #[test]
+    fn a_resume_prompt_is_the_argument_or_stdin_on_a_dash() {
+        let typed = resolve_follow_up(Some("add a test".into()), || panic!("not read"));
+        assert_eq!(typed, Ok(Some("add a test".into())));
+        let piped = resolve_follow_up(Some("-".into()), || Ok("from stdin\n".into()));
+        assert_eq!(piped, Ok(Some("from stdin".into())));
+        let blank = resolve_follow_up(Some("  ".into()), || panic!("not read"));
+        assert!(blank.is_err(), "a blank prompt is refused");
+    }
 
     /// The reader must not run on the argument path: on a TTY it would block
     /// until the user hit Ctrl-D, turning every ordinary `stella run "…"` into

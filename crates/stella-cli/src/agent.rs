@@ -55,6 +55,7 @@ mod presence;
 pub(crate) mod prompt;
 mod reflect;
 pub(crate) mod resume;
+pub(crate) mod run_resume;
 pub(crate) mod seats;
 mod skill_usage;
 mod summary;
@@ -169,6 +170,7 @@ pub async fn run_one_shot(
         test_command,
         require_verdict,
         invoked_skill,
+        None,
     )
     .await
 }

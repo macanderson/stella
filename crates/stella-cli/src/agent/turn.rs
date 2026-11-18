@@ -273,7 +273,7 @@ pub(crate) async fn run_turn(
     if format == OutputFormat::Json {
         // One final JSON object: the outcome summary plus the full event log
         // (the same objects stream-json would have emitted line by line).
-        summary::print_json_summary(cfg, &outcome, collected);
+        summary::print_json_summary(cfg, &outcome, session, collected);
     }
 
     if let TurnOutcome::Completed { cost_usd, .. } = &outcome

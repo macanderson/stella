@@ -5,6 +5,8 @@
 //! unroutable role rides the worker provider, so configuration can never
 //! turn a runnable pipeline into an error.
 
+use stella_core::hooks::{HookPayload, HookSessionSource};
+
 use super::*;
 
 /// EngineConfig for the session's agent: defaults + the workspace root as
@@ -309,15 +311,15 @@ pub(crate) fn engine_config_for_kind(cfg: &Config, kind: &str) -> EngineConfig {
 async fn session_start_hook_context(
     cfg: &Config,
     durability: &crate::durability::SessionDurability,
+    source: Option<HookSessionSource>,
 ) -> Option<String> {
     let hooks = cfg.hooks.as_ref()?;
-    let outcome = stella_core::hooks::run_hooks(
-        &HostHookRunner,
-        Some(hooks),
-        &stella_core::hooks::HookPayload::session_start(cfg.workspace_root.display().to_string())
-            .with_session_context(durability.session_context().as_ref()),
-    )
-    .await;
+    let mut payload = HookPayload::session_start(cfg.workspace_root.display().to_string())
+        .with_session_context(durability.session_context().as_ref());
+    if let Some(source) = source {
+        payload = payload.with_session_source(source);
+    }
+    let outcome = stella_core::hooks::run_hooks(&HostHookRunner, Some(hooks), &payload).await;
     // A SessionStart hook that failed stays non-fatal, but must not vanish:
     // without this line a typo'd hook silently contributes no context all
     // session and nothing ever says why (issue #373, item 6).
@@ -363,11 +365,31 @@ pub(crate) async fn with_session_hook_context(system_prompt: String, cfg: &Confi
 }
 
 pub(crate) async fn with_session_hook_context_for(
-    mut system_prompt: String,
+    system_prompt: String,
     cfg: &Config,
     durability: &crate::durability::SessionDurability,
 ) -> String {
-    if let Some(context) = session_start_hook_context(cfg, durability).await {
+    with_session_start(system_prompt, cfg, durability, None).await
+}
+
+/// [`with_session_hook_context`] for a door that knows how its session
+/// began. `stella run` says `startup` or `resume`, so a recorder can tell a
+/// continued session from a new one.
+pub(crate) async fn with_session_hook_context_from(
+    system_prompt: String,
+    cfg: &Config,
+    source: HookSessionSource,
+) -> String {
+    with_session_start(system_prompt, cfg, &cfg.durability, Some(source)).await
+}
+
+async fn with_session_start(
+    mut system_prompt: String,
+    cfg: &Config,
+    durability: &crate::durability::SessionDurability,
+    source: Option<HookSessionSource>,
+) -> String {
+    if let Some(context) = session_start_hook_context(cfg, durability, source).await {
         system_prompt.push_str(SESSION_HOOK_CONTEXT_HEADER);
         system_prompt.push_str(&clamp_hook_context(&context));
     }
