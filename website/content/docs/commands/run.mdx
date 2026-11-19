@@ -128,17 +128,18 @@ stella run --resume "$id"
 stella run --resume "$id" -- "Now add a regression test"
 ```
 
-A resumed run keeps the session's id, so its hooks, its audit rows, and `stella resume --list` all show one session. Its `SessionStart` hooks fire with `"source": "resume"`, and a new run's fire with `"source": "startup"`, so a recorder can tell the two apart (see [Hooks](/docs/agent-tools/hooks#sessionstart)). The resumed turn runs on the conversation the session saved, under today's system prompt. When the old process was killed mid-turn, the steps it finished stay done and do not run again.
+A resumed run keeps the session's id, so its hooks, its audit rows, and `stella resume --list` all show one session. Its `SessionStart` hooks fire with `"source": "resume"`, and a new run's fire with `"source": "startup"`, so a recorder can tell the two apart (see [Hooks](/docs/agent-tools/hooks#sessionstart)). The resumed turn runs on the conversation the session saved, under today's system prompt. When the old process was killed mid-turn, the steps it finished stay done and do not run again. The same holds when the process stops after a turn ends but before the run has saved it: the next resume goes on from that turn's last finished step.
 
 `--spend-limit` caps what the resumed run spends, counted from zero. It leaves out what the session spent before, so a launcher that restarts one run several times sets each limit with that in mind.
 
 `--resume` refuses to start, and names the id, when:
 
 - no session on this machine has that id,
-- another stella process is running that session,
+- another stella process is running that session, or another `stella run --resume` is already continuing it,
 - the session belongs to another workspace, so run it from there,
-- the session saved no conversation, or
-- no prompt was given and the session's last turn already finished.
+- the session saved no conversation, or its saved conversation can't be read (the error says why),
+- no prompt was given and the session's last turn already finished, or
+- a prompt was given and the session stopped partway through a turn. Run `stella run --resume <ID>` with no prompt to finish that turn, then give the next prompt.
 
 `stella run --resume` is for scripts and launchers. To reopen a session in interactive mode, use [`stella resume`](/docs/commands/resume).
 
