@@ -10,12 +10,11 @@
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::Value;
 use stella_core::hooks::{HookAction, HookExecError, HookExecResult};
-use stella_core::retry::Sleeper;
 use stella_core::{
     BudgetGuard, Engine, EngineConfig, HookRunner, Hooks, TurnCapabilities, TurnOutcome,
 };
@@ -24,6 +23,7 @@ use stella_protocol::{
     BudgetMode, CompletionMessage, CompletionRequestRef, CompletionResult, CompletionUsage,
     Provider, ProviderError, ToolCall, ToolOutput,
 };
+use stella_time::TokioSleeper;
 
 /// The fixture server built by this crate.
 const FIXTURE: &str = env!("CARGO_BIN_EXE_mcp-fixture-server");
@@ -188,30 +188,6 @@ impl HookRunner for RecordingRunner {
     }
 }
 
-/// A sleeper that waits in real time.
-///
-/// The engine races every tool call against its tool timeout, through this
-/// sleeper. One that returned at once would time out each MCP call while the
-/// server was still answering, so no `PostToolUse` hook would fire. The
-/// timeout is 15 minutes, and the scripted model never retries, so nothing
-/// in this test waits on it.
-struct RealTime;
-
-#[async_trait]
-impl Sleeper for RealTime {
-    async fn sleep(&self, duration_ms: u64) {
-        tokio::time::sleep(Duration::from_millis(duration_ms)).await;
-    }
-
-    fn now(&self) -> Instant {
-        Instant::now()
-    }
-
-    fn jitter(&self, _upper: u64) -> u64 {
-        0
-    }
-}
-
 /// Two identical MCP calls in one step, then the same call again on the next
 /// step. Each call's `PreToolUse`, `PostToolUse` and `tools/call` request all
 /// name one id, and no two calls share one. The first call carries a Gemini
@@ -236,7 +212,10 @@ async fn the_hooks_and_the_request_name_the_same_call() {
         }"#,
     )
     .expect("the hook settings parse");
-    let sleeper = RealTime;
+    // The engine races every tool call against its tool timeout through the
+    // sleeper. One that returned at once would time out each MCP call while
+    // the server was still answering, so this test waits in real time.
+    let sleeper = TokioSleeper;
     let seams = TurnCapabilities {
         hooks: Some((&hooks, &runner)),
         ..TurnCapabilities::none()

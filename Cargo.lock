@@ -3540,6 +3540,7 @@ dependencies = [
  "stella-core",
  "stella-protocol",
  "stella-store",
+ "stella-time",
  "thiserror 2.0.21",
  "tokio",
  "toml",
