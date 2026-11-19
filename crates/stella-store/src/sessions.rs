@@ -168,6 +168,15 @@ pub mod supervised {
     pub const APPROVAL_ANSWER: &str = "approval-answer.json";
 }
 
+/// The lock a run that continues a session (`stella run --resume`) holds in
+/// that session's sidecar for as long as it runs.
+///
+/// Two launchers can read one stopped record at the same moment, and both see
+/// a session nobody runs. Only one of them gets this lock, so only one writes
+/// the session's history and resume point. The kernel drops the lock when its
+/// holder exits, crash and `SIGKILL` included.
+pub const RESUME_LOCK: &str = "resume.lock";
+
 /// How to reach a supervised session's work: it is a detached child in its own
 /// process group, its console is two files in the sidecar, and it outlives the
 /// terminal that started it.
