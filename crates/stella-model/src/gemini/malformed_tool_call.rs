@@ -27,7 +27,7 @@ const A_CALL_WITH_NO_NAME: &str = concat!(
 
 /// The same shape with the name present, which must still complete.
 const A_WHOLE_CALL: &str = concat!(
-    "data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"read_file\",\"args\":{\"path\":\"a.rs\"}}}]}}]}\n\n",
+    "data: {\"responseId\":\"rsp-1\",\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"read_file\",\"args\":{\"path\":\"a.rs\"}}}]}}]}\n\n",
     "data: {\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[]}}]}\n\n",
 );
 
@@ -90,6 +90,6 @@ async fn a_function_call_with_a_name_still_completes() {
     let result = provider.complete(request()).await.expect("a whole call");
     assert_eq!(result.tool_calls.len(), 1);
     assert_eq!(result.tool_calls[0].name, "read_file");
-    assert_eq!(result.tool_calls[0].call_id, "call_0");
+    assert_eq!(result.tool_calls[0].call_id, "call_rsp-1_0");
     assert_eq!(result.tool_calls[0].input["path"], "a.rs");
 }

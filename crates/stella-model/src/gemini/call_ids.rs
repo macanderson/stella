@@ -45,10 +45,16 @@ fn the_same_call_in_two_responses_gets_two_ids() {
     assert_eq!(again, "call_rsp-B2_0");
 }
 
-/// A response with no `responseId` keeps the id this adapter always minted.
+/// Two responses with no `responseId` still give their calls two ids.
 #[test]
-fn a_response_with_no_id_keeps_the_ordinal_id() {
-    assert_eq!(minted(response(None, None)), "call_0");
+fn responses_with_no_id_give_their_calls_two_ids() {
+    let first = minted(response(None, None));
+    let again = minted(response(None, None));
+    assert_ne!(first, again);
+    for id in [&first, &again] {
+        assert!(id.starts_with("call_local-"), "{id}");
+        assert!(id.ends_with("_0"), "{id}");
+    }
 }
 
 /// The signature still rides after the separator, and splits back out.
@@ -59,10 +65,17 @@ fn a_signature_rides_after_the_response_id() {
     assert_eq!(split_call_id(&id), ("call_rsp-A1_0", Some("sig123")));
 }
 
-/// A `responseId` holding the separator cannot move the signature split.
+/// Two `responseId`s that differ only in characters a call id cannot carry
+/// give their calls two ids. Neither id moves the signature split.
 #[test]
-fn a_response_id_is_cleaned_before_it_names_a_call() {
-    let id = minted(response(Some("a#b/c=d"), Some("sig123")));
-    assert_eq!(id, "call_abcd_0#sig123");
-    assert_eq!(id_token("#/="), None, "nothing usable is left");
+fn response_ids_that_differ_in_odd_characters_stay_apart() {
+    let first = minted(response(Some("a#b"), Some("sig123")));
+    let again = minted(response(Some("a/b"), Some("sig123")));
+    let (first_id, first_sig) = split_call_id(&first);
+    let (again_id, again_sig) = split_call_id(&again);
+    assert_ne!(first_id, again_id);
+    assert_eq!(first_sig, Some("sig123"));
+    assert_eq!(again_sig, Some("sig123"));
+    assert_eq!(usable_response_id("a#b"), None);
+    assert_eq!(usable_response_id(""), None);
 }
