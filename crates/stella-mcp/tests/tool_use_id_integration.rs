@@ -188,12 +188,20 @@ impl HookRunner for RecordingRunner {
     }
 }
 
-/// A sleeper that never waits. No retry or timeout fires in this test.
-struct NoWait;
+/// A sleeper that waits in real time.
+///
+/// The engine races every tool call against its tool timeout, through this
+/// sleeper. One that returned at once would time out each MCP call while the
+/// server was still answering, so no `PostToolUse` hook would fire. The
+/// timeout is 15 minutes, and the scripted model never retries, so nothing
+/// in this test waits on it.
+struct RealTime;
 
 #[async_trait]
-impl Sleeper for NoWait {
-    async fn sleep(&self, _duration_ms: u64) {}
+impl Sleeper for RealTime {
+    async fn sleep(&self, duration_ms: u64) {
+        tokio::time::sleep(Duration::from_millis(duration_ms)).await;
+    }
 
     fn now(&self) -> Instant {
         Instant::now()
@@ -228,7 +236,7 @@ async fn the_hooks_and_the_request_name_the_same_call() {
         }"#,
     )
     .expect("the hook settings parse");
-    let sleeper = NoWait;
+    let sleeper = RealTime;
     let seams = TurnCapabilities {
         hooks: Some((&hooks, &runner)),
         ..TurnCapabilities::none()
