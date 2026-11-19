@@ -3,8 +3,10 @@
 //!
 //! Two calls to one tool with the same input are the same bytes on the wire
 //! without it, so a gateway cannot tell which hook event each belongs to.
-//! The fixture's `meta_probe` tool answers with the `_meta` it received,
-//! which is how these tests read what was sent.
+//! The fixture's `meta_probe` tool answers `{"_meta": <value>}` with the
+//! `_meta` it received, or `{}` when the request had none. That is how these
+//! tests read what was sent, and how they tell a missing `_meta` from a null
+//! one.
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -42,13 +44,20 @@ fn stdio_config() -> McpServerConfig {
     }
 }
 
-/// The id a `meta_probe` answer says its request carried, or `None` when
-/// the request had no `_meta`.
-fn sent_id(output: &ToolOutput) -> Option<String> {
+/// What a `meta_probe` call answered: `{"_meta": <value>}` when its request
+/// carried `_meta`, and `{}` when it did not.
+fn probe_answer(output: &ToolOutput) -> Value {
     let ToolOutput::Ok { content, .. } = output else {
         panic!("meta_probe answers Ok, got {output:?}");
     };
-    let meta: Value = serde_json::from_str(content).expect("meta_probe answers JSON");
+    serde_json::from_str(content).expect("meta_probe answers JSON")
+}
+
+/// The id a `meta_probe` answer says its request carried, or `None` when
+/// the request had no `_meta`.
+fn sent_id(output: &ToolOutput) -> Option<String> {
+    let answer = probe_answer(output);
+    let meta = &answer["_meta"];
     meta.get(TOOL_USE_ID_META_KEY)
         .and_then(Value::as_str)
         .map(str::to_string)
@@ -81,7 +90,8 @@ async fn concurrent_identical_calls_send_their_own_ids() {
     client.close().await.expect("the fixture closes");
 }
 
-/// A call made outside the engine names no call, and sends no `_meta`.
+/// A call made outside the engine names no call, and sends no `_meta` key.
+/// A `_meta` of null would fail this too.
 #[tokio::test]
 async fn a_call_outside_the_engine_sends_no_meta() {
     let client = McpClient::connect(&stdio_config(), Duration::from_secs(5))
@@ -91,10 +101,11 @@ async fn a_call_outside_the_engine_sends_no_meta() {
         .call_tool("meta_probe", serde_json::json!({}))
         .await
         .expect("the call answers");
-    match output {
-        ToolOutput::Ok { content, .. } => assert_eq!(content, "null"),
-        other => panic!("meta_probe answers Ok, got {other:?}"),
-    }
+    assert_eq!(
+        probe_answer(&output),
+        serde_json::json!({}),
+        "the request carried no `_meta` key"
+    );
     client.close().await.expect("the fixture closes");
 }
 
@@ -195,7 +206,8 @@ impl Sleeper for NoWait {
 
 /// Two identical MCP calls in one step, then the same call again on the next
 /// step. Each call's `PreToolUse`, `PostToolUse` and `tools/call` request all
-/// name one id, and no two calls share one.
+/// name one id, and no two calls share one. The first call carries a Gemini
+/// thought signature, which neither the hooks nor the server see.
 #[tokio::test]
 async fn the_hooks_and_the_request_name_the_same_call() {
     let config = stdio_config();
@@ -203,7 +215,7 @@ async fn the_hooks_and_the_request_name_the_same_call() {
     assert_eq!(set.connected_count(), 1, "{:?}", set.failed_servers());
     let provider = ScriptedProvider {
         steps: tokio::sync::Mutex::new(vec![
-            probe_step(&["call_a", "call_b"]),
+            probe_step(&["call_a#c2lnbmF0dXJl", "call_b"]),
             probe_step(&["call_c"]),
             answer_step(),
         ]),
@@ -252,7 +264,7 @@ async fn the_hooks_and_the_request_name_the_same_call() {
             let result = value["toolResult"].as_str().expect("a tool result");
             let sent: Value = serde_json::from_str(result).expect("meta_probe answers JSON");
             assert_eq!(
-                sent[TOOL_USE_ID_META_KEY], id,
+                sent["_meta"][TOOL_USE_ID_META_KEY], id,
                 "the request named the call its hooks name"
             );
         }

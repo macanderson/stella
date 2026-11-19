@@ -43,6 +43,19 @@ mod tests {
         assert_eq!(meta_for(None), None);
     }
 
+    /// With no id, the request leaves the `_meta` key out, rather than
+    /// sending it as null.
+    #[test]
+    fn a_request_with_no_id_has_no_meta_key() {
+        let params = crate::protocol::CallToolParams {
+            name: "echo".into(),
+            arguments: serde_json::json!({}),
+            meta: meta_for(None),
+        };
+        let json = serde_json::to_value(&params).expect("the params serialize");
+        assert!(json.get("_meta").is_none(), "{json}");
+    }
+
     #[tokio::test]
     async fn the_meta_names_the_call_the_engine_is_running() {
         assert_eq!(for_current_call(), None, "no call is running here");

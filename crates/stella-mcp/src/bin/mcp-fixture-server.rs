@@ -22,7 +22,8 @@
 //!
 //! Tools it advertises: `echo`, `env_probe`, `make_image`, `make_resource`,
 //! `fail` (`isError:true`), `jsonrpc_error` (a JSON-RPC error response), and
-//! `meta_probe`. It sends back the `_meta` it got, as text.
+//! `meta_probe`. It answers `{"_meta": <value>}` when the request carried a
+//! `_meta` key, null included, and `{}` when it carried none.
 //! Resources it serves (unless `--no-resources`): `file:///r.txt` (text) and
 //! `file:///data.bin` (a base64 blob); any other URI is a JSON-RPC error.
 
@@ -313,8 +314,12 @@ fn tools_call_response(id: &Value, params: &Value, flags: &Flags) -> Value {
             "isError": true
         }),
         "meta_probe" => {
-            let meta = params.get("_meta").cloned().unwrap_or(Value::Null);
-            json!({ "content": [{ "type": "text", "text": meta.to_string() }] })
+            let mut seen = serde_json::Map::new();
+            if let Some(meta) = params.get("_meta") {
+                seen.insert("_meta".to_string(), meta.clone());
+            }
+            let text = Value::Object(seen).to_string();
+            json!({ "content": [{ "type": "text", "text": text }] })
         }
         "jsonrpc_error" => {
             return json!({
