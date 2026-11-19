@@ -354,8 +354,17 @@ pub(crate) async fn run_raw_one_shot(
     // same seam whichever door invoked it.
     recall.note_invoked_skill(invoked_skill);
     // Saved before the first step, so a process killed before that step
-    // still leaves a turn `stella run --resume` can run.
-    presence.snapshot(&messages);
+    // still leaves a turn `stella run --resume` can run. A continued session
+    // also drops the resume point it came from once this copy is saved, so a
+    // prompt added above cannot lose to that older point.
+    if resumed.is_some() {
+        presence.save_restored(&messages);
+    } else {
+        presence.snapshot(&messages);
+    }
+    // From here on, a turn that ends keeps its resume point until the run
+    // has saved the conversation the turn ended with.
+    presence.hold_resume_point();
 
     let started_unix = crate::memory::unix_now_secs();
     // Machine-wide presence: findable in the deck's SESSIONS overlay and
@@ -466,8 +475,9 @@ pub(crate) async fn run_raw_one_shot(
             result
         }
     };
-    // Every turn the run took, for the next `stella run --resume`.
-    presence.snapshot(&messages);
+    // Every turn the run took, for the next `stella run --resume`. The last
+    // turn's resume point goes once this copy is on disk.
+    presence.save_finished(&messages);
     // Episodic memory first (works even for a failed turn — failures are
     // exactly the episodes worth recalling)…
     if let Some(m) = &memory

@@ -40,6 +40,7 @@
 //! and the engine skips the encode entirely.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
 use stella_core::step::CheckpointSink;
@@ -204,6 +205,21 @@ struct Bound {
     /// gone by the second turn, and the turn most likely to be killed is not
     /// the first one.
     pipeline: Arc<RwLock<Option<String>>>,
+    /// Whether a finished turn's resume point waits for the driver, and
+    /// whether one is waiting ([`SessionDurability::hold_discards`]).
+    discards: Arc<DiscardHold>,
+}
+
+/// What [`SessionDurability::hold_discards`] keeps: a finished turn's resume
+/// point stays until the driver has saved the conversation the turn ended
+/// with.
+#[derive(Debug, Default)]
+struct DiscardHold {
+    /// Set by [`SessionDurability::hold_discards`].
+    held: AtomicBool,
+    /// Set when a turn ended while discards were held. Cleared when the
+    /// driver settles, or when a new turn writes a point of its own.
+    pending: AtomicBool,
 }
 
 impl SessionDurability {
@@ -272,6 +288,7 @@ impl SessionDurability {
                 record: Some(Bound {
                     journal: Arc::new(journal),
                     pipeline: Arc::new(RwLock::new(None)),
+                    discards: Arc::default(),
                 }),
             });
         }
@@ -375,6 +392,57 @@ impl SessionDurability {
         Some(Arc::new(JournalCheckpointSink {
             bound: bound.record?,
         }))
+    }
+
+    /// Keep each finished turn's resume point until [`Self::settle_discards`]
+    /// says the driver has saved the conversation the turn ended with.
+    ///
+    /// The engine drops a turn's resume point the moment the turn ends. A
+    /// driver that saves the finished conversation itself does so later, after
+    /// hooks and reporting. A process killed in between would leave neither,
+    /// and the next `stella run --resume` would start the turn again from the
+    /// conversation saved before it, with its tool calls and spend. Held, the
+    /// point is still there, and the resumed run goes on from the turn's last
+    /// finished step.
+    ///
+    /// Silently ignored on an unbound handle, like everything else here.
+    pub fn hold_discards(&self) {
+        if let Some(bound) = self.bound_record() {
+            bound.discards.held.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// The driver has saved the conversation: drop the resume point a turn
+    /// left while discards were held, if one is waiting.
+    pub fn settle_discards(&self) {
+        if let Some(bound) = self.bound_record()
+            && bound.discards.pending.swap(false, Ordering::SeqCst)
+        {
+            let _ = bound.journal.clear_checkpoint();
+        }
+    }
+
+    /// Drop the resume point this session holds now, whichever run left it.
+    ///
+    /// For a run that continued the session and has saved the conversation it
+    /// restored. That copy holds everything the old point did, and any prompt
+    /// the run added after it. Left in place, the old point would win the next
+    /// resume and lose that prompt.
+    pub fn retract_checkpoint(&self) {
+        if let Some(journal) = self.journal() {
+            let _ = journal.clear_checkpoint();
+        }
+    }
+
+    /// The bound session's durable record and what rides with it, or `None`
+    /// while unbound.
+    fn bound_record(&self) -> Option<Bound> {
+        self.bound
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()?
+            .record
+            .clone()
     }
 
     /// The bound session's durable record, or `None` while unbound.
@@ -571,6 +639,9 @@ impl CheckpointSink for JournalCheckpointSink {
     /// contract is that a checkpoint which cannot be written leaves the turn
     /// exactly as recoverable as it was before the sink existed.
     fn persist(&self, json: &str) {
+        // This turn's point replaces one a held discard was keeping, so the
+        // driver has nothing left to drop.
+        self.bound.discards.pending.store(false, Ordering::SeqCst);
         let pipeline = self
             .bound
             .pipeline
@@ -586,7 +657,14 @@ impl CheckpointSink for JournalCheckpointSink {
     /// Idempotent by [`WorkJournal::clear_checkpoint`]'s own contract, and free
     /// when there is nothing to retract — which is what lets every terminal
     /// path discard unconditionally.
+    ///
+    /// While discards are held ([`SessionDurability::hold_discards`]), the
+    /// point stays and waits for [`SessionDurability::settle_discards`].
     fn discard(&self) {
+        if self.bound.discards.held.load(Ordering::SeqCst) {
+            self.bound.discards.pending.store(true, Ordering::SeqCst);
+            return;
+        }
         let _ = self.bound.journal.clear_checkpoint();
     }
 }
@@ -983,6 +1061,65 @@ mod tests {
 
         assert!(record.checkpoint().is_some());
         assert_eq!(durability.pipeline_frame(), None);
+    }
+
+    /// While discards are held, a turn that ends keeps its resume point until
+    /// the driver settles. A process killed between the two still has the
+    /// point, and not only the conversation saved before the turn.
+    #[test]
+    fn a_held_discard_keeps_the_point_until_the_driver_settles() {
+        let store = tempfile::tempdir().unwrap();
+        let ws = tempfile::tempdir().unwrap();
+        let record = journal(store.path(), ws.path(), "ses-held");
+        let durability = SessionDurability::default();
+        durability.bind(record.clone());
+        durability.hold_discards();
+        let sink = durability.sink().expect("bound");
+
+        sink.persist(r#"{"step":3}"#);
+        sink.discard();
+        assert_eq!(
+            record.checkpoint().as_deref(),
+            Some(r#"{"step":3}"#),
+            "the point outlives the turn until the conversation is saved"
+        );
+
+        durability.settle_discards();
+        assert!(record.checkpoint().is_none());
+    }
+
+    /// A new turn's point replaces the one a held discard was keeping, so
+    /// settling leaves the new one in place until that turn ends too.
+    #[test]
+    fn a_new_point_is_not_dropped_for_the_turn_before_it() {
+        let store = tempfile::tempdir().unwrap();
+        let ws = tempfile::tempdir().unwrap();
+        let record = journal(store.path(), ws.path(), "ses-next-turn");
+        let durability = SessionDurability::default();
+        durability.bind(record.clone());
+        durability.hold_discards();
+        let sink = durability.sink().expect("bound");
+
+        sink.persist(r#"{"turn":1}"#);
+        sink.discard();
+        sink.persist(r#"{"turn":2}"#);
+        durability.settle_discards();
+        assert_eq!(record.checkpoint().as_deref(), Some(r#"{"turn":2}"#));
+    }
+
+    /// Retracting drops the point at once, held or not.
+    #[test]
+    fn retracting_drops_the_point_at_once() {
+        let store = tempfile::tempdir().unwrap();
+        let ws = tempfile::tempdir().unwrap();
+        let record = journal(store.path(), ws.path(), "ses-retract");
+        let durability = SessionDurability::default();
+        durability.bind(record.clone());
+        durability.hold_discards();
+
+        durability.sink().expect("bound").persist(r#"{"step":1}"#);
+        durability.retract_checkpoint();
+        assert!(record.checkpoint().is_none());
     }
 
     #[test]
