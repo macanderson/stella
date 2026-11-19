@@ -21,7 +21,9 @@
 //!   answer `resources/*` with method-not-found — a tools-only server (#2678).
 //!
 //! Tools it advertises: `echo`, `env_probe`, `make_image`, `make_resource`,
-//! `fail` (`isError:true`), `jsonrpc_error` (a JSON-RPC error response).
+//! `fail` (`isError:true`), `jsonrpc_error` (a JSON-RPC error response), and
+//! `meta_probe`. It answers `{"_meta": <value>}` when the request carried a
+//! `_meta` key, null included, and `{}` when it carried none.
 //! Resources it serves (unless `--no-resources`): `file:///r.txt` (text) and
 //! `file:///data.bin` (a base64 blob); any other URI is a JSON-RPC error.
 
@@ -228,6 +230,7 @@ fn all_tools() -> Vec<Value> {
         "make_resource",
         "fail",
         "jsonrpc_error",
+        "meta_probe",
     ]
     .iter()
     .map(|name| tool_def(name))
@@ -310,6 +313,14 @@ fn tools_call_response(id: &Value, params: &Value, flags: &Flags) -> Value {
             "content": [{ "type": "text", "text": "the tool failed" }],
             "isError": true
         }),
+        "meta_probe" => {
+            let mut seen = serde_json::Map::new();
+            if let Some(meta) = params.get("_meta") {
+                seen.insert("_meta".to_string(), meta.clone());
+            }
+            let text = Value::Object(seen).to_string();
+            json!({ "content": [{ "type": "text", "text": text }] })
+        }
         "jsonrpc_error" => {
             return json!({
                 "jsonrpc": "2.0", "id": id,

@@ -413,7 +413,7 @@ impl Hooks {
 
 pub use payload::{
     HookIssueInfo, HookIssueOutcome, HookPayload, HookPullRequestInfo, HookRunInfo,
-    HookSubAgentInfo, HookSubAgentResult, HookToolInfo,
+    HookSessionSource, HookSubAgentInfo, HookSubAgentResult, HookToolInfo,
 };
 
 /// One hook command's raw execution result — returned even on non-zero

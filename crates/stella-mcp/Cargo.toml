@@ -31,6 +31,7 @@ sha2.workspace = true
 libc.workspace = true
 
 [dev-dependencies]
+stella-time = { path = "../stella-time" }
 wiremock.workspace = true
 
 # A tiny, self-contained MCP server used only by the integration tests. It

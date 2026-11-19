@@ -345,8 +345,26 @@ pub fn write_history(dir: &Path, messages: &[CompletionMessage]) -> Result<()> {
 
 /// Load the LLM conversation snapshot; `None` when absent or unreadable.
 pub fn read_history(dir: &Path) -> Option<Vec<CompletionMessage>> {
-    let text = crate::read_private_to_string(&dir.join(HISTORY_FILE)).ok()?;
-    serde_json::from_str(&text).ok()
+    load_history(dir).ok().flatten()
+}
+
+/// Load the LLM conversation snapshot: `Ok(None)` when none was saved, and an
+/// error when one was saved but cannot be read or parsed.
+///
+/// [`read_history`] answers `None` for all three. A caller that has to tell a
+/// lost conversation from one that never existed reads this instead.
+pub fn load_history(dir: &Path) -> Result<Option<Vec<CompletionMessage>>> {
+    use std::io::ErrorKind;
+    let text = match crate::read_private_to_string(&dir.join(HISTORY_FILE)) {
+        Ok(text) => text,
+        Err(StoreError::Io { source, .. }) if source.kind() == ErrorKind::NotFound => {
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    };
+    serde_json::from_str(&text)
+        .map(Some)
+        .map_err(|e| StoreError::serde("cannot parse the saved conversation", e))
 }
 
 /// Atomically snapshot the pending prompt backlog (`queue.json`).
@@ -775,6 +793,21 @@ mod tests {
         // Overwrite is atomic-replace, not append.
         write_queue(&dir, &[]).unwrap();
         assert!(read_queue(&dir).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A saved conversation that does not parse is an error. One that was
+    /// never saved is `None`.
+    #[test]
+    fn a_torn_history_is_an_error_and_a_missing_one_is_none() {
+        let dir = temp_dir("torn-history");
+        assert!(matches!(load_history(&dir), Ok(None)));
+
+        write_history(&dir, &[CompletionMessage::user("hi")]).unwrap();
+        std::fs::write(dir.join(HISTORY_FILE), "{\"role\":").unwrap();
+        let torn = load_history(&dir);
+        assert!(matches!(torn, Err(StoreError::Serde { .. })));
+        assert_eq!(read_history(&dir), None, "the lenient read says none");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

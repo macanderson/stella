@@ -34,11 +34,7 @@ impl SessionPresence {
     /// silent, because an unbound sink is indistinguishable from a session
     /// that simply never crashed.
     pub(crate) fn announce(cfg: &Config, prompt: Option<&str>) -> Self {
-        let name = cfg
-            .workspace_root
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| cfg.workspace_root.display().to_string());
+        let name = workspace_name(cfg);
         let registry = stella_store::SessionRegistry::open_default();
         // A supervised run continues the record its supervisor registered
         // rather than minting a second one for the same work (#1552). The
@@ -74,6 +70,83 @@ impl SessionPresence {
             eprintln!("  {warning}");
         }
         presence
+    }
+
+    /// Re-own the session `stella run --resume` continues.
+    ///
+    /// The record keeps its id and its name, so one session holds the whole
+    /// run. A new `prompt` refreshes its summary. The caller that found the
+    /// session has already bound its durable record.
+    pub(crate) fn adopt(
+        cfg: &Config,
+        record: stella_store::SessionRecord,
+        prompt: Option<&str>,
+    ) -> Self {
+        let record =
+            crate::session_persist::adopt_record(record, stella_store::SessionStatus::InProgress);
+        Self::begin(
+            stella_store::SessionRegistry::open_default(),
+            record,
+            workspace_name(cfg),
+            cfg.durability.clone(),
+            true,
+            prompt,
+        )
+    }
+
+    /// Print the session id on stderr before the run spends anything, so a
+    /// launcher can keep it for `stella run --resume`. Stderr in every output
+    /// format, because stdout carries JSON in two of them and the `json`
+    /// summary names the session too.
+    pub(crate) fn print_id(&self) {
+        eprintln!("{}", session_line(&self.record.id));
+    }
+
+    /// Save the conversation where `stella run --resume` reads it, and
+    /// answer whether it is on disk now. A failed write is said on stderr,
+    /// and the run goes on.
+    pub(crate) fn snapshot(&self, messages: &[CompletionMessage]) -> bool {
+        if super::session_persistence() == stella_runtime::Persistence::Disabled {
+            return false;
+        }
+        let sidecar = self.registry.sidecar_dir(&self.record.id);
+        match crate::session_persist::snapshot_history(&sidecar, messages) {
+            Some(warning) => {
+                eprintln!("  {warning}");
+                false
+            }
+            None => true,
+        }
+    }
+
+    /// Keep each finished turn's resume point until [`Self::save_finished`]
+    /// has saved the conversation the turn ended with
+    /// ([`crate::durability::SessionDurability::hold_discards`]). A session
+    /// that saves no conversation keeps nothing back.
+    pub(crate) fn hold_resume_point(&self) {
+        if super::session_persistence() == stella_runtime::Persistence::Enabled {
+            self.durability.hold_discards();
+        }
+    }
+
+    /// Save the conversation the run ended with, then drop the resume point
+    /// its last turn left. A failed save keeps the point, so the next
+    /// `stella run --resume` goes on from the last finished step rather than
+    /// from the conversation saved before the turn.
+    pub(crate) fn save_finished(&self, messages: &[CompletionMessage]) {
+        if self.snapshot(messages) {
+            self.durability.settle_discards();
+        }
+    }
+
+    /// Save the conversation a continued session starts from, then drop the
+    /// resume point it was restored from. The saved copy holds everything
+    /// that point did, and the prompt this run added. Left in place, the
+    /// older point would win the next resume and lose that prompt.
+    pub(crate) fn save_restored(&self, messages: &[CompletionMessage]) {
+        if self.snapshot(messages) {
+            self.durability.retract_checkpoint();
+        }
     }
 
     /// Register `record`, named from `prompt` when there is one and `named`
@@ -194,6 +267,19 @@ impl SessionPresence {
     }
 }
 
+/// The stderr line that names a run's session as it starts.
+fn session_line(id: &str) -> String {
+    format!("stella: session {id}")
+}
+
+/// The workspace's folder name, which titles its sessions and notifications.
+fn workspace_name(cfg: &Config) -> String {
+    cfg.workspace_root
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| cfg.workspace_root.display().to_string())
+}
+
 /// A driver that returns through `?` never reaches [`SessionPresence::finish`],
 /// so its record still says a turn is running. The read side only corrects that
 /// where it can check a pid, and it cannot check one on every platform. A
@@ -209,7 +295,88 @@ impl Drop for SessionPresence {
 
 #[cfg(test)]
 mod tests {
-    use super::SessionPresence;
+    use stella_protocol::CompletionMessage;
+    use stella_store::work_journal::WorkJournal;
+
+    use super::{SessionPresence, session_line};
+    use crate::durability::SessionDurability;
+
+    /// A presence in `registry` whose durable record is a journal in `store`,
+    /// with the journal and the handle it is bound through.
+    fn bound_presence(
+        registry: &stella_store::SessionRegistry,
+        store: &std::path::Path,
+        workspace: &std::path::Path,
+    ) -> (SessionPresence, WorkJournal, SessionDurability) {
+        let record = stella_store::SessionRecord::new(workspace.display().to_string(), "stella");
+        let journal = WorkJournal::open_in(store, workspace, &record.id).expect("a journal");
+        let durability = SessionDurability::default();
+        durability.bind(journal.clone());
+        let presence = SessionPresence::begin(
+            registry.clone(),
+            record,
+            "stella".to_string(),
+            durability.clone(),
+            false,
+            Some("fix the flaky parser test"),
+        );
+        (presence, journal, durability)
+    }
+
+    fn turns() -> Vec<CompletionMessage> {
+        vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("fix the flaky parser test"),
+            CompletionMessage::assistant("fixed"),
+        ]
+    }
+
+    /// The resume point a finished turn left stays until the conversation it
+    /// ended with is saved, and goes once it is.
+    #[test]
+    fn a_finished_turn_keeps_its_point_until_its_conversation_is_saved() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = tempfile::tempdir().expect("store");
+        let workspace = tempfile::tempdir().expect("workspace");
+        let registry = stella_store::SessionRegistry::open(dir.path());
+        let (presence, journal, durability) =
+            bound_presence(&registry, store.path(), workspace.path());
+        presence.hold_resume_point();
+
+        let sink = durability.sink().expect("bound");
+        sink.persist(r#"{"step":2}"#);
+        sink.discard();
+        assert!(journal.checkpoint().is_some(), "the discard waits");
+
+        presence.save_finished(&turns());
+        assert!(journal.checkpoint().is_none());
+        let saved = stella_store::journal::read_history(&registry.sidecar_dir(presence.id()));
+        assert_eq!(saved, Some(turns()));
+    }
+
+    /// A continued session drops the point it was restored from once it has
+    /// saved where it starts, so a prompt it added cannot lose to that point.
+    #[test]
+    fn a_saved_restore_drops_the_point_it_came_from() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = tempfile::tempdir().expect("store");
+        let workspace = tempfile::tempdir().expect("workspace");
+        let registry = stella_store::SessionRegistry::open(dir.path());
+        let (presence, journal, durability) =
+            bound_presence(&registry, store.path(), workspace.path());
+        durability.sink().expect("bound").persist(r#"{"step":4}"#);
+
+        presence.save_restored(&turns());
+        assert!(journal.checkpoint().is_none());
+        let saved = stella_store::journal::read_history(&registry.sidecar_dir(presence.id()));
+        assert_eq!(saved, Some(turns()));
+    }
+
+    /// The line a launcher reads for the id has one fixed shape.
+    #[test]
+    fn the_start_line_names_the_session() {
+        assert_eq!(session_line("ses-1-2"), "stella: session ses-1-2");
+    }
 
     fn presence_in(registry: &stella_store::SessionRegistry) -> SessionPresence {
         SessionPresence::begin(

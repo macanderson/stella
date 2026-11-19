@@ -989,6 +989,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
     match cli.command.unwrap_or(Command::Chat) {
         Command::Run {
             prompt,
+            resume,
             no_pipeline,
             pipeline,
             test_command,
@@ -1019,6 +1020,22 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 pipeline_choice,
                 require_verdict,
             )?;
+            // `--resume` goes on with one named session in this process, so
+            // no supervisor registers a second record for it.
+            if let Some(id) = resume {
+                print_no_pipeline_notice_if_owed(daemon::detach::Posture::Foreground, no_pipeline);
+                let door = agent::run_resume::run(
+                    &cfg,
+                    &id,
+                    prompt,
+                    cli.globals.spend_limit,
+                    output_format,
+                    pipeline_choice,
+                    test_command.as_deref(),
+                    require_verdict,
+                );
+                return signals::block_on_interruptible(rt()?, door);
+            }
             let prompt = prompt_source::resolve(
                 prompt,
                 std::io::stdin().is_terminal(),

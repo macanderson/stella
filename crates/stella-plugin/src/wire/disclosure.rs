@@ -258,6 +258,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
         disclosure: Some("the native session ID when the host supplies it"),
     },
     HookField {
+        event: HookEvent::SessionStart,
+        path: "source",
+        disclosure: None,
+    },
+    HookField {
         event: HookEvent::PreToolUse,
         path: "event",
         disclosure: None,
@@ -291,6 +296,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
         disclosure: None,
     },
     HookField {
+        event: HookEvent::PreToolUse,
+        path: "tool.tool_use_id",
+        disclosure: None,
+    },
+    HookField {
         event: HookEvent::PostToolUse,
         path: "event",
         disclosure: None,
@@ -318,6 +328,11 @@ pub const HOOK_FIELDS: &[HookField] = &[
     HookField {
         event: HookEvent::PostToolUse,
         path: "tool.read_only",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::PostToolUse,
+        path: "tool.tool_use_id",
         disclosure: None,
     },
     HookField {

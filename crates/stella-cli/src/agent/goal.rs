@@ -10,6 +10,8 @@
 //! [`run_raw_one_shot`] lives here beside it because the two doors are the
 //! same shape now: one prompt, one wrapper socket, one report.
 
+use stella_core::hooks::HookSessionSource;
+
 use super::*;
 
 #[cfg(test)]
@@ -112,6 +114,10 @@ fn bare_loop_config(cfg: &Config) -> Config {
 /// strict parser and rides the candidate grant as a [`stella_plugin::TestPlan`]
 /// (#3553). Dropped before, which is why `pre_turn_signals` published
 /// `test_command: false` unconditionally.
+///
+/// `resumed` is the session `stella run --resume` continues, and `None` for a
+/// new run. A resumed run keeps the session's id, runs on its saved turns,
+/// and adds `prompt` as the next one only when the launcher gave one.
 #[expect(
     clippy::too_many_arguments,
     reason = "this is `run_turn`'s door-side twin and follows its expect: the turn-entry \
@@ -132,16 +138,29 @@ pub(crate) async fn run_raw_one_shot(
     // `None` for a plain `stella run`, which is every caller there was
     // before the verb existed.
     invoked_skill: Option<crate::extensions::InvokedSkill>,
+    resumed: Option<super::run_resume::ResumedSession>,
 ) -> Result<(), crate::failure::CliFailure> {
-    let mut presence = SessionPresence::announce(full_cfg, Some(prompt));
+    let mut presence = match &resumed {
+        Some(session) => {
+            SessionPresence::adopt(full_cfg, session.record().clone(), session.prompt())
+        }
+        None => SessionPresence::announce(full_cfg, Some(prompt)),
+    };
+    presence.print_id();
+    // A resumed run that adds no prompt submits none, so no hook judges one.
+    let submits = resumed.as_ref().is_none_or(|s| s.prompt().is_some());
     // Fired before anything else is built: a provider, a tool registry, an
     // MCP connection. So a denied prompt costs nothing but the hook itself.
-    let prompt_owned = match user_prompt_submit_hook(full_cfg, prompt).await {
-        Ok(prompt) => prompt,
-        Err(reason) => {
-            presence.finish(stella_store::SessionStatus::Stopped, None);
-            return Err(crate::failure::CliFailure::error(reason));
+    let prompt_owned = if submits {
+        match user_prompt_submit_hook(full_cfg, prompt).await {
+            Ok(prompt) => prompt,
+            Err(reason) => {
+                presence.finish(stella_store::SessionStatus::Stopped, None);
+                return Err(crate::failure::CliFailure::error(reason));
+            }
         }
+    } else {
+        prompt.to_string()
     };
     let prompt: &str = &prompt_owned;
     let bare = bare_loop_config(full_cfg);
@@ -272,16 +291,29 @@ pub(crate) async fn run_raw_one_shot(
         println!("  {}\n", prompt.dimmed());
     }
 
-    let mut messages = vec![
-        CompletionMessage::system(
-            with_session_hook_context(
-                build_system_prompt(cfg, &cfg.workspace_root, &active_rules),
-                cfg,
-            )
-            .await,
-        ),
-        crate::attachments::user_message_in(prompt, &cfg.workspace_root),
-    ];
+    let source = match &resumed {
+        Some(_) => HookSessionSource::Resume,
+        None => HookSessionSource::Startup,
+    };
+    let system_prompt = with_session_hook_context_from(
+        build_system_prompt(cfg, &cfg.workspace_root, &active_rules),
+        cfg,
+        source,
+    )
+    .await;
+    let mut messages = match &resumed {
+        Some(session) => {
+            let follow_up = session.prompt().map(|_| prompt);
+            let root = &cfg.workspace_root;
+            let (messages, note) = session.conversation(&system_prompt, follow_up, root);
+            eprintln!("  {note}");
+            messages
+        }
+        None => vec![
+            CompletionMessage::system(system_prompt),
+            crate::attachments::user_message_in(prompt, &cfg.workspace_root),
+        ],
+    };
 
     // The self-improvement loop (memory.rs): recall relevant memories +
     // skills into a volatile block after the stable system prefix (L-E8)…
@@ -304,8 +336,14 @@ pub(crate) async fn run_raw_one_shot(
     // Phase 2 (#713): carried forward rather than emitted here — the turn's
     // event channel is created inside `run_turn`, after the messages recall
     // contributes to have been assembled.
+    //
+    // A resumed run recalls nothing new. Its saved turns already hold what
+    // the session recalled, and a block put in front of them would change
+    // the transcript the model saw.
     let mut recall = crate::memory::OpeningRecall::default();
-    if let Some(m) = &memory {
+    if let Some(m) = &memory
+        && resumed.is_none()
+    {
         let touched = stella_core::driver::loop_evidence::turn_evidence(&messages).touched_paths;
         let recalled = m.recall_block_reported(prompt, &touched).await;
         recall =
@@ -315,6 +353,18 @@ pub(crate) async fn run_raw_one_shot(
     // expansions: the skill's injection event and its turn scope ride the
     // same seam whichever door invoked it.
     recall.note_invoked_skill(invoked_skill);
+    // Saved before the first step, so a process killed before that step
+    // still leaves a turn `stella run --resume` can run. A continued session
+    // also drops the resume point it came from once this copy is saved, so a
+    // prompt added above cannot lose to that older point.
+    if resumed.is_some() {
+        presence.save_restored(&messages);
+    } else {
+        presence.snapshot(&messages);
+    }
+    // From here on, a turn that ends keeps its resume point until the run
+    // has saved the conversation the turn ended with.
+    presence.hold_resume_point();
 
     let started_unix = crate::memory::unix_now_secs();
     // Machine-wide presence: findable in the deck's SESSIONS overlay and
@@ -425,6 +475,9 @@ pub(crate) async fn run_raw_one_shot(
             result
         }
     };
+    // Every turn the run took, for the next `stella run --resume`. The last
+    // turn's resume point goes once this copy is on disk.
+    presence.save_finished(&messages);
     // Episodic memory first (works even for a failed turn — failures are
     // exactly the episodes worth recalling)…
     if let Some(m) = &memory

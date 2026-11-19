@@ -93,7 +93,7 @@ async fn an_empty_gemini_stream_falls_back_to_generate_content() {
     Mock::given(method("POST"))
         .and(path(UNARY_PATH))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
-            r#"{"candidates":[{"finishReason":"STOP","content":{"parts":[{"text":"thinking out loud","thought":true},{"functionCall":{"name":"read_file","args":{"path":"src/lib.rs"}},"thoughtSignature":"sig123"}]}}],"usageMetadata":{"promptTokenCount":12,"candidatesTokenCount":9}}"#,
+            r#"{"responseId":"rsp-1","candidates":[{"finishReason":"STOP","content":{"parts":[{"text":"thinking out loud","thought":true},{"functionCall":{"name":"read_file","args":{"path":"src/lib.rs"}},"thoughtSignature":"sig123"}]}}],"usageMetadata":{"promptTokenCount":12,"candidatesTokenCount":9}}"#,
             "application/json",
         ))
         .mount(&server)
@@ -114,7 +114,7 @@ async fn an_empty_gemini_stream_falls_back_to_generate_content() {
         .await
         .expect("the fallback attempt completes");
     assert_eq!(result.tool_calls.len(), 1);
-    assert_eq!(result.tool_calls[0].call_id, "call_0#sig123");
+    assert_eq!(result.tool_calls[0].call_id, "call_rsp-1_0#sig123");
     assert_eq!(result.tool_calls[0].name, "read_file");
     assert_eq!(
         result.tool_calls[0].input,

@@ -259,6 +259,10 @@ pub struct CallToolParams {
     pub name: String,
     #[serde(default)]
     pub arguments: Value,
+    /// The MCP request metadata. Stella puts the engine's tool call id
+    /// here under a key of its own, and leaves it out when there is none.
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
 }
 
 /// `tools/call` result: a content array plus a tool-level error flag.

@@ -39,15 +39,19 @@ const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta
 /// signature inside a `ToolCall::call_id`. Gemini's wire has no call ids at
 /// all — calls correlate to responses by function *name* and order — but the
 /// engine's internal protocol requires one, so this adapter mints
-/// `call_0`, `call_1`, …. Gemini 3 additionally attaches a `thoughtSignature`
+/// `call_<response>_0`, `call_<response>_1`, …, where `<response>` is the
+/// response's `responseId` or a token minted for it (see [`mint_call_id`]).
+/// Gemini 3 additionally attaches a `thoughtSignature`
 /// to streamed `functionCall` parts and *requires* it to be echoed back on
 /// the matching part in conversation history (omitting it degrades or
 /// rejects the next turn). `CompletionMessage`/`ToolCall` have no slot for a
 /// provider-private blob, so the signature rides inside the minted call id
-/// after this separator (`call_0#<sig>`) and is split back out when history
-/// is re-framed for the wire. `#` cannot appear in the base64 signature, so
-/// the split is unambiguous.
-const SIGNATURE_SEPARATOR: char = '#';
+/// after this separator (`call_<response>_0#<sig>`) and is split back out
+/// when history is re-framed for the wire. `#` cannot appear in the base64
+/// signature, so the split is unambiguous. It is the protocol's
+/// [`CALL_ID_PROVIDER_SEPARATOR`](stella_protocol::tool::CALL_ID_PROVIDER_SEPARATOR),
+/// so the id a hook or an MCP request sees stops before the signature.
+const SIGNATURE_SEPARATOR: char = stella_protocol::tool::CALL_ID_PROVIDER_SEPARATOR;
 
 pub struct GeminiProvider {
     client: reqwest::Client,
@@ -319,6 +323,10 @@ pub(crate) struct GeminiStreamChunk {
     pub(crate) candidates: Vec<GeminiCandidate>,
     #[serde(default)]
     pub(crate) usage_metadata: Option<GeminiUsageMetadata>,
+    /// The id Google gives this response. Every streamed chunk of one
+    /// response carries the same value, and no two responses share one.
+    #[serde(default)]
+    pub(crate) response_id: Option<String>,
     /// An in-band error frame (`data: {"error": {...}}`). Google can emit one
     /// mid-stream after a 200 status; without modelling it the frame would
     /// deserialize into an otherwise-empty chunk and be silently dropped,
@@ -429,7 +437,7 @@ pub(crate) fn map_thinking_level(effort: ReasoningEffort) -> &'static str {
     }
 }
 
-/// Split a minted call id back into `(wire ordinal, thought signature)` —
+/// Split a minted call id back into `(minted id, thought signature)` —
 /// the inverse of what [`aggregate_gemini_stream`] minted.
 fn split_call_id(call_id: &str) -> (&str, Option<&str>) {
     match call_id.split_once(SIGNATURE_SEPARATOR) {
@@ -758,6 +766,56 @@ pub(crate) struct GeminiAssembly {
     pub(crate) usage_seen: bool,
     /// Reported on the final chunk's candidate; last assignment wins.
     pub(crate) finish_raw: Option<String>,
+    /// What names this response in its call ids: its `responseId` when
+    /// [`usable_response_id`] keeps it, or else a [`local_response_token`].
+    /// The first chunk with a usable `responseId` sets it. The first call
+    /// mints a token when no chunk before it did.
+    pub(crate) response_id: Option<String>,
+}
+
+/// The call id for the `ordinal`-th call of a response.
+///
+/// The ordinal starts at 0 in every response, so it names a call only within
+/// one step. `response` makes the id unique across steps, so a hook, an MCP
+/// request and a recorder can tell one step's first call from the next one's.
+/// A `thoughtSignature` rides after [`SIGNATURE_SEPARATOR`].
+fn mint_call_id(response: &str, ordinal: usize, signature: Option<&str>) -> String {
+    let base = format!("call_{response}_{ordinal}");
+    match signature {
+        Some(sig) => format!("{base}{SIGNATURE_SEPARATOR}{sig}"),
+        None => base,
+    }
+}
+
+/// `responseId` as it can name calls, or `None` when it cannot.
+///
+/// An id of letters, digits, `-` and `_` is kept as it is. Any other id gets
+/// a [`local_response_token`] instead. Dropping the other characters would
+/// give two ids that differ only in them one name, and their calls one id.
+/// Keeping them would let [`SIGNATURE_SEPARATOR`] into the id and move the
+/// split that finds the signature.
+fn usable_response_id(response_id: &str) -> Option<String> {
+    let usable = !response_id.is_empty()
+        && response_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'));
+    usable.then(|| response_id.to_string())
+}
+
+/// A name for a response with no usable `responseId`.
+///
+/// A counter keeps it apart from every other name this process mints, and the
+/// process id and a random value keep it apart from another process's.
+fn local_response_token() -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static MINTED: AtomicU64 = AtomicU64::new(0);
+    let count = MINTED.fetch_add(1, Ordering::Relaxed);
+    let random = RandomState::new().build_hasher().finish();
+    let pid = std::process::id();
+    format!("local-{pid:x}-{random:x}-{count:x}")
 }
 
 impl GeminiAssembly {
@@ -783,6 +841,9 @@ impl GeminiAssembly {
             self.usage.output_tokens = u.candidates_token_count + u.thoughts_token_count;
             self.usage.cached_input_tokens = u.cached_content_token_count;
         }
+        if self.response_id.is_none() {
+            self.response_id = chunk.response_id.as_deref().and_then(usable_response_id);
+        }
         for candidate in chunk.candidates {
             if let Some(reason) = candidate.finish_reason {
                 self.finish_raw = Some(reason);
@@ -794,8 +855,8 @@ impl GeminiAssembly {
                 if let Some(call) = part.function_call {
                     let ordinal = self.tool_calls.len();
                     // The name is the tool to run, and it cannot be invented
-                    // here. The call id is minted below from the ordinal, so
-                    // the name is the one dispatch field this wire can drop.
+                    // here. The call id is minted below, so the name is
+                    // the one dispatch field this wire can drop.
                     // Committing a call named `""` would send the engine
                     // looking for a tool no registry holds.
                     if call.name.is_empty() {
@@ -806,10 +867,8 @@ impl GeminiAssembly {
                             &["name"],
                         ));
                     }
-                    let call_id = match &part.thought_signature {
-                        Some(sig) => format!("call_{ordinal}{SIGNATURE_SEPARATOR}{sig}"),
-                        None => format!("call_{ordinal}"),
-                    };
+                    let token = self.response_id.get_or_insert_with(local_response_token);
+                    let call_id = mint_call_id(token, ordinal, part.thought_signature.as_deref());
                     // A no-argument call omits `args` on the wire, which
                     // deserializes to `Value::Null` (the field is
                     // `#[serde(default)]`). That is an empty object, not
@@ -1003,6 +1062,8 @@ fn map_gemini_finish_reason(raw: Option<&str>, has_tool_calls: bool) -> Option<F
     }
 }
 
+#[cfg(test)]
+mod call_ids;
 #[cfg(test)]
 mod malformed_tool_call;
 #[cfg(test)]

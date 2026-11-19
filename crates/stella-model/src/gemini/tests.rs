@@ -447,7 +447,7 @@ async fn complete_mints_call_ids_and_captures_thought_signatures() {
     // complete JSON objects (no fragment reassembly) and a Gemini 3
     // thoughtSignature on the first part of the group.
     let sse_body = concat!(
-        "data: {\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[",
+        "data: {\"responseId\":\"rsp-1\",\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[",
         "{\"functionCall\":{\"name\":\"read_file\",\"args\":{\"path\":\"src/lib.rs\"}},\"thoughtSignature\":\"c2ln\"},",
         "{\"functionCall\":{\"name\":\"bash\",\"args\":{\"command\":\"ls\"}}}",
         "]}}],\"usageMetadata\":{\"promptTokenCount\":20,\"candidatesTokenCount\":12}}\n\n",
@@ -480,13 +480,13 @@ async fn complete_mints_call_ids_and_captures_thought_signatures() {
 
     let result = provider.complete(req).await.expect("should succeed");
     assert_eq!(result.tool_calls.len(), 2);
-    assert_eq!(result.tool_calls[0].call_id, "call_0#c2ln");
+    assert_eq!(result.tool_calls[0].call_id, "call_rsp-1_0#c2ln");
     assert_eq!(result.tool_calls[0].name, "read_file");
     assert_eq!(
         result.tool_calls[0].input,
         serde_json::json!({"path": "src/lib.rs"})
     );
-    assert_eq!(result.tool_calls[1].call_id, "call_1");
+    assert_eq!(result.tool_calls[1].call_id, "call_rsp-1_1");
     assert_eq!(result.tool_calls[1].name, "bash");
 }
 

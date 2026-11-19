@@ -62,6 +62,28 @@ pub struct ToolCall {
     pub input: serde_json::Value,
 }
 
+/// The character that ends the public part of a [`ToolCall::call_id`].
+///
+/// An adapter can keep data its provider needs back in history inside the id
+/// it mints, after this character. Gemini 3 does: it sends a
+/// `thoughtSignature` with each function call and needs it echoed back, and a
+/// `ToolCall` has no other place to keep it. That data is for the provider
+/// alone, so [`ToolCall::public_id`] leaves it out.
+pub const CALL_ID_PROVIDER_SEPARATOR: char = '#';
+
+impl ToolCall {
+    /// The id that names this call outside the process, in a hook payload or
+    /// the `_meta` of an MCP request. It is [`call_id`](Self::call_id) up to
+    /// [`CALL_ID_PROVIDER_SEPARATOR`], so a Gemini thought signature stays in
+    /// the transcript and goes no further.
+    #[must_use]
+    pub fn public_id(&self) -> &str {
+        self.call_id
+            .split_once(CALL_ID_PROVIDER_SEPARATOR)
+            .map_or(self.call_id.as_str(), |(public, _)| public)
+    }
+}
+
 /// Why a tool call failed, as a closed machine-readable set (#3145).
 ///
 /// [`ToolOutput::Error`]'s `message` is prose written for the model to retry
@@ -267,6 +289,18 @@ pub struct ToolResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A Gemini thought signature stays in the id and out of its public part.
+    #[test]
+    fn a_public_id_leaves_out_what_only_the_provider_reads() {
+        let call = |call_id: &str| ToolCall {
+            call_id: call_id.to_string(),
+            name: "search_code".to_string(),
+            input: serde_json::json!({}),
+        };
+        assert_eq!(call("call_rsp_0#c2lnbmF0dXJl").public_id(), "call_rsp_0");
+        assert_eq!(call("toolu_01").public_id(), "toolu_01");
+    }
 
     #[test]
     fn tool_output_roundtrips_ok_and_error() {

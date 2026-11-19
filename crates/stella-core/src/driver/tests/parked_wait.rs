@@ -20,6 +20,8 @@ struct ParkingTools {
     probe_calls: Arc<AtomicU32>,
     change_on: u32,
     wake_calls: Arc<AtomicU32>,
+    /// The tool call id each call ran under, in order.
+    ids: Arc<std::sync::Mutex<Vec<Option<String>>>>,
 }
 
 impl ParkingTools {
@@ -29,6 +31,7 @@ impl ParkingTools {
             probe_calls: Arc::new(AtomicU32::new(0)),
             change_on,
             wake_calls: Arc::new(AtomicU32::new(0)),
+            ids: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 }
@@ -46,6 +49,10 @@ impl ToolExecutor for ParkingTools {
     }
 
     async fn execute(&self, _name: &str, input: &Value) -> ToolOutput {
+        self.ids
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(crate::tool_use::current());
         if input.get("probe").and_then(Value::as_bool).unwrap_or(false) {
             let n = self.probe_calls.fetch_add(1, Ordering::SeqCst) + 1;
             return ToolOutput::Ok {
@@ -715,4 +722,46 @@ async fn a_soft_stop_during_a_park_ends_the_turn_as_a_deliberate_stop() {
         !events.iter().any(|e| matches!(e, AgentEvent::Error { .. })),
         "a user decision surfaces no provider failure: {events:?}"
     );
+}
+
+/// Each probe and the wake run under an id of their own, named after the
+/// call that asked for the wait. A hook or a gateway sees one id per call,
+/// even though every probe sends the same input.
+#[tokio::test(start_paused = true)]
+async fn each_replay_runs_under_its_own_call_id() {
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![Ok(ci_wait_call()), Ok(text_result("CI is green"))]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = ParkingTools::depositing(ci_wait_request(600), 3);
+    let ids = tools.ids.clone();
+    let sleeper = PausedSleeper;
+    let seams = TurnCapabilities::none();
+    let engine = Engine::assemble(&provider, &tools, EngineConfig::default(), &sleeper, seams);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("monitor CI and report"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, _rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "got {outcome:?}"
+    );
+
+    let ran = ids.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let expected: Vec<Option<String>> = [
+        "w1",
+        "w1.parked-wait-1",
+        "w1.parked-wait-2",
+        "w1.parked-wait-3",
+        "w1.parked-wake-1",
+    ]
+    .iter()
+    .map(|id| Some((*id).to_string()))
+    .collect();
+    assert_eq!(ran, expected, "each replay runs under its own id");
 }
