@@ -29,7 +29,9 @@ fn response(response_id: Option<&str>, signature: Option<&str>) -> GeminiStreamC
 /// The id of the one call a response holds.
 fn minted(chunk: GeminiStreamChunk) -> String {
     let mut assembly = GeminiAssembly::default();
-    assembly.absorb(chunk, "Gemini", None).expect("the chunk folds");
+    assembly
+        .absorb(chunk, "Gemini", None)
+        .expect("the chunk folds");
     assert_eq!(assembly.tool_calls.len(), 1);
     assembly.tool_calls.remove(0).call_id
 }

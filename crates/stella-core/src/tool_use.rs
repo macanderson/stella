@@ -117,9 +117,18 @@ mod tests {
             asked,
             CompletionMessage::user("a later turn"),
         ];
-        assert_eq!(replay_id(&messages, "parked-wait", 1), "call_2.parked-wait-1");
-        assert_eq!(replay_id(&messages, "parked-wait", 2), "call_2.parked-wait-2");
+        assert_eq!(
+            replay_id(&messages, "parked-wait", 1),
+            "call_2.parked-wait-1"
+        );
+        assert_eq!(
+            replay_id(&messages, "parked-wait", 2),
+            "call_2.parked-wait-2"
+        );
         let none = vec![CompletionMessage::user("no calls yet")];
-        assert_eq!(replay_id(&none, "working-set-restore", 1), "working-set-restore-1");
+        assert_eq!(
+            replay_id(&none, "working-set-restore", 1),
+            "working-set-restore-1"
+        );
     }
 }

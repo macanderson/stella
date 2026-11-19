@@ -277,7 +277,11 @@ async fn a_resumed_run_sends_the_saved_turns_and_the_next_prompt() {
     let answered = at("assistant", "fixed the parser");
     let next = at("user", NEXT_PROMPT);
     assert!(asked < answered, "the saved turn keeps its order: {sent:?}");
-    assert_eq!(next, sent.len() - 1, "the prompt is the next turn: {sent:?}");
+    assert_eq!(
+        next,
+        sent.len() - 1,
+        "the prompt is the next turn: {sent:?}"
+    );
 
     let starts = session_starts(workspace.path());
     let sources: Vec<&str> = starts
@@ -286,7 +290,9 @@ async fn a_resumed_run_sends_the_saved_turns_and_the_next_prompt() {
         .collect();
     assert_eq!(sources, ["startup", "resume"], "{starts:?}");
     assert!(
-        starts.iter().all(|start| start["session_id"] == id.as_str()),
+        starts
+            .iter()
+            .all(|start| start["session_id"] == id.as_str()),
         "{starts:?}"
     );
 }
