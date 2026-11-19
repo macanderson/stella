@@ -30,10 +30,11 @@ pub struct HookToolInfo {
     /// still deserializes.
     #[serde(default)]
     pub read_only: bool,
-    /// The engine's id for this call, the `call_id` its `ToolStart` and
-    /// `ToolResult` events carry. `PreToolUse` and `PostToolUse` for one
-    /// call carry the same value, and an MCP `tools/call` sends it in
-    /// `_meta`. Absent from a payload built before the field existed.
+    /// The engine's id for this call: its `call_id` without the data only the
+    /// provider reads ([`stella_protocol::ToolCall::public_id`]).
+    /// `PreToolUse` and `PostToolUse` for one call carry the same value, and
+    /// an MCP `tools/call` sends it in `_meta`. Absent from a payload built
+    /// before the field existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_use_id: Option<String>,
 }

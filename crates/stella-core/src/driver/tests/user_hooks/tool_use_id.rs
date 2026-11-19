@@ -58,13 +58,15 @@ fn same_input_calls(ids: &[&str]) -> CompletionResultAlias {
 
 /// Two identical calls in one step, then the same call again on the next
 /// step. Each call's `PreToolUse` and `PostToolUse` carry one id, the
-/// executor runs under that id, and no two calls share one.
+/// executor runs under that id, and no two calls share one. The first call
+/// carries a Gemini thought signature, which neither the hooks nor the
+/// executor see.
 #[tokio::test(start_paused = true)]
 async fn each_call_names_one_id_in_both_hooks_and_the_executor() {
     let provider = ScriptedProvider {
         id: "scripted".into(),
         script: TokioMutex::new(vec![
-            Ok(same_input_calls(&["call_a", "call_b"])),
+            Ok(same_input_calls(&["call_a#c2lnbmF0dXJl", "call_b"])),
             Ok(same_input_calls(&["call_c"])),
             Ok(text_result("done")),
         ]),

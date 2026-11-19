@@ -200,8 +200,9 @@ impl<'a> Engine<'a> {
     /// can carry it without re-walking `schemas()` per call.
     ///
     /// The executor runs inside [`crate::tool_use::scope`] under the call's
-    /// `call_id`, the id the hook payloads carry too. That is how an MCP
-    /// request names the call it serves.
+    /// public id ([`stella_protocol::ToolCall::public_id`]), the id the hook
+    /// payloads carry too. That is how an MCP request names the call it
+    /// serves, with no thought signature in it.
     pub(super) async fn dispatch_tool_call(
         &self,
         call: &ToolCall,
@@ -219,7 +220,7 @@ impl<'a> Engine<'a> {
                 ),
             );
         }
-        let tool_use_id = call.call_id.clone();
+        let tool_use_id = call.public_id().to_string();
         let dispatch = async {
             match self.hooks {
                 None => self.tools.execute(&call.name, &call.input).await,
@@ -262,7 +263,7 @@ impl<'a> Engine<'a> {
                 call.input.clone(),
                 read_only,
             )
-            .with_tool_use_id(call.call_id.clone())
+            .with_tool_use_id(call.public_id())
             .with_session_context(self.config.session_context.as_ref()),
         )
         .await;
@@ -335,7 +336,7 @@ impl<'a> Engine<'a> {
                 read_only,
                 result_str,
             )
-            .with_tool_use_id(call.call_id.clone())
+            .with_tool_use_id(call.public_id())
             .with_session_context(self.config.session_context.as_ref()),
         )
         .await;

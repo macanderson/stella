@@ -34,7 +34,8 @@ pub fn current() -> Option<String> {
 /// The id of a call the engine makes on its own. No model asked for it.
 /// A probe in a parked wait is one. So is a read that restores files.
 ///
-/// The id starts with the id of the last call the model made, then names
+/// The id starts with the public id of the last call the model made
+/// ([`ToolCall::public_id`](stella_protocol::ToolCall::public_id)), then names
 /// `kind` and `ordinal`. So each replay gets its own id, and a gateway never
 /// sees one id on two requests.
 #[must_use]
@@ -44,7 +45,7 @@ pub fn replay_id(messages: &[CompletionMessage], kind: &str, ordinal: usize) -> 
         .rev()
         .find_map(|message| message.tool_calls.last());
     match anchor {
-        Some(call) => format!("{}.{kind}-{ordinal}", call.call_id),
+        Some(call) => format!("{}.{kind}-{ordinal}", call.public_id()),
         None => format!("{kind}-{ordinal}"),
     }
 }
@@ -129,6 +130,22 @@ mod tests {
         assert_eq!(
             replay_id(&none, "working-set-restore", 1),
             "working-set-restore-1"
+        );
+    }
+
+    /// A thought signature in the last call's id stays out of a replay's id.
+    #[test]
+    fn a_replay_leaves_out_the_signature_of_its_anchor() {
+        let mut asked = CompletionMessage::assistant("");
+        asked.tool_calls = vec![ToolCall {
+            call_id: "call_rsp_0#c2ln".to_string(),
+            name: "ci_status".to_string(),
+            input: serde_json::json!({}),
+        }];
+        let messages = vec![CompletionMessage::user("watch CI"), asked];
+        assert_eq!(
+            replay_id(&messages, "parked-wait", 1),
+            "call_rsp_0.parked-wait-1"
         );
     }
 }
