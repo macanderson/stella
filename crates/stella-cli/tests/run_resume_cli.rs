@@ -298,7 +298,8 @@ async fn a_resumed_run_sends_the_saved_turns_and_the_next_prompt() {
 }
 
 /// A turn that stopped before its answer goes on with no prompt. The model
-/// gets the saved turn as it was, with no new turn.
+/// gets the saved turn as it was, with no new turn. That includes the recall
+/// block the first run put before the prompt, which is a user message too.
 #[tokio::test]
 async fn a_resumed_run_with_no_prompt_continues_the_stopped_turn() {
     let workspace = tempfile::tempdir().expect("workspace");
@@ -326,13 +327,19 @@ async fn a_resumed_run_with_no_prompt_continues_the_stopped_turn() {
     assert_eq!(summary(&resumed)["text"], "fixed the parser");
 
     let bodies = requests(&server).await;
+    let refused = messages_of(bodies.first().expect("the first run called the model"));
     let sent = messages_of(bodies.last().expect("the resumed run called the model"));
-    let users: Vec<&Value> = sent
-        .iter()
-        .filter(|message| message["role"] == "user")
-        .collect();
-    assert_eq!(users.len(), 1, "no new user turn was added: {sent:?}");
-    assert!(says(users[0], FIRST_PROMPT), "{sent:?}");
+    // Each run builds its own system prompt, so the turns after it are what
+    // must match. They include the first run's recall block: a resumed run
+    // recalls nothing new.
+    assert_eq!(
+        sent[1..],
+        refused[1..],
+        "the model got the saved turn as it was, with no new turn"
+    );
+    let last = sent.last().expect("the request carries a turn");
+    assert_eq!(last["role"], "user", "{sent:?}");
+    assert!(says(last, FIRST_PROMPT), "{sent:?}");
 
     let again = run_blocking(workspace.path(), data.path(), &uri, &resume_args).await;
     assert!(
