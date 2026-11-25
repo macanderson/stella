@@ -160,7 +160,7 @@ unicode-width = "0.2"
 # outside any feature gate.
 scraper = { version = "0.27", default-features = false, features = ["errors"] }
 # The msrv job checks this pin on the declared `rust-version` (1.90) with
-# `cargo +1.90 check --workspace --locked`, and 0.42 passes it. The 0.40 line
+# `cargo +1.90 check --workspace --locked`, and 0.43 passes it. The 0.40 line
 # does not: rusqlite 0.40.1 and its libsqlite3-sys 0.38 both call
 # `cfg_select!`, which Rust stabilized in 1.95. Because rusqlite calls it from
 # its own source, a different libsqlite3-sys feature set cannot avoid it
